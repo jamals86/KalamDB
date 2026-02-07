@@ -19,6 +19,6 @@ mod helpers;
 
 pub use execute::execute_sql_v1;
 pub use file_utils::{
-    extract_file_placeholders, extract_table_from_sql, parse_sql_payload,
-    stage_and_finalize_files, substitute_file_placeholders,
+    extract_file_placeholders, extract_table_from_sql, parse_sql_payload, stage_and_finalize_files,
+    substitute_file_placeholders,
 };

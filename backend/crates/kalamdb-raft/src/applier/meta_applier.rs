@@ -12,9 +12,9 @@
 use async_trait::async_trait;
 use kalamdb_commons::models::schemas::{TableDefinition, TableType};
 use kalamdb_commons::models::{JobId, NamespaceId, NodeId, StorageId, TableId, UserId};
-use kalamdb_system::Storage;
-use kalamdb_system::JobStatus;
 use kalamdb_system::providers::jobs::models::Job;
+use kalamdb_system::JobStatus;
+use kalamdb_system::Storage;
 use kalamdb_system::User;
 
 use crate::RaftError;
@@ -69,8 +69,11 @@ pub trait MetaApplier: Send + Sync {
     ) -> Result<String, RaftError>;
 
     /// Alter a table in persistent storage
-    async fn alter_table(&self, table_id: &TableId, table_def: &TableDefinition)
-        -> Result<String, RaftError>;
+    async fn alter_table(
+        &self,
+        table_id: &TableId,
+        table_def: &TableDefinition,
+    ) -> Result<String, RaftError>;
 
     /// Drop a table from persistent storage
     async fn drop_table(&self, table_id: &TableId) -> Result<String, RaftError>;
@@ -218,7 +221,12 @@ impl MetaApplier for NoOpMetaApplier {
     }
 
     // Table operations
-    async fn create_table(&self, _: &TableId, _: TableType, _: &TableDefinition) -> Result<String, RaftError> {
+    async fn create_table(
+        &self,
+        _: &TableId,
+        _: TableType,
+        _: &TableDefinition,
+    ) -> Result<String, RaftError> {
         Ok(String::new())
     }
     async fn alter_table(&self, _: &TableId, _: &TableDefinition) -> Result<String, RaftError> {
@@ -501,7 +509,8 @@ mod tests {
             TableType::User,
             vec![],
             None,
-        ).expect("Failed to create table definition");
+        )
+        .expect("Failed to create table definition");
 
         applier.create_table(&table_id, TableType::User, &table_def).await.unwrap();
         applier.alter_table(&table_id, &table_def).await.unwrap();
@@ -612,7 +621,8 @@ mod tests {
             TableType::User,
             vec![],
             None,
-        ).expect("Failed to create table definition");
+        )
+        .expect("Failed to create table definition");
         let user_id = UserId::from("user");
         let user = User {
             user_id: user_id.clone(),
@@ -758,7 +768,8 @@ mod tests {
             TableType::User,
             vec![],
             None,
-        ).expect("Failed to create table definition");
+        )
+        .expect("Failed to create table definition");
         let user_id = UserId::from("u1");
         let user = User {
             user_id: user_id.clone(),

@@ -248,7 +248,7 @@ impl StorageRegistry {
                             .to_string(),
                     ))
                 }
-            }
+            },
             (None, Some(_)) => Err(FilestoreError::InvalidTemplate(
                 "Shared table template: {namespace} is required".to_string(),
             )),
@@ -256,8 +256,7 @@ impl StorageRegistry {
                 "Shared table template: {tableName} is required".to_string(),
             )),
             (None, None) => Err(FilestoreError::InvalidTemplate(
-                "Shared table template: Both {namespace} and {tableName} are required"
-                    .to_string(),
+                "Shared table template: Both {namespace} and {tableName} are required".to_string(),
             )),
         }
     }
@@ -280,7 +279,7 @@ impl StorageRegistry {
                 return Err(FilestoreError::InvalidTemplate(
                     "User table template: {userId} is required".to_string(),
                 ))
-            }
+            },
         };
 
         // Rule 2: Enforce ordering
@@ -428,6 +427,10 @@ mod tests {
             .join("storage")
             .to_string_lossy()
             .into_owned();
-        StorageRegistry::new(storages_provider, default_storage_path, kalamdb_configs::config::types::RemoteStorageTimeouts::default())
+        StorageRegistry::new(
+            storages_provider,
+            default_storage_path,
+            kalamdb_configs::config::types::RemoteStorageTimeouts::default(),
+        )
     }
 }

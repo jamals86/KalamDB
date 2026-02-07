@@ -54,13 +54,13 @@ pub use compatibility::{
     ErrorStyle,
 };
 pub use ddl::{
-    parse_job_command, AlterStorageStatement, CheckStorageStatement, CompactAllTablesStatement, CompactTableStatement,
-    CreateStorageStatement, DropStorageStatement, FlushAllTablesStatement, FlushTableStatement,
-    JobCommand, ShowManifestStatement, ShowStoragesStatement, SubscribeStatement,
-    SubscriptionOptions,
+    parse_job_command, AlterStorageStatement, CheckStorageStatement, CompactAllTablesStatement,
+    CompactTableStatement, CreateStorageStatement, DropStorageStatement, FlushAllTablesStatement,
+    FlushTableStatement, JobCommand, ShowManifestStatement, ShowStoragesStatement,
+    SubscribeStatement, SubscriptionOptions,
 };
-pub use parser::extract_dml_table_id;
 pub use ddl_parent::DdlAst;
+pub use parser::extract_dml_table_id;
 pub use parser::SqlParser;
 pub use query_cache::{QueryCache, QueryCacheKey, QueryCacheTtlConfig};
 pub use validation::{

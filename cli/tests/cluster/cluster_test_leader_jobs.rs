@@ -85,7 +85,8 @@ fn cluster_test_leader_only_flush_jobs() {
     let leader_node_id = get_self_node_id(&leader_url).expect("Failed to resolve leader node_id");
 
     // Step 5: Query system.jobs to verify job was executed by leader
-    let jobs_query = "SELECT job_id, job_type, status, node_id FROM system.jobs WHERE job_id = '".to_string()
+    let jobs_query = "SELECT job_id, job_type, status, node_id FROM system.jobs WHERE job_id = '"
+        .to_string()
         + &job_id
         + "'";
 
@@ -159,10 +160,7 @@ fn cluster_test_jobs_table_consistency() {
             rows.iter().any(|row| {
                 row.get(2)
                     .map(|val| {
-                        extract_typed_value(val)
-                            .as_str()
-                            .map(|s| !s.is_empty())
-                            .unwrap_or(false)
+                        extract_typed_value(val).as_str().map(|s| !s.is_empty()).unwrap_or(false)
                     })
                     .unwrap_or(false)
             })
@@ -197,7 +195,8 @@ fn cluster_test_job_claiming() {
     let table_name = format!("claim_{}", rand_suffix());
     let full_table = format!("{}.{}", namespace, table_name);
 
-    let _ = execute_on_node(&leader_url, &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_on_node(&leader_url, &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     thread::sleep(Duration::from_millis(20));
 
     execute_on_node(&leader_url, &format!("CREATE NAMESPACE {}", namespace))
@@ -257,21 +256,20 @@ fn cluster_test_flush_job_nodes_completion() {
     let table_name = format!("flush_nodes_{}", rand_suffix());
     let full_table = format!("{}.{}", namespace, table_name);
 
-    let _ = execute_on_node(&leader_url, &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_on_node(&leader_url, &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     thread::sleep(Duration::from_millis(20));
 
     execute_on_node(&leader_url, &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
     thread::sleep(Duration::from_millis(20));
 
-    let create_sql =
-        format!("CREATE SHARED TABLE {} (id INT PRIMARY KEY, value TEXT)", full_table);
+    let create_sql = format!("CREATE SHARED TABLE {} (id INT PRIMARY KEY, value TEXT)", full_table);
     execute_on_node(&leader_url, &create_sql).expect("Failed to create table");
     thread::sleep(Duration::from_millis(30));
 
     for i in 0..20 {
-        let insert_sql =
-            format!("INSERT INTO {} (id, value) VALUES ({}, 'v{}')", full_table, i, i);
+        let insert_sql = format!("INSERT INTO {} (id, value) VALUES ({}, 'v{}')", full_table, i, i);
         execute_on_node(&leader_url, &insert_sql).expect("Failed to insert row");
     }
 
@@ -343,13 +341,14 @@ fn wait_for_job_nodes_completed(
                 if let Some(rows) = &result.rows {
                     if rows.len() == expected_nodes {
                         let all_completed = rows.iter().all(|row| {
-                            row.get(1).map(|val| {
-                                extract_typed_value(val)
-                                    .as_str()
-                                    .map(|s| s.eq_ignore_ascii_case("completed"))
-                                    .unwrap_or(false)
-                            })
-                            .unwrap_or(false)
+                            row.get(1)
+                                .map(|val| {
+                                    extract_typed_value(val)
+                                        .as_str()
+                                        .map(|s| s.eq_ignore_ascii_case("completed"))
+                                        .unwrap_or(false)
+                                })
+                                .unwrap_or(false)
                         });
 
                         if all_completed {
@@ -373,9 +372,7 @@ fn get_self_node_id(leader_url: &str) -> Option<String> {
             if let Some(rows) = &result.rows {
                 if let Some(row) = rows.first() {
                     if let Some(value) = row.first() {
-                        return extract_typed_value(value)
-                            .as_str()
-                            .map(|s| s.to_string());
+                        return extract_typed_value(value).as_str().map(|s| s.to_string());
                     }
                 }
             }

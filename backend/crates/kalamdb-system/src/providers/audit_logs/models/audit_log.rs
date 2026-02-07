@@ -90,7 +90,7 @@ pub struct AuditLogEntry {
         default = "None",
         comment = "Additional details about the action (JSON)"
     )]
-    pub details: Option<String>,    // JSON blob for additional context
+    pub details: Option<String>, // JSON blob for additional context
     #[column(
         id = 8,
         ordinal = 8,

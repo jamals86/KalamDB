@@ -1,22 +1,27 @@
 //! File permission tests over HTTP.
 
+use super::test_support::auth_helper::create_user_auth_header_with_id;
+use super::test_support::http_server::start_http_test_server;
 use kalam_link::models::ResponseStatus as LinkResponseStatus;
-use kalamdb_api::handlers::sql::models::{SqlResponse, ResponseStatus};
-use kalamdb_system::FileRef;
+use kalamdb_api::handlers::sql::models::{ResponseStatus, SqlResponse};
 use kalamdb_commons::{Role, UserName};
+use kalamdb_system::FileRef;
 use reqwest::multipart;
 use serde_json::Value as JsonValue;
 use serial_test::serial;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
-use super::test_support::auth_helper::create_user_auth_header_with_id;
-use super::test_support::http_server::start_http_test_server;
 
 fn unique_suffix() -> String {
     Uuid::new_v4().simple().to_string()
 }
 
-fn table_path_for_user(storage_root: &Path, namespace: &str, table: &str, user_id: &str) -> PathBuf {
+fn table_path_for_user(
+    storage_root: &Path,
+    namespace: &str,
+    table: &str,
+    user_id: &str,
+) -> PathBuf {
     storage_root.join(namespace).join(table).join(user_id)
 }
 
@@ -152,10 +157,7 @@ async fn test_file_download_permissions_user_table() -> anyhow::Result<()> {
         let resp = server.execute_sql_with_auth(&select_sql, &alice_auth).await?;
         assert_eq!(resp.status, LinkResponseStatus::Success, "SELECT failed");
         let rows = resp.rows_as_maps();
-        let file_value = rows
-            .get(0)
-            .and_then(|row| row.get("doc"))
-            .expect("doc should be present");
+        let file_value = rows.get(0).and_then(|row| row.get("doc")).expect("doc should be present");
         let file_ref = parse_file_ref(file_value)?;
         let stored_name = file_ref.stored_name();
 
@@ -170,18 +172,10 @@ async fn test_file_download_permissions_user_table() -> anyhow::Result<()> {
         );
         let client = reqwest::Client::new();
 
-        let bob_resp = client
-            .get(&download_url)
-            .header("Authorization", bob_auth)
-            .send()
-            .await?;
+        let bob_resp = client.get(&download_url).header("Authorization", bob_auth).send().await?;
         assert_eq!(bob_resp.status(), reqwest::StatusCode::FORBIDDEN);
 
-        let root_resp = client
-            .get(&download_url)
-            .header("Authorization", root_auth)
-            .send()
-            .await?;
+        let root_resp = client.get(&download_url).header("Authorization", root_auth).send().await?;
         assert_eq!(root_resp.status(), reqwest::StatusCode::OK);
 
         let _ = server
@@ -219,10 +213,8 @@ async fn test_insert_with_files_permission_denied() -> anyhow::Result<()> {
         let (bob_auth, _bob_id) =
             create_user_auth_header_with_id(&server, "bob", "test123", &Role::User).await?;
 
-        let insert_sql = format!(
-            "INSERT INTO {}.{} (id, doc) VALUES (1, FILE(\"doc\"))",
-            namespace, table_name
-        );
+        let insert_sql =
+            format!("INSERT INTO {}.{} (id, doc) VALUES (1, FILE(\"doc\"))", namespace, table_name);
 
         let upload = execute_sql_multipart(
             &server,
@@ -233,11 +225,8 @@ async fn test_insert_with_files_permission_denied() -> anyhow::Result<()> {
         .await?;
 
         assert_eq!(upload.status, ResponseStatus::Error);
-        let error_message = upload
-            .error
-            .as_ref()
-            .map(|err| err.message.to_lowercase())
-            .unwrap_or_default();
+        let error_message =
+            upload.error.as_ref().map(|err| err.message.to_lowercase()).unwrap_or_default();
         assert!(
             error_message.contains("access") || error_message.contains("permission"),
             "Expected permission denial, got: {}",
@@ -436,9 +425,11 @@ async fn test_user_file_access_matrix() -> anyhow::Result<()> {
         assert_eq!(userb_on_a.status(), reqwest::StatusCode::FORBIDDEN);
 
         for auth in [&service_auth, &dba_auth, &root_auth] {
-            let resp_a = client.get(&download_a).header("Authorization", auth.clone()).send().await?;
+            let resp_a =
+                client.get(&download_a).header("Authorization", auth.clone()).send().await?;
             assert_eq!(resp_a.status(), reqwest::StatusCode::OK);
-            let resp_b = client.get(&download_b).header("Authorization", auth.clone()).send().await?;
+            let resp_b =
+                client.get(&download_b).header("Authorization", auth.clone()).send().await?;
             assert_eq!(resp_b.status(), reqwest::StatusCode::OK);
         }
 

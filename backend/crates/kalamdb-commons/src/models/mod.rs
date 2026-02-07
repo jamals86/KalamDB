@@ -61,7 +61,6 @@ pub use rows::{KTableRow, StreamTableRow, UserTableRow};
 
 pub use connection::ConnectionInfo;
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

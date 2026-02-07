@@ -80,8 +80,7 @@ fn test_storage_drop_requires_detached_tables() {
         } else {
             std::time::Duration::from_secs(10)
         };
-        verify_job_completed(&job_id, timeout)
-            .expect("user table flush job should complete");
+        verify_job_completed(&job_id, timeout).expect("user table flush job should complete");
     } else {
     }
 
@@ -117,8 +116,7 @@ fn test_storage_drop_requires_detached_tables() {
         } else {
             std::time::Duration::from_secs(10)
         };
-        verify_job_completed(&job_id, timeout)
-            .expect("shared table flush job should complete");
+        verify_job_completed(&job_id, timeout).expect("shared table flush job should complete");
     } else {
     }
 

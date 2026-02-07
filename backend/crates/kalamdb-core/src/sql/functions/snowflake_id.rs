@@ -121,8 +121,11 @@ impl ScalarUDFImpl for SnowflakeIdFunction {
         if !args.args.is_empty() {
             return Err(DataFusionError::Plan("SNOWFLAKE_ID() takes no arguments".to_string()));
         }
-        let id = self.generate_id();
-        let array = Int64Array::from(vec![id]);
+        let mut ids = Vec::with_capacity(args.number_rows);
+        for _ in 0..args.number_rows {
+            ids.push(self.generate_id());
+        }
+        let array = Int64Array::from(ids);
         Ok(ColumnarValue::Array(Arc::new(array) as ArrayRef))
     }
 }

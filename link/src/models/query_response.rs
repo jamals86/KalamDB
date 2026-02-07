@@ -36,11 +36,7 @@ impl QueryResponse {
 
     /// Returns the first result's rows, if any (as arrays)
     pub fn rows(&self) -> Vec<Vec<JsonValue>> {
-        self.results
-            .first()
-            .and_then(|r| r.rows.as_ref())
-            .cloned()
-            .unwrap_or_default()
+        self.results.first().and_then(|r| r.rows.as_ref()).cloned().unwrap_or_default()
     }
 
     /// Returns the first result's rows as HashMaps (column name -> value)
@@ -71,8 +67,7 @@ impl QueryResponse {
 
     /// Get a value from the first row by column name
     pub fn get_value(&self, column_name: &str) -> Option<JsonValue> {
-        self.first_row_as_map()
-            .and_then(|row| row.get(column_name).cloned())
+        self.first_row_as_map().and_then(|row| row.get(column_name).cloned())
     }
 
     /// Get an i64 value from the first row by column name
@@ -89,7 +84,6 @@ impl QueryResponse {
 
     /// Get a string value from the first row by column name
     pub fn get_string(&self, column_name: &str) -> Option<String> {
-        self.get_value(column_name)
-            .and_then(|v| v.as_str().map(|s| s.to_string()))
+        self.get_value(column_name).and_then(|v| v.as_str().map(|s| s.to_string()))
     }
 }

@@ -40,22 +40,14 @@ impl TypedStatementHandler<AckStatement> for AckHandler {
 
         // Verify topic exists
         let topics_provider = self.app_context.system_tables().topics();
-        let _topic = topics_provider
-            .get_topic_by_id_async(&topic_id)
-            .await?
-            .ok_or_else(|| {
-                KalamDbError::NotFound(format!("Topic '{}' does not exist", statement.topic_name))
-            })?;
+        let _topic = topics_provider.get_topic_by_id_async(&topic_id).await?.ok_or_else(|| {
+            KalamDbError::NotFound(format!("Topic '{}' does not exist", statement.topic_name))
+        })?;
 
         // Commit the offset
         let topic_publisher = self.app_context.topic_publisher();
         topic_publisher
-            .ack_offset(
-                &topic_id,
-                &group_id,
-                statement.partition_id,
-                statement.upto_offset,
-            )
+            .ack_offset(&topic_id, &group_id, statement.partition_id, statement.upto_offset)
             .map_err(|e| {
                 KalamDbError::InvalidOperation(format!("Failed to commit offset: {}", e))
             })?;

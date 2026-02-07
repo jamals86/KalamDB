@@ -93,11 +93,7 @@ impl RateLimiter {
         let max_queries = self.max_queries_per_sec;
 
         let bucket = self.user_query_buckets.get_with(user_key, || {
-            Arc::new(Mutex::new(TokenBucket::new(
-                max_queries,
-                max_queries,
-                Duration::from_secs(1),
-            )))
+            Arc::new(Mutex::new(TokenBucket::new(max_queries, max_queries, Duration::from_secs(1))))
         });
 
         let mut guard = bucket.lock();
@@ -122,9 +118,8 @@ impl RateLimiter {
     pub fn increment_subscription(&self, user_id: &UserId) {
         let user_key: Arc<str> = Arc::from(user_id.as_str());
 
-        let count = self
-            .user_subscription_counts
-            .get_with(user_key, || Arc::new(AtomicU32::new(0)));
+        let count =
+            self.user_subscription_counts.get_with(user_key, || Arc::new(AtomicU32::new(0)));
 
         count.fetch_add(1, Ordering::Relaxed);
     }
@@ -136,9 +131,7 @@ impl RateLimiter {
 
         if let Some(count) = self.user_subscription_counts.get(&user_key) {
             count
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
-                    Some(v.saturating_sub(1))
-                })
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| Some(v.saturating_sub(1)))
                 .ok();
         }
     }
@@ -150,15 +143,13 @@ impl RateLimiter {
     pub fn check_message_rate(&self, connection_id: &ConnectionId) -> bool {
         let max_messages = self.max_messages_per_sec;
 
-        let bucket = self
-            .connection_message_buckets
-            .get_with(connection_id.clone(), || {
-                Arc::new(Mutex::new(TokenBucket::new(
-                    max_messages,
-                    max_messages,
-                    Duration::from_secs(1),
-                )))
-            });
+        let bucket = self.connection_message_buckets.get_with(connection_id.clone(), || {
+            Arc::new(Mutex::new(TokenBucket::new(
+                max_messages,
+                max_messages,
+                Duration::from_secs(1),
+            )))
+        });
 
         let mut guard = bucket.lock();
         guard.try_consume(1)
@@ -170,10 +161,7 @@ impl RateLimiter {
     #[inline]
     pub fn check_auth_rate(&self, connection_info: &ConnectionInfo) -> bool {
         let max_auth_requests = self.max_auth_requests_per_ip_per_sec;
-        let ip_key = connection_info
-            .remote_addr
-            .as_deref()
-            .unwrap_or("unknown");
+        let ip_key = connection_info.remote_addr.as_deref().unwrap_or("unknown");
         let key: Arc<str> = Arc::from(ip_key);
 
         let bucket = self.auth_ip_buckets.get_with(key, || {

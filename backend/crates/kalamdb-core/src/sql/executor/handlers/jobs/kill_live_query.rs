@@ -2,8 +2,8 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
-use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
+use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use kalamdb_sql::ddl::KillLiveQueryStatement;
 use std::sync::Arc;
 

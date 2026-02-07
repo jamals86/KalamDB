@@ -25,15 +25,13 @@ impl SqlImpersonationService {
         target_username: &str,
     ) -> Result<UserId, KalamDbError> {
         let users_provider = self.app_context.system_tables().users();
-        let target_user = if let Some(user) = users_provider
-            .get_user_by_username(target_username)
-            .map_err(|e| {
+        let target_user = if let Some(user) =
+            users_provider.get_user_by_username(target_username).map_err(|e| {
                 KalamDbError::InvalidOperation(format!(
                     "Failed to resolve EXECUTE AS USER target '{}' by username: {}",
                     target_username, e
                 ))
-            })?
-        {
+            })? {
             user
         } else {
             users_provider

@@ -2,9 +2,12 @@ use datafusion::logical_expr::LogicalPlan;
 use kalamdb_commons::{NamespaceId, Role};
 use moka::sync::Cache;
 use std::sync::Arc;
+use std::time::Duration;
 
 /// Default maximum cache entries (prevents unbounded memory growth)
 const DEFAULT_MAX_ENTRIES: u64 = 1000;
+/// Default cache idle TTL in seconds (evict unused plans)
+const DEFAULT_IDLE_TTL_SECS: u64 = 900;
 
 /// Cache key for plan lookup.
 ///
@@ -45,12 +48,12 @@ pub struct PlanCache {
 impl PlanCache {
     /// Create a new PlanCache with default max entries (1000)
     pub fn new() -> Self {
-        Self::with_max_entries(DEFAULT_MAX_ENTRIES)
+        Self::with_config(DEFAULT_MAX_ENTRIES, Duration::from_secs(DEFAULT_IDLE_TTL_SECS))
     }
 
-    /// Create a new PlanCache with specified max entries
-    pub fn with_max_entries(max_entries: u64) -> Self {
-        let cache = Cache::builder().max_capacity(max_entries).build();
+    /// Create a new PlanCache with specified max entries and idle TTL
+    pub fn with_config(max_entries: u64, idle_ttl: Duration) -> Self {
+        let cache = Cache::builder().max_capacity(max_entries).time_to_idle(idle_ttl).build();
 
         Self { cache }
     }

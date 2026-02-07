@@ -11,12 +11,12 @@ use web_sys::{
     WebSocket,
 };
 
-use base64::Engine;
 use crate::compression;
 use crate::models::{
     ClientMessage, ConnectionOptions, QueryRequest, ServerMessage, SubscriptionOptions,
     SubscriptionRequest,
 };
+use base64::Engine;
 
 use super::auth::WasmAuthProvider;
 use super::console_log;
@@ -132,10 +132,7 @@ impl KalamClient {
             ));
         }
 
-        Ok(KalamClient::new_with_auth(
-            url,
-            WasmAuthProvider::Basic { username, password },
-        ))
+        Ok(KalamClient::new_with_auth(url, WasmAuthProvider::Basic { username, password }))
     }
 
     /// Create a new KalamDB client with JWT Token Authentication
@@ -461,68 +458,69 @@ impl KalamClient {
                 }
 
                 // Look for subscription_id in the event and update last_seq_id
-                let subscription_id = match &event {
-                    ServerMessage::SubscriptionAck {
-                        subscription_id,
-                        total_rows,
-                        ..
-                    } => {
-                        console_log(&format!(
-                            "KalamClient: Parsed SubscriptionAck - id: {}, total_rows: {}",
-                            subscription_id, total_rows
-                        ));
-                        Some(subscription_id.clone())
-                    },
-                    ServerMessage::InitialDataBatch {
-                        subscription_id,
-                        batch_control,
-                        rows,
-                    } => {
-                        console_log(&format!(
+                let subscription_id =
+                    match &event {
+                        ServerMessage::SubscriptionAck {
+                            subscription_id,
+                            total_rows,
+                            ..
+                        } => {
+                            console_log(&format!(
+                                "KalamClient: Parsed SubscriptionAck - id: {}, total_rows: {}",
+                                subscription_id, total_rows
+                            ));
+                            Some(subscription_id.clone())
+                        },
+                        ServerMessage::InitialDataBatch {
+                            subscription_id,
+                            batch_control,
+                            rows,
+                        } => {
+                            console_log(&format!(
                             "KalamClient: Parsed InitialDataBatch - id: {}, rows: {}, status: {:?}",
                             subscription_id, rows.len(), batch_control.status
                         ));
-                        // Update last_seq_id from batch_control
-                        if let Some(seq_id) = &batch_control.last_seq_id {
-                            let mut subs = subscriptions.borrow_mut();
-                            if let Some(state) = subs.get_mut(subscription_id) {
-                                state.last_seq_id = Some(*seq_id);
-                                console_log(&format!(
-                                    "KalamClient: Updated last_seq_id for {} to {}",
-                                    subscription_id, seq_id
-                                ));
+                            // Update last_seq_id from batch_control
+                            if let Some(seq_id) = &batch_control.last_seq_id {
+                                let mut subs = subscriptions.borrow_mut();
+                                if let Some(state) = subs.get_mut(subscription_id) {
+                                    state.last_seq_id = Some(*seq_id);
+                                    console_log(&format!(
+                                        "KalamClient: Updated last_seq_id for {} to {}",
+                                        subscription_id, seq_id
+                                    ));
+                                }
                             }
-                        }
-                        Some(subscription_id.clone())
-                    },
-                    ServerMessage::Change {
-                        subscription_id,
-                        change_type,
-                        rows,
-                        ..
-                    } => {
-                        console_log(&format!(
-                            "KalamClient: Parsed Change - id: {}, type: {:?}, rows: {:?}",
+                            Some(subscription_id.clone())
+                        },
+                        ServerMessage::Change {
                             subscription_id,
                             change_type,
-                            rows.as_ref().map(|r| r.len())
-                        ));
-                        Some(subscription_id.clone())
-                    },
-                    ServerMessage::Error {
-                        subscription_id,
-                        code,
-                        message,
-                        ..
-                    } => {
-                        console_log(&format!(
-                            "KalamClient: Parsed Error - id: {}, code: {}, msg: {}",
-                            subscription_id, code, message
-                        ));
-                        Some(subscription_id.clone())
-                    },
-                    _ => None, // Auth messages don't have subscription_id
-                };
+                            rows,
+                            ..
+                        } => {
+                            console_log(&format!(
+                                "KalamClient: Parsed Change - id: {}, type: {:?}, rows: {:?}",
+                                subscription_id,
+                                change_type,
+                                rows.as_ref().map(|r| r.len())
+                            ));
+                            Some(subscription_id.clone())
+                        },
+                        ServerMessage::Error {
+                            subscription_id,
+                            code,
+                            message,
+                            ..
+                        } => {
+                            console_log(&format!(
+                                "KalamClient: Parsed Error - id: {}, code: {}, msg: {}",
+                                subscription_id, code, message
+                            ));
+                            Some(subscription_id.clone())
+                        },
+                        _ => None, // Auth messages don't have subscription_id
+                    };
 
                 if let Some(id) = subscription_id.clone() {
                     let subs = subscriptions.borrow();
@@ -610,10 +608,7 @@ impl KalamClient {
     /// true if WebSocket connection is active, false otherwise
     #[wasm_bindgen(js_name = isConnected)]
     pub fn is_connected(&self) -> bool {
-        self.ws
-            .borrow()
-            .as_ref()
-            .is_some_and(|ws| ws.ready_state() == WebSocket::OPEN)
+        self.ws.borrow().as_ref().is_some_and(|ws| ws.ready_state() == WebSocket::OPEN)
     }
 
     /// Insert data into a table (T048, T063G)
@@ -1069,9 +1064,8 @@ impl KalamClient {
         if !resp.ok() {
             let status = resp.status();
             let text = JsFuture::from(resp.text()?).await?;
-            let error_msg = text
-                .as_string()
-                .unwrap_or_else(|| format!("Consume failed: HTTP {}", status));
+            let error_msg =
+                text.as_string().unwrap_or_else(|| format!("Consume failed: HTTP {}", status));
             return Err(JsValue::from_str(&error_msg));
         }
 
@@ -1091,9 +1085,7 @@ impl KalamClient {
                 .map(|msg| {
                     // Decode base64 payload if present
                     let value = if let Some(payload_str) = msg["payload"].as_str() {
-                        match base64::engine::general_purpose::STANDARD.decode(
-                            payload_str,
-                        ) {
+                        match base64::engine::general_purpose::STANDARD.decode(payload_str) {
                             Ok(bytes) => {
                                 serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null)
                             },
@@ -1106,7 +1098,9 @@ impl KalamClient {
                     };
 
                     crate::models::ConsumeMessage {
-                        message_id: msg["message_id"].as_str().map(|s| s.to_string())
+                        message_id: msg["message_id"]
+                            .as_str()
+                            .map(|s| s.to_string())
                             .or_else(|| msg["key"].as_str().map(|s| s.to_string())),
                         source_table: msg["source_table"].as_str().map(|s| s.to_string()),
                         op: msg["op"].as_str().map(|s| s.to_string()),
@@ -1115,7 +1109,9 @@ impl KalamClient {
                         partition_id: msg["partition_id"].as_u64().unwrap_or(0) as u32,
                         topic: req.topic.clone(),
                         group_id: req.group_id.clone(),
-                        username: msg["username"].as_str().map(|s| crate::models::Username::from(s)),
+                        username: msg["username"]
+                            .as_str()
+                            .map(|s| crate::models::Username::from(s)),
                         value,
                     }
                 })
@@ -1132,7 +1128,8 @@ impl KalamClient {
 
         // Use json_compatible() to produce plain JS objects instead of Maps
         // for nested serde_json::Value fields (ConsumeMessage.value).
-        response.serialize(&serde_wasm_bindgen::Serializer::json_compatible())
+        response
+            .serialize(&serde_wasm_bindgen::Serializer::json_compatible())
             .map_err(|e| JsValue::from_str(&format!("Failed to serialize consume response: {}", e)))
     }
 
@@ -1187,9 +1184,8 @@ impl KalamClient {
         if !resp.ok() {
             let status = resp.status();
             let text = JsFuture::from(resp.text()?).await?;
-            let error_msg = text
-                .as_string()
-                .unwrap_or_else(|| format!("Ack failed: HTTP {}", status));
+            let error_msg =
+                text.as_string().unwrap_or_else(|| format!("Ack failed: HTTP {}", status));
             return Err(JsValue::from_str(&error_msg));
         }
 
@@ -1332,10 +1328,7 @@ impl KalamClient {
                 });
             }) as Box<dyn FnMut()>);
 
-            super::helpers::global_set_timeout(
-                reconnect_fn.as_ref().unchecked_ref(),
-                delay as i32,
-            );
+            super::helpers::global_set_timeout(reconnect_fn.as_ref().unchecked_ref(), delay as i32);
             reconnect_fn.forget();
         }) as Box<dyn FnMut(CloseEvent)>);
 

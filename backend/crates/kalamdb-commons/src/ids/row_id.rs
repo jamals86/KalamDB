@@ -181,10 +181,7 @@ mod tests {
         let bob = UserTableRowId::new(UserId::new("bob"), SeqId::new(50));
 
         // "alice" < "bob" lexicographically, so alice's key should sort first
-        assert!(
-            alice.storage_key() < bob.storage_key(),
-            "alice should sort before bob"
-        );
+        assert!(alice.storage_key() < bob.storage_key(), "alice should sort before bob");
 
         // Same user, different seq: should sort by seq
         let alice_100 = UserTableRowId::new(UserId::new("alice"), SeqId::new(100));
@@ -236,9 +233,6 @@ mod tests {
         let alice = StreamTableRowId::new(UserId::new("alice"), SeqId::new(100));
         let bob = StreamTableRowId::new(UserId::new("bob"), SeqId::new(50));
 
-        assert!(
-            alice.storage_key() < bob.storage_key(),
-            "alice should sort before bob"
-        );
+        assert!(alice.storage_key() < bob.storage_key(), "alice should sort before bob");
     }
 }

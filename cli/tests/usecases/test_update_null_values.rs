@@ -58,18 +58,20 @@ fn test_update_row_with_null_columns_hot() {
     let select_sql = format!("SELECT * FROM {} WHERE id = 12345", full_table_name);
     let output = execute_sql_as_root_via_cli(&select_sql).unwrap();
     assert!(output.contains("12345"), "Row not found after insert: {}", output);
-    assert!(output.contains("(1 row)") || output.contains("1 row"), "Expected 1 row, got: {}", output);
+    assert!(
+        output.contains("(1 row)") || output.contains("1 row"),
+        "Expected 1 row, got: {}",
+        output
+    );
     println!("[DEBUG] Row before update: {}", output);
 
     // === KEY TEST: UPDATE row that has NULL in non-PK column ===
-    let update_sql = format!(
-        "UPDATE {} SET sender = 'Updated Assistant' WHERE id = 12345",
-        full_table_name
-    );
+    let update_sql =
+        format!("UPDATE {} SET sender = 'Updated Assistant' WHERE id = 12345", full_table_name);
 
     let output = execute_sql_as_root_via_cli(&update_sql).unwrap();
     println!("[DEBUG] Update output: {}", output);
-    
+
     // This should succeed and affect 1 row
     assert!(
         output.contains("1 row") || output.contains("Updated 1"),
@@ -80,11 +82,7 @@ fn test_update_row_with_null_columns_hot() {
     // Verify update took effect by checking the updated column value
     let verify_sql = format!("SELECT id, sender FROM {} WHERE id = 12345", full_table_name);
     let output = execute_sql_as_root_via_cli(&verify_sql).unwrap();
-    assert!(
-        output.contains("12345"),
-        "Row disappeared after UPDATE: {}",
-        output
-    );
+    assert!(output.contains("12345"), "Row disappeared after UPDATE: {}", output);
     // Verify we still get 1 row (row exists)
     assert!(
         output.contains("(1 row)") || output.contains("1 row"),
@@ -112,7 +110,7 @@ fn test_update_row_with_null_columns_cold() {
     // Setup namespace
     let _ = execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
 
-    // Create table 
+    // Create table
     let create_sql = format!(
         r#"CREATE USER TABLE {} (
             id BIGINT NOT NULL PRIMARY KEY,
@@ -162,18 +160,20 @@ fn test_update_row_with_null_columns_cold() {
     let select_sql = format!("SELECT * FROM {} WHERE id = 98765", full_table_name);
     let output = execute_sql_as_root_via_cli(&select_sql).unwrap();
     assert!(output.contains("98765"), "Row not found in cold storage: {}", output);
-    assert!(output.contains("(1 row)") || output.contains("1 row"), "Expected 1 row, got: {}", output);
+    assert!(
+        output.contains("(1 row)") || output.contains("1 row"),
+        "Expected 1 row, got: {}",
+        output
+    );
     println!("[DEBUG] Row in cold storage before update: {}", output);
 
     // === KEY TEST: UPDATE row with NULL column from cold storage ===
-    let update_sql = format!(
-        "UPDATE {} SET sender = 'Updated Cold' WHERE id = 98765",
-        full_table_name
-    );
+    let update_sql =
+        format!("UPDATE {} SET sender = 'Updated Cold' WHERE id = 98765", full_table_name);
 
     let output = execute_sql_as_root_via_cli(&update_sql).unwrap();
     println!("[DEBUG] Update output (cold): {}", output);
-    
+
     // This should succeed and affect 1 row
     assert!(
         output.contains("1 row") || output.contains("Updated 1"),
@@ -184,11 +184,7 @@ fn test_update_row_with_null_columns_cold() {
     // Verify update took effect by checking the row still exists
     let verify_sql = format!("SELECT id, sender FROM {} WHERE id = 98765", full_table_name);
     let output = execute_sql_as_root_via_cli(&verify_sql).unwrap();
-    assert!(
-        output.contains("98765"),
-        "Row disappeared after UPDATE: {}",
-        output
-    );
+    assert!(output.contains("98765"), "Row disappeared after UPDATE: {}", output);
     // Verify we still get 1 row (row exists)
     assert!(
         output.contains("(1 row)") || output.contains("1 row"),
@@ -216,7 +212,7 @@ fn test_update_no_changes() {
     // Setup namespace
     let _ = execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
 
-    // Create table 
+    // Create table
     let create_sql = format!(
         "CREATE USER TABLE {} (id BIGINT NOT NULL PRIMARY KEY, value TEXT NOT NULL)",
         full_table_name
@@ -230,23 +226,18 @@ fn test_update_no_changes() {
     );
 
     // Insert row
-    let insert_sql = format!(
-        "INSERT INTO {} (id, value) VALUES (555, 'unchanged')",
-        full_table_name
-    );
+    let insert_sql =
+        format!("INSERT INTO {} (id, value) VALUES (555, 'unchanged')", full_table_name);
 
     let output = execute_sql_as_root_via_cli(&insert_sql).unwrap();
     assert!(output.contains("1 row"), "Insert failed: {}", output);
 
     // === KEY TEST: UPDATE with same value (no actual change) ===
-    let update_sql = format!(
-        "UPDATE {} SET value = 'unchanged' WHERE id = 555",
-        full_table_name
-    );
+    let update_sql = format!("UPDATE {} SET value = 'unchanged' WHERE id = 555", full_table_name);
 
     let output = execute_sql_as_root_via_cli(&update_sql).unwrap();
     println!("[DEBUG] Update (no change) output: {}", output);
-    
+
     // Currently this reports 1 row affected even when no change occurred
     // This is EXPECTED BEHAVIOR in MVCC systems (new version is always created)
     // But we should document this behavior
@@ -287,7 +278,11 @@ fn test_update_multiple_rows_with_nulls() {
 
     // Insert multiple rows: some with NULL, some without
     for i in 1..=5 {
-        let optional_val = if i % 2 == 0 { "NULL" } else { &format!("'value_{}'", i) };
+        let optional_val = if i % 2 == 0 {
+            "NULL"
+        } else {
+            &format!("'value_{}'", i)
+        };
         let insert_sql = format!(
             "INSERT INTO {} (id, optional_field, required_field) VALUES ({}, {}, 'field_{}')",
             full_table_name, i, optional_val, i
@@ -323,12 +318,7 @@ fn test_update_multiple_rows_with_nulls() {
     );
     // Check that all IDs are present (more reliable than checking truncated text)
     for i in 1..=5 {
-        assert!(
-            output.contains(&i.to_string()),
-            "Row ID {} not found: {}",
-            i,
-            output
-        );
+        assert!(output.contains(&i.to_string()), "Row ID {} not found: {}", i, output);
     }
 
     println!("✅ Test passed: Multiple rows with NULL values can be updated");

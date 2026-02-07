@@ -664,7 +664,7 @@ where
                     Ok(Some(entity)) => {
                         remaining -= 1;
                         return Some(Ok((primary_key, entity)));
-                    }
+                    },
                     Ok(None) => continue,
                     Err(e) => return Some(Err(e)),
                 }
@@ -762,10 +762,7 @@ where
 
         let mut prefixes_by_len: HashMap<usize, HashSet<&[u8]>> = HashMap::new();
         for prefix in prefixes {
-            prefixes_by_len
-                .entry(prefix.len())
-                .or_default()
-                .insert(prefix.as_slice());
+            prefixes_by_len.entry(prefix.len()).or_default().insert(prefix.as_slice());
         }
         let mut lengths: Vec<usize> = prefixes_by_len.keys().copied().collect();
         lengths.sort_unstable();
@@ -1073,8 +1070,8 @@ pub fn extract_i64_equality(filter: &Expr) -> Option<(&str, i64)> {
 mod tests {
     use super::*;
     use crate::test_utils::InMemoryBackend;
-    use kalamdb_system::providers::jobs::models::Job;
     use kalamdb_commons::{JobId, NodeId};
+    use kalamdb_system::providers::jobs::models::Job;
     use kalamdb_system::{JobStatus, JobType};
 
     // Test index: Jobs by status

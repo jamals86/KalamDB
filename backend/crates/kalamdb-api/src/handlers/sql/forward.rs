@@ -31,16 +31,13 @@ pub async fn forward_sql_if_follower(
         Ok(stmts) => stmts,
         Err(_) => {
             let cluster_info = executor.get_cluster_info();
-            let leader_api_addr = executor
-                .get_leader(GroupId::Meta)
-                .await
-                .and_then(|leader_id| {
-                    cluster_info
-                        .nodes
-                        .iter()
-                        .find(|node| node.node_id == leader_id)
-                        .map(|node| node.api_addr.clone())
-                });
+            let leader_api_addr = executor.get_leader(GroupId::Meta).await.and_then(|leader_id| {
+                cluster_info
+                    .nodes
+                    .iter()
+                    .find(|node| node.node_id == leader_id)
+                    .map(|node| node.api_addr.clone())
+            });
 
             return match leader_api_addr {
                 Some(api_addr) => forward_to_leader(http_req, req, &api_addr).await,
@@ -50,7 +47,7 @@ pub async fn forward_sql_if_follower(
                     0.0,
                 ))),
             };
-        }
+        },
     };
 
     // Classify each statement to check if any are writes
@@ -71,16 +68,13 @@ pub async fn forward_sql_if_follower(
 
     if has_write {
         let cluster_info = executor.get_cluster_info();
-        let leader_api_addr = executor
-            .get_leader(GroupId::Meta)
-            .await
-            .and_then(|leader_id| {
-                cluster_info
-                    .nodes
-                    .iter()
-                    .find(|node| node.node_id == leader_id)
-                    .map(|node| node.api_addr.clone())
-            });
+        let leader_api_addr = executor.get_leader(GroupId::Meta).await.and_then(|leader_id| {
+            cluster_info
+                .nodes
+                .iter()
+                .find(|node| node.node_id == leader_id)
+                .map(|node| node.api_addr.clone())
+        });
 
         if let Some(api_addr) = leader_api_addr {
             log::debug!(
@@ -136,7 +130,7 @@ pub async fn forward_to_leader(
                 "Failed to forward request to cluster leader",
                 0.0,
             )));
-        }
+        },
     };
 
     let status = actix_web::http::StatusCode::from_u16(response.status().as_u16())
@@ -191,10 +185,7 @@ pub async fn handle_not_leader_error(
     // Extract leader address from error message
     let leader_addr = extract_leader_addr_from_error(&err_msg)?;
 
-    log::info!(
-        "Auto-forwarding to shard leader {} due to NOT_LEADER error",
-        leader_addr
-    );
+    log::info!("Auto-forwarding to shard leader {} due to NOT_LEADER error", leader_addr);
 
     // Forward entire request to the shard leader
     match forward_to_leader(http_req, req, &leader_addr).await {
@@ -207,6 +198,6 @@ pub async fn handle_not_leader_error(
                 &format!("Failed to forward request to leader: {}", err),
                 took,
             )))
-        }
+        },
     }
 }

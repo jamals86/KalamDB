@@ -2,9 +2,9 @@
 //!
 //! This module defines secondary indexes for the system.manifest table.
 
+use crate::providers::manifest::{ManifestCacheEntry, SyncState};
 use crate::StoragePartition;
 use kalamdb_commons::storage::Partition;
-use crate::providers::manifest::{ManifestCacheEntry, SyncState};
 use kalamdb_commons::{ManifestId, StorageKey};
 use kalamdb_store::IndexDefinition;
 use std::sync::Arc;
@@ -57,7 +57,11 @@ mod tests {
     use crate::providers::manifest::{Manifest, SyncState};
     use kalamdb_commons::{NamespaceId, TableId, TableName, UserId};
 
-    fn create_test_entry(table_id: TableId, user_id: Option<UserId>, sync_state: SyncState) -> ManifestCacheEntry {
+    fn create_test_entry(
+        table_id: TableId,
+        user_id: Option<UserId>,
+        sync_state: SyncState,
+    ) -> ManifestCacheEntry {
         let manifest = Manifest::new(table_id, user_id);
         ManifestCacheEntry::new(manifest, None, chrono::Utc::now().timestamp_millis(), sync_state)
     }
@@ -66,7 +70,7 @@ mod tests {
     fn test_pending_write_index_only_indexes_pending() {
         let table_id = TableId::new(NamespaceId::new("ns1"), TableName::new("tbl1"));
         let manifest_id = ManifestId::new(table_id.clone(), None);
-        
+
         let index = ManifestPendingWriteIndex;
 
         // PendingWrite entry should be indexed
@@ -101,10 +105,10 @@ mod tests {
         let table_id = TableId::new(NamespaceId::new("ns1"), TableName::new("user_tbl"));
         let user_id = UserId::new("user1");
         let manifest_id = ManifestId::new(table_id.clone(), Some(user_id.clone()));
-        
+
         let index = ManifestPendingWriteIndex;
         let entry = create_test_entry(table_id, Some(user_id), SyncState::PendingWrite);
-        
+
         let key = index.extract_key(&manifest_id, &entry);
         assert!(key.is_some());
         assert_eq!(key.unwrap(), manifest_id.storage_key());

@@ -262,7 +262,8 @@ impl SystemTable {
         static AUDIT_LOG: Lazy<Partition> = Lazy::new(|| Partition::new("system_audit_log"));
         static MANIFEST: Lazy<Partition> = Lazy::new(|| Partition::new("manifest_cache"));
         static TOPICS: Lazy<Partition> = Lazy::new(|| Partition::new("system_topics"));
-        static TOPIC_OFFSETS: Lazy<Partition> = Lazy::new(|| Partition::new("system_topic_offsets"));
+        static TOPIC_OFFSETS: Lazy<Partition> =
+            Lazy::new(|| Partition::new("system_topic_offsets"));
 
         match self {
             SystemTable::Users => Some(&USERS),

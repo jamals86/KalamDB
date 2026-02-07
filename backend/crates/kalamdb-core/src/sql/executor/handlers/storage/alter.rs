@@ -3,9 +3,9 @@
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
+use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::helpers::guards::require_admin;
-use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
 use kalamdb_filestore::StorageHealthService;
 use kalamdb_sql::ddl::AlterStorageStatement;
 use std::sync::Arc;
@@ -90,9 +90,8 @@ impl TypedStatementHandler<AlterStorageStatement> for AlterStorageHandler {
             .into_kalamdb_error("Storage connectivity check failed")?;
 
         if !connectivity.connected {
-            let error = connectivity
-                .error
-                .unwrap_or_else(|| "Unknown connectivity error".to_string());
+            let error =
+                connectivity.error.unwrap_or_else(|| "Unknown connectivity error".to_string());
             return Err(KalamDbError::InvalidOperation(format!(
                 "Storage connectivity check failed (latency {} ms): {}",
                 connectivity.latency_ms, error
@@ -149,8 +148,8 @@ mod tests {
     use super::*;
     use crate::test_helpers::{create_test_session_simple, test_app_context_simple};
     use kalamdb_commons::models::UserId;
-    use kalamdb_system::Storage;
     use kalamdb_commons::{Role, StorageId};
+    use kalamdb_system::Storage;
     use std::sync::Arc;
 
     fn init_app_context() -> Arc<AppContext> {

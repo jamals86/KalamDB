@@ -121,7 +121,7 @@ impl AuthSubscriptionListener {
                     if seen_events.len() < 8 {
                         seen_events.push(line);
                     }
-                }
+                },
                 Err(std_mpsc::RecvTimeoutError::Timeout) => continue,
                 Err(std_mpsc::RecvTimeoutError::Disconnected) => break,
             }
@@ -158,16 +158,23 @@ struct ChatFixture {
 
 impl ChatFixture {
     fn cleanup(&self) {
-        let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", self.regular_user));
-        let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", self.service_user));
+        let _ =
+            execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", self.regular_user));
+        let _ =
+            execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", self.service_user));
         let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", self.other_user));
-        let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", self.typing_table));
-        let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", self.messages_table));
+        let _ =
+            execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", self.typing_table));
+        let _ = execute_sql_as_root_via_client(&format!(
+            "DROP TABLE IF EXISTS {}",
+            self.messages_table
+        ));
         let _ = execute_sql_as_root_via_client(&format!(
             "DROP TABLE IF EXISTS {}",
             self.conversations_table
         ));
-        let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", self.namespace));
+        let _ =
+            execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", self.namespace));
     }
 }
 
@@ -190,7 +197,7 @@ fn create_user_with_retry(username: &str, password: &str, role: &str) {
                     continue;
                 }
                 panic!("Failed to create user {}: {}", username, msg);
-            }
+            },
         }
     }
     panic!(
@@ -283,12 +290,9 @@ fn run_base_chat_flow_with_impersonation(fixture: &ChatFixture) -> BaseFlow {
         "SELECT * FROM {} WHERE conversation_id = {}",
         fixture.typing_table, conversation_id
     );
-    let mut typing_listener = AuthSubscriptionListener::start(
-        &fixture.regular_user,
-        &fixture.password,
-        &typing_query,
-    )
-    .expect("Failed to start typing subscription as regular user");
+    let mut typing_listener =
+        AuthSubscriptionListener::start(&fixture.regular_user, &fixture.password, &typing_query)
+            .expect("Failed to start typing subscription as regular user");
 
     thread::sleep(Duration::from_millis(350));
 
@@ -323,12 +327,9 @@ fn run_base_chat_flow_with_impersonation(fixture: &ChatFixture) -> BaseFlow {
         "SELECT * FROM {} WHERE conversation_id = {}",
         fixture.messages_table, conversation_id
     );
-    let mut messages_listener = AuthSubscriptionListener::start(
-        &fixture.regular_user,
-        &fixture.password,
-        &message_query,
-    )
-    .expect("Failed to start message subscription as regular user");
+    let mut messages_listener =
+        AuthSubscriptionListener::start(&fixture.regular_user, &fixture.password, &message_query)
+            .expect("Failed to start message subscription as regular user");
 
     thread::sleep(Duration::from_millis(350));
     messages_listener
@@ -378,9 +379,7 @@ fn run_base_chat_flow_with_impersonation(fixture: &ChatFixture) -> BaseFlow {
             Duration::from_secs(12),
         )
         .expect("Regular user should receive inserted assistant message in subscription");
-    messages_listener
-        .stop()
-        .expect("Failed to stop message listener");
+    messages_listener.stop().expect("Failed to stop message listener");
 
     BaseFlow {
         conversation_id,
@@ -463,7 +462,9 @@ fn smoke_as_user_chat_insert_and_select_flow() {
 #[test]
 fn smoke_as_user_chat_select_scope_for_different_user() {
     if !is_server_running() {
-        eprintln!("Skipping smoke_as_user_chat_select_scope_for_different_user: server not running");
+        eprintln!(
+            "Skipping smoke_as_user_chat_select_scope_for_different_user: server not running"
+        );
         return;
     }
 
@@ -505,12 +506,9 @@ fn smoke_as_user_chat_update_flow() {
         "SELECT * FROM {} WHERE conversation_id = {}",
         fixture.messages_table, flow.conversation_id
     );
-    let mut message_listener = AuthSubscriptionListener::start(
-        &fixture.regular_user,
-        &fixture.password,
-        &message_query,
-    )
-    .expect("Failed to start message subscription before update");
+    let mut message_listener =
+        AuthSubscriptionListener::start(&fixture.regular_user, &fixture.password, &message_query)
+            .expect("Failed to start message subscription before update");
 
     execute_sql_via_client_as(
         &fixture.service_user,
@@ -524,7 +522,10 @@ fn smoke_as_user_chat_update_flow() {
     .expect("Service UPDATE AS USER should succeed");
 
     message_listener
-        .wait_for_any_event(&["updated", "delivered", "service response updated"], Duration::from_secs(12))
+        .wait_for_any_event(
+            &["updated", "delivered", "service response updated"],
+            Duration::from_secs(12),
+        )
         .expect("Regular user should receive updated message in subscription");
     message_listener.stop().expect("Failed to stop update listener");
 
@@ -549,8 +550,7 @@ fn smoke_as_user_chat_update_flow() {
         &fixture.password,
         &format!(
             "EXECUTE AS USER '{}' (SELECT content, status FROM {} WHERE id = {})",
-            fixture.regular_user,
-            fixture.messages_table, flow.assistant_message_id
+            fixture.regular_user, fixture.messages_table, flow.assistant_message_id
         ),
     )
     .expect("Service SELECT AS USER should see updated message");
@@ -581,8 +581,7 @@ fn smoke_as_user_chat_delete_flow() {
         &fixture.password,
         &format!(
             "EXECUTE AS USER '{}' (DELETE FROM {} WHERE id = {})",
-            fixture.regular_user,
-            fixture.messages_table, flow.assistant_message_id
+            fixture.regular_user, fixture.messages_table, flow.assistant_message_id
         ),
     )
     .expect("Service DELETE AS USER should succeed");

@@ -5,8 +5,8 @@
 
 use kalamdb_commons::TableId;
 use sqlparser::ast::{ObjectNamePart, Statement, TableFactor, TableObject};
-use sqlparser::dialect::GenericDialect;
 use sqlparser::dialect::Dialect;
+use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::{Parser, ParserError, ParserOptions};
 use sqlparser::tokenizer::{Span, Token};
 
@@ -29,9 +29,9 @@ pub fn parse_sql_statements(
         .parse_statements()
 }
 
-/// Extract the target table for INSERT/UPDATE DML statements.
+/// Extract the target table for INSERT/UPDATE/DELETE DML statements.
 ///
-/// Returns None if parsing fails or the statement is not INSERT/UPDATE.
+/// Returns None if parsing fails or the statement is not INSERT/UPDATE/DELETE.
 pub fn extract_dml_table_id(sql: &str, default_namespace: &str) -> Option<TableId> {
     let dialect = GenericDialect {};
     let statements = parse_sql_statements(sql, &dialect).ok()?;
@@ -58,7 +58,7 @@ pub fn extract_dml_table_id(sql: &str, default_namespace: &str) -> Option<TableI
                 2 => Some(TableId::from_strings(&table_parts[0], &table_parts[1])),
                 _ => None,
             }
-        }
+        },
         Statement::Update(sqlparser::ast::Update { table, .. }) => match &table.relation {
             TableFactor::Table { name, .. } => {
                 let parts: Vec<String> = name
@@ -75,8 +75,35 @@ pub fn extract_dml_table_id(sql: &str, default_namespace: &str) -> Option<TableI
                     2 => Some(TableId::from_strings(&parts[0], &parts[1])),
                     _ => None,
                 }
-            }
+            },
             _ => None,
+        },
+        Statement::Delete(delete) => {
+            let table_name = match &delete.from {
+                sqlparser::ast::FromTable::WithFromKeyword(tables)
+                | sqlparser::ast::FromTable::WithoutKeyword(tables) => match tables.first() {
+                    Some(table_with_joins) => match &table_with_joins.relation {
+                        TableFactor::Table { name, .. } => name,
+                        _ => return None,
+                    },
+                    None => return None,
+                },
+            };
+
+            let parts: Vec<String> = table_name
+                .0
+                .iter()
+                .filter_map(|part| match part {
+                    ObjectNamePart::Identifier(ident) => Some(ident.value.clone()),
+                    _ => None,
+                })
+                .collect();
+
+            match parts.len() {
+                1 => Some(TableId::from_strings(default_namespace, &parts[0])),
+                2 => Some(TableId::from_strings(&parts[0], &parts[1])),
+                _ => None,
+            }
         },
         _ => None,
     }
@@ -276,9 +303,9 @@ pub fn extract_identifier(sql: &str, skip_tokens: usize) -> Result<String, Strin
 /// - Table reference is not qualified (missing namespace)
 /// - Invalid format
 pub fn extract_qualified_table(table_ref: &str) -> Result<(String, String), String> {
-    let (namespace, table) = table_ref
-        .split_once('.')
-        .ok_or_else(|| "Table name must be qualified as exactly namespace.table_name".to_string())?;
+    let (namespace, table) = table_ref.split_once('.').ok_or_else(|| {
+        "Table name must be qualified as exactly namespace.table_name".to_string()
+    })?;
     if table.contains('.') {
         return Err("Table name must be qualified as exactly namespace.table_name".to_string());
     }
@@ -391,5 +418,20 @@ mod tests {
 
         // Not a whole word
         assert!(find_whole_word("TABLES", "TABLE").is_none());
+    }
+
+    #[test]
+    fn test_extract_dml_table_id_insert_update_delete() {
+        let insert = extract_dml_table_id("INSERT INTO chat.messages (id) VALUES (1)", "default")
+            .expect("insert table id");
+        assert_eq!(insert.full_name(), "chat.messages");
+
+        let update = extract_dml_table_id("UPDATE messages SET id = 2 WHERE id = 1", "chat")
+            .expect("update table id");
+        assert_eq!(update.full_name(), "chat.messages");
+
+        let delete = extract_dml_table_id("DELETE FROM chat.messages WHERE id = 1", "default")
+            .expect("delete table id");
+        assert_eq!(delete.full_name(), "chat.messages");
     }
 }

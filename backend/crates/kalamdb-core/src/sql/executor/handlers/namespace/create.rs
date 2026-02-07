@@ -8,9 +8,9 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
+use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::helpers::guards::require_admin;
-use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
 use datafusion::catalog::MemorySchemaProvider;
 use kalamdb_commons::models::{NamespaceId, UserId};
 use kalamdb_sql::ddl::CreateNamespaceStatement;
@@ -193,8 +193,11 @@ mod tests {
     async fn test_typed_authorization_check() {
         let app_ctx = test_app_context_simple();
         let handler = CreateNamespaceHandler::new(app_ctx);
-        let user_ctx =
-            ExecutionContext::new(UserId::from("regular_user"), Role::User, create_test_session_simple());
+        let user_ctx = ExecutionContext::new(
+            UserId::from("regular_user"),
+            Role::User,
+            create_test_session_simple(),
+        );
 
         let stmt = CreateNamespaceStatement {
             name: NamespaceId::new("unauthorized_ns"),

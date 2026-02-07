@@ -2,8 +2,8 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
-use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
+use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use kalamdb_commons::models::TopicId;
 use kalamdb_sql::ddl::CreateTopicStatement;
 use kalamdb_system::providers::topics::models::Topic;
@@ -107,7 +107,7 @@ mod tests {
             ExecutionResult::Success { message } => {
                 assert!(message.contains("test_events"));
                 assert!(message.contains("4 partition"));
-            }
+            },
             _ => panic!("Expected Success result"),
         }
     }

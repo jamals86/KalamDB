@@ -14,31 +14,33 @@
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use crate::manifest::manifest_helpers::{ensure_manifest_ready, load_row_from_parquet_by_seq};
+use crate::shared_tables::{SharedTableIndexedStore, SharedTablePkIndex, SharedTableRow};
 use crate::utils::base::{self, BaseTableProvider, TableProviderCore};
 use crate::utils::row_utils::extract_full_user_context;
-use kalamdb_commons::constants::SystemColumnNames;
-use kalamdb_commons::conversions::arrow_json_conversion::coerce_rows;
-use kalamdb_commons::schemas::TableType;
-use kalamdb_commons::websocket::ChangeNotification;
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::catalog::Session;
 use datafusion::datasource::TableProvider;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
+use datafusion::logical_expr::dml::InsertOp;
 use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::scalar::ScalarValue;
+use kalamdb_commons::constants::SystemColumnNames;
+use kalamdb_commons::conversions::arrow_json_conversion::coerce_rows;
 use kalamdb_commons::ids::SharedTableRowId;
 use kalamdb_commons::models::rows::Row;
 use kalamdb_commons::models::UserId;
-use kalamdb_commons::TableId;
 use kalamdb_commons::schemas::TableDefinition;
-use kalamdb_system::SchemaRegistry as SchemaRegistryTrait;
-use kalamdb_session::check_shared_table_access;
+use kalamdb_commons::schemas::TableType;
+use kalamdb_commons::websocket::ChangeNotification;
+use kalamdb_commons::TableId;
+use kalamdb_session::{check_shared_table_access, check_shared_table_write_access};
 use kalamdb_store::EntityStore;
-use crate::shared_tables::{SharedTableIndexedStore, SharedTablePkIndex, SharedTableRow};
+use kalamdb_system::SchemaRegistry as SchemaRegistryTrait;
 use std::any::Any;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 // Arrow <-> JSON helpers
@@ -70,6 +72,9 @@ pub struct SharedTableProvider {
 
     /// Cached table definition for shared table access control
     table_def: Arc<TableDefinition>,
+
+    /// DataFusion column defaults used by INSERT planning.
+    column_defaults: HashMap<String, Expr>,
 }
 
 impl SharedTableProvider {
@@ -85,6 +90,15 @@ impl SharedTableProvider {
         store: Arc<SharedTableIndexedStore>,
         primary_key_field_name: String,
     ) -> Self {
+        Self::new_with_defaults(core, store, primary_key_field_name, HashMap::new())
+    }
+
+    pub fn new_with_defaults(
+        core: Arc<TableProviderCore>,
+        store: Arc<SharedTableIndexedStore>,
+        primary_key_field_name: String,
+        column_defaults: HashMap<String, Expr>,
+    ) -> Self {
         // Cache schema at creation time to avoid "Table not found" panics if table is dropped
         // while provider is still in use by a query plan
         let schema = core
@@ -96,9 +110,7 @@ impl SharedTableProvider {
             .schema_registry
             .get_table_if_exists(core.table_id())
             .expect("Failed to load table definition from registry during provider creation")
-            .unwrap_or_else(|| {
-                panic!("Table definition not found for {}", core.table_id())
-            });
+            .unwrap_or_else(|| panic!("Table definition not found for {}", core.table_id()));
 
         // Create PK index for efficient lookups
         let pk_index = SharedTablePkIndex::new(core.table_id(), &primary_key_field_name);
@@ -110,9 +122,10 @@ impl SharedTableProvider {
             primary_key_field_name,
             schema,
             table_def,
+            column_defaults,
         }
     }
-    
+
     /// Build a complete Row for live query/topic notifications including system columns (_seq, _deleted)
     ///
     /// This ensures notifications include all columns, not just user-defined fields.
@@ -128,11 +141,11 @@ impl SharedTableProvider {
         );
         Row::new(values)
     }
-    
+
     /// Access the underlying indexed store (used by flush jobs)
-        pub fn store(&self) -> Arc<SharedTableIndexedStore> {
-            Arc::clone(&self.store)
-        }
+    pub fn store(&self) -> Arc<SharedTableIndexedStore> {
+        Arc::clone(&self.store)
+    }
 
     /// Scan Parquet files from cold storage for shared table
     ///
@@ -159,7 +172,8 @@ impl SharedTableProvider {
             None,
             self.schema_ref(),
             filter,
-        ).await
+        )
+        .await
     }
 
     /// Find a row by PK value using the PK index for efficient O(1) lookup.
@@ -282,7 +296,8 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
             pk_name,
             pk_column_id,
             id_value,
-        ).await?;
+        )
+        .await?;
 
         if exists_in_cold {
             log::trace!("[SharedTableProvider] PK {} exists in cold storage", id_value);
@@ -294,7 +309,11 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         Ok(None)
     }
 
-    async fn insert(&self, _user_id: &UserId, row_data: Row) -> Result<SharedTableRowId, KalamDbError> {
+    async fn insert(
+        &self,
+        _user_id: &UserId,
+        row_data: Row,
+    ) -> Result<SharedTableRowId, KalamDbError> {
         ensure_manifest_ready(&self.core, self.core.table_type(), None, "SharedTableProvider")?;
 
         // IGNORE user_id parameter - no RLS for shared tables
@@ -302,9 +321,9 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
 
         // Generate new SeqId via SystemColumnsService
         let sys_cols = self.core.system_columns.clone();
-        let seq_id = sys_cols
-            .generate_seq_id()
-            .map_err(|e| KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e)))?;
+        let seq_id = sys_cols.generate_seq_id().map_err(|e| {
+            KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e))
+        })?;
 
         // Create SharedTableRow directly
         let entity = SharedTableRow {
@@ -442,7 +461,9 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
                 pk_name,
                 pk_column_id,
                 &pk_values_to_check,
-            ).await? {
+            )
+            .await?
+            {
                 return Err(KalamDbError::AlreadyExists(format!(
                     "Primary key violation: value '{}' already exists in column '{}'",
                     found_pk, pk_name
@@ -452,9 +473,9 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
 
         // Generate all SeqIds in single mutex acquisition
         let sys_cols = self.core.system_columns.clone();
-        let seq_ids = sys_cols
-            .generate_seq_ids(row_count)
-            .map_err(|e| KalamDbError::InvalidOperation(format!("SeqId batch generation failed: {}", e)))?;
+        let seq_ids = sys_cols.generate_seq_ids(row_count).map_err(|e| {
+            KalamDbError::InvalidOperation(format!("SeqId batch generation failed: {}", e))
+        })?;
 
         // Build all entities and keys
         let mut entries: Vec<(SharedTableRowId, SharedTableRow)> = Vec::with_capacity(row_count);
@@ -523,8 +544,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         let pk_name = self.primary_key_field_name().to_string();
         // Load referenced prior version to derive PK value if not present in updates
         // Try RocksDB first, then Parquet
-        let prior_opt = self.store.get(key)
-            .into_kalamdb_error("Failed to load prior version")?;
+        let prior_opt = self.store.get(key).into_kalamdb_error("Failed to load prior version")?;
 
         let prior = if let Some(p) = prior_opt {
             p
@@ -540,7 +560,8 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
                     _deleted: row_data.deleted,
                     fields: row_data.fields,
                 },
-            ).await?
+            )
+            .await?
             .ok_or_else(|| KalamDbError::NotFound("Row not found for update".to_string()))?
         };
 
@@ -573,9 +594,9 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         let new_fields = Row::new(merged);
 
         let sys_cols = self.core.system_columns.clone();
-        let seq_id = sys_cols
-            .generate_seq_id()
-            .map_err(|e| KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e)))?;
+        let seq_id = sys_cols.generate_seq_id().map_err(|e| {
+            KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e))
+        })?;
         let entity = SharedTableRow {
             _seq: seq_id,
             _deleted: false,
@@ -619,14 +640,17 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
     ) -> Result<SharedTableRowId, KalamDbError> {
         // IGNORE user_id parameter - no RLS for shared tables
         let pk_name = self.primary_key_field_name().to_string();
-        
+
         // Get PK column data type from schema for proper type coercion
         let schema = self.schema();
-        let pk_field = schema
-            .field_with_name(&pk_name)
-            .map_err(|e| KalamDbError::InvalidOperation(format!("PK column '{}' not found in schema: {}", pk_name, e)))?;
+        let pk_field = schema.field_with_name(&pk_name).map_err(|e| {
+            KalamDbError::InvalidOperation(format!(
+                "PK column '{}' not found in schema: {}",
+                pk_name, e
+            ))
+        })?;
         let pk_column_type = pk_field.data_type();
-        
+
         // Convert string PK value to proper ScalarValue based on column type
         use kalamdb_commons::conversions::parse_string_as_scalar;
         let pk_value_scalar = parse_string_as_scalar(pk_value, pk_column_type)
@@ -644,7 +668,10 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
                 pk_value
             );
             base::find_row_by_pk(self, None, pk_value).await?.ok_or_else(|| {
-                KalamDbError::NotFound(format!("Row with {}={} not found (checked both hot and cold storage)", pk_name, pk_value))
+                KalamDbError::NotFound(format!(
+                    "Row with {}={} not found (checked both hot and cold storage)",
+                    pk_name, pk_value
+                ))
             })?
         };
 
@@ -655,9 +682,9 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         let new_fields = Row::new(merged);
 
         let sys_cols = self.core.system_columns.clone();
-        let seq_id = sys_cols
-            .generate_seq_id()
-            .map_err(|e| KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e)))?;
+        let seq_id = sys_cols.generate_seq_id().map_err(|e| {
+            KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e))
+        })?;
         let entity = SharedTableRow {
             _seq: seq_id,
             _deleted: false,
@@ -686,8 +713,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         // IGNORE user_id parameter - no RLS for shared tables
         // Load referenced version to extract PK so tombstone groups with same logical row
         // Try RocksDB first, then Parquet
-        let prior_opt = self.store.get(key)
-            .into_kalamdb_error("Failed to load prior version")?;
+        let prior_opt = self.store.get(key).into_kalamdb_error("Failed to load prior version")?;
 
         let prior = if let Some(p) = prior_opt {
             p
@@ -703,14 +729,15 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
                     _deleted: row_data.deleted,
                     fields: row_data.fields,
                 },
-            ).await?
+            )
+            .await?
             .ok_or_else(|| KalamDbError::NotFound("Row not found for delete".to_string()))?
         };
 
         let sys_cols = self.core.system_columns.clone();
-        let seq_id = sys_cols
-            .generate_seq_id()
-            .map_err(|e| KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e)))?;
+        let seq_id = sys_cols.generate_seq_id().map_err(|e| {
+            KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e))
+        })?;
         // Preserve ALL fields in the tombstone
         let values = prior.fields.values.clone();
 
@@ -748,10 +775,24 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         Ok(())
     }
 
-    async fn delete_by_pk_value(&self, _user_id: &UserId, pk_value: &str) -> Result<bool, KalamDbError> {
+    async fn delete_by_pk_value(
+        &self,
+        _user_id: &UserId,
+        pk_value: &str,
+    ) -> Result<bool, KalamDbError> {
         // IGNORE user_id parameter - no RLS for shared tables
         let pk_name = self.primary_key_field_name().to_string();
-        let pk_value_scalar = ScalarValue::Utf8(Some(pk_value.to_string()));
+        let schema = self.schema();
+        let pk_field = schema.field_with_name(&pk_name).map_err(|e| {
+            KalamDbError::InvalidOperation(format!(
+                "PK column '{}' not found in schema: {}",
+                pk_name, e
+            ))
+        })?;
+        let pk_column_type = pk_field.data_type();
+        let pk_value_scalar =
+            kalamdb_commons::conversions::parse_string_as_scalar(pk_value, pk_column_type)
+                .map_err(KalamDbError::InvalidOperation)?;
 
         // Find latest resolved row for this PK
         // First try hot storage (O(1) via PK index), then fall back to cold storage (Parquet scan)
@@ -768,14 +809,14 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
                         pk_value
                     );
                     return Ok(false);
-                }
+                },
             }
         };
 
         let sys_cols = self.core.system_columns.clone();
-        let seq_id = sys_cols
-            .generate_seq_id()
-            .map_err(|e| KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e)))?;
+        let seq_id = sys_cols.generate_seq_id().map_err(|e| {
+            KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e))
+        })?;
 
         // Preserve ALL fields in the tombstone
         let values = latest_row.fields.values.clone();
@@ -836,13 +877,15 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         let keep_deleted = filter.map(base::filter_uses_deleted_column).unwrap_or(false);
 
         // NO user_id extraction - shared tables scan ALL rows
-        let kvs = self.scan_with_version_resolution_to_kvs_async(
-            base::system_user_id(),
-            filter,
-            since_seq,
-            limit,
-            keep_deleted,
-        ).await?;
+        let kvs = self
+            .scan_with_version_resolution_to_kvs_async(
+                base::system_user_id(),
+                filter,
+                since_seq,
+                limit,
+                keep_deleted,
+            )
+            .await?;
 
         // Convert to JSON rows aligned with schema
         let schema = self.schema_ref();
@@ -858,7 +901,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         keep_deleted: bool,
     ) -> Result<Vec<(SharedTableRowId, SharedTableRow)>, KalamDbError> {
         use kalamdb_store::EntityStoreAsync;
-        
+
         // Warn if no filter or limit - potential performance issue
         base::warn_if_unfiltered_scan(self.core.table_id(), filter, limit, self.core.table_type());
 
@@ -954,6 +997,10 @@ impl TableProvider for SharedTableProvider {
         datafusion::logical_expr::TableType::Base
     }
 
+    fn get_column_default(&self, column: &str) -> Option<&Expr> {
+        self.column_defaults.get(column)
+    }
+
     async fn scan(
         &self,
         state: &dyn Session,
@@ -966,8 +1013,9 @@ impl TableProvider for SharedTableProvider {
 
         // Extract user context including read_context for leader check
         // SharedTableProvider ignores user_id for data access (no RLS) but uses read_context
-        let (_user_id, _role, read_context) = extract_full_user_context(state)
-            .map_err(|e| DataFusionError::Execution(format!("Failed to extract user context: {}", e)))?;
+        let (_user_id, _role, read_context) = extract_full_user_context(state).map_err(|e| {
+            DataFusionError::Execution(format!("Failed to extract user context: {}", e))
+        })?;
 
         // Check if this is a client read that requires leader (shared data shard)
         // Skip check for internal reads (jobs, live query notifications, etc.)
@@ -977,12 +1025,117 @@ impl TableProvider for SharedTableProvider {
                 // For shared tables, redirect to leader
                 // We don't have a specific user, so we just report not leader
                 return Err(DataFusionError::Execution(
-                    "NOT_LEADER: This node is not the leader for shared tables".to_string()
+                    "NOT_LEADER: This node is not the leader for shared tables".to_string(),
                 ));
             }
         }
 
         self.base_scan(state, projection, filters, limit).await
+    }
+
+    async fn insert_into(
+        &self,
+        state: &dyn Session,
+        input: Arc<dyn ExecutionPlan>,
+        insert_op: InsertOp,
+    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        check_shared_table_write_access(state, &self.table_def).map_err(DataFusionError::from)?;
+
+        if insert_op != InsertOp::Append {
+            return Err(DataFusionError::Plan(format!(
+                "{} is not supported for shared tables",
+                insert_op
+            )));
+        }
+
+        let rows = crate::utils::datafusion_dml::collect_input_rows(state, input).await?;
+        let inserted = self
+            .insert_batch(base::system_user_id(), rows)
+            .await
+            .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+
+        crate::utils::datafusion_dml::rows_affected_plan(state, inserted.len() as u64).await
+    }
+
+    async fn delete_from(
+        &self,
+        state: &dyn Session,
+        filters: Vec<Expr>,
+    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        check_shared_table_write_access(state, &self.table_def).map_err(DataFusionError::from)?;
+        crate::utils::datafusion_dml::validate_where_clause(&filters, "DELETE")?;
+
+        let rows =
+            crate::utils::datafusion_dml::collect_matching_rows(self, state, &filters).await?;
+        if rows.is_empty() {
+            return crate::utils::datafusion_dml::rows_affected_plan(state, 0).await;
+        }
+
+        let pk_column = self.primary_key_field_name().to_string();
+        let mut seen = HashSet::new();
+        let mut deleted: u64 = 0;
+
+        for row in rows {
+            let pk_value = crate::utils::datafusion_dml::extract_pk_value(&row, &pk_column)?;
+            if !seen.insert(pk_value.clone()) {
+                continue;
+            }
+
+            if self
+                .delete_by_pk_value(base::system_user_id(), &pk_value)
+                .await
+                .map_err(|e| DataFusionError::Execution(e.to_string()))?
+            {
+                deleted += 1;
+            }
+        }
+
+        crate::utils::datafusion_dml::rows_affected_plan(state, deleted).await
+    }
+
+    async fn update(
+        &self,
+        state: &dyn Session,
+        assignments: Vec<(String, Expr)>,
+        filters: Vec<Expr>,
+    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        check_shared_table_write_access(state, &self.table_def).map_err(DataFusionError::from)?;
+        crate::utils::datafusion_dml::validate_where_clause(&filters, "UPDATE")?;
+
+        let pk_column = self.primary_key_field_name().to_string();
+        crate::utils::datafusion_dml::validate_update_assignments(&assignments, &pk_column)?;
+
+        let rows =
+            crate::utils::datafusion_dml::collect_matching_rows(self, state, &filters).await?;
+        if rows.is_empty() {
+            return crate::utils::datafusion_dml::rows_affected_plan(state, 0).await;
+        }
+
+        let schema = self.schema_ref();
+        let mut seen = HashSet::new();
+        let mut updated: u64 = 0;
+
+        for row in rows {
+            let pk_value = crate::utils::datafusion_dml::extract_pk_value(&row, &pk_column)?;
+            if !seen.insert(pk_value.clone()) {
+                continue;
+            }
+
+            let mut values = BTreeMap::new();
+            for (column, expr) in &assignments {
+                let value = crate::utils::datafusion_dml::evaluate_assignment_expr(
+                    state, &schema, &row, expr,
+                )?;
+                values.insert(column.clone(), value);
+            }
+
+            self.update_by_pk_value(base::system_user_id(), &pk_value, Row::new(values))
+                .await
+                .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+            updated += 1;
+        }
+
+        crate::utils::datafusion_dml::rows_affected_plan(state, updated).await
     }
 
     fn supports_filters_pushdown(

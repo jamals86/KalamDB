@@ -71,8 +71,6 @@ mod base64_bytes {
         D: Deserializer<'de>,
     {
         let encoded = String::deserialize(deserializer)?;
-        STANDARD
-            .decode(encoded.as_bytes())
-            .map_err(D::Error::custom)
+        STANDARD.decode(encoded.as_bytes()).map_err(D::Error::custom)
     }
 }

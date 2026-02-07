@@ -184,7 +184,8 @@ async fn test_scenario_01_chat_app_core() -> anyhow::Result<()> {
     // Update a message
     let resp = u1_client
         .execute_query(
-            &format!("UPDATE {}.messages SET content = 'Updated message 1' WHERE id = 1", ns), None,
+            &format!("UPDATE {}.messages SET content = 'Updated message 1' WHERE id = 1", ns),
+            None,
             None,
             None,
         )
@@ -248,7 +249,12 @@ async fn test_scenario_01_chat_app_core() -> anyhow::Result<()> {
     let mut post_flush_count: i64 = 0;
     loop {
         let resp = u1_client
-            .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.messages", ns), None, None, None)
+            .execute_query(
+                &format!("SELECT COUNT(*) as cnt FROM {}.messages", ns),
+                None,
+                None,
+                None,
+            )
             .await?;
         post_flush_count = resp.get_i64("cnt").unwrap_or(0);
         if post_flush_count >= 54 || Instant::now() >= deadline {
@@ -338,7 +344,8 @@ async fn test_scenario_01_service_writes_as_user() -> anyhow::Result<()> {
             &format!(
                 "INSERT INTO {}.messages (id, role_id, content) VALUES (1, 'user', 'Hello')",
                 ns
-            ), None,
+            ),
+            None,
             None,
             None,
         )

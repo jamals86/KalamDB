@@ -33,8 +33,7 @@ impl UserTableStoreExt for UserTableStore {
         let rows = self.scan_user(user_key_prefix)?;
         let count = rows.len();
         for (key, _) in rows {
-            self.delete(&key)
-                .map_err(|e| TableError::Storage(e.to_string()))?;
+            self.delete(&key).map_err(|e| TableError::Storage(e.to_string()))?;
         }
         Ok(count)
     }

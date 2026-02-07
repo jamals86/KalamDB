@@ -9,10 +9,10 @@
 //! - Each `*TableSchema` memoizes its Arrow schema (OnceLock)
 //! - `base` module: Common traits for unified scan logic
 
-pub mod base;
 pub mod audit_logs;
-pub mod jobs;
+pub mod base;
 pub mod job_nodes;
+pub mod jobs;
 pub mod live_queries;
 pub mod manifest;
 pub mod namespaces;
@@ -23,12 +23,14 @@ pub mod topics;
 pub mod users;
 
 // Re-export base traits
-pub use base::{SystemTableScan, SimpleSystemTableScan, extract_filter_value, extract_range_filters};
+pub use base::{
+    extract_filter_value, extract_range_filters, SimpleSystemTableScan, SystemTableScan,
+};
 
 // Re-export all providers
 pub use audit_logs::AuditLogsTableProvider;
-pub use jobs::JobsTableProvider;
 pub use job_nodes::JobNodesTableProvider;
+pub use jobs::JobsTableProvider;
 pub use live_queries::LiveQueriesTableProvider;
 pub use manifest::{InMemoryChecker, ManifestTableProvider};
 pub use namespaces::NamespacesTableProvider;
@@ -40,8 +42,8 @@ pub use users::UsersTableProvider;
 
 // Re-export all schema definitions (source of truth for TableDefinition)
 pub use audit_logs::AuditLogsTableSchema;
-pub use jobs::JobsTableSchema;
 pub use job_nodes::JobNodesTableSchema;
+pub use jobs::JobsTableSchema;
 pub use live_queries::LiveQueriesTableSchema;
 pub use manifest::ManifestTableSchema;
 pub use namespaces::NamespacesTableSchema;

@@ -98,6 +98,17 @@ export {
   SYSTEM_TABLES_ORDER,
 } from './helpers/query_helpers.js';
 
+// FileRef helpers
+export {
+  FileRef,
+  parseFileRef,
+  parseFileRefs,
+} from './file_ref.js';
+
+export type {
+  FileRefData,
+} from './file_ref.js';
+
 // WASM bindings (re-exported so advanced users can access low-level API)
 export type { KalamClient as WasmKalamClient } from '../.wasm-out/kalam_link.js';
 

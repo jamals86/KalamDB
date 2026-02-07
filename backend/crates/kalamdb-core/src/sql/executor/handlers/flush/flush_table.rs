@@ -3,12 +3,12 @@
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::jobs::executors::flush::FlushParams;
-use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
+use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use kalamdb_commons::models::TableId;
 use kalamdb_commons::{JobId, TableType};
-use kalamdb_system::JobType;
 use kalamdb_sql::ddl::FlushTableStatement;
+use kalamdb_system::JobType;
 use std::sync::Arc;
 
 /// Handler for STORAGE FLUSH TABLE
@@ -33,15 +33,13 @@ impl TypedStatementHandler<FlushTableStatement> for FlushTableHandler {
         // Validate table exists via SchemaRegistry and fetch definition for table_type
         let registry = self.app_context.schema_registry();
         let table_id = TableId::new(statement.namespace.clone(), statement.table_name.clone());
-        let table_def = registry
-            .get_table_if_exists(&table_id)?
-            .ok_or_else(|| {
-                KalamDbError::NotFound(format!(
-                    "Table {}.{} not found",
-                    statement.namespace.as_str(),
-                    statement.table_name.as_str()
-                ))
-            })?;
+        let table_def = registry.get_table_if_exists(&table_id)?.ok_or_else(|| {
+            KalamDbError::NotFound(format!(
+                "Table {}.{} not found",
+                statement.namespace.as_str(),
+                statement.table_name.as_str()
+            ))
+        })?;
 
         if table_def.table_type == TableType::Stream {
             return Err(KalamDbError::InvalidOperation(

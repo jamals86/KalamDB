@@ -117,9 +117,7 @@ impl KalamNode {
 
     /// Detect the system hostname
     fn detect_hostname() -> Option<String> {
-        hostname::get()
-            .ok()
-            .and_then(|h| h.into_string().ok())
+        hostname::get().ok().and_then(|h| h.into_string().ok())
     }
 
     /// Detect system memory in MB
@@ -127,19 +125,14 @@ impl KalamNode {
         #[cfg(target_os = "linux")]
         {
             use std::fs;
-            fs::read_to_string("/proc/meminfo")
-                .ok()
-                .and_then(|content| {
-                    content
-                        .lines()
-                        .find(|line| line.starts_with("MemTotal:"))
-                        .and_then(|line| {
-                            line.split_whitespace()
-                                .nth(1)
-                                .and_then(|kb| kb.parse::<u64>().ok())
-                                .map(|kb| kb / 1024) // Convert KB to MB
-                        })
+            fs::read_to_string("/proc/meminfo").ok().and_then(|content| {
+                content.lines().find(|line| line.starts_with("MemTotal:")).and_then(|line| {
+                    line.split_whitespace()
+                        .nth(1)
+                        .and_then(|kb| kb.parse::<u64>().ok())
+                        .map(|kb| kb / 1024) // Convert KB to MB
                 })
+            })
         }
         #[cfg(target_os = "macos")]
         {

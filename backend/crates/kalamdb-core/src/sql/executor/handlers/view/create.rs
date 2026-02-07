@@ -7,8 +7,8 @@
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
-use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
+use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use kalamdb_commons::models::NamespaceId;
 use kalamdb_sql::ddl::CreateViewStatement;
 use std::sync::Arc;
@@ -140,8 +140,11 @@ mod tests {
         )
         .expect("parse view");
 
-        let exec_ctx =
-            ExecutionContext::new(UserId::new("tester"), kalamdb_commons::Role::Dba, app_ctx.base_session_context());
+        let exec_ctx = ExecutionContext::new(
+            UserId::new("tester"),
+            kalamdb_commons::Role::Dba,
+            app_ctx.base_session_context(),
+        );
 
         handler.execute(stmt, vec![], &exec_ctx).await.expect("create view executed");
 

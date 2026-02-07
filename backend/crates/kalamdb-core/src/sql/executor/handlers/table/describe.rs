@@ -2,8 +2,8 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
-use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
+use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::views::DescribeView;
 use kalamdb_commons::models::{NamespaceId, TableId};
 use kalamdb_sql::ddl::DescribeTableStatement;
@@ -31,17 +31,15 @@ impl TypedStatementHandler<DescribeTableStatement> for DescribeTableHandler {
         let start_time = std::time::Instant::now();
         let ns = statement.namespace_id.clone().unwrap_or_else(|| NamespaceId::default());
         let table_id = TableId::from_strings(ns.as_str(), statement.table_name.as_str());
-        let def = self
-            .app_context
-            .schema_registry()
-            .get_table_if_exists(&table_id)?
-            .ok_or_else(|| {
+        let def = self.app_context.schema_registry().get_table_if_exists(&table_id)?.ok_or_else(
+            || {
                 KalamDbError::NotFound(format!(
                     "Table '{}' not found in namespace '{}'",
                     statement.table_name.as_str(),
                     ns.as_str()
                 ))
-            })?;
+            },
+        )?;
 
         // Use the DescribeView to build the batch with extended columns
         let batch = DescribeView::build_batch(&def)?;

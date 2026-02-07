@@ -2,14 +2,14 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
-use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
+use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use datafusion::arrow::{
-    array::{ArrayRef, Int32Array, Int64Array, StringBuilder, BinaryBuilder},
+    array::{ArrayRef, BinaryBuilder, Int32Array, Int64Array, StringBuilder},
     record_batch::RecordBatch,
 };
 use kalamdb_commons::models::{ConsumerGroupId, TopicId};
-use kalamdb_sql::ddl::{ConsumeStatement, ConsumePosition};
+use kalamdb_sql::ddl::{ConsumePosition, ConsumeStatement};
 use kalamdb_system::providers::topic_offsets::TopicOffset;
 use kalamdb_tables::topics::topic_message_schema::topic_message_schema;
 use std::sync::Arc;
@@ -37,12 +37,9 @@ impl TypedStatementHandler<ConsumeStatement> for ConsumeHandler {
 
         // Verify topic exists
         let topics_provider = self.app_context.system_tables().topics();
-        let topic = topics_provider
-            .get_topic_by_id_async(&topic_id)
-            .await?
-            .ok_or_else(|| {
-                KalamDbError::NotFound(format!("Topic '{}' does not exist", statement.topic_name))
-            })?;
+        let topic = topics_provider.get_topic_by_id_async(&topic_id).await?.ok_or_else(|| {
+            KalamDbError::NotFound(format!("Topic '{}' does not exist", statement.topic_name))
+        })?;
 
         let topic_publisher = self.app_context.topic_publisher();
         let limit = statement.limit.unwrap_or(100) as usize;
@@ -64,14 +61,14 @@ impl TypedStatementHandler<ConsumeStatement> for ConsumeHandler {
                 let offsets: Vec<TopicOffset> = topic_publisher
                     .get_group_offsets(&topic_id, &group_id)
                     .map_err(|e| KalamDbError::InvalidOperation(e.to_string()))?;
-                
+
                 // Find offset for partition 0
                 offsets
                     .iter()
                     .find(|o| o.partition_id == partition_id)
                     .map(|o| o.last_acked_offset + 1) // Start from next message after last acked
                     .unwrap_or(0)
-            }
+            },
         };
 
         // Fetch messages from topic publisher
@@ -94,12 +91,12 @@ impl TypedStatementHandler<ConsumeStatement> for ConsumeHandler {
             topics_builder.append_value(topic.topic_id.as_str());
             partitions.push(msg.partition_id as i32);
             offsets.push(msg.offset as i64);
-            
+
             match &msg.key {
                 Some(k) => keys_builder.append_value(k),
                 None => keys_builder.append_null(),
             }
-            
+
             payloads_builder.append_value(&msg.payload);
             timestamps.push(msg.timestamp_ms);
         }
@@ -114,7 +111,10 @@ impl TypedStatementHandler<ConsumeStatement> for ConsumeHandler {
                 Arc::new(payloads_builder.finish()) as ArrayRef,
                 Arc::new(Int64Array::from(timestamps)) as ArrayRef,
             ],
-        ).map_err(|e| KalamDbError::SerializationError(format!("Failed to create RecordBatch: {}", e)))?;
+        )
+        .map_err(|e| {
+            KalamDbError::SerializationError(format!("Failed to create RecordBatch: {}", e))
+        })?;
 
         // Auto-commit offset if using consumer group
         if let Some(group_name) = &statement.group_id {
@@ -122,7 +122,9 @@ impl TypedStatementHandler<ConsumeStatement> for ConsumeHandler {
                 let group_id = ConsumerGroupId::new(group_name);
                 topic_publisher
                     .ack_offset(&topic_id, &group_id, partition_id, last_msg.offset)
-                    .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to commit offset: {}", e)))?;
+                    .map_err(|e| {
+                        KalamDbError::InvalidOperation(format!("Failed to commit offset: {}", e))
+                    })?;
             }
         }
 

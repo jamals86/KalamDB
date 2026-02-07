@@ -3,11 +3,11 @@
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::jobs::executors::flush::FlushParams;
-use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
+use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use kalamdb_commons::JobId;
-use kalamdb_system::JobType;
 use kalamdb_sql::ddl::FlushAllTablesStatement;
+use kalamdb_system::JobType;
 use std::sync::Arc;
 use tokio::task::JoinSet;
 
@@ -86,8 +86,9 @@ impl TypedStatementHandler<FlushAllTablesStatement> for FlushAllTablesHandler {
             in_flight += 1;
             if in_flight >= MAX_IN_FLIGHT {
                 if let Some(result) = join_set.join_next().await {
-                    let job_id = result
-                        .map_err(|e| KalamDbError::Other(format!("Flush job task failed: {}", e)))??;
+                    let job_id = result.map_err(|e| {
+                        KalamDbError::Other(format!("Flush job task failed: {}", e))
+                    })??;
                     if let Some(job_id) = job_id {
                         job_ids.push(job_id.as_str().to_string());
                     }

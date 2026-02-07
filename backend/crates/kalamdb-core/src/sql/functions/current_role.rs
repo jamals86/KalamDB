@@ -10,6 +10,7 @@ use datafusion::logical_expr::{
 };
 use kalamdb_commons::arrow_utils::{arrow_utf8, ArrowDataType};
 use kalamdb_commons::Role;
+use kalamdb_session::SessionUserContext;
 use std::any::Any;
 use std::sync::Arc;
 
@@ -61,16 +62,19 @@ impl ScalarUDFImpl for CurrentRoleFunction {
 
     fn invoke_with_args(&self, args: ScalarFunctionArgs) -> DataFusionResult<ColumnarValue> {
         if !args.args.is_empty() {
-            return Err(DataFusionError::Plan(
-                "CURRENT_ROLE() takes no arguments".to_string(),
-            ));
+            return Err(DataFusionError::Plan("CURRENT_ROLE() takes no arguments".to_string()));
         }
 
-        let role = self.role.as_ref().ok_or_else(|| {
-            DataFusionError::Execution(
-                "CURRENT_ROLE() failed: Role must not be null or empty".to_string(),
-            )
-        })?;
+        let role = if let Some(role) = self.role {
+            role
+        } else if let Some(session_ctx) = args.config_options.extensions.get::<SessionUserContext>()
+        {
+            session_ctx.role
+        } else {
+            return Err(DataFusionError::Execution(
+                "CURRENT_ROLE() failed: session user context not found".to_string(),
+            ));
+        };
 
         // Convert role to lowercase string (user, service, dba, system, anonymous)
         let role_str = match role {

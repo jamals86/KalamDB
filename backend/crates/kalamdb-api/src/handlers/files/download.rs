@@ -38,7 +38,7 @@ pub async fn download_file(
             return HttpResponse::NotFound().json(serde_json::json!({
                 "error": format!("Table '{}' not found", table_id),
             }));
-        }
+        },
     };
 
     let storage_id = table_entry.storage_id.clone();
@@ -55,10 +55,7 @@ pub async fn download_file(
         }
     }
 
-    let effective_user_id = query
-        .user_id
-        .clone()
-        .unwrap_or_else(|| session.user_id().clone());
+    let effective_user_id = query.user_id.clone().unwrap_or_else(|| session.user_id().clone());
 
     let user_id = match table_type {
         TableType::User => Some(effective_user_id),
@@ -79,7 +76,7 @@ pub async fn download_file(
                 ));
             }
             None
-        }
+        },
         TableType::Stream | TableType::System => {
             // Stream and system tables don't support file storage
             return HttpResponse::BadRequest().json(SqlResponse::error(
@@ -87,7 +84,7 @@ pub async fn download_file(
                 "File storage is not supported for stream or system tables",
                 0.0,
             ));
-        }
+        },
     };
 
     // Validate path components for security
@@ -111,13 +108,10 @@ pub async fn download_file(
 
     // Fetch file from storage
     let file_service = app_context.file_storage_service();
-    match file_service.get_file_by_path(
-        &storage_id,
-        table_type,
-        &table_id,
-        user_id.as_ref(),
-        &relative_path,
-    ).await {
+    match file_service
+        .get_file_by_path(&storage_id, table_type, &table_id, user_id.as_ref(), &relative_path)
+        .await
+    {
         Ok(data) => {
             //TODO: Get content type from the stored file metadata
             // Guess content type from file extension in file_id
@@ -125,29 +119,19 @@ pub async fn download_file(
 
             HttpResponse::Ok()
                 .content_type(content_type)
-                .append_header((
-                    "Content-Disposition",
-                    format!("inline; filename=\"{}\"", file_id),
-                ))
+                .append_header(("Content-Disposition", format!("inline; filename=\"{}\"", file_id)))
                 .body(data)
-        }
+        },
         Err(e) => {
-            log::warn!(
-                "File download failed: table={}, file={}: {}",
-                table_id,
-                file_id,
-                e
-            );
+            log::warn!("File download failed: table={}, file={}: {}", table_id, file_id, e);
             HttpResponse::NotFound().json(serde_json::json!({
                 "error": "File not found",
                 "code": "FILE_NOT_FOUND",
             }))
-        }
+        },
     }
 }
 
 fn guess_content_type(file_id: &str) -> String {
-    mime_guess::from_path(file_id)
-        .first_or_octet_stream()
-        .to_string()
+    mime_guess::from_path(file_id).first_or_octet_stream().to_string()
 }

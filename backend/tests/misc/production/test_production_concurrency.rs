@@ -15,9 +15,7 @@ async fn concurrent_inserts_same_user_table() {
     let ns = consolidated_helpers::unique_namespace("app_concurrent_ins");
 
     // Setup
-    let resp = server
-        .execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns))
-        .await;
+    let resp = server.execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns)).await;
     assert_eq!(resp.status, ResponseStatus::Success);
 
     let create_table = format!(
@@ -90,9 +88,7 @@ async fn concurrent_select_queries() {
     let ns = consolidated_helpers::unique_namespace("app_concurrent_sel");
 
     // Setup with data
-    let resp = server
-        .execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns))
-        .await;
+    let resp = server.execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns)).await;
     assert_eq!(resp.status, ResponseStatus::Success);
 
     let create_table = format!(
@@ -112,8 +108,7 @@ async fn concurrent_select_queries() {
 
     // Insert test data
     for i in 0..20 {
-        let sql =
-            format!("INSERT INTO {}.data (id, value) VALUES ({}, 'value{}')", ns, i, i);
+        let sql = format!("INSERT INTO {}.data (id, value) VALUES ({}, 'value{}')", ns, i, i);
         let resp = server.execute_sql_as_user(&sql, user_id.as_str()).await;
         assert_eq!(resp.status, ResponseStatus::Success);
     }
@@ -162,9 +157,7 @@ async fn concurrent_duplicate_primary_key_handling() {
     let server = TestServer::new_shared().await;
     let ns = consolidated_helpers::unique_namespace("app_concurrent_pk");
 
-    let resp = server
-        .execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns))
-        .await;
+    let resp = server.execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns)).await;
     assert_eq!(resp.status, ResponseStatus::Success);
 
     let create_table = format!(
@@ -236,9 +229,7 @@ async fn concurrent_updates_same_row() {
     let server = TestServer::new_shared().await;
     let ns = consolidated_helpers::unique_namespace("app_concurrent_upd");
 
-    let resp = server
-        .execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns))
-        .await;
+    let resp = server.execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns)).await;
     assert_eq!(resp.status, ResponseStatus::Success);
 
     let create_table = format!(
@@ -273,8 +264,7 @@ async fn concurrent_updates_same_row() {
         let ns_clone = ns.clone();
 
         let handle = tokio::spawn(async move {
-            let sql =
-                format!("UPDATE {}.counter SET value = {} WHERE id = 1", ns_clone, i * 10);
+            let sql = format!("UPDATE {}.counter SET value = {} WHERE id = 1", ns_clone, i * 10);
             server_clone.execute_sql_as_user(&sql, user_id_clone.as_str()).await
         });
         handles.push(handle);
@@ -313,9 +303,7 @@ async fn concurrent_deletes() {
     let server = TestServer::new_shared().await;
     let ns = consolidated_helpers::unique_namespace("app_concurrent_del");
 
-    let resp = server
-        .execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns))
-        .await;
+    let resp = server.execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns)).await;
     assert_eq!(resp.status, ResponseStatus::Success);
 
     let create_table = format!(
@@ -335,8 +323,7 @@ async fn concurrent_deletes() {
 
     // Insert 10 rows
     for i in 0..10 {
-        let sql =
-            format!("INSERT INTO {}.temp (id, data) VALUES ({}, 'data{}')", ns, i, i);
+        let sql = format!("INSERT INTO {}.temp (id, data) VALUES ({}, 'data{}')", ns, i, i);
         let resp = server.execute_sql_as_user(&sql, user_id.as_str()).await;
         assert_eq!(resp.status, ResponseStatus::Success);
     }

@@ -82,9 +82,7 @@ impl JobNodeId {
             .next()
             .and_then(|s| s.parse::<u64>().ok())
             .ok_or_else(|| format!("Invalid JobNodeId format: {}", value))?;
-        let job_id = parts
-            .next()
-            .ok_or_else(|| format!("Invalid JobNodeId format: {}", value))?;
+        let job_id = parts.next().ok_or_else(|| format!("Invalid JobNodeId format: {}", value))?;
         Ok(Self::new(&JobId::new(job_id), &NodeId::new(node_id)))
     }
 

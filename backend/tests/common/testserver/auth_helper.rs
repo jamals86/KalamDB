@@ -8,11 +8,11 @@
 //! - Validating authentication responses
 
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
-use kalamdb_system::User;
 use kalamdb_commons::{AuthType, Role, StorageId, UserId, UserName};
-use kalamdb_system::providers::storages::models::StorageMode;
 use kalamdb_core::error::KalamDbError;
 use kalamdb_core::sql::context::ExecutionContext;
+use kalamdb_system::providers::storages::models::StorageMode;
+use kalamdb_system::User;
 use serde::{Deserialize, Serialize};
 
 use super::consolidated_helpers::ensure_user_exists;
@@ -113,7 +113,7 @@ pub async fn create_test_user(
 
     // Return user object for test verification
     User {
-        user_id: user_id,
+        user_id,
         username: username.into(),
         password_hash: String::new(), // Not needed for tests
         role,

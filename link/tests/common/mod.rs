@@ -56,9 +56,8 @@ fn ensure_auto_test_server() -> Option<(String, PathBuf)> {
                 let runtime = AUTO_TEST_RUNTIME.get_or_init(|| {
                     Runtime::new().expect("Failed to create auto test server runtime")
                 });
-                let result = runtime
-                    .block_on(start_local_test_server())
-                    .map_err(|err| err.to_string());
+                let result =
+                    runtime.block_on(start_local_test_server()).map_err(|err| err.to_string());
                 let _ = tx.send(result);
             });
 
@@ -67,28 +66,23 @@ fn ensure_auto_test_server() -> Option<(String, PathBuf)> {
                 Err(err) => Err(format!("Timed out starting test server: {}", err)),
             }
         } else {
-            let runtime = AUTO_TEST_RUNTIME.get_or_init(|| {
-                Runtime::new().expect("Failed to create auto test server runtime")
-            });
-            runtime
-                .block_on(start_local_test_server())
-                .map_err(|err| err.to_string())
+            let runtime = AUTO_TEST_RUNTIME
+                .get_or_init(|| Runtime::new().expect("Failed to create auto test server runtime"));
+            runtime.block_on(start_local_test_server()).map_err(|err| err.to_string())
         };
 
         match start_result {
             Ok(server) => {
                 *guard = Some(server);
-            }
+            },
             Err(err) => {
                 eprintln!("Failed to auto-start test server: {}", err);
                 return None;
-            }
+            },
         }
     }
 
-    guard
-        .as_ref()
-        .map(|server| (server.base_url.clone(), server.data_dir.clone()))
+    guard.as_ref().map(|server| (server.base_url.clone(), server.data_dir.clone()))
 }
 
 async fn start_local_test_server() -> Result<AutoTestServer, Box<dyn std::error::Error>> {
@@ -123,20 +117,14 @@ async fn ensure_server_setup(
     root_password: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let client = Client::new();
-    let status = client
-        .get(format!("{}/v1/api/auth/status", base_url))
-        .send()
-        .await?;
+    let status = client.get(format!("{}/v1/api/auth/status", base_url)).send().await?;
 
     if !status.status().is_success() {
         return Err(format!("Failed to check setup status: {}", status.status()).into());
     }
 
     let body: serde_json::Value = status.json().await?;
-    let needs_setup = body
-        .get("needs_setup")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
+    let needs_setup = body.get("needs_setup").and_then(|v| v.as_bool()).unwrap_or(false);
 
     if !needs_setup {
         return Ok(());
@@ -196,7 +184,8 @@ pub async fn root_access_token() -> Result<String, Box<dyn std::error::Error>> {
         return Ok(token.clone());
     }
 
-    let password = std::env::var("KALAMDB_ROOT_PASSWORD").unwrap_or_else(|_| "test_password".to_string());
+    let password =
+        std::env::var("KALAMDB_ROOT_PASSWORD").unwrap_or_else(|_| "test_password".to_string());
     let token = fetch_access_token(server_url(), "root", &password).await?;
     *guard = Some(token.clone());
     Ok(token)
@@ -219,9 +208,8 @@ pub fn root_access_token_blocking() -> Result<String, Box<dyn std::error::Error>
         }
     }
 
-    let runtime = AUTO_TEST_RUNTIME.get_or_init(|| {
-        Runtime::new().expect("Failed to create runtime for access token")
-    });
+    let runtime = AUTO_TEST_RUNTIME
+        .get_or_init(|| Runtime::new().expect("Failed to create runtime for access token"));
     runtime.block_on(root_access_token())
 }
 
@@ -237,7 +225,10 @@ pub fn server_url() -> &'static str {
                     std::env::set_var("KALAMDB_SERVER_URL", &url);
                     // Use a test password for the auto-started server
                     std::env::set_var("KALAMDB_ROOT_PASSWORD", "test_password");
-                    std::env::set_var("KALAMDB_STORAGE_DIR", storage_dir.to_string_lossy().to_string());
+                    std::env::set_var(
+                        "KALAMDB_STORAGE_DIR",
+                        storage_dir.to_string_lossy().to_string(),
+                    );
                     return url;
                 }
             }

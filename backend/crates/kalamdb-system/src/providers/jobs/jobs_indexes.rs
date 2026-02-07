@@ -3,8 +3,8 @@
 //! This module defines secondary indexes for the system.jobs table.
 
 use crate::providers::jobs::models::Job;
-use crate::StoragePartition;
 use crate::JobStatus;
+use crate::StoragePartition;
 use kalamdb_commons::storage::Partition;
 use kalamdb_commons::JobId;
 use kalamdb_store::IndexDefinition;

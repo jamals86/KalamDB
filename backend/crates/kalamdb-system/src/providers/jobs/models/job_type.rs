@@ -109,7 +109,7 @@ impl JobType {
             JobType::Restore |      // External storage download
             JobType::JobCleanup |   // Raft-replicated job table cleanup
             JobType::UserCleanup |  // Cascade via Raft
-            JobType::TopicCleanup   // Delete topic messages + offsets
+            JobType::TopicCleanup // Delete topic messages + offsets
         )
     }
 
@@ -129,7 +129,7 @@ impl JobType {
             JobType::ManifestEviction | // Local cache eviction
             JobType::StreamEviction |   // Local stream log cleanup
             JobType::Retention |        // Local soft-delete cleanup
-            JobType::TopicRetention     // Local topic message cleanup
+            JobType::TopicRetention // Local topic message cleanup
         )
     }
 

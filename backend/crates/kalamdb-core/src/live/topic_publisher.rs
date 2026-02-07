@@ -44,15 +44,15 @@ pub struct TopicPublisherService {
     message_store: Arc<TopicMessageStore>,
     /// Store for consumer group offsets (system table provider)
     offset_store: Arc<TopicOffsetsTableProvider>,
-    
+
     /// In-memory cache: TableId → Vec<RouteEntry>
     /// Enables O(1) lookup to check if a table has any topic routes
     table_routes: DashMap<TableId, Vec<RouteEntry>>,
-    
+
     /// In-memory cache: TopicId → Topic
     /// Full topic metadata for quick access
     topics: DashMap<TopicId, Topic>,
-    
+
     /// Per-topic-partition offset counters for message ordering
     /// Key: "topic_id:partition_id", Value: next_offset
     offset_counters: DashMap<String, u64>, //TODO: Use type-safe keys
@@ -68,10 +68,8 @@ impl TopicPublisherService {
         let _ = storage_backend.create_partition(&messages_partition);
         let _ = storage_backend.create_partition(&offsets_partition);
 
-        let message_store = Arc::new(TopicMessageStore::new(
-            storage_backend.clone(),
-            messages_partition.clone()
-        ));
+        let message_store =
+            Arc::new(TopicMessageStore::new(storage_backend.clone(), messages_partition.clone()));
         let offset_store = Arc::new(TopicOffsetsTableProvider::new(storage_backend));
 
         Self {
@@ -149,7 +147,7 @@ impl TopicPublisherService {
     /// Add a single topic to the cache
     pub fn add_topic(&self, topic: Topic) {
         let topic_id = topic.topic_id.clone();
-        
+
         // Add routes to table mapping
         for route in &topic.routes {
             let entry = RouteEntry {
@@ -226,11 +224,8 @@ impl TopicPublisherService {
         };
 
         // Filter routes by operation
-        let matching: Vec<_> = routes
-            .iter()
-            .filter(|entry| entry.route.op == operation)
-            .cloned()
-            .collect();
+        let matching: Vec<_> =
+            routes.iter().filter(|entry| entry.route.op == operation).cloned().collect();
 
         if matching.is_empty() {
             return Ok(0);
@@ -273,9 +268,9 @@ impl TopicPublisherService {
 
             // Store message (TODO: integrate with actual persistence layer)
             // For now, just using message_store directly
-            self.message_store
-                .put(&message.id(), &message)
-                .map_err(|e| CommonError::Internal(format!("Failed to store topic message: {}", e)))?;
+            self.message_store.put(&message.id(), &message).map_err(|e| {
+                CommonError::Internal(format!("Failed to store topic message: {}", e))
+            })?;
 
             total_published += 1;
         }
@@ -300,22 +295,20 @@ impl TopicPublisherService {
             PayloadMode::Diff => {
                 // For now, extract full row (diff requires before/after state)
                 self.extract_full_row_payload(row)
-            }
+            },
         }
     }
 
     /// Extract primary key columns from a Row
     fn extract_key_columns_from_row(&self, row: &Row) -> Result<Vec<u8>> {
         if row.values.is_empty() {
-            return Err(CommonError::InvalidInput(
-                "Cannot extract key from empty row".to_string(),
-            ));
+            return Err(CommonError::InvalidInput("Cannot extract key from empty row".to_string()));
         }
 
         // Convert ScalarValue to JSON using proper conversion (faster and cleaner than Debug)
         let json_map = row_to_json_map(row)
             .map_err(|e| CommonError::Internal(format!("Failed to convert row to JSON: {}", e)))?;
-        
+
         serde_json::to_vec(&json_map)
             .map_err(|e| CommonError::Internal(format!("Failed to serialize keys: {}", e)))
     }
@@ -325,7 +318,7 @@ impl TopicPublisherService {
         // Convert ScalarValue to JSON using proper conversion (faster and cleaner than Debug)
         let json_map = row_to_json_map(row)
             .map_err(|e| CommonError::Internal(format!("Failed to convert row to JSON: {}", e)))?;
-        
+
         serde_json::to_vec(&json_map)
             .map_err(|e| CommonError::Internal(format!("Failed to serialize row: {}", e)))
     }
@@ -337,13 +330,13 @@ impl TopicPublisherService {
         if row.values.is_empty() {
             return Ok(None);
         }
-        
+
         let json_map = row_to_json_map(row)
             .map_err(|e| CommonError::Internal(format!("Failed to convert row to JSON: {}", e)))?;
-        
+
         let json_str = serde_json::to_string(&json_map)
             .map_err(|e| CommonError::Internal(format!("Failed to serialize key: {}", e)))?;
-        
+
         Ok(Some(json_str))
     }
 
@@ -351,9 +344,9 @@ impl TopicPublisherService {
     fn hash_row(&self, row: &Row) -> u64 {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
-        
+
         let mut hasher = DefaultHasher::new();
-        
+
         // Hash the JSON representation for consistency (faster than Debug)
         if let Ok(json_map) = row_to_json_map(row) {
             if let Ok(json_str) = serde_json::to_string(&json_map) {
@@ -361,12 +354,12 @@ impl TopicPublisherService {
                 return hasher.finish();
             }
         }
-        
+
         // Fallback: hash column names only
         for key in row.values.keys() {
             key.hash(&mut hasher);
         }
-        
+
         hasher.finish()
     }
 
@@ -450,7 +443,7 @@ impl TopicPublisherService {
                     &topic.topic_id,
                     partition_id,
                     0,
-                    usize::MAX,  // scan all
+                    usize::MAX, // scan all
                 ) {
                     Ok(msgs) => {
                         if let Some(last) = msgs.last() {
@@ -464,7 +457,7 @@ impl TopicPublisherService {
                                 next,
                             );
                         }
-                    }
+                    },
                     Err(e) => {
                         log::warn!(
                             "Failed to restore offset for topic={} partition={}: {}",
@@ -472,7 +465,7 @@ impl TopicPublisherService {
                             partition_id,
                             e,
                         );
-                    }
+                    },
                 }
             }
         }
@@ -589,12 +582,10 @@ mod tests {
             create_test_row(2, "Bob"),
             create_test_row(3, "Charlie"),
         ];
-        
+
         let mut total_count = 0;
         for row in &rows {
-            let count = service
-                .publish_message(&table_id, TopicOp::Insert, row, None)
-                .unwrap();
+            let count = service.publish_message(&table_id, TopicOp::Insert, row, None).unwrap();
             total_count += count;
         }
 
@@ -618,9 +609,7 @@ mod tests {
         let table_id = TableId::new(ns.clone(), TableName::from("no_routes"));
 
         let row = create_test_row(1, "Test");
-        let count = service
-            .publish_message(&table_id, TopicOp::Insert, &row, None)
-            .unwrap();
+        let count = service.publish_message(&table_id, TopicOp::Insert, &row, None).unwrap();
 
         assert_eq!(count, 0);
     }

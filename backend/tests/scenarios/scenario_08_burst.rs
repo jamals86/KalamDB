@@ -225,7 +225,8 @@ async fn test_scenario_08_sustained_load() -> anyhow::Result<()> {
                         ns_for_writes,
                         i,
                         i * 10
-                    ), None,
+                    ),
+                    None,
                     None,
                     None,
                 )
@@ -303,7 +304,8 @@ async fn test_scenario_08_subscription_reconnect() -> anyhow::Result<()> {
     for i in 1..=5 {
         let resp = client
             .execute_query(
-                &format!("INSERT INTO {}.events (id, value) VALUES ({}, 'initial_{}')", ns, i, i), None,
+                &format!("INSERT INTO {}.events (id, value) VALUES ({}, 'initial_{}')", ns, i, i),
+                None,
                 None,
                 None,
             )
@@ -325,7 +327,8 @@ async fn test_scenario_08_subscription_reconnect() -> anyhow::Result<()> {
     for i in 6..=10 {
         let resp = client
             .execute_query(
-                &format!("INSERT INTO {}.events (id, value) VALUES ({}, 'new_{}')", ns, i, i), None,
+                &format!("INSERT INTO {}.events (id, value) VALUES ({}, 'new_{}')", ns, i, i),
+                None,
                 None,
                 None,
             )

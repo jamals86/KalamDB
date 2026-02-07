@@ -52,9 +52,7 @@ impl TopicsTableProvider {
     pub fn new(backend: Arc<dyn StorageBackend>) -> Self {
         let store = IndexedEntityStore::new(
             backend,
-            SystemTable::Topics
-                .column_family_name()
-                .expect("Topics is a table, not a view"),
+            SystemTable::Topics.column_family_name().expect("Topics is a table, not a view"),
             Vec::new(), // No secondary indexes for MVP
         );
         Self { store }
@@ -120,10 +118,7 @@ impl TopicsTableProvider {
         // Check if topic exists
         let old_topic = self.store.get(&topic.topic_id)?;
         if old_topic.is_none() {
-            return Err(SystemError::NotFound(format!(
-                "Topic not found: {}",
-                topic.topic_id
-            )));
+            return Err(SystemError::NotFound(format!("Topic not found: {}", topic.topic_id)));
         }
         let old_topic = old_topic.unwrap();
 
@@ -143,10 +138,7 @@ impl TopicsTableProvider {
             .into_system_error("get_async error")?;
 
         if old_topic.is_none() {
-            return Err(SystemError::NotFound(format!(
-                "Topic not found: {}",
-                topic.topic_id
-            )));
+            return Err(SystemError::NotFound(format!("Topic not found: {}", topic.topic_id)));
         }
 
         // Use insert for update (IndexedEntityStore handles indexes automatically)
@@ -158,9 +150,7 @@ impl TopicsTableProvider {
 
     /// Delete a topic by ID
     pub fn delete_topic(&self, topic_id: &TopicId) -> Result<(), SystemError> {
-        self.store
-            .delete(topic_id)
-            .into_system_error("delete topic error")
+        self.store.delete(topic_id).into_system_error("delete topic error")
     }
 
     /// Async version of `delete_topic()`.
@@ -182,7 +172,10 @@ impl TopicsTableProvider {
         &self.store
     }
 
-    fn build_batch_from_pairs(&self, pairs: Vec<(TopicId, Topic)>) -> Result<RecordBatch, SystemError> {
+    fn build_batch_from_pairs(
+        &self,
+        pairs: Vec<(TopicId, Topic)>,
+    ) -> Result<RecordBatch, SystemError> {
         let mut topic_ids = Vec::with_capacity(pairs.len());
         let mut names = Vec::with_capacity(pairs.len());
         let mut aliases = Vec::with_capacity(pairs.len());
@@ -200,7 +193,8 @@ impl TopicsTableProvider {
             partitions.push(Some(topic.partitions as i32));
             retention_seconds.push(topic.retention_seconds);
             retention_max_bytes.push(topic.retention_max_bytes);
-            let routes_json = serde_json::to_string(&topic.routes).unwrap_or_else(|_| "[]".to_string());
+            let routes_json =
+                serde_json::to_string(&topic.routes).unwrap_or_else(|_| "[]".to_string());
             routes.push(Some(routes_json));
             created_ats.push(Some(topic.created_at));
             updated_ats.push(Some(topic.updated_at));
@@ -262,7 +256,10 @@ impl SystemTableScan<TopicId, Topic> for TopicsTableProvider {
         Some(TopicId::new(value))
     }
 
-    fn create_batch_from_pairs(&self, pairs: Vec<(TopicId, Topic)>) -> Result<RecordBatch, SystemError> {
+    fn create_batch_from_pairs(
+        &self,
+        pairs: Vec<(TopicId, Topic)>,
+    ) -> Result<RecordBatch, SystemError> {
         self.build_batch_from_pairs(pairs)
     }
 }

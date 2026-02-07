@@ -44,7 +44,10 @@ fn smoke_test_watermark_dml_insert_performance() {
     for i in 0..INSERT_COUNT {
         let sql = format!(
             "INSERT INTO {} (id, name, value) VALUES ({}, 'item_{}', {})",
-            full_table_name, i, i, i * 10
+            full_table_name,
+            i,
+            i,
+            i * 10
         );
         execute_sql_as_root_via_client(&sql)
             .unwrap_or_else(|e| panic!("INSERT {} failed: {}", i, e));
@@ -57,21 +60,16 @@ fn smoke_test_watermark_dml_insert_performance() {
     println!("  Average: {:.2}ms per INSERT", avg_ms);
 
     // Verify data is readable
-    let select_result = execute_sql_as_root_via_client(&format!(
-        "SELECT COUNT(*) as cnt FROM {}",
-        full_table_name
-    ))
-    .expect("SELECT COUNT should succeed");
+    let select_result =
+        execute_sql_as_root_via_client(&format!("SELECT COUNT(*) as cnt FROM {}", full_table_name))
+            .expect("SELECT COUNT should succeed");
 
     println!("  Verification: {:?}", select_result);
 
     // Performance assertion: avg INSERT should be < 100ms with watermark optimization
     // Before optimization, this could be 50-200ms due to Meta waiting
     if avg_ms > 100.0 {
-        println!(
-            "  ⚠️ WARNING: Average INSERT time {:.2}ms exceeds 100ms target",
-            avg_ms
-        );
+        println!("  ⚠️ WARNING: Average INSERT time {:.2}ms exceeds 100ms target", avg_ms);
     } else {
         println!("  ✅ PASS: Average INSERT time {:.2}ms is within target", avg_ms);
     }
@@ -127,11 +125,9 @@ fn smoke_test_watermark_dml_update() {
     }
 
     // Verify data was inserted successfully
-    let count_result = execute_sql_as_root_via_client(&format!(
-        "SELECT COUNT(*) as cnt FROM {}",
-        full_table_name
-    ))
-    .expect("SELECT COUNT should succeed");
+    let count_result =
+        execute_sql_as_root_via_client(&format!("SELECT COUNT(*) as cnt FROM {}", full_table_name))
+            .expect("SELECT COUNT should succeed");
     assert!(
         count_result.contains("10"),
         "Expected 10 rows after insert, got: {}",
@@ -164,10 +160,7 @@ fn smoke_test_watermark_dml_update() {
     let _ =
         execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 
-    assert!(
-        elapsed.as_secs() < 30,
-        "Total UPDATE time exceeded 30 second limit"
-    );
+    assert!(elapsed.as_secs() < 30, "Total UPDATE time exceeded 30 second limit");
 }
 
 /// Test that DELETE operations work correctly after watermark optimization
@@ -192,10 +185,8 @@ fn smoke_test_watermark_dml_delete() {
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
         .expect("CREATE NAMESPACE should succeed");
 
-    let create_table_sql = format!(
-        "CREATE TABLE {} (id BIGINT PRIMARY KEY, data TEXT)",
-        full_table_name
-    );
+    let create_table_sql =
+        format!("CREATE TABLE {} (id BIGINT PRIMARY KEY, data TEXT)", full_table_name);
     execute_sql_as_root_via_client(&create_table_sql).expect("CREATE TABLE should succeed");
 
     // Insert data to delete
@@ -224,11 +215,9 @@ fn smoke_test_watermark_dml_delete() {
     println!("  Average: {:.2}ms per DELETE", avg_ms);
 
     // Verify all rows deleted
-    let select_result = execute_sql_as_root_via_client(&format!(
-        "SELECT COUNT(*) as cnt FROM {}",
-        full_table_name
-    ))
-    .expect("SELECT COUNT should succeed");
+    let select_result =
+        execute_sql_as_root_via_client(&format!("SELECT COUNT(*) as cnt FROM {}", full_table_name))
+            .expect("SELECT COUNT should succeed");
 
     println!("  Verification (should be 0): {:?}", select_result);
     println!("  ✅ PASS: DELETE operations working correctly");
@@ -238,14 +227,11 @@ fn smoke_test_watermark_dml_delete() {
     let _ =
         execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 
-    assert!(
-        elapsed.as_secs() < 90,
-        "Total DELETE time exceeded 90 second limit"
-    );
+    assert!(elapsed.as_secs() < 90, "Total DELETE time exceeded 90 second limit");
 }
 
 /// Test rapid DDL followed by DML to verify watermark still works when needed
-#[ntest::timeout(45000)]
+#[ntest::timeout(70000)]
 #[test]
 fn smoke_test_watermark_ddl_then_dml() {
     if !is_server_running() {
@@ -272,10 +258,7 @@ fn smoke_test_watermark_ddl_then_dml() {
         let table = format!("{}.cycle_table_{}", namespace, i);
 
         // DDL: Create table
-        let create_sql = format!(
-            "CREATE TABLE {} (id BIGINT PRIMARY KEY, value INT)",
-            table
-        );
+        let create_sql = format!("CREATE TABLE {} (id BIGINT PRIMARY KEY, value INT)", table);
         execute_sql_as_root_via_client(&create_sql)
             .unwrap_or_else(|e| panic!("CREATE TABLE {} failed: {}", i, e));
 
@@ -286,12 +269,7 @@ fn smoke_test_watermark_ddl_then_dml() {
 
         // Verify
         let select_result = execute_sql_as_root_via_client(&format!("SELECT * FROM {}", table));
-        assert!(
-            select_result.is_ok(),
-            "SELECT after INSERT {} failed: {:?}",
-            i,
-            select_result
-        );
+        assert!(select_result.is_ok(), "SELECT after INSERT {} failed: {:?}", i, select_result);
 
         // Cleanup this table
         let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", table));

@@ -35,15 +35,14 @@ pub use manager::{ConnectionsManager, LiveQueryManager};
 
 // Re-export from helpers
 pub use helpers::{
+    error,
+    failover::{CleanupReport as LiveQueryCleanupReport, LiveQueryFailoverHandler},
     filter_eval::{matches as filter_matches, parse_where_clause},
     initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult},
     query_parser::QueryParser,
-    failover::{CleanupReport as LiveQueryCleanupReport, LiveQueryFailoverHandler},
-    error,
 };
 
 // Re-export from other modules
 pub use notification::NotificationService;
 pub use subscription::SubscriptionService;
-pub use topic_publisher::{TopicPublisherService, TopicCacheStats};
-
+pub use topic_publisher::{TopicCacheStats, TopicPublisherService};

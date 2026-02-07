@@ -112,12 +112,15 @@ async fn test_service_role_flush_operations() {
     let flush = format!("STORAGE FLUSH TABLE {}.events", ns);
     let resp = server.execute_sql_as_user(&flush, svc.as_str()).await;
     assert_eq!(resp.status, ResponseStatus::Success, "service flush should succeed");
-    
+
     // Verify the flush message is present (if results exist)
     if let Some(result) = resp.results.first() {
         if let Some(msg) = &result.message {
-            assert!(msg.contains("Flush started") || msg.contains("Job ID"), 
-                    "Flush message should indicate success, got: {}", msg);
+            assert!(
+                msg.contains("Flush started") || msg.contains("Job ID"),
+                "Flush message should indicate success, got: {}",
+                msg
+            );
         }
     }
 }

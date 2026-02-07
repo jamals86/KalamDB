@@ -129,7 +129,8 @@ async fn test_scenario_07_collaborative_editing() -> anyhow::Result<()> {
             &format!(
                 "UPDATE {}.documents SET content = 'Updated by user1', version = 2 WHERE id = 1",
                 ns
-            ), None,
+            ),
+            None,
             None,
             None,
         )
@@ -142,7 +143,8 @@ async fn test_scenario_07_collaborative_editing() -> anyhow::Result<()> {
             &format!(
                 "UPDATE {}.documents SET content = 'Updated by user2', version = 3 WHERE id = 1",
                 ns
-            ), None,
+            ),
+            None,
             None,
             None,
         )
@@ -185,7 +187,8 @@ async fn test_scenario_07_collaborative_editing() -> anyhow::Result<()> {
     // Verify presence is visible immediately
     let resp = admin_client
         .execute_query(
-            &format!("SELECT COUNT(*) as cnt FROM {}.presence WHERE doc_id = 1", ns), None,
+            &format!("SELECT COUNT(*) as cnt FROM {}.presence WHERE doc_id = 1", ns),
+            None,
             None,
             None,
         )
@@ -201,7 +204,8 @@ async fn test_scenario_07_collaborative_editing() -> anyhow::Result<()> {
     // Presence should be expired
     let resp = admin_client
         .execute_query(
-            &format!("SELECT COUNT(*) as cnt FROM {}.presence WHERE doc_id = 1", ns), None,
+            &format!("SELECT COUNT(*) as cnt FROM {}.presence WHERE doc_id = 1", ns),
+            None,
             None,
             None,
         )

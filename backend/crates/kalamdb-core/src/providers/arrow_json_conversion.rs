@@ -1,9 +1,9 @@
 use crate::error::KalamDbError;
+use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::scalar::ScalarValue;
 use kalamdb_commons::conversions::arrow_json_conversion as commons;
 use kalamdb_commons::errors::CommonError;
 use kalamdb_commons::models::rows::Row;
-use datafusion::arrow::record_batch::RecordBatch;
-use datafusion::scalar::ScalarValue;
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 
@@ -32,11 +32,6 @@ pub fn row_to_json_map(row: &Row) -> Result<HashMap<String, JsonValue>, KalamDbE
 }
 
 pub use commons::{
-    arrow_value_to_scalar,
-    coerce_rows,
-    coerce_updates,
-    json_rows_to_arrow_batch,
-    json_to_row,
-    json_value_to_scalar,
-    json_value_to_scalar_strict,
+    arrow_value_to_scalar, coerce_rows, coerce_updates, json_rows_to_arrow_batch, json_to_row,
+    json_value_to_scalar, json_value_to_scalar_strict,
 };

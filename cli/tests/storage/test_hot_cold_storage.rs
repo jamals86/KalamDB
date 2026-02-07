@@ -79,8 +79,7 @@ fn test_hot_cold_storage_data_integrity() {
         } else {
             std::time::Duration::from_secs(10)
         };
-        verify_job_completed(&job_id, timeout)
-            .expect("flush job should complete");
+        verify_job_completed(&job_id, timeout).expect("flush job should complete");
     } else {
     }
 
@@ -227,7 +226,6 @@ fn test_duplicate_primary_key_insert_fails() {
             .expect("flush job should complete before cold-storage duplicate check");
     }
 
-
     // === Test 5: Attempt to insert duplicate primary key (cold storage) ===
     let result =
         execute_sql(&format!("INSERT INTO {} (id, name) VALUES (1, 'Charlie')", full_table_name));
@@ -313,7 +311,6 @@ fn test_update_operations_hot_and_cold() {
     // === Test 2: FLUSH to cold storage ===
     execute_sql(&format!("STORAGE FLUSH TABLE {}", full_table_name))
         .expect("STORAGE FLUSH TABLE failed");
-
 
     // === Test 3: UPDATE specific row in cold storage ===
     execute_sql(&format!(

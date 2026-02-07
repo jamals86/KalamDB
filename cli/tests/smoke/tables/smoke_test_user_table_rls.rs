@@ -74,11 +74,14 @@ fn smoke_user_table_rls_isolation() {
                 Err(e) => {
                     attempts += 1;
                     if attempts >= max_attempts {
-                        panic!("Failed to insert user row after {} attempts: {:?}", max_attempts, e);
+                        panic!(
+                            "Failed to insert user row after {} attempts: {:?}",
+                            max_attempts, e
+                        );
                     }
                     eprintln!("Insert attempt {} failed, retrying: {}", attempts, e);
                     std::thread::sleep(std::time::Duration::from_millis(100 * attempts as u64));
-                }
+                },
             }
         }
     }

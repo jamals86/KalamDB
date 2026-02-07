@@ -11,10 +11,7 @@ use http_body::Frame;
 use http_body_util::StreamBody;
 use log::{debug, warn};
 use reqwest::multipart::{Form, Part};
-use std::{
-    sync::Arc,
-    time::Instant,
-};
+use std::{sync::Arc, time::Instant};
 
 /// Handles SQL query execution via HTTP.
 #[derive(Clone)]
@@ -34,7 +31,8 @@ fn build_progress_stream(
     file_index: usize,
     total_files: usize,
     progress_cb: UploadProgressCallback,
-) -> impl futures_util::Stream<Item = std::result::Result<Frame<Bytes>, std::io::Error>> + Send + 'static {
+) -> impl futures_util::Stream<Item = std::result::Result<Frame<Bytes>, std::io::Error>> + Send + 'static
+{
     let chunk_size = 64 * 1024;
     futures_util::stream::unfold(0usize, move |offset| {
         let data = Arc::clone(&data);
@@ -150,8 +148,7 @@ impl QueryExecutor {
         params: Option<Vec<serde_json::Value>>,
         namespace_id: Option<String>,
     ) -> Result<QueryResponse> {
-        self.execute_with_progress(sql, files, params, namespace_id, None)
-            .await
+        self.execute_with_progress(sql, files, params, namespace_id, None).await
     }
 
     /// Execute a SQL query with optional parameters and namespace, with upload progress callback.
@@ -207,10 +204,7 @@ impl QueryExecutor {
                         .file_name(filename)
                         .mime_str(mime_type.as_deref().unwrap_or("application/octet-stream"))
                         .map_err(|e| {
-                            KalamLinkError::ConfigurationError(format!(
-                                "Invalid MIME type: {}",
-                                e
-                            ))
+                            KalamLinkError::ConfigurationError(format!("Invalid MIME type: {}", e))
                         })?;
 
                     form = form.part(field_name, part);
@@ -221,10 +215,7 @@ impl QueryExecutor {
             req_builder = self.auth.apply_to_request(req_builder)?;
 
             let attempt_start = Instant::now();
-            debug!(
-                "[LINK_HTTP] Sending multipart POST to {}",
-                self.sql_url
-            );
+            debug!("[LINK_HTTP] Sending multipart POST to {}", self.sql_url);
 
             let response = req_builder.send().await?;
             let http_duration_ms = attempt_start.elapsed().as_millis();
@@ -292,8 +283,7 @@ impl QueryExecutor {
                         let total_duration_ms = overall_start.elapsed().as_millis();
                         debug!(
                             "[LINK_QUERY] Success: http_ms={} total_ms={}",
-                            http_duration_ms,
-                            total_duration_ms
+                            http_duration_ms, total_duration_ms
                         );
                     }
 
@@ -331,10 +321,7 @@ impl QueryExecutor {
         err.is_timeout() || err.is_connect()
     }
 
-    async fn handle_response(
-        response: reqwest::Response,
-        sql: &str,
-    ) -> Result<QueryResponse> {
+    async fn handle_response(response: reqwest::Response, sql: &str) -> Result<QueryResponse> {
         let status = response.status();
 
         if status.is_success() {
@@ -349,10 +336,7 @@ impl QueryExecutor {
             return Ok(query_response);
         }
 
-        let error_text = response
-            .text()
-            .await
-            .unwrap_or_else(|_| "Unknown error".to_string());
+        let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
 
         // SECURITY: Authentication/Authorization errors (4xx) must return an error,
         // not Ok with error status. This prevents CLI from exiting with success code
@@ -376,10 +360,7 @@ impl QueryExecutor {
             return Ok(json_response);
         }
 
-        warn!(
-            "[LINK_HTTP] Server error: status={} message=\"{}\"",
-            status, error_text
-        );
+        warn!("[LINK_HTTP] Server error: status={} message=\"{}\"", status, error_text);
 
         Err(KalamLinkError::ServerError {
             status_code: status.as_u16(),
@@ -405,13 +386,8 @@ mod tests {
             *last_progress_clone.lock().unwrap() = Some(progress);
         });
 
-        let stream = build_progress_stream(
-            Arc::clone(&data),
-            Arc::clone(&file_name),
-            2,
-            3,
-            progress_cb,
-        );
+        let stream =
+            build_progress_stream(Arc::clone(&data), Arc::clone(&file_name), 2, 3, progress_cb);
 
         futures_util::pin_mut!(stream);
         while let Some(frame) = stream.next().await {

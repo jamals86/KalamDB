@@ -83,11 +83,7 @@ pub fn assert_query_has_results(response: &QueryResponse, context: &str) {
 pub fn assert_row_count(response: &QueryResponse, expected: usize, context: &str) {
     assert_query_success(response, context);
     let actual = response.row_count();
-    assert_eq!(
-        actual, expected,
-        "{}: Expected {} rows, got {}",
-        context, expected, actual
-    );
+    assert_eq!(actual, expected, "{}: Expected {} rows, got {}", context, expected, actual);
 }
 
 /// Get a value from the first row safely, with a default.
@@ -125,10 +121,6 @@ pub fn get_i64_or_default(response: &QueryResponse, column_name: &str, default: 
 /// let response = server.execute_sql("SELECT name FROM users LIMIT 1").await;
 /// let name = get_string_or_default(&response, "name", "unknown");
 /// ```
-pub fn get_string_or_default(
-    response: &QueryResponse,
-    column_name: &str,
-    default: &str,
-) -> String {
+pub fn get_string_or_default(response: &QueryResponse, column_name: &str, default: &str) -> String {
     response.get_string(column_name).unwrap_or_else(|| default.to_string())
 }

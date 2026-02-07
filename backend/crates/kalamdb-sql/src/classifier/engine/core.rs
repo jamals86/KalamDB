@@ -12,12 +12,12 @@ impl SqlStatement {
         F: FnOnce() -> Result<SqlStatementKind, E>,
         E: std::fmt::Display,
     {
-        parser()
-            .map(|kind| Self::new(sql.to_string(), kind))
-            .map_err(|err| StatementClassificationError::InvalidSql {
+        parser().map(|kind| Self::new(sql.to_string(), kind)).map_err(|err| {
+            StatementClassificationError::InvalidSql {
                 sql: sql.to_string(),
                 message: err.to_string(),
-            })
+            }
+        })
     }
 
     /// Classify and parse SQL statement in one pass with authorization check
@@ -241,15 +241,13 @@ impl SqlStatement {
             | ["ALTER", "USER", "TABLE", ..]
             | ["ALTER", "SHARED", "TABLE", ..]
             | ["ALTER", "STREAM", "TABLE", ..] => Self::wrap(sql, || {
-                AlterTableStatement::parse(sql, default_namespace)
-                    .map(SqlStatementKind::AlterTable)
+                AlterTableStatement::parse(sql, default_namespace).map(SqlStatementKind::AlterTable)
             }),
             ["DROP", "USER", "TABLE", ..]
             | ["DROP", "SHARED", "TABLE", ..]
             | ["DROP", "STREAM", "TABLE", ..]
             | ["DROP", "TABLE", ..] => Self::wrap(sql, || {
-                DropTableStatement::parse(sql, default_namespace)
-                    .map(SqlStatementKind::DropTable)
+                DropTableStatement::parse(sql, default_namespace).map(SqlStatementKind::DropTable)
             }),
             ["SHOW", "TABLES", ..] => {
                 // Read-only, allowed for all users
@@ -490,9 +488,9 @@ impl SqlStatement {
             },
 
             // Live query subscriptions - allowed for all users
-            ["SUBSCRIBE", "TO", ..] => Self::wrap(sql, || {
-                SubscribeStatement::parse(sql).map(SqlStatementKind::Subscribe)
-            }),
+            ["SUBSCRIBE", "TO", ..] => {
+                Self::wrap(sql, || SubscribeStatement::parse(sql).map(SqlStatementKind::Subscribe))
+            },
 
             // Topic pub/sub commands
             ["CREATE", "TOPIC", ..] => {
@@ -553,8 +551,7 @@ impl SqlStatement {
             ["ACK", ..] => {
                 // All authenticated users can acknowledge topic offsets
                 Self::wrap(sql, || {
-                    crate::ddl::topic_commands::parse_ack(sql)
-                        .map(SqlStatementKind::AckTopic)
+                    crate::ddl::topic_commands::parse_ack(sql).map(SqlStatementKind::AckTopic)
                 })
             },
 
@@ -572,9 +569,7 @@ impl SqlStatement {
             },
             ["ALTER", "USER", ..] => {
                 // Authorization deferred to handler (users can alter their own account)
-                Self::wrap(sql, || {
-                    AlterUserStatement::parse(sql).map(SqlStatementKind::AlterUser)
-                })
+                Self::wrap(sql, || AlterUserStatement::parse(sql).map(SqlStatementKind::AlterUser))
             },
             ["DROP", "USER", ..] => {
                 if !is_admin {
@@ -583,9 +578,7 @@ impl SqlStatement {
                             .to_string(),
                     ));
                 }
-                Self::wrap(sql, || {
-                    DropUserStatement::parse(sql).map(SqlStatementKind::DropUser)
-                })
+                Self::wrap(sql, || DropUserStatement::parse(sql).map(SqlStatementKind::DropUser))
             },
 
             // DataFusion Meta Commands - Admin only
@@ -823,12 +816,8 @@ mod tests {
     #[test]
     fn classify_select_keeps_original_sql() {
         let sql = "SELECT * FROM default.tasks WHERE id = 1";
-        let stmt = SqlStatement::classify_and_parse(
-            sql,
-            &NamespaceId::new("default"),
-            Role::User,
-        )
-        .expect("SELECT should classify");
+        let stmt = SqlStatement::classify_and_parse(sql, &NamespaceId::new("default"), Role::User)
+            .expect("SELECT should classify");
 
         assert!(matches!(stmt.kind(), SqlStatementKind::Select));
         assert_eq!(stmt.as_str(), sql);

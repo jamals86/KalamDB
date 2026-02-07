@@ -17,14 +17,11 @@ pub async fn cleanup_files(
 ) {
     let file_service = app_context.file_storage_service();
     for file_ref in file_refs.values() {
-        if let Err(err) =
-            file_service.delete_file(file_ref, storage_id, table_type, table_id, user_id).await
+        if let Err(err) = file_service
+            .delete_file(file_ref, storage_id, table_type, table_id, user_id)
+            .await
         {
-            log::warn!(
-                "Failed to cleanup file {} after SQL error: {}",
-                file_ref.id,
-                err
-            );
+            log::warn!("Failed to cleanup file {} after SQL error: {}", file_ref.id, err);
         }
     }
 }

@@ -230,7 +230,8 @@ fn smoke_security_subscription_blocked_for_system_and_private_shared() {
         "CREATE TABLE {} (id BIGINT PRIMARY KEY, name TEXT) WITH (TYPE='SHARED', ACCESS_LEVEL='PUBLIC')",
         full_public
     );
-    execute_sql_as_root_via_client(&create_public_sql).expect("Failed to create public shared table");
+    execute_sql_as_root_via_client(&create_public_sql)
+        .expect("Failed to create public shared table");
 
     execute_sql_as_root_via_client(&format!(
         "CREATE USER {} WITH PASSWORD '{}' ROLE 'user'",
@@ -244,17 +245,11 @@ fn smoke_security_subscription_blocked_for_system_and_private_shared() {
 
     let shared_query = format!("SELECT * FROM {}", full_table);
     let shared_sub = subscribe_as_user(&regular_user, password, &shared_query);
-    assert!(
-        shared_sub.is_err(),
-        "Expected private shared table subscription to fail"
-    );
+    assert!(shared_sub.is_err(), "Expected private shared table subscription to fail");
 
     let public_query = format!("SELECT * FROM {}", full_public);
     let public_sub = subscribe_as_user(&regular_user, password, &public_query);
-    assert!(
-        public_sub.is_err(),
-        "Expected public shared table subscription to fail"
-    );
+    assert!(public_sub.is_err(), "Expected public shared table subscription to fail");
 
     let _ = execute_sql_as_root_via_client(&format!("DROP USER {}", regular_user));
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));

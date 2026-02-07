@@ -218,7 +218,8 @@ impl TableFlush for SharedTableFlushJob {
                 continue;
             }
 
-            let row_data = helpers::add_system_columns(row.fields.clone(), row._seq.as_i64(), false);
+            let row_data =
+                helpers::add_system_columns(row.fields.clone(), row._seq.as_i64(), false);
             rows.push((key_bytes, row_data));
         }
 
@@ -297,13 +298,7 @@ impl TableFlush for SharedTableFlushJob {
         // Step 3: Rename temp file to final location (atomic operation)
         log::debug!("📝 [ATOMIC] Renaming {} -> {}", temp_path, destination_path);
         storage_cached
-            .rename_sync(
-                TableType::Shared,
-                &self.table_id,
-                None,
-                &temp_filename,
-                &batch_filename,
-            )
+            .rename_sync(TableType::Shared, &self.table_id, None, &temp_filename, &batch_filename)
             .into_kalamdb_error("Failed to rename Parquet file to final location")?;
 
         log::info!(
@@ -340,7 +335,10 @@ impl TableFlush for SharedTableFlushJob {
 
         // Compact RocksDB column family after flush to free space and optimize reads
         use kalamdb_store::entity_store::EntityStore;
-        log::debug!("🔧 Compacting RocksDB column family after flush: {}", self.store.partition().name());
+        log::debug!(
+            "🔧 Compacting RocksDB column family after flush: {}",
+            self.store.partition().name()
+        );
         if let Err(e) = self.store.compact() {
             log::warn!("⚠️  Failed to compact partition after flush: {}", e);
             // Non-fatal: flush succeeded, compaction is optimization

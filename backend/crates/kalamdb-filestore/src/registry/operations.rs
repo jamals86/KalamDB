@@ -20,7 +20,11 @@ impl ListResult {
     /// Create a new ListResult
     pub fn new(paths: Vec<String>, prefix: String) -> Self {
         let count = paths.len();
-        Self { paths, count, prefix }
+        Self {
+            paths,
+            count,
+            prefix,
+        }
     }
 
     /// Check if any files were found

@@ -20,8 +20,7 @@ use kalamdb_commons::TableId;
 use crate::app_context::AppContext;
 use crate::applier::error::ApplierError;
 use crate::applier::executor::utils::fileref_util::{
-    collect_file_refs_from_row, collect_replaced_file_refs_for_update,
-    delete_file_refs_best_effort,
+    collect_file_refs_from_row, collect_replaced_file_refs_for_update, delete_file_refs_best_effort,
 };
 use crate::providers::base::{find_row_by_pk, BaseTableProvider};
 use crate::providers::{SharedTableProvider, StreamTableProvider, UserTableProvider};
@@ -64,7 +63,8 @@ impl DmlExecutor {
         // Try UserTableProvider first, then StreamTableProvider
         if let Some(provider) = provider_arc.as_any().downcast_ref::<UserTableProvider>() {
             let row_ids = provider
-                .insert_batch(user_id, rows.to_vec()).await
+                .insert_batch(user_id, rows.to_vec())
+                .await
                 .map_err(|e| ApplierError::Execution(format!("Failed to insert batch: {}", e)))?;
             log::debug!("DmlExecutor: Inserted {} rows into {}", row_ids.len(), table_id);
             Ok(row_ids.len())
@@ -115,7 +115,7 @@ impl DmlExecutor {
                         err
                     );
                     None
-                }
+                },
             };
 
             let replaced_refs = prior_row.as_ref().map_or_else(Vec::new, |row| {
@@ -127,7 +127,9 @@ impl DmlExecutor {
                 )
             });
 
-            let updated = self.update_user_provider(provider, user_id, pk_value, update_row.clone()).await?;
+            let updated = self
+                .update_user_provider(provider, user_id, pk_value, update_row.clone())
+                .await?;
             if updated > 0 {
                 delete_file_refs_best_effort(
                     self.app_context.as_ref(),
@@ -135,11 +137,13 @@ impl DmlExecutor {
                     TableType::User,
                     Some(user_id),
                     &replaced_refs,
-                ).await;
+                )
+                .await;
             }
             Ok(updated)
         } else if let Some(provider) = provider_arc.as_any().downcast_ref::<StreamTableProvider>() {
-            self.update_stream_provider(provider, user_id, pk_value, update_row.clone()).await
+            self.update_stream_provider(provider, user_id, pk_value, update_row.clone())
+                .await
         } else {
             Err(ApplierError::Execution(format!(
                 "Provider type mismatch for user table {}",
@@ -172,11 +176,9 @@ impl DmlExecutor {
             let mut deleted_count = 0;
             for pk_value in pk_values {
                 let file_refs = match find_row_by_pk(provider, Some(user_id), pk_value).await {
-                    Ok(Some((_key, row))) => collect_file_refs_from_row(
-                        self.app_context.as_ref(),
-                        table_id,
-                        &row.fields,
-                    ),
+                    Ok(Some((_key, row))) => {
+                        collect_file_refs_from_row(self.app_context.as_ref(), table_id, &row.fields)
+                    },
                     Ok(None) => Vec::new(),
                     Err(err) => {
                         log::warn!(
@@ -186,11 +188,12 @@ impl DmlExecutor {
                             err
                         );
                         Vec::new()
-                    }
+                    },
                 };
 
                 if provider
-                    .delete_by_id_field(user_id, pk_value).await
+                    .delete_by_id_field(user_id, pk_value)
+                    .await
                     .map_err(|e| ApplierError::Execution(format!("Failed to delete row: {}", e)))?
                 {
                     deleted_count += 1;
@@ -200,7 +203,8 @@ impl DmlExecutor {
                         TableType::User,
                         Some(user_id),
                         &file_refs,
-                    ).await;
+                    )
+                    .await;
                 }
             }
             log::debug!("DmlExecutor: Deleted {} rows from {}", deleted_count, table_id);
@@ -209,7 +213,8 @@ impl DmlExecutor {
             let mut deleted_count = 0;
             for pk_value in pk_values {
                 if provider
-                    .delete_by_id_field(user_id, pk_value).await
+                    .delete_by_id_field(user_id, pk_value)
+                    .await
                     .map_err(|e| ApplierError::Execution(format!("Failed to delete row: {}", e)))?
                 {
                     deleted_count += 1;
@@ -247,7 +252,8 @@ impl DmlExecutor {
         if let Some(provider) = provider_arc.as_any().downcast_ref::<SharedTableProvider>() {
             let system_user = UserId::from("system");
             let row_ids = provider
-                .insert_batch(&system_user, rows.to_vec()).await
+                .insert_batch(&system_user, rows.to_vec())
+                .await
                 .map_err(|e| ApplierError::Execution(format!("Failed to insert batch: {}", e)))?;
             log::debug!("DmlExecutor: Inserted {} shared rows into {}", row_ids.len(), table_id);
             Ok(row_ids.len())
@@ -294,7 +300,7 @@ impl DmlExecutor {
                         err
                     );
                     None
-                }
+                },
             };
 
             let replaced_refs = prior_row.as_ref().map_or_else(Vec::new, |row| {
@@ -307,7 +313,8 @@ impl DmlExecutor {
             });
 
             provider
-                .update_by_id_field(&system_user, pk_value, update_row).await
+                .update_by_id_field(&system_user, pk_value, update_row)
+                .await
                 .map_err(|e| ApplierError::Execution(format!("Failed to update row: {}", e)))?;
 
             delete_file_refs_best_effort(
@@ -316,7 +323,8 @@ impl DmlExecutor {
                 TableType::Shared,
                 None,
                 &replaced_refs,
-            ).await;
+            )
+            .await;
 
             log::debug!("DmlExecutor: Updated 1 shared row in {} (pk={})", table_id, pk_value);
             Ok(1)
@@ -353,11 +361,9 @@ impl DmlExecutor {
 
             for pk_value in pk_values {
                 let file_refs = match find_row_by_pk(provider, None, pk_value).await {
-                    Ok(Some((_key, row))) => collect_file_refs_from_row(
-                        self.app_context.as_ref(),
-                        table_id,
-                        &row.fields,
-                    ),
+                    Ok(Some((_key, row))) => {
+                        collect_file_refs_from_row(self.app_context.as_ref(), table_id, &row.fields)
+                    },
                     Ok(None) => Vec::new(),
                     Err(err) => {
                         log::warn!(
@@ -367,11 +373,12 @@ impl DmlExecutor {
                             err
                         );
                         Vec::new()
-                    }
+                    },
                 };
 
                 if provider
-                    .delete_by_id_field(&system_user, pk_value).await
+                    .delete_by_id_field(&system_user, pk_value)
+                    .await
                     .map_err(|e| ApplierError::Execution(format!("Failed to delete row: {}", e)))?
                 {
                     deleted_count += 1;
@@ -381,7 +388,8 @@ impl DmlExecutor {
                         TableType::Shared,
                         None,
                         &file_refs,
-                    ).await;
+                    )
+                    .await;
                 }
             }
 

@@ -3,8 +3,8 @@
 //! These tests verify that the CLI properly handles authentication failures
 //! and prompts for credentials when stored credentials become invalid.
 
-use std::process::{Command, Stdio};
 use std::path::PathBuf;
+use std::process::{Command, Stdio};
 
 /// Helper to get the CLI binary path
 fn get_cli_binary() -> PathBuf {
@@ -36,7 +36,7 @@ fn test_auth_failure_triggers_prompt() {
         Err(e) => {
             eprintln!("Failed to execute CLI: {}", e);
             return;
-        }
+        },
     };
 
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -51,7 +51,10 @@ fn test_auth_failure_triggers_prompt() {
 
     // Verify it exits with non-zero code on auth failure (when non-interactive)
     if stderr.contains("Authentication failed") || stderr.contains("User not found") {
-        assert!(!output.status.success(), "Should exit with error when auth fails in non-interactive mode");
+        assert!(
+            !output.status.success(),
+            "Should exit with error when auth fails in non-interactive mode"
+        );
     }
 }
 
@@ -59,7 +62,7 @@ fn test_auth_failure_triggers_prompt() {
 fn test_auth_failure_with_cli_username() {
     // When --username is provided, CLI should NOT prompt for credentials again
     // It should just fail with the error
-    
+
     let binary = get_cli_binary();
     if !binary.exists() {
         eprintln!("CLI binary not found at {:?}. Run: cargo build --release", binary);
@@ -67,7 +70,12 @@ fn test_auth_failure_with_cli_username() {
     }
 
     let output = Command::new(&binary)
-        .args(&["--username", "nonexistent_user_xyz_12345", "--password", "wrongpass"])
+        .args(&[
+            "--username",
+            "nonexistent_user_xyz_12345",
+            "--password",
+            "wrongpass",
+        ])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -78,17 +86,17 @@ fn test_auth_failure_with_cli_username() {
         Err(e) => {
             eprintln!("Failed to execute CLI: {}", e);
             return;
-        }
+        },
     };
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    
+
     // Should fail with auth error
     assert!(
         !output.status.success(),
         "Should exit with error when auth fails with explicit username"
     );
-    
+
     // Should NOT prompt for new credentials when --username is provided
     assert!(
         !stderr.contains("Please enter your credentials"),
@@ -122,7 +130,9 @@ fn test_expired_token_flow() {
     println!("\n=== Manual Token Expiry Test ===");
     println!("\nSteps to test expired token handling:");
     println!("1. Login and save credentials:");
-    println!("   cargo run --release -- --username testuser --password testpass --save-credentials");
+    println!(
+        "   cargo run --release -- --username testuser --password testpass --save-credentials"
+    );
     println!("\n2. Wait for the access token to expire (or manually edit the expiry in credentials file)");
     println!("\n3. Run CLI without arguments:");
     println!("   cargo run --release");

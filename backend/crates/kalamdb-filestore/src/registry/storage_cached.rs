@@ -43,11 +43,11 @@ use arrow::datatypes::SchemaRef;
 use arrow::record_batch::RecordBatch;
 use bytes::Bytes;
 use futures_util::StreamExt;
-use kalamdb_system::providers::storages::models::StorageType;
 use kalamdb_commons::models::{TableId, UserId};
 use kalamdb_commons::schemas::TableType;
+use kalamdb_system::providers::storages::models::StorageType;
 use kalamdb_system::Storage;
-use object_store::{ObjectStore, path::Path as ObjectPath};
+use object_store::{path::Path as ObjectPath, ObjectStore};
 use parking_lot::RwLock;
 use std::sync::Arc;
 
@@ -81,7 +81,10 @@ impl StorageCached {
     /// Create a new StorageCached with the given storage configuration.
     ///
     /// The ObjectStore is not built until first access.
-    pub fn new(storage: Storage, timeouts: kalamdb_configs::config::types::RemoteStorageTimeouts) -> Self {
+    pub fn new(
+        storage: Storage,
+        timeouts: kalamdb_configs::config::types::RemoteStorageTimeouts,
+    ) -> Self {
         Self {
             storage: Arc::new(storage),
             timeouts,
@@ -90,7 +93,7 @@ impl StorageCached {
     }
 
     /// Create a new StorageCached with default timeouts.
-    /// 
+    ///
     /// Convenience method that uses RemoteStorageTimeouts::default().
     pub fn with_default_timeouts(storage: Storage) -> Self {
         Self::new(storage, kalamdb_configs::config::types::RemoteStorageTimeouts::default())
@@ -118,15 +121,14 @@ impl StorageCached {
         &self,
         table_type: TableType,
         table_id: &TableId,
-        user_id: Option<&UserId>
+        user_id: Option<&UserId>,
     ) -> String {
         let static_resolved = self.resolve_static(table_type, table_id);
-        
+
         // If user_id is provided, resolve dynamic placeholders
         // Otherwise, return as-is (shared tables don't have {userId} placeholder)
         if let Some(uid) = user_id {
-            TemplateResolver::resolve_dynamic_placeholders(&static_resolved, uid)
-                .into_owned()
+            TemplateResolver::resolve_dynamic_placeholders(&static_resolved, uid).into_owned()
         } else {
             static_resolved
         }
@@ -135,7 +137,11 @@ impl StorageCached {
     /// Get the base directory for this storage.
     fn base_directory(&self) -> &str {
         let trimmed = self.storage.base_directory.trim();
-        if trimmed.is_empty() { "." } else { trimmed }
+        if trimmed.is_empty() {
+            "."
+        } else {
+            trimmed
+        }
     }
 
     /// Join base directory with relative path.
@@ -168,7 +174,7 @@ impl StorageCached {
         &self,
         table_type: TableType,
         table_id: &TableId,
-        user_id: Option<&UserId>
+        user_id: Option<&UserId>,
     ) -> PathResult {
         let relative = self.resolve_full_template(table_type, table_id, user_id);
         let full = self.join_paths(&relative);
@@ -194,11 +200,8 @@ impl StorageCached {
         filename: &str,
     ) -> PathResult {
         let dir_relative = self.resolve_full_template(table_type, table_id, user_id);
-        let file_relative = format!(
-            "{}/{}",
-            dir_relative.trim_end_matches('/'),
-            filename.trim_start_matches('/')
-        );
+        let file_relative =
+            format!("{}/{}", dir_relative.trim_end_matches('/'), filename.trim_start_matches('/'));
         let full = self.join_paths(&file_relative);
         PathResult::new(full, file_relative, self.base_directory().to_string())
     }
@@ -297,7 +300,6 @@ impl StorageCached {
         Ok(ListResult::new(paths, relative))
     }
 
-
     /// Read manifest.json directly (Task 102)
     pub fn read_manifest_sync(
         &self,
@@ -310,10 +312,10 @@ impl StorageCached {
             Err(FilestoreError::NotFound(_)) => return Ok(None),
             Err(e) => return Err(e),
         };
-        
+
         let manifest: serde_json::Value = serde_json::from_slice(&file_content)
             .map_err(|e| FilestoreError::Format(format!("Invalid manifest json: {}", e)))?;
-            
+
         Ok(Some(manifest))
     }
 
@@ -325,12 +327,12 @@ impl StorageCached {
         user_id: Option<&UserId>,
         manifest: &serde_json::Value,
     ) -> Result<()> {
-         let data = serde_json::to_vec_pretty(manifest)
+        let data = serde_json::to_vec_pretty(manifest)
             .map_err(|e| FilestoreError::Format(format!("Failed to serialize manifest: {}", e)))?;
-            
-         // Pass just the filename, not the full path - put_sync will construct the full path
-         self.put_sync(table_type, table_id, user_id, "manifest.json", bytes::Bytes::from(data))?;
-         Ok(())
+
+        // Pass just the filename, not the full path - put_sync will construct the full path
+        self.put_sync(table_type, table_id, user_id, "manifest.json", bytes::Bytes::from(data))?;
+        Ok(())
     }
 
     /// List all files under a table's storage path (sync).
@@ -345,9 +347,7 @@ impl StorageCached {
         let table_id = table_id.clone();
         let user_id = user_id.cloned();
 
-        run_blocking(|| async {
-            self.list(table_type, &table_id, user_id.as_ref()).await
-        })
+        run_blocking(|| async { self.list(table_type, &table_id, user_id.as_ref()).await })
     }
 
     /// List all Parquet files under a table's storage path (sync).
@@ -362,7 +362,8 @@ impl StorageCached {
         let list_result = self.list_sync(table_type, table_id, user_id)?;
         let prefix = list_result.prefix.trim_end_matches('/');
 
-        let mut files: Vec<String> = list_result.paths
+        let mut files: Vec<String> = list_result
+            .paths
             .into_iter()
             .filter_map(|path| {
                 // Extract filename relative to the listed prefix
@@ -373,7 +374,7 @@ impl StorageCached {
                     // Fallback for paths that might be full absolute paths or differently formatted
                     path.rsplit('/').next().unwrap_or(path.as_str())
                 };
-                
+
                 if suffix.ends_with(".parquet") {
                     Some(suffix.to_string())
                 } else {
@@ -381,7 +382,7 @@ impl StorageCached {
                 }
             })
             .collect();
-            
+
         files.sort();
         files.dedup();
         Ok(files)
@@ -398,7 +399,8 @@ impl StorageCached {
         let list_result = self.list(table_type, table_id, user_id).await?;
         let prefix = list_result.prefix.trim_end_matches('/');
 
-        let mut files: Vec<String> = list_result.paths
+        let mut files: Vec<String> = list_result
+            .paths
             .into_iter()
             .filter_map(|path| {
                 let suffix = if path.starts_with(prefix) {
@@ -406,7 +408,7 @@ impl StorageCached {
                 } else {
                     path.rsplit('/').next().unwrap_or(path.as_str())
                 };
-                
+
                 if suffix.ends_with(".parquet") {
                     Some(suffix.to_string())
                 } else {
@@ -414,7 +416,7 @@ impl StorageCached {
                 }
             })
             .collect();
-            
+
         files.sort();
         files.dedup();
         Ok(files)
@@ -431,10 +433,10 @@ impl StorageCached {
         let mut batches = Vec::new();
         for file in files {
             let data = self.get(table_type, table_id, user_id, file).await?.data;
-            let builder = parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder::try_new(data)
-                .map_err(|e| FilestoreError::Format(e.to_string()))?;
-            let reader = builder.build()
-                .map_err(|e| FilestoreError::Format(e.to_string()))?;
+            let builder =
+                parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder::try_new(data)
+                    .map_err(|e| FilestoreError::Format(e.to_string()))?;
+            let reader = builder.build().map_err(|e| FilestoreError::Format(e.to_string()))?;
             for batch in reader {
                 batches.push(batch.map_err(|e| FilestoreError::Format(e.to_string()))?);
             }
@@ -463,18 +465,14 @@ impl StorageCached {
         let path_result = self.get_file_path(table_type, table_id, user_id, filename);
         let object_path = self.to_object_path(&path_result.relative_path)?;
 
-        let result = store
-            .get(&object_path)
-            .await
-            .map_err(|e| match e {
-                object_store::Error::NotFound { .. } => FilestoreError::NotFound(path_result.full_path.clone()),
-                _ => FilestoreError::ObjectStore(e.to_string()),
-            })?;
+        let result = store.get(&object_path).await.map_err(|e| match e {
+            object_store::Error::NotFound { .. } => {
+                FilestoreError::NotFound(path_result.full_path.clone())
+            },
+            _ => FilestoreError::ObjectStore(e.to_string()),
+        })?;
 
-        let bytes = result
-            .bytes()
-            .await
-            .map_err(|e| FilestoreError::ObjectStore(e.to_string()))?;
+        let bytes = result.bytes().await.map_err(|e| FilestoreError::ObjectStore(e.to_string()))?;
 
         Ok(GetResult::new(bytes, path_result.full_path))
     }
@@ -565,8 +563,7 @@ impl StorageCached {
         let parquet_bytes = serialize_to_parquet(schema, batches, bloom_filter_columns)?;
         let size_bytes = parquet_bytes.len() as u64;
 
-        self.put(table_type, table_id, user_id, filename, parquet_bytes)
-            .await?;
+        self.put(table_type, table_id, user_id, filename, parquet_bytes).await?;
 
         Ok(ParquetWriteResult { size_bytes })
     }
@@ -733,14 +730,12 @@ impl StorageCached {
         let object_path = self.to_object_path(&path_result.relative_path)?;
 
         match store.head(&object_path).await {
-            Ok(meta) => Ok(ExistsResult::new(
-                path_result.full_path,
-                true,
-                Some(meta.size as usize),
-            )),
+            Ok(meta) => {
+                Ok(ExistsResult::new(path_result.full_path, true, Some(meta.size as usize)))
+            },
             Err(object_store::Error::NotFound { .. }) => {
                 Ok(ExistsResult::new(path_result.full_path, false, None))
-            }
+            },
             Err(e) => Err(FilestoreError::ObjectStore(e.to_string())),
         }
     }
@@ -797,10 +792,8 @@ impl StorageCached {
     ) -> Result<RenameResult> {
         let store = self.object_store_internal()?;
 
-        let from_path_result =
-            self.get_file_path(table_type, table_id, user_id, from_filename);
-        let to_path_result =
-            self.get_file_path(table_type, table_id, user_id, to_filename);
+        let from_path_result = self.get_file_path(table_type, table_id, user_id, from_filename);
+        let to_path_result = self.get_file_path(table_type, table_id, user_id, to_filename);
 
         let from_object_path = self.to_object_path(&from_path_result.relative_path)?;
         let to_object_path = self.to_object_path(&to_path_result.relative_path)?;
@@ -810,11 +803,7 @@ impl StorageCached {
             .await
             .map_err(|e| FilestoreError::ObjectStore(e.to_string()))?;
 
-        Ok(RenameResult::new(
-            from_path_result.full_path,
-            to_path_result.full_path,
-            true,
-        ))
+        Ok(RenameResult::new(from_path_result.full_path, to_path_result.full_path, true))
     }
 
     /// Rename/move a file (sync).
@@ -832,14 +821,8 @@ impl StorageCached {
         let to_filename = to_filename.to_string();
 
         run_blocking(|| async {
-            self.rename(
-                table_type,
-                &table_id,
-                user_id.as_ref(),
-                &from_filename,
-                &to_filename,
-            )
-            .await
+            self.rename(table_type, &table_id, user_id.as_ref(), &from_filename, &to_filename)
+                .await
         })
     }
 
@@ -889,8 +872,8 @@ impl StorageCached {
 mod tests {
     use super::*;
     use kalamdb_commons::models::ids::StorageId;
-    use kalamdb_system::providers::storages::models::StorageType;
     use kalamdb_commons::{NamespaceId, TableName};
+    use kalamdb_system::providers::storages::models::StorageType;
     use std::env;
 
     fn create_test_storage() -> Storage {
@@ -935,7 +918,10 @@ mod tests {
 
     #[test]
     fn test_get_relative_path_user() {
-        let cached = StorageCached::new(create_test_storage(), kalamdb_configs::config::types::RemoteStorageTimeouts::default());
+        let cached = StorageCached::new(
+            create_test_storage(),
+            kalamdb_configs::config::types::RemoteStorageTimeouts::default(),
+        );
         let table_id = make_table_id("chat", "messages");
         let user_id = UserId::from("alice");
 
@@ -946,11 +932,13 @@ mod tests {
 
     #[test]
     fn test_get_file_path() {
-        let cached = StorageCached::new(create_test_storage(), kalamdb_configs::config::types::RemoteStorageTimeouts::default());
+        let cached = StorageCached::new(
+            create_test_storage(),
+            kalamdb_configs::config::types::RemoteStorageTimeouts::default(),
+        );
         let table_id = make_table_id("myns", "mytable");
 
-        let result =
-            cached.get_file_path(TableType::Shared, &table_id, None, "manifest.json");
+        let result = cached.get_file_path(TableType::Shared, &table_id, None, "manifest.json");
 
         assert!(result.relative_path.ends_with("manifest.json"));
         assert!(result.relative_path.contains("myns/mytable"));
@@ -958,7 +946,10 @@ mod tests {
 
     #[test]
     fn test_get_manifest_path() {
-        let cached = StorageCached::new(create_test_storage(), kalamdb_configs::config::types::RemoteStorageTimeouts::default());
+        let cached = StorageCached::new(
+            create_test_storage(),
+            kalamdb_configs::config::types::RemoteStorageTimeouts::default(),
+        );
         let table_id = make_table_id("myns", "mytable");
 
         let result = cached.get_manifest_path(TableType::Shared, &table_id, None);
@@ -995,9 +986,7 @@ mod tests {
         assert_eq!(put_result.size, content.len());
 
         // Read file back
-        let get_result = cached
-            .get_sync(TableType::Shared, &table_id, None, "data.txt")
-            .unwrap();
+        let get_result = cached.get_sync(TableType::Shared, &table_id, None, "data.txt").unwrap();
         assert_eq!(get_result.data, content);
         assert_eq!(get_result.size, content.len());
 
@@ -1019,32 +1008,18 @@ mod tests {
 
         for file in &files {
             cached
-                .put_sync(
-                    TableType::Shared,
-                    &table_id1,
-                    None,
-                    file,
-                    Bytes::from("test"),
-                )
+                .put_sync(TableType::Shared, &table_id1, None, file, Bytes::from("test"))
                 .unwrap();
         }
 
         // Also write a file in a different namespace to ensure isolation
         let table_id2 = make_table_id("namespace2", "table2");
         cached
-            .put_sync(
-                TableType::Shared,
-                &table_id2,
-                None,
-                "file4.txt",
-                Bytes::from("test"),
-            )
+            .put_sync(TableType::Shared, &table_id2, None, "file4.txt", Bytes::from("test"))
             .unwrap();
 
         // List all files under namespace1/table1
-        let listed = cached
-            .list_sync(TableType::Shared, &table_id1, None)
-            .unwrap();
+        let listed = cached.list_sync(TableType::Shared, &table_id1, None).unwrap();
 
         // Should include namespace1 files
         assert!(listed.count >= 3, "Should list at least 3 files");
@@ -1072,19 +1047,11 @@ mod tests {
 
         // Write file
         cached
-            .put_sync(
-                TableType::Shared,
-                &table_id,
-                None,
-                "metadata.txt",
-                content.clone(),
-            )
+            .put_sync(TableType::Shared, &table_id, None, "metadata.txt", content.clone())
             .unwrap();
 
         // Get metadata
-        let meta = cached
-            .head_sync(TableType::Shared, &table_id, None, "metadata.txt")
-            .unwrap();
+        let meta = cached.head_sync(TableType::Shared, &table_id, None, "metadata.txt").unwrap();
 
         assert_eq!(meta.size, content.len());
         assert!(meta.last_modified_ms.is_some());
@@ -1107,13 +1074,7 @@ mod tests {
 
         // Write file
         cached
-            .put(
-                TableType::Shared,
-                &table_id,
-                None,
-                "delete_me.txt",
-                content,
-            )
+            .put(TableType::Shared, &table_id, None, "delete_me.txt", content)
             .await
             .unwrap();
 
@@ -1163,24 +1124,15 @@ mod tests {
         }
 
         // Verify files exist
-        let listed_before = cached
-            .list(TableType::Shared, &table_id, None)
-            .await
-            .unwrap();
+        let listed_before = cached.list(TableType::Shared, &table_id, None).await.unwrap();
         assert!(listed_before.count >= 3);
 
         // Delete all files under prefix
-        let delete_result = cached
-            .delete_prefix(TableType::Shared, &table_id, None)
-            .await
-            .unwrap();
+        let delete_result = cached.delete_prefix(TableType::Shared, &table_id, None).await.unwrap();
         assert_eq!(delete_result.files_deleted, 3, "Should delete 3 files");
 
         // Verify all deleted
-        let listed_after = cached
-            .list(TableType::Shared, &table_id, None)
-            .await
-            .unwrap();
+        let listed_after = cached.list(TableType::Shared, &table_id, None).await.unwrap();
         assert_eq!(listed_after.count, 0, "All files should be deleted");
 
         let _ = std::fs::remove_dir_all(&temp_dir);
@@ -1198,29 +1150,17 @@ mod tests {
         let table_id = make_table_id("exists", "test");
 
         // Check non-existent prefix
-        let exists_before = cached
-            .prefix_exists(TableType::Shared, &table_id, None)
-            .await
-            .unwrap();
+        let exists_before = cached.prefix_exists(TableType::Shared, &table_id, None).await.unwrap();
         assert!(!exists_before);
 
         // Write a file
         cached
-            .put(
-                TableType::Shared,
-                &table_id,
-                None,
-                "file.txt",
-                Bytes::from("test"),
-            )
+            .put(TableType::Shared, &table_id, None, "file.txt", Bytes::from("test"))
             .await
             .unwrap();
 
         // Check prefix now exists
-        let exists_after = cached
-            .prefix_exists(TableType::Shared, &table_id, None)
-            .await
-            .unwrap();
+        let exists_after = cached.prefix_exists(TableType::Shared, &table_id, None).await.unwrap();
         assert!(exists_after);
 
         let _ = std::fs::remove_dir_all(&temp_dir);
@@ -1239,36 +1179,20 @@ mod tests {
 
         // Write first version
         let put1 = cached
-            .put_sync(
-                TableType::Shared,
-                &table_id,
-                None,
-                "overwrite.txt",
-                Bytes::from("version 1"),
-            )
+            .put_sync(TableType::Shared, &table_id, None, "overwrite.txt", Bytes::from("version 1"))
             .unwrap();
         assert!(put1.is_new);
 
-        let v1 = cached
-            .get_sync(TableType::Shared, &table_id, None, "overwrite.txt")
-            .unwrap();
+        let v1 = cached.get_sync(TableType::Shared, &table_id, None, "overwrite.txt").unwrap();
         assert_eq!(v1.data, Bytes::from("version 1"));
 
         // Overwrite with version 2
         let put2 = cached
-            .put_sync(
-                TableType::Shared,
-                &table_id,
-                None,
-                "overwrite.txt",
-                Bytes::from("version 2"),
-            )
+            .put_sync(TableType::Shared, &table_id, None, "overwrite.txt", Bytes::from("version 2"))
             .unwrap();
         assert!(!put2.is_new); // Should be overwrite
 
-        let v2 = cached
-            .get_sync(TableType::Shared, &table_id, None, "overwrite.txt")
-            .unwrap();
+        let v2 = cached.get_sync(TableType::Shared, &table_id, None, "overwrite.txt").unwrap();
         assert_eq!(v2.data, Bytes::from("version 2"));
 
         let _ = std::fs::remove_dir_all(&temp_dir);
@@ -1308,26 +1232,17 @@ mod tests {
 
         // Write large file
         cached
-            .put_sync(
-                TableType::Shared,
-                &table_id,
-                None,
-                "large.bin",
-                content.clone(),
-            )
+            .put_sync(TableType::Shared, &table_id, None, "large.bin", content.clone())
             .unwrap();
 
         // Read back
-        let read_content = cached
-            .get_sync(TableType::Shared, &table_id, None, "large.bin")
-            .unwrap();
+        let read_content =
+            cached.get_sync(TableType::Shared, &table_id, None, "large.bin").unwrap();
         assert_eq!(read_content.size, 1024 * 1024);
         assert_eq!(read_content.data, content);
 
         // Check metadata
-        let meta = cached
-            .head_sync(TableType::Shared, &table_id, None, "large.bin")
-            .unwrap();
+        let meta = cached.head_sync(TableType::Shared, &table_id, None, "large.bin").unwrap();
         assert_eq!(meta.size, 1024 * 1024);
 
         let _ = std::fs::remove_dir_all(&temp_dir);
@@ -1346,19 +1261,12 @@ mod tests {
 
         // Write to deeply nested path
         cached
-            .put_sync(
-                TableType::Shared,
-                &table_id,
-                None,
-                "c/d/e/f/file.txt",
-                Bytes::from("nested"),
-            )
+            .put_sync(TableType::Shared, &table_id, None, "c/d/e/f/file.txt", Bytes::from("nested"))
             .unwrap();
 
         // Read back
-        let content = cached
-            .get_sync(TableType::Shared, &table_id, None, "c/d/e/f/file.txt")
-            .unwrap();
+        let content =
+            cached.get_sync(TableType::Shared, &table_id, None, "c/d/e/f/file.txt").unwrap();
         assert_eq!(content.data, Bytes::from("nested"));
 
         let _ = std::fs::remove_dir_all(&temp_dir);
@@ -1377,20 +1285,14 @@ mod tests {
         let empty = Bytes::new();
 
         // Write empty file
-        cached
-            .put_sync(TableType::Shared, &table_id, None, "empty.txt", empty)
-            .unwrap();
+        cached.put_sync(TableType::Shared, &table_id, None, "empty.txt", empty).unwrap();
 
         // Read back
-        let content = cached
-            .get_sync(TableType::Shared, &table_id, None, "empty.txt")
-            .unwrap();
+        let content = cached.get_sync(TableType::Shared, &table_id, None, "empty.txt").unwrap();
         assert_eq!(content.size, 0);
 
         // Check metadata
-        let meta = cached
-            .head_sync(TableType::Shared, &table_id, None, "empty.txt")
-            .unwrap();
+        let meta = cached.head_sync(TableType::Shared, &table_id, None, "empty.txt").unwrap();
         assert_eq!(meta.size, 0);
 
         let _ = std::fs::remove_dir_all(&temp_dir);
@@ -1408,9 +1310,7 @@ mod tests {
         let table_id = make_table_id("empty", "prefix");
 
         // List non-existent prefix
-        let files = cached
-            .list_sync(TableType::Shared, &table_id, None)
-            .unwrap();
+        let files = cached.list_sync(TableType::Shared, &table_id, None).unwrap();
         assert_eq!(files.count, 0);
 
         let _ = std::fs::remove_dir_all(&temp_dir);
@@ -1451,18 +1351,11 @@ mod tests {
         let content = Bytes::from(binary_data);
 
         cached
-            .put_sync(
-                TableType::Shared,
-                &table_id,
-                None,
-                "binary.bin",
-                content.clone(),
-            )
+            .put_sync(TableType::Shared, &table_id, None, "binary.bin", content.clone())
             .unwrap();
 
-        let read_content = cached
-            .get_sync(TableType::Shared, &table_id, None, "binary.bin")
-            .unwrap();
+        let read_content =
+            cached.get_sync(TableType::Shared, &table_id, None, "binary.bin").unwrap();
         assert_eq!(read_content.data, content);
         assert_eq!(read_content.size, 256);
 
@@ -1483,46 +1376,37 @@ mod tests {
 
         // Write source file
         cached
-            .put(
-                TableType::Shared,
-                &table_id,
-                None,
-                "original.txt",
-                content.clone(),
-            )
+            .put(TableType::Shared, &table_id, None, "original.txt", content.clone())
             .await
             .unwrap();
 
         // Verify source exists
-        assert!(cached
-            .exists(TableType::Shared, &table_id, None, "original.txt")
-            .await
-            .unwrap()
-            .exists);
+        assert!(
+            cached
+                .exists(TableType::Shared, &table_id, None, "original.txt")
+                .await
+                .unwrap()
+                .exists
+        );
 
         // Rename file
         cached
-            .rename_sync(
-                TableType::Shared,
-                &table_id,
-                None,
-                "original.txt",
-                "renamed.txt",
-            )
+            .rename_sync(TableType::Shared, &table_id, None, "original.txt", "renamed.txt")
             .unwrap();
 
         // Verify destination exists with correct content
-        let read_content = cached
-            .get_sync(TableType::Shared, &table_id, None, "renamed.txt")
-            .unwrap();
+        let read_content =
+            cached.get_sync(TableType::Shared, &table_id, None, "renamed.txt").unwrap();
         assert_eq!(read_content.data, content);
 
         // Verify source no longer exists
-        assert!(!cached
-            .exists(TableType::Shared, &table_id, None, "original.txt")
-            .await
-            .unwrap()
-            .exists);
+        assert!(
+            !cached
+                .exists(TableType::Shared, &table_id, None, "original.txt")
+                .await
+                .unwrap()
+                .exists
+        );
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
@@ -1541,39 +1425,28 @@ mod tests {
 
         // Write source file
         cached
-            .put(
-                TableType::Shared,
-                &table_id,
-                None,
-                "file.txt",
-                content.clone(),
-            )
+            .put(TableType::Shared, &table_id, None, "file.txt", content.clone())
             .await
             .unwrap();
 
         // Rename to different directory
         cached
-            .rename_sync(
-                TableType::Shared,
-                &table_id,
-                None,
-                "file.txt",
-                "subdir/file.txt",
-            )
+            .rename_sync(TableType::Shared, &table_id, None, "file.txt", "subdir/file.txt")
             .unwrap();
 
         // Verify destination exists
-        let read_content = cached
-            .get_sync(TableType::Shared, &table_id, None, "subdir/file.txt")
-            .unwrap();
+        let read_content =
+            cached.get_sync(TableType::Shared, &table_id, None, "subdir/file.txt").unwrap();
         assert_eq!(read_content.data, content);
 
         // Verify source no longer exists
-        assert!(!cached
-            .exists(TableType::Shared, &table_id, None, "file.txt")
-            .await
-            .unwrap()
-            .exists);
+        assert!(
+            !cached
+                .exists(TableType::Shared, &table_id, None, "file.txt")
+                .await
+                .unwrap()
+                .exists
+        );
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
@@ -1616,22 +1489,21 @@ mod tests {
             .unwrap();
 
         // Step 3: Verify final file exists with correct content
-        let read_content = cached
-            .get_sync(TableType::Shared, &table_id, None, "batch-0.parquet")
-            .unwrap();
+        let read_content =
+            cached.get_sync(TableType::Shared, &table_id, None, "batch-0.parquet").unwrap();
         assert_eq!(read_content.data, parquet_content);
 
         // Step 4: Verify temp file is gone
-        assert!(!cached
-            .exists(TableType::Shared, &table_id, None, "batch-0.parquet.tmp")
-            .await
-            .unwrap()
-            .exists);
+        assert!(
+            !cached
+                .exists(TableType::Shared, &table_id, None, "batch-0.parquet.tmp")
+                .await
+                .unwrap()
+                .exists
+        );
 
         // List files - should only see the final file
-        let files = cached
-            .list_sync(TableType::Shared, &table_id, None)
-            .unwrap();
+        let files = cached.list_sync(TableType::Shared, &table_id, None).unwrap();
         assert_eq!(files.count, 1);
         assert!(files.paths[0].contains("batch-0.parquet"));
         assert!(!files.paths[0].contains(".tmp"));
@@ -1656,30 +1528,16 @@ mod tests {
 
         // Write large file
         cached
-            .put_sync(
-                TableType::Shared,
-                &table_id,
-                None,
-                "file.tmp",
-                content.clone(),
-            )
+            .put_sync(TableType::Shared, &table_id, None, "file.tmp", content.clone())
             .unwrap();
 
         // Rename
         cached
-            .rename_sync(
-                TableType::Shared,
-                &table_id,
-                None,
-                "file.tmp",
-                "file.dat",
-            )
+            .rename_sync(TableType::Shared, &table_id, None, "file.tmp", "file.dat")
             .unwrap();
 
         // Verify content is preserved
-        let read_content = cached
-            .get_sync(TableType::Shared, &table_id, None, "file.dat")
-            .unwrap();
+        let read_content = cached.get_sync(TableType::Shared, &table_id, None, "file.dat").unwrap();
         assert_eq!(read_content.size, 1024 * 1024);
         assert_eq!(read_content.data, content);
 
@@ -1747,17 +1605,12 @@ mod tests {
             .unwrap();
 
         // Verify final state
-        let files = cached
-            .list_sync(TableType::Shared, &table_id, None)
-            .unwrap();
+        let files = cached.list_sync(TableType::Shared, &table_id, None).unwrap();
         assert_eq!(files.count, 2); // manifest.json + batch-0.parquet
 
         // No temp files should exist
         let temp_files: Vec<_> = files.paths.iter().filter(|f| f.contains(".tmp")).collect();
-        assert!(
-            temp_files.is_empty(),
-            "No temp files should remain after atomic flush"
-        );
+        assert!(temp_files.is_empty(), "No temp files should remain after atomic flush");
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }

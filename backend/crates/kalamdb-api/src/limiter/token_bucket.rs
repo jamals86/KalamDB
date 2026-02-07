@@ -94,7 +94,6 @@ impl TokenBucket {
     pub fn capacity(&self) -> u32 {
         self.capacity
     }
-
 }
 
 #[cfg(test)]

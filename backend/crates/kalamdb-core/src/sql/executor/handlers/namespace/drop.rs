@@ -5,9 +5,9 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
+use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::helpers::guards::require_admin;
-use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
 use kalamdb_commons::models::{NamespaceId, TableId};
 use kalamdb_sql::ddl::DropNamespaceStatement;
 use std::sync::Arc;
@@ -194,7 +194,8 @@ mod tests {
         };
 
         // Test with non-admin user
-        let ctx = ExecutionContext::new(UserId::new("user"), Role::User, create_test_session_simple());
+        let ctx =
+            ExecutionContext::new(UserId::new("user"), Role::User, create_test_session_simple());
         let result = handler.check_authorization(&stmt, &ctx).await;
 
         assert!(result.is_err());

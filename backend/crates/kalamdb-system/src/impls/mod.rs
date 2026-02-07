@@ -1,6 +1,6 @@
+use crate::{Manifest, ManifestCacheEntry};
 use datafusion::arrow::datatypes::SchemaRef;
 use kalamdb_commons::models::schemas::TableDefinition;
-use crate::{Manifest, ManifestCacheEntry};
 use kalamdb_commons::{StorageId, TableId, UserId};
 use kalamdb_store::StorageError;
 use std::sync::Arc;

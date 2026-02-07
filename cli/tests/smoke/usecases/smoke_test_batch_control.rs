@@ -348,7 +348,6 @@ fn smoke_batch_control_single_batch() {
         execute_sql_as_root_via_client(&insert_sql).expect("insert should succeed");
     }
 
-
     // Subscribe
     let query = format!("SELECT * FROM {}", full);
     let mut listener =
@@ -432,7 +431,6 @@ fn smoke_batch_control_multi_batch() {
         );
         execute_sql_as_root_via_client(&insert_sql).expect("insert should succeed");
     }
-
 
     // Subscribe with small batch size to force multiple batches
     let query = format!("SELECT * FROM {}", full);
@@ -522,7 +520,6 @@ fn smoke_batch_control_empty_table() {
         format!("CREATE TABLE {} (id INT PRIMARY KEY, data VARCHAR) WITH (TYPE = 'USER')", full);
     execute_sql_as_root_via_client(&create_sql).expect("create table should succeed");
 
-
     // Subscribe to empty table
     let query = format!("SELECT * FROM {}", full);
     let mut listener =
@@ -588,7 +585,6 @@ fn smoke_batch_control_data_ordering() {
         );
         execute_sql_as_root_via_client(&insert_sql).expect("insert should succeed");
     }
-
 
     // Subscribe with small batch size
     let query = format!("SELECT * FROM {} ORDER BY id", full);

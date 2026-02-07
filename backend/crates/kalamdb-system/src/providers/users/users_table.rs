@@ -4,10 +4,10 @@
 //! - TableDefinition: Source of truth for columns, types, comments
 //! - Arrow schema: Derived from TableDefinition, memoized via OnceLock
 
+use crate::providers::users::models::User;
 use datafusion::arrow::datatypes::SchemaRef;
 use kalamdb_commons::schemas::TableDefinition;
 use kalamdb_commons::SystemTable;
-use crate::providers::users::models::User;
 use std::sync::OnceLock;
 
 /// System users table schema definition

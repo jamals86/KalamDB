@@ -196,7 +196,6 @@ async fn test_regular_user_cannot_create_namespace() {
         return;
     }
 
-
     // Try to create namespace as regular user
     let result =
         execute_sql_via_http_as("testuser", "testpass", "CREATE NAMESPACE user_test_ns").await;
@@ -266,11 +265,9 @@ async fn test_cli_admin_operations() {
 
     // Execute statements individually to avoid batch execution bug with Raft
     // Step 1: Create namespace
-    let _ = execute_sql_via_http_as_root(&format!(
-        "CREATE NAMESPACE IF NOT EXISTS {}",
-        namespace_name
-    ))
-    .await;
+    let _ =
+        execute_sql_via_http_as_root(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace_name))
+            .await;
 
     // Step 2: Create table
     let _ = execute_sql_via_http_as_root(&format!(
@@ -284,8 +281,7 @@ async fn test_cli_admin_operations() {
         "INSERT INTO {}.users (id, name) VALUES ('{}', 'Alice')",
         namespace_name, unique_id
     );
-    let stdout = execute_sql_as_root_via_cli(&insert_sql)
-        .expect("CLI insert should succeed");
+    let stdout = execute_sql_as_root_via_cli(&insert_sql).expect("CLI insert should succeed");
 
     assert!(
         stdout.contains("1 row") || stdout.contains("Query OK"),
@@ -294,18 +290,10 @@ async fn test_cli_admin_operations() {
     );
 
     // Step 4: Select to verify
-    let select_sql = format!(
-        "SELECT * FROM {}.users WHERE id = '{}'",
-        namespace_name, unique_id
-    );
-    let stdout = execute_sql_as_root_via_cli(&select_sql)
-        .expect("CLI select should succeed");
+    let select_sql = format!("SELECT * FROM {}.users WHERE id = '{}'", namespace_name, unique_id);
+    let stdout = execute_sql_as_root_via_cli(&select_sql).expect("CLI select should succeed");
 
-    assert!(
-        stdout.contains("Alice"),
-        "SELECT should show inserted data. stdout: {}",
-        stdout
-    );
+    assert!(stdout.contains("Alice"), "SELECT should show inserted data. stdout: {}", stdout);
 
     // Cleanup
     let _ =
@@ -371,11 +359,9 @@ async fn test_cli_flush_table() {
     }
 
     // Execute STORAGE FLUSH TABLE via CLI
-    let stdout = execute_sql_as_root_via_cli(&format!(
-        "STORAGE FLUSH TABLE {}.metrics",
-        namespace_name
-    ))
-    .expect("STORAGE FLUSH TABLE should succeed");
+    let stdout =
+        execute_sql_as_root_via_cli(&format!("STORAGE FLUSH TABLE {}.metrics", namespace_name))
+            .expect("STORAGE FLUSH TABLE should succeed");
 
     // Verify the flush command was accepted (should show job info or success message)
     assert!(

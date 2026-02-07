@@ -5,11 +5,11 @@
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
-use kalamdb_system::providers::storages::models::StorageType;
 use kalamdb_commons::models::{NamespaceId, StorageId, TableAccess, TableId, UserId};
 use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::Role;
 use kalamdb_sql::ddl::CreateTableStatement;
+use kalamdb_system::providers::storages::models::StorageType;
 use std::sync::Arc;
 
 /// Unified CREATE TABLE handler for all table types (USER/SHARED/STREAM)
@@ -71,20 +71,15 @@ pub fn create_table(
 
     // Build definition (validates, checks existence, builds)
     let table_def = build_table_definition(app_context.clone(), &stmt, user_id, user_role)?;
-    let table_id = TableId::from_strings(
-        table_def.namespace_id.as_str(),
-        table_def.table_name.as_str(),
-    );
+    let table_id =
+        TableId::from_strings(table_def.namespace_id.as_str(), table_def.table_name.as_str());
     let schema_registry = app_context.schema_registry();
 
     // Handle existing table (IF NOT EXISTS)
     if schema_registry.get(&table_id).is_some() {
         // Ensure provider is registered even if table exists
         if schema_registry.get_provider(&table_id).is_none() {
-            log::info!(
-                "Table {} exists but provider missing - registering now",
-                table_id
-            );
+            log::info!("Table {} exists but provider missing - registering now", table_id);
             schema_registry.put(table_def)?;
         }
 
@@ -135,7 +130,7 @@ fn log_table_created(
                 table_def.columns.len(),
                 pk_col
             );
-        }
+        },
         TableOptions::Shared(opts) => {
             log::info!(
                 "✅ SHARED TABLE created: {} | storage: {} | columns: {} | pk: {} | access_level: {:?} | system_columns: [_seq, _deleted]",
@@ -145,7 +140,7 @@ fn log_table_created(
                 pk_col,
                 opts.access_level
             );
-        }
+        },
         TableOptions::Stream(opts) => {
             log::info!(
                 "✅ STREAM TABLE created: {} | columns: {} | TTL: {}s | system_columns: none",
@@ -153,10 +148,14 @@ fn log_table_created(
                 table_def.columns.len(),
                 opts.ttl_seconds
             );
-        }
+        },
         TableOptions::System(_) => {
-            log::info!("✅ SYSTEM TABLE created: {} | columns: {}", table_id, table_def.columns.len());
-        }
+            log::info!(
+                "✅ SYSTEM TABLE created: {} | columns: {}",
+                table_id,
+                table_def.columns.len()
+            );
+        },
     }
 }
 

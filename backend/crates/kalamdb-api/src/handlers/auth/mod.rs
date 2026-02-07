@@ -24,8 +24,8 @@ pub use me::me_handler;
 pub use refresh::refresh_handler;
 pub use setup::{server_setup_handler, setup_status_handler};
 
-use actix_web::HttpResponse;
 use actix_web::HttpRequest;
+use actix_web::HttpResponse;
 use kalamdb_auth::{extract_auth_token, AuthError};
 use models::AuthErrorResponse;
 
@@ -92,9 +92,7 @@ pub(crate) fn extract_bearer_or_cookie_token(req: &HttpRequest) -> Result<String
         }
 
         if token.is_empty() {
-            return Err(AuthError::MalformedAuthorization(
-                "Bearer token missing".to_string(),
-            ));
+            return Err(AuthError::MalformedAuthorization("Bearer token missing".to_string()));
         }
 
         return Ok(token.to_string());

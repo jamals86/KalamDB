@@ -2,7 +2,7 @@
 // - PathResolver module (removed)
 // - CachedTableData::with_storage_config (removed)
 // - stats() returns (usize, usize) not (usize, usize, usize, f64)
-// 
+//
 // Integration tests in backend/tests/ are comprehensive and passing.
 // These unit tests need to be rewritten to match current API.
 

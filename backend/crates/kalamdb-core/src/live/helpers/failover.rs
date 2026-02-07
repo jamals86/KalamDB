@@ -145,7 +145,8 @@ impl LiveQueryFailoverHandler {
         );
 
         // Get subscriptions for the failed node
-        let subscriptions = self.live_queries_provider.list_by_node(failed_node_id).map_err(|e| {
+        let subscriptions =
+            self.live_queries_provider.list_by_node(failed_node_id).map_err(|e| {
                 KalamDbError::io_message(format!("Failed to list node subscriptions: {}", e))
             })?;
 

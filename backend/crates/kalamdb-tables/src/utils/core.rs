@@ -4,10 +4,8 @@ use kalamdb_commons::websocket::ChangeNotification;
 use kalamdb_commons::TableId;
 use kalamdb_filestore::StorageRegistry;
 use kalamdb_system::{
-    ClusterCoordinator as ClusterCoordinatorTrait,
-    NotificationService as NotificationServiceTrait,
-    ManifestService as ManifestServiceTrait,
-    SchemaRegistry as SchemaRegistryTrait,
+    ClusterCoordinator as ClusterCoordinatorTrait, ManifestService as ManifestServiceTrait,
+    NotificationService as NotificationServiceTrait, SchemaRegistry as SchemaRegistryTrait,
 };
 use std::sync::Arc;
 
@@ -85,7 +83,9 @@ impl TableProviderCore {
     }
 
     /// LiveQueryManager accessor
-    pub fn notification_service(&self) -> &Arc<dyn NotificationServiceTrait<Notification = ChangeNotification>> {
+    pub fn notification_service(
+        &self,
+    ) -> &Arc<dyn NotificationServiceTrait<Notification = ChangeNotification>> {
         &self.notification_service
     }
 

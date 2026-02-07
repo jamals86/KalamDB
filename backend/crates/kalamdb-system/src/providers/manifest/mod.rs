@@ -10,10 +10,10 @@ pub mod manifest_table;
 pub mod models;
 
 pub use manifest_indexes::create_manifest_indexes;
+pub use manifest_provider::{InMemoryChecker, ManifestTableProvider};
+pub use manifest_store::{new_manifest_store, ManifestStore};
+pub use manifest_table::ManifestTableSchema;
 pub use models::{
     ColumnStats, FileRef, FileSubfolderState, Manifest, ManifestCacheEntry, SegmentMetadata,
     SegmentStatus, SyncState,
 };
-pub use manifest_provider::{InMemoryChecker, ManifestTableProvider};
-pub use manifest_store::{new_manifest_store, ManifestStore};
-pub use manifest_table::ManifestTableSchema;

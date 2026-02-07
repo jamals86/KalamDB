@@ -9,8 +9,8 @@ use crate::sql::context::{ExecutionContext, ExecutionResult};
 use datafusion::execution::context::SessionContext;
 use kalamdb_commons::models::StorageId;
 use kalamdb_filestore::StorageHealthService;
-use kalamdb_system::StorageType;
 use kalamdb_sql::CreateStorageStatement;
+use kalamdb_system::StorageType;
 use std::sync::Arc;
 
 /// Execute CREATE STORAGE statement
@@ -126,9 +126,7 @@ pub async fn execute_create_storage(
         .into_kalamdb_error("Storage connectivity check failed")?;
 
     if !connectivity.connected {
-        let error = connectivity
-            .error
-            .unwrap_or_else(|| "Unknown connectivity error".to_string());
+        let error = connectivity.error.unwrap_or_else(|| "Unknown connectivity error".to_string());
         return Err(KalamDbError::InvalidOperation(format!(
             "Storage connectivity check failed (latency {} ms): {}",
             connectivity.latency_ms, error

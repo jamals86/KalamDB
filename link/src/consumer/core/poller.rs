@@ -1,9 +1,9 @@
 use crate::auth::AuthProvider;
-use crate::consumer::models::CommitResult;
 use crate::consumer::models::consumer_record::ConsumerRecordWire;
-use crate::error::{KalamLinkError, Result};
 use crate::consumer::models::AutoOffsetReset;
+use crate::consumer::models::CommitResult;
 use crate::consumer::utils::backoff::jittered_exponential_backoff;
+use crate::error::{KalamLinkError, Result};
 use log::{debug, warn};
 use serde::{Deserialize, Serialize};
 use serde_json;
@@ -49,11 +49,7 @@ impl ConsumerPoller {
             req_builder = self.auth.apply_to_request(req_builder)?;
 
             let attempt_start = std::time::Instant::now();
-            debug!(
-                "[LINK_CONSUMER] consume request attempt {}/{}",
-                attempt + 1,
-                max_retries + 1
-            );
+            debug!("[LINK_CONSUMER] consume request attempt {}/{}", attempt + 1, max_retries + 1);
 
             match req_builder.send().await {
                 Ok(response) => {
@@ -75,14 +71,12 @@ impl ConsumerPoller {
                                     status_code: status.as_u16(),
                                     message: body.to_string(),
                                 });
-                            }
+                            },
                         }
                     }
 
-                    let error_text = response
-                        .text()
-                        .await
-                        .unwrap_or_else(|_| "Unknown error".to_string());
+                    let error_text =
+                        response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
 
                     if status.is_client_error() {
                         return Err(KalamLinkError::ServerError {
@@ -150,10 +144,7 @@ impl ConsumerPoller {
             });
         }
 
-        let error_text = response
-            .text()
-            .await
-            .unwrap_or_else(|_| "Unknown error".to_string());
+        let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
 
         Err(KalamLinkError::ServerError {
             status_code: status.as_u16(),

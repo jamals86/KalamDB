@@ -147,8 +147,8 @@ fn test_cli_verbose_output() {
         return;
     }
 
-    let output = execute_sql_as_root_via_cli("SELECT 1 as verbose_test")
-        .expect("Verbose mode should work");
+    let output =
+        execute_sql_as_root_via_cli("SELECT 1 as verbose_test").expect("Verbose mode should work");
     assert!(output.contains("1"), "Verbose output should include result: {}", output);
 }
 

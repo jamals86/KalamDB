@@ -5,8 +5,8 @@
 
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
-use crate::sql::executor::handlers::TypedStatementHandler;
 use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
+use crate::sql::executor::handlers::TypedStatementHandler;
 use async_trait::async_trait;
 use kalamdb_sql::ShowManifestStatement;
 use kalamdb_system::providers::ManifestTableProvider;

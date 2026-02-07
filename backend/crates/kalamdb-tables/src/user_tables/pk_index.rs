@@ -55,7 +55,11 @@ impl UserTablePkIndex {
     }
 
     /// Build a prefix for scanning all versions of a PK for a specific user.
-    pub fn build_prefix_for_pk(&self, user_id: &kalamdb_commons::UserId, pk_value: &ScalarValue) -> Vec<u8> {
+    pub fn build_prefix_for_pk(
+        &self,
+        user_id: &kalamdb_commons::UserId,
+        pk_value: &ScalarValue,
+    ) -> Vec<u8> {
         let pk_bytes = scalar_value_to_bytes(pk_value);
         encode_prefix(&(user_id.as_str(), pk_bytes))
     }
@@ -83,11 +87,7 @@ impl IndexDefinition<UserTableRowId, UserTableRow> for UserTablePkIndex {
         let pk_value = entity.fields.get(&self.pk_field_name)?;
 
         let pk_bytes = scalar_value_to_bytes(pk_value);
-        Some(encode_key(&(
-            primary_key.user_id.as_str(),
-            pk_bytes,
-            primary_key.seq.as_i64(),
-        )))
+        Some(encode_key(&(primary_key.user_id.as_str(), pk_bytes, primary_key.seq.as_i64())))
     }
 
     fn filter_to_prefix(&self, filter: &datafusion::logical_expr::Expr) -> Option<Vec<u8>> {
@@ -137,7 +137,11 @@ mod tests {
     use kalamdb_commons::models::UserId;
     use std::collections::BTreeMap;
 
-    fn create_test_row(user_id: &UserId, seq: i64, id_value: i64) -> (UserTableRowId, UserTableRow) {
+    fn create_test_row(
+        user_id: &UserId,
+        seq: i64,
+        id_value: i64,
+    ) -> (UserTableRowId, UserTableRow) {
         let mut values = BTreeMap::new();
         values.insert("id".to_string(), ScalarValue::Int64(Some(id_value)));
         values.insert("name".to_string(), ScalarValue::Utf8(Some("Test".to_string())));
@@ -162,7 +166,8 @@ mod tests {
         assert!(index_key.is_some());
 
         let index_key = index_key.unwrap();
-        let prefix = index.build_prefix_for_pk(&UserId::new("user1"), &ScalarValue::Int64(Some(42)));
+        let prefix =
+            index.build_prefix_for_pk(&UserId::new("user1"), &ScalarValue::Int64(Some(42)));
         assert!(index_key.starts_with(&prefix));
     }
 
@@ -178,7 +183,8 @@ mod tests {
         let index_key1 = index.extract_key(&key1, &row1).unwrap();
         let index_key2 = index.extract_key(&key2, &row2).unwrap();
 
-        let prefix = index.build_prefix_for_pk(&UserId::new("user1"), &ScalarValue::Int64(Some(42)));
+        let prefix =
+            index.build_prefix_for_pk(&UserId::new("user1"), &ScalarValue::Int64(Some(42)));
         assert!(index_key1.starts_with(&prefix));
         assert!(index_key2.starts_with(&prefix));
         assert_ne!(index_key1, index_key2);
@@ -215,8 +221,10 @@ mod tests {
         let index_key1 = index.extract_key(&key1, &row1).unwrap();
         let index_key2 = index.extract_key(&key2, &row2).unwrap();
 
-        let prefix1 = index.build_prefix_for_pk(&UserId::new("user1"), &ScalarValue::Int64(Some(42)));
-        let prefix2 = index.build_prefix_for_pk(&UserId::new("user1"), &ScalarValue::Int64(Some(99)));
+        let prefix1 =
+            index.build_prefix_for_pk(&UserId::new("user1"), &ScalarValue::Int64(Some(42)));
+        let prefix2 =
+            index.build_prefix_for_pk(&UserId::new("user1"), &ScalarValue::Int64(Some(99)));
         assert!(index_key1.starts_with(&prefix1));
         assert!(index_key2.starts_with(&prefix2));
         assert_ne!(prefix1, prefix2);

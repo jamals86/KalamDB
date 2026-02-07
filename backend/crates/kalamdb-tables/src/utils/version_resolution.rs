@@ -2,7 +2,6 @@
 //
 // Selects MAX(_seq) per row_id with tie-breaker: FastStorage (priority=2) > Parquet (priority=1)
 
-use kalamdb_commons::conversions::arrow_json_conversion::arrow_value_to_scalar;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use crate::{SharedTableRow, UserTableRow};
@@ -13,6 +12,7 @@ use datafusion::arrow::compute;
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::constants::SystemColumnNames;
+use kalamdb_commons::conversions::arrow_json_conversion::arrow_value_to_scalar;
 use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::rows::Row;
 use std::collections::{BTreeMap, HashMap};

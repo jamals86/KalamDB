@@ -52,9 +52,7 @@ pub fn init_test_app_context() -> Arc<TestDb> {
             "data/storage".to_string(),
             test_config,
         );
-        TEST_APP_CONTEXT
-            .set(app_ctx)
-            .expect("TEST_APP_CONTEXT already initialized");
+        TEST_APP_CONTEXT.set(app_ctx).expect("TEST_APP_CONTEXT already initialized");
     });
 
     // One-time bootstrap that matches server startup behavior closely:
@@ -115,7 +113,8 @@ pub fn init_test_app_context() -> Arc<TestDb> {
                     storage_id,
                     storage_name: "Local Storage".to_string(),
                     description: Some("Default local storage for tests".to_string()),
-                    storage_type: kalamdb_system::providers::storages::models::StorageType::Filesystem,
+                    storage_type:
+                        kalamdb_system::providers::storages::models::StorageType::Filesystem,
                     base_directory: "/tmp/kalamdb_test".to_string(),
                     credentials: None,
                     config_json: None,
@@ -133,10 +132,7 @@ pub fn init_test_app_context() -> Arc<TestDb> {
 
 pub fn test_app_context() -> Arc<AppContext> {
     init_test_app_context();
-    TEST_APP_CONTEXT
-        .get()
-        .expect("TEST_APP_CONTEXT should be initialized")
-        .clone()
+    TEST_APP_CONTEXT.get().expect("TEST_APP_CONTEXT should be initialized").clone()
 }
 
 /// Returns an AppContext without starting Raft bootstrap.

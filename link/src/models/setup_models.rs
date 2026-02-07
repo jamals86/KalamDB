@@ -34,7 +34,7 @@ impl ServerSetupRequest {
 }
 
 /// Server setup response body
-/// 
+///
 /// After successful setup, the user must login separately to obtain tokens.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerSetupResponse {

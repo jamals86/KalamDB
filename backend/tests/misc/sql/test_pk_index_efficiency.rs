@@ -68,7 +68,10 @@ async fn test_user_table_pk_index_update() {
             .execute_sql_as_user(
                 &format!(
                     "INSERT INTO {}.user_items (id, name, value) VALUES ({}, 'item_{}', {})",
-                    ns, i, i, i * 10
+                    ns,
+                    i,
+                    i,
+                    i * 10
                 ),
                 "test_user",
             )
@@ -127,7 +130,10 @@ async fn test_user_table_pk_index_update() {
             .execute_sql_as_user(
                 &format!(
                     "INSERT INTO {}.user_items (id, name, value) VALUES ({}, 'item_{}', {})",
-                    ns, i, i, i * 10
+                    ns,
+                    i,
+                    i,
+                    i * 10
                 ),
                 "test_user",
             )
@@ -206,9 +212,8 @@ async fn test_shared_table_pk_index_update() {
     // Setup namespace and shared table
     fixtures::create_namespace(&server, &ns).await;
     let create_response = server
-        .execute_sql(
-            &format!(
-                r#"CREATE TABLE {}.products (
+        .execute_sql(&format!(
+            r#"CREATE TABLE {}.products (
                 id INT PRIMARY KEY,
                 name TEXT,
                 price INT
@@ -216,9 +221,8 @@ async fn test_shared_table_pk_index_update() {
                 TYPE = 'SHARED',
                 STORAGE_ID = 'local'
             )"#,
-                ns
-            ),
-        )
+            ns
+        ))
         .await;
     assert_eq!(
         create_response.status,
@@ -232,7 +236,10 @@ async fn test_shared_table_pk_index_update() {
         let insert_response = server
             .execute_sql(&format!(
                 "INSERT INTO {}.products (id, name, price) VALUES ({}, 'product_{}', {})",
-                ns, i, i, i * 100
+                ns,
+                i,
+                i,
+                i * 100
             ))
             .await;
         assert_eq!(
@@ -272,7 +279,10 @@ async fn test_shared_table_pk_index_update() {
         let insert_response = server
             .execute_sql(&format!(
                 "INSERT INTO {}.products (id, name, price) VALUES ({}, 'product_{}', {})",
-                ns, i, i, i * 100
+                ns,
+                i,
+                i,
+                i * 100
             ))
             .await;
         assert_eq!(
@@ -366,10 +376,7 @@ async fn test_user_table_pk_index_select() {
     for i in 1..=500 {
         server
             .execute_sql_as_user(
-                &format!(
-                    "INSERT INTO {}.records (id, data) VALUES ({}, 'data_for_{}')",
-                    ns, i, i
-                ),
+                &format!("INSERT INTO {}.records (id, data) VALUES ({}, 'data_for_{}')", ns, i, i),
                 "select_user",
             )
             .await;
@@ -400,10 +407,7 @@ async fn test_user_table_pk_index_select() {
     for i in 501..=2500 {
         server
             .execute_sql_as_user(
-                &format!(
-                    "INSERT INTO {}.records (id, data) VALUES ({}, 'data_for_{}')",
-                    ns, i, i
-                ),
+                &format!("INSERT INTO {}.records (id, data) VALUES ({}, 'data_for_{}')", ns, i, i),
                 "select_user",
             )
             .await;
@@ -483,10 +487,7 @@ async fn test_user_table_pk_index_delete() {
     for i in 1..=300 {
         server
             .execute_sql_as_user(
-                &format!(
-                    "INSERT INTO {}.items (id, description) VALUES ({}, 'desc_{}')",
-                    ns, i, i
-                ),
+                &format!("INSERT INTO {}.items (id, description) VALUES ({}, 'desc_{}')", ns, i, i),
                 "delete_user",
             )
             .await;
@@ -495,10 +496,7 @@ async fn test_user_table_pk_index_delete() {
     // Measure DELETE by PK latency with 300 rows
     let start_300 = Instant::now();
     let delete_response = server
-        .execute_sql_as_user(
-            &format!("DELETE FROM {}.items WHERE id = 150", ns),
-            "delete_user",
-        )
+        .execute_sql_as_user(&format!("DELETE FROM {}.items WHERE id = 150", ns), "delete_user")
         .await;
     let latency_300_rows = start_300.elapsed();
 
@@ -511,10 +509,7 @@ async fn test_user_table_pk_index_delete() {
 
     // Verify the delete worked
     let select_response = server
-        .execute_sql_as_user(
-            &format!("SELECT id FROM {}.items WHERE id = 150", ns),
-            "delete_user",
-        )
+        .execute_sql_as_user(&format!("SELECT id FROM {}.items WHERE id = 150", ns), "delete_user")
         .await;
     assert_eq!(select_response.status, ResponseStatus::Success);
     let rows = select_response.rows_as_maps();
@@ -524,10 +519,7 @@ async fn test_user_table_pk_index_delete() {
     for i in 301..=1500 {
         server
             .execute_sql_as_user(
-                &format!(
-                    "INSERT INTO {}.items (id, description) VALUES ({}, 'desc_{}')",
-                    ns, i, i
-                ),
+                &format!("INSERT INTO {}.items (id, description) VALUES ({}, 'desc_{}')", ns, i, i),
                 "delete_user",
             )
             .await;
@@ -536,10 +528,7 @@ async fn test_user_table_pk_index_delete() {
     // Measure DELETE by PK latency with ~1500 rows
     let start_1500 = Instant::now();
     let delete_response = server
-        .execute_sql_as_user(
-            &format!("DELETE FROM {}.items WHERE id = 750", ns),
-            "delete_user",
-        )
+        .execute_sql_as_user(&format!("DELETE FROM {}.items WHERE id = 750", ns), "delete_user")
         .await;
     let latency_1500_rows = start_1500.elapsed();
 
@@ -616,7 +605,10 @@ async fn test_user_table_pk_index_update_after_flush() {
             .execute_sql_as_user(
                 &format!(
                     "INSERT INTO {}.user_items (id, name, value) VALUES ({}, 'item_{}', {})",
-                    ns, i, i, i * 10
+                    ns,
+                    i,
+                    i,
+                    i * 10
                 ),
                 "flush_user",
             )
@@ -666,7 +658,10 @@ async fn test_user_table_pk_index_update_after_flush() {
 
     // Debug: Check COUNT in a separate query
     let total_count = server
-        .execute_sql_as_user(&format!("SELECT COUNT(*) as cnt FROM {}.user_items", ns), "flush_user")
+        .execute_sql_as_user(
+            &format!("SELECT COUNT(*) as cnt FROM {}.user_items", ns),
+            "flush_user",
+        )
         .await;
     println!("📊 Total COUNT: {:?}", total_count.results);
 
@@ -754,9 +749,8 @@ async fn test_shared_table_pk_index_update_after_flush() {
     // Setup namespace and shared table
     fixtures::create_namespace(&server, &ns).await;
     let create_response = server
-        .execute_sql(
-            &format!(
-                r#"CREATE TABLE {}.products (
+        .execute_sql(&format!(
+            r#"CREATE TABLE {}.products (
                 id INT PRIMARY KEY,
                 name TEXT,
                 price INT
@@ -764,9 +758,8 @@ async fn test_shared_table_pk_index_update_after_flush() {
                 TYPE = 'SHARED',
                 STORAGE_ID = 'local'
             )"#,
-                ns
-            ),
-        )
+            ns
+        ))
         .await;
     assert_eq!(
         create_response.status,
@@ -780,7 +773,10 @@ async fn test_shared_table_pk_index_update_after_flush() {
         let insert_response = server
             .execute_sql(&format!(
                 "INSERT INTO {}.products (id, name, price) VALUES ({}, 'product_{}', {})",
-                ns, i, i, i * 100
+                ns,
+                i,
+                i,
+                i * 100
             ))
             .await;
         assert_eq!(
@@ -802,8 +798,7 @@ async fn test_shared_table_pk_index_update_after_flush() {
     assert_eq!(rows[0].get("price").unwrap().as_i64().unwrap(), 2500);
 
     // Flush the table to Parquet (cold storage)
-    let flush_result =
-        execute_shared_flush_synchronously(&server, &ns, "products").await;
+    let flush_result = execute_shared_flush_synchronously(&server, &ns, "products").await;
     assert!(flush_result.is_ok(), "Shared table flush failed: {:?}", flush_result.err());
     let flush_stats = flush_result.unwrap();
     println!("✅ Flushed {} rows to cold storage (shared table)", flush_stats.rows_flushed);

@@ -62,7 +62,7 @@ impl ErrorCode {
     pub fn is_not_leader(&self) -> bool {
         matches!(self, ErrorCode::NotLeader)
     }
-    
+
     /// Get the string representation of the error code
     #[inline]
     pub fn as_str(&self) -> &'static str {
@@ -475,8 +475,8 @@ mod tests {
 
     #[test]
     fn test_query_result_with_as_user() {
-        let result = QueryResult::with_message("ok".to_string())
-            .with_as_user(Username::from("alice"));
+        let result =
+            QueryResult::with_message("ok".to_string()).with_as_user(Username::from("alice"));
 
         assert_eq!(result.as_user, Username::from("alice"));
     }

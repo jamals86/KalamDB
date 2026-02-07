@@ -1,18 +1,11 @@
 import { Download, File, FileText, Image, Video, Music, Archive } from 'lucide-react';
-
-interface FileRef {
-  id: string;
-  sub: string;
-  name: string;
-  mime: string;
-  size: number;
-  sha256?: string;
-}
+import { FileRef } from 'kalam-link';
 
 interface FileDisplayProps {
-  value: FileRef;
+  value: unknown;
   namespace?: string;
   tableName?: string;
+  baseUrl?: string; // KalamDB server URL (defaults to window.location.origin)
 }
 
 function getFileIcon(mime: string) {
@@ -26,50 +19,46 @@ function getFileIcon(mime: string) {
   return <File className="h-4 w-4 text-gray-400" />;
 }
 
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-}
-
-export function FileDisplay({ value, namespace, tableName }: FileDisplayProps) {
-  if (!value || typeof value !== 'object') {
+export function FileDisplay({ value, namespace, tableName, baseUrl }: FileDisplayProps) {
+  // Parse FileRef from value (handles JSON string or object)
+  const fileRef = FileRef.from(value);
+  
+  if (!fileRef) {
     return <span className="text-muted-foreground italic">null</span>;
   }
 
-  const { id, sub, name, mime, size } = value;
+  const serverUrl = baseUrl || window.location.origin;
 
   // Build download URL if we have table context
   const downloadUrl = namespace && tableName 
-    ? `/files/${namespace}/${tableName}/${sub}/${id}`
+    ? fileRef.getDownloadUrl(serverUrl, namespace, tableName)
     : null;
 
   return (
     <div className="flex items-center gap-2 max-w-[280px]">
-      {getFileIcon(mime)}
+      {getFileIcon(fileRef.mime)}
       {downloadUrl ? (
         <a
           href={downloadUrl}
-          download={name}
+          download={fileRef.name}
           className="text-blue-600 dark:text-blue-400 hover:underline truncate flex-1"
           onClick={(e) => e.stopPropagation()}
-          title={`${name} (${formatSize(size)})`}
+          title={`${fileRef.name} (${fileRef.formatSize()})`}
         >
-          {name}
+          {fileRef.name}
         </a>
       ) : (
-        <span className="truncate flex-1" title={`${name} (${formatSize(size)})`}>
-          {name}
+        <span className="truncate flex-1" title={`${fileRef.name} (${fileRef.formatSize()})`}>
+          {fileRef.name}
         </span>
       )}
       <span className="text-xs text-muted-foreground shrink-0">
-        {formatSize(size)}
+        {fileRef.formatSize()}
       </span>
       {downloadUrl && (
         <a
           href={downloadUrl}
-          download={name}
+          download={fileRef.name}
           className="text-muted-foreground hover:text-foreground shrink-0"
           onClick={(e) => e.stopPropagation()}
           title="Download"

@@ -16,7 +16,7 @@
 use crate::error::SystemError;
 use crate::system_table_trait::SystemTableProviderExt;
 use crate::SystemTable;
-use kalamdb_commons::{KSerializable, storage::Partition};
+use kalamdb_commons::{storage::Partition, KSerializable};
 use kalamdb_store::{
     entity_store::{CrossUserTableStore, EntityStore},
     StorageBackend, StorageKey,

@@ -201,14 +201,18 @@ impl CLIConfiguration {
         if !path.exists() {
             // Create default configuration
             let default_config = Self::default();
-            
+
             // Try to save default config to disk
             // If this fails (e.g., permissions), we'll still return the default config
             // but log the warning
             if let Err(e) = default_config.save(path) {
-                eprintln!("Warning: Could not create default config file at {}: {}", path.display(), e);
+                eprintln!(
+                    "Warning: Could not create default config file at {}: {}",
+                    path.display(),
+                    e
+                );
             }
-            
+
             return Ok(default_config);
         }
 

@@ -28,6 +28,13 @@ await client.connect();
 const result = await client.query('SELECT 1 AS ok');
 console.log(result.results[0]);
 
+// Parameterized query ($1, $2, ...)
+const filtered = await client.query(
+  'SELECT * FROM app.messages WHERE conversation_id = $1 AND is_deleted = $2',
+  ['conv_42', false],
+);
+console.log(filtered.results[0]);
+
 // Subscribe (returns an unsubscribe function)
 const unsubscribe = await client.subscribe('app.messages', (event) => {
   switch (event.type) {

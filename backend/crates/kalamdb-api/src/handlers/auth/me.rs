@@ -3,13 +3,11 @@
 //! GET /v1/api/auth/me - Returns information about the currently authenticated user
 
 use actix_web::{web, HttpRequest, HttpResponse};
-use kalamdb_auth::{
-    authenticate, extract_client_ip_secure, AuthRequest, UserRepository,
-};
+use kalamdb_auth::{authenticate, extract_client_ip_secure, AuthRequest, UserRepository};
 use std::sync::Arc;
 
-use super::{extract_bearer_or_cookie_token, map_auth_error_to_response};
 use super::models::{AuthErrorResponse, UserInfo};
+use super::{extract_bearer_or_cookie_token, map_auth_error_to_response};
 
 /// GET /v1/api/auth/me
 ///

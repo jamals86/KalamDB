@@ -89,12 +89,7 @@ impl ExecutionContext {
         base_session_context: Arc<SessionContext>,
     ) -> Self {
         Self {
-            auth_session: AuthSession::with_audit_info(
-                user_id,
-                user_role,
-                request_id,
-                ip_address,
-            ),
+            auth_session: AuthSession::with_audit_info(user_id, user_role, request_id, ip_address),
             namespace_id: None,
             base_session_context,
             session_context_cache: Arc::new(OnceCell::new()),
@@ -201,15 +196,23 @@ impl ExecutionContext {
         // Inject current user_id, role, and read_context into session config extensions
         // TableProviders will read this during scan() for per-user filtering and leader check
         // Use the read_context from this ExecutionContext (defaults to Client)
-        session_state
-            .config_mut()
-            .options_mut()
-            .extensions
-            .insert(SessionUserContext::new(
-                self.auth_session.user_id().clone(),
-                self.auth_session.role(),
-                self.auth_session.read_context(),
-            ));
+        let session_user_context =
+            if let Some(username) = self.auth_session.user_context().username.clone() {
+                SessionUserContext::with_username(
+                    self.auth_session.user_id().clone(),
+                    username,
+                    self.auth_session.role(),
+                    self.auth_session.read_context(),
+                )
+            } else {
+                SessionUserContext::new(
+                    self.auth_session.user_id().clone(),
+                    self.auth_session.role(),
+                    self.auth_session.read_context(),
+                )
+            };
+
+        session_state.config_mut().options_mut().extensions.insert(session_user_context);
 
         // Override default_schema if namespace_id is set on this context
         if let Some(ref ns) = self.namespace_id {
@@ -228,10 +231,8 @@ impl ExecutionContext {
         }
 
         // Register CURRENT_USER_ID() function with user_id and role
-        let current_user_id_fn = CurrentUserIdFunction::with_user(
-            self.user_id(),
-            self.auth_session.role(),
-        );
+        let current_user_id_fn =
+            CurrentUserIdFunction::with_user(self.user_id(), self.auth_session.role());
         ctx.register_udf(ScalarUDF::from(current_user_id_fn));
 
         // Register CURRENT_ROLE() function with current role
@@ -306,9 +307,7 @@ impl ExecutionContext {
     /// # Returns
     /// SessionContext with user_id and role injected, ready for query execution
     pub fn create_session_with_user(&self) -> SessionContext {
-        let session = self
-            .session_context_cache
-            .get_or_init(|| self.build_user_session_context());
+        let session = self.session_context_cache.get_or_init(|| self.build_user_session_context());
 
         session.clone()
     }
@@ -317,7 +316,11 @@ impl ExecutionContext {
     ///
     /// This bypasses the cached session and is used for impersonation reads where
     /// user_id/role must differ from the actor's authenticated session.
-    pub fn create_session_with_effective_user(&self, user_id: &UserId, role: Role) -> SessionContext {
+    pub fn create_session_with_effective_user(
+        &self,
+        user_id: &UserId,
+        role: Role,
+    ) -> SessionContext {
         self.build_effective_session_context(user_id.clone(), role)
     }
 

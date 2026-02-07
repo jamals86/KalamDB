@@ -90,7 +90,7 @@ mod cluster_common {
     pub fn query_count_on_url(base_url: &str, sql: &str) -> i64 {
         // Try the specified URL first, but if we get NOT_LEADER error, retry on leader
         let result = query_count_on_url_internal(base_url, sql);
-        
+
         // If we got a NOT_LEADER error, retry on the leader (extracted from error or cached)
         if let Err(err_msg) = result {
             if is_leader_error(&err_msg) {
@@ -105,7 +105,7 @@ mod cluster_common {
             }
             panic!("Cluster count query failed: {}", err_msg);
         }
-        
+
         result.unwrap()
     }
 
@@ -116,18 +116,29 @@ mod cluster_common {
         let response = cluster_runtime()
             .block_on(async move { client.execute_query(&sql, None, None, None).await })
             .map_err(|e| e.to_string())?;
-            
+
         if !response.success() {
             return Err(response_error_message(&response));
         }
-        
-        let result = response.results.first().ok_or_else(|| "Missing query result for count".to_string())?;
-        let rows = result.rows.as_ref().and_then(|rows| rows.first()).ok_or_else(|| "Missing count row".to_string())?;
+
+        let result = response
+            .results
+            .first()
+            .ok_or_else(|| "Missing query result for count".to_string())?;
+        let rows = result
+            .rows
+            .as_ref()
+            .and_then(|rows| rows.first())
+            .ok_or_else(|| "Missing count row".to_string())?;
         let value = rows.first().ok_or_else(|| "Missing count column".to_string())?;
         let unwrapped = extract_typed_value(value);
         match unwrapped {
-            serde_json::Value::String(s) => s.parse::<i64>().map_err(|e| format!("Invalid count string: {}", e)),
-            serde_json::Value::Number(n) => n.as_i64().ok_or_else(|| "Invalid count number".to_string()),
+            serde_json::Value::String(s) => {
+                s.parse::<i64>().map_err(|e| format!("Invalid count string: {}", e))
+            },
+            serde_json::Value::Number(n) => {
+                n.as_i64().ok_or_else(|| "Invalid count number".to_string())
+            },
             other => Err(format!("Unexpected count value: {}", other)),
         }
     }
@@ -145,11 +156,7 @@ mod cluster_common {
 
     fn is_read_only_sql(sql: &str) -> bool {
         let trimmed = sql.trim_start();
-        let first_token = trimmed
-            .split_whitespace()
-            .next()
-            .unwrap_or("")
-            .to_ascii_uppercase();
+        let first_token = trimmed.split_whitespace().next().unwrap_or("").to_ascii_uppercase();
         matches!(
             first_token.as_str(),
             "SELECT" | "SHOW" | "DESCRIBE" | "DESC" | "EXPLAIN" | "WITH"
@@ -295,9 +302,9 @@ mod cluster_common {
             for url in urls.iter().cloned() {
                 let client = create_cluster_client(&url);
                 let sql_value = sql.clone();
-                match cluster_runtime()
-                    .block_on(async move { client.execute_query(&sql_value, None, None, None).await })
-                {
+                match cluster_runtime().block_on(async move {
+                    client.execute_query(&sql_value, None, None, None).await
+                }) {
                     Ok(response) => {
                         if !response.success() {
                             let err_msg = response_error_message(&response);
@@ -308,11 +315,9 @@ mod cluster_common {
                             return Err(err_msg);
                         }
                         wait_for_cluster_after_sql(&sql);
-                        return Ok(
-                            serde_json::to_string_pretty(&response)
-                                .unwrap_or_else(|_| format!("{:?}", response)),
-                        );
-                    }
+                        return Ok(serde_json::to_string_pretty(&response)
+                            .unwrap_or_else(|_| format!("{:?}", response)));
+                    },
                     Err(e) => {
                         let msg = e.to_string();
                         if is_retryable_cluster_error_for_sql(&sql, &msg) {
@@ -320,10 +325,9 @@ mod cluster_common {
                             continue;
                         }
                         return Err(msg);
-                    }
+                    },
                 }
             }
-
         }
 
         Err(last_err.unwrap_or_else(|| "All cluster nodes failed".to_string()))
@@ -335,7 +339,10 @@ mod cluster_common {
     }
 
     /// Execute SQL on a specific cluster node and return the structured response without leader routing
-    pub fn execute_on_node_response_raw(base_url: &str, sql: &str) -> Result<QueryResponse, String> {
+    pub fn execute_on_node_response_raw(
+        base_url: &str,
+        sql: &str,
+    ) -> Result<QueryResponse, String> {
         execute_on_node_response_internal(base_url, sql, false)
     }
 
@@ -352,9 +359,9 @@ mod cluster_common {
             for url in urls.iter().cloned() {
                 let client = create_cluster_client(&url);
                 let sql_value = sql.clone();
-                match cluster_runtime()
-                    .block_on(async move { client.execute_query(&sql_value, None, None, None).await })
-                {
+                match cluster_runtime().block_on(async move {
+                    client.execute_query(&sql_value, None, None, None).await
+                }) {
                     Ok(response) => {
                         if !response.success() {
                             let err_msg = response_error_message(&response);
@@ -366,7 +373,7 @@ mod cluster_common {
                         }
                         wait_for_cluster_after_sql(&sql);
                         return Ok(response);
-                    }
+                    },
                     Err(e) => {
                         let msg = e.to_string();
                         if is_retryable_cluster_error_for_sql(&sql, &msg) {
@@ -374,10 +381,9 @@ mod cluster_common {
                             continue;
                         }
                         return Err(msg);
-                    }
+                    },
                 }
             }
-
         }
 
         Err(last_err.unwrap_or_else(|| "All cluster nodes failed".to_string()))
@@ -418,9 +424,9 @@ mod cluster_common {
             for url in urls.iter().cloned() {
                 let client = create_cluster_client_with_auth(&url, username, password);
                 let sql_value = sql.clone();
-                match cluster_runtime()
-                    .block_on(async move { client.execute_query(&sql_value, None, None, None).await })
-                {
+                match cluster_runtime().block_on(async move {
+                    client.execute_query(&sql_value, None, None, None).await
+                }) {
                     Ok(response) => {
                         if !response.success() {
                             let err_msg = response_error_message(&response);
@@ -431,11 +437,9 @@ mod cluster_common {
                             return Err(err_msg);
                         }
                         wait_for_cluster_after_sql(&sql);
-                        return Ok(
-                            serde_json::to_string_pretty(&response)
-                                .unwrap_or_else(|_| format!("{:?}", response)),
-                        );
-                    }
+                        return Ok(serde_json::to_string_pretty(&response)
+                            .unwrap_or_else(|_| format!("{:?}", response)));
+                    },
                     Err(e) => {
                         let msg = e.to_string();
                         if is_retryable_cluster_error_for_sql(&sql, &msg) {
@@ -443,10 +447,9 @@ mod cluster_common {
                             continue;
                         }
                         return Err(msg);
-                    }
+                    },
                 }
             }
-
         }
 
         Err(last_err.unwrap_or_else(|| "All cluster nodes failed".to_string()))
@@ -487,9 +490,9 @@ mod cluster_common {
             for url in urls.iter().cloned() {
                 let client = create_cluster_client_with_auth(&url, username, password);
                 let sql_value = sql.clone();
-                match cluster_runtime()
-                    .block_on(async move { client.execute_query(&sql_value, None, None, None).await })
-                {
+                match cluster_runtime().block_on(async move {
+                    client.execute_query(&sql_value, None, None, None).await
+                }) {
                     Ok(response) => {
                         if !response.success() {
                             let err_msg = response_error_message(&response);
@@ -501,7 +504,7 @@ mod cluster_common {
                         }
                         wait_for_cluster_after_sql(&sql);
                         return Ok(response);
-                    }
+                    },
                     Err(e) => {
                         let msg = e.to_string();
                         if is_retryable_cluster_error_for_sql(&sql, &msg) {
@@ -509,10 +512,9 @@ mod cluster_common {
                             continue;
                         }
                         return Err(msg);
-                    }
+                    },
                 }
             }
-
         }
 
         Err(last_err.unwrap_or_else(|| "All cluster nodes failed".to_string()))
@@ -622,7 +624,6 @@ mod cluster_common {
             if all_visible {
                 return true;
             }
-
         }
 
         false
@@ -647,7 +648,6 @@ mod cluster_common {
             if all_visible {
                 return true;
             }
-
         }
 
         false
@@ -674,7 +674,6 @@ mod cluster_common {
             if all_match {
                 return true;
             }
-
         }
 
         false
@@ -709,7 +708,6 @@ mod cluster_common {
                     }
                 }
             }
-
         }
 
         None
@@ -724,10 +722,7 @@ mod cluster_common {
     ) -> bool {
         let start = std::time::Instant::now();
         let timeout = extend_job_timeout(timeout);
-        let sql = format!(
-            "SELECT status FROM system.jobs WHERE job_id = '{}' LIMIT 1",
-            job_id
-        );
+        let sql = format!("SELECT status FROM system.jobs WHERE job_id = '{}' LIMIT 1", job_id);
 
         while start.elapsed() < timeout {
             if let Ok(response) = execute_on_node_response(base_url, &sql) {
@@ -747,7 +742,6 @@ mod cluster_common {
                     }
                 }
             }
-
         }
 
         false

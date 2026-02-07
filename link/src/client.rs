@@ -87,8 +87,7 @@ impl KalamLinkClient {
         params: Option<Vec<serde_json::Value>>,
         namespace_id: Option<&str>,
     ) -> Result<QueryResponse> {
-        self.execute_query_with_progress(sql, files, params, namespace_id, None)
-            .await
+        self.execute_query_with_progress(sql, files, params, namespace_id, None).await
     }
 
     /// Execute a SQL query with optional files and a progress callback for uploads.
@@ -313,18 +312,24 @@ impl KalamLinkClient {
         if !status.is_success() {
             let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
             log::debug!("[LOGIN] Login failed: {}", error_text);
-            
+
             // Check for setup_required error (HTTP 428 Precondition Required)
             if status.as_u16() == 428 {
                 // Parse the error message for more details
-                let message = if let Ok(error_json) = serde_json::from_str::<serde_json::Value>(&error_text) {
-                    error_json.get("message").and_then(|m| m.as_str()).unwrap_or("Server requires initial setup").to_string()
+                let message = if let Ok(error_json) =
+                    serde_json::from_str::<serde_json::Value>(&error_text)
+                {
+                    error_json
+                        .get("message")
+                        .and_then(|m| m.as_str())
+                        .unwrap_or("Server requires initial setup")
+                        .to_string()
                 } else {
                     "Server requires initial setup".to_string()
                 };
                 return Err(KalamLinkError::SetupRequired(message));
             }
-            
+
             return Err(KalamLinkError::AuthenticationError(format!(
                 "Login failed ({}): {}",
                 status, error_text
@@ -383,11 +388,7 @@ impl KalamLinkClient {
             .await?;
 
         let status = response.status();
-        log::debug!(
-            "[REFRESH] HTTP response received in {:?}, status={}",
-            start.elapsed(),
-            status
-        );
+        log::debug!("[REFRESH] HTTP response received in {:?}, status={}", start.elapsed(), status);
 
         if !status.is_success() {
             let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
@@ -434,11 +435,7 @@ impl KalamLinkClient {
         let response = self.http_client.get(&url).send().await?;
 
         let status = response.status();
-        log::debug!(
-            "[SETUP] Status check response in {:?}, status={}",
-            start.elapsed(),
-            status
-        );
+        log::debug!("[SETUP] Status check response in {:?}, status={}", start.elapsed(), status);
 
         if !status.is_success() {
             let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
@@ -492,15 +489,11 @@ impl KalamLinkClient {
         let response = self.http_client.post(&url).json(&request).send().await?;
 
         let status = response.status();
-        log::debug!(
-            "[SETUP] Setup response in {:?}, status={}",
-            start.elapsed(),
-            status
-        );
+        log::debug!("[SETUP] Setup response in {:?}, status={}", start.elapsed(), status);
 
         if !status.is_success() {
             let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-            
+
             // Check for specific error types
             if status.as_u16() == 409 {
                 return Err(KalamLinkError::ConfigurationError(
@@ -515,7 +508,7 @@ impl KalamLinkClient {
                     }
                 }
             }
-            
+
             return Err(KalamLinkError::ServerError {
                 status_code: status.as_u16(),
                 message: error_text,

@@ -2,8 +2,8 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
-use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
+use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use kalamdb_commons::models::TopicId;
 use kalamdb_sql::ddl::AddTopicSourceStatement;
 use kalamdb_system::providers::topics::models::TopicRoute;
@@ -34,10 +34,8 @@ impl TypedStatementHandler<AddTopicSourceStatement> for AddTopicSourceHandler {
         let topics_provider = self.app_context.system_tables().topics();
 
         // Check if topic exists and get it
-        let mut topic = topics_provider
-            .get_topic_by_id_async(&topic_id)
-            .await?
-            .ok_or_else(|| {
+        let mut topic =
+            topics_provider.get_topic_by_id_async(&topic_id).await?.ok_or_else(|| {
                 KalamDbError::NotFound(format!("Topic '{}' does not exist", statement.topic_name))
             })?;
 
@@ -51,10 +49,8 @@ impl TypedStatementHandler<AddTopicSourceStatement> for AddTopicSourceHandler {
         };
 
         // Check for duplicate route (same table + operation)
-        let duplicate = topic
-            .routes
-            .iter()
-            .any(|r| r.table_id == route.table_id && r.op == route.op);
+        let duplicate =
+            topic.routes.iter().any(|r| r.table_id == route.table_id && r.op == route.op);
 
         if duplicate {
             return Err(KalamDbError::AlreadyExists(format!(

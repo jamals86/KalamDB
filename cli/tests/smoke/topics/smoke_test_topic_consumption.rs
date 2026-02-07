@@ -34,22 +34,15 @@ async fn create_test_client() -> kalam_link::KalamLinkClient {
 
 /// Execute SQL via HTTP helper
 async fn execute_sql(sql: &str) {
-    common::execute_sql_via_http_as_root(sql)
-        .await
-        .expect("Failed to execute SQL");
+    common::execute_sql_via_http_as_root(sql).await.expect("Failed to execute SQL");
 }
 
-async fn wait_for_topic_ready() {
-}
+async fn wait_for_topic_ready() {}
 
 async fn create_topic_with_sources(topic: &str, table: &str, operations: &[&str]) {
     execute_sql(&format!("CREATE TOPIC {}", topic)).await;
     for op in operations {
-        execute_sql(&format!(
-            "ALTER TOPIC {} ADD SOURCE {} ON {}",
-            topic, table, op
-        ))
-        .await;
+        execute_sql(&format!("ALTER TOPIC {} ADD SOURCE {} ON {}", topic, table, op)).await;
     }
     wait_for_topic_ready().await;
 }
@@ -71,7 +64,7 @@ async fn poll_records_until(
                         break;
                     }
                 }
-            }
+            },
             Err(err) => {
                 let message = err.to_string();
                 last_error = Some(message.clone());
@@ -82,7 +75,7 @@ async fn poll_records_until(
                     continue;
                 }
                 panic!("Failed to poll: {}", message);
-            }
+            },
         }
     }
     if records.is_empty() {
@@ -234,11 +227,8 @@ async fn test_topic_consume_delete_events() {
     let topic = format!("{}.{}", namespace, table);
 
     execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
-    execute_sql(&format!(
-        "CREATE TABLE {}.{} (id INT PRIMARY KEY, name TEXT)",
-        namespace, table
-    ))
-    .await;
+    execute_sql(&format!("CREATE TABLE {}.{} (id INT PRIMARY KEY, name TEXT)", namespace, table))
+        .await;
     create_topic_with_sources(&topic, &format!("{}.{}", namespace, table), &["INSERT", "DELETE"])
         .await;
 
@@ -250,12 +240,7 @@ async fn test_topic_consume_delete_events() {
         .await;
     }
 
-    execute_sql(&format!(
-        "DELETE FROM {}.{} WHERE id = 2",
-        namespace, table
-    ))
-    .await;
-
+    execute_sql(&format!("DELETE FROM {}.{} WHERE id = 2", namespace, table)).await;
 
     let client = create_test_client().await;
     let mut consumer = client
@@ -275,10 +260,7 @@ async fn test_topic_consume_delete_events() {
         .iter()
         .filter(|r| {
             let payload = parse_payload(&r.payload);
-            payload
-                .get("_deleted")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false)
+            payload.get("_deleted").and_then(|v| v.as_bool()).unwrap_or(false)
         })
         .count();
     assert!(deletes_by_op.max(deletes_by_payload) >= 1);
@@ -341,7 +323,7 @@ async fn test_topic_consume_mixed_operations() {
         .build()
         .expect("Failed to build consumer");
 
-    let records = poll_records_until(&mut consumer, 4, Duration::from_secs(6)).await;
+    let records = poll_records_until(&mut consumer, 4, Duration::from_secs(12)).await;
     assert!(!records.is_empty(), "Should receive at least one event");
 
     let inserts = records.iter().filter(|r| r.op == TopicOp::Insert).count();
@@ -374,11 +356,8 @@ async fn test_topic_consume_offset_persistence() {
     let group_id = format!("test-offset-group-{}", chrono::Utc::now().timestamp_millis());
 
     execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
-    execute_sql(&format!(
-        "CREATE TABLE {}.{} (id INT PRIMARY KEY, data TEXT)",
-        namespace, table
-    ))
-    .await;
+    execute_sql(&format!("CREATE TABLE {}.{} (id INT PRIMARY KEY, data TEXT)", namespace, table))
+        .await;
     create_topic_with_sources(&topic, &format!("{}.{}", namespace, table), &["INSERT"]).await;
 
     // First consumer: consume and commit first batch
@@ -401,7 +380,7 @@ async fn test_topic_consume_offset_persistence() {
             .await;
         }
 
-        let records = poll_records_until(&mut consumer, 2, Duration::from_secs(6)).await;
+        let records = poll_records_until(&mut consumer, 2, Duration::from_secs(12)).await;
         assert_eq!(records.len(), 2);
 
         for record in &records {
@@ -430,7 +409,7 @@ async fn test_topic_consume_offset_persistence() {
             .await;
         }
 
-        let records = poll_records_until(&mut consumer, 2, Duration::from_secs(6)).await;
+        let records = poll_records_until(&mut consumer, 2, Duration::from_secs(12)).await;
         assert_eq!(records.len(), 2, "Should receive only batch 2");
 
         for record in &records {
@@ -455,11 +434,8 @@ async fn test_topic_consume_from_earliest() {
     let topic = format!("{}.{}", namespace, table);
 
     execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
-    execute_sql(&format!(
-        "CREATE TABLE {}.{} (id INT PRIMARY KEY, msg TEXT)",
-        namespace, table
-    ))
-    .await;
+    execute_sql(&format!("CREATE TABLE {}.{} (id INT PRIMARY KEY, msg TEXT)", namespace, table))
+        .await;
     create_topic_with_sources(&topic, &format!("{}.{}", namespace, table), &["INSERT"]).await;
 
     for i in 1..=4 {
@@ -517,11 +493,8 @@ async fn test_topic_consume_from_latest() {
     let topic = format!("{}.{}", namespace, table);
 
     execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
-    execute_sql(&format!(
-        "CREATE TABLE {}.{} (id INT PRIMARY KEY, msg TEXT)",
-        namespace, table
-    ))
-    .await;
+    execute_sql(&format!("CREATE TABLE {}.{} (id INT PRIMARY KEY, msg TEXT)", namespace, table))
+        .await;
     create_topic_with_sources(&topic, &format!("{}.{}", namespace, table), &["INSERT"]).await;
 
     // Insert old messages

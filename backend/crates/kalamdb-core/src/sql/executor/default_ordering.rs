@@ -74,8 +74,7 @@ async fn get_default_sort_columns(
     let schema_registry = app_context.schema_registry();
 
     // Try to get table definition
-    if let Ok(Some(table_def)) = schema_registry.get_table_if_exists_async(table_id).await
-    {
+    if let Ok(Some(table_def)) = schema_registry.get_table_if_exists_async(table_id).await {
         let pk_columns = table_def.get_primary_key_columns();
 
         if !pk_columns.is_empty() {

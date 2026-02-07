@@ -260,9 +260,11 @@ impl CommandParser {
                                 group = Some(args[i + 1].to_string());
                                 i += 2;
                             } else {
-                                return Err(CLIError::ParseError("--group requires a value".into()));
+                                return Err(CLIError::ParseError(
+                                    "--group requires a value".into(),
+                                ));
                             }
-                        }
+                        },
                         "--from" => {
                             if i + 1 < args.len() {
                                 from = Some(args[i + 1].to_string());
@@ -270,7 +272,7 @@ impl CommandParser {
                             } else {
                                 return Err(CLIError::ParseError("--from requires a value".into()));
                             }
-                        }
+                        },
                         "--limit" => {
                             if i + 1 < args.len() {
                                 limit = args[i + 1].parse::<usize>().ok();
@@ -281,9 +283,11 @@ impl CommandParser {
                                 }
                                 i += 2;
                             } else {
-                                return Err(CLIError::ParseError("--limit requires a value".into()));
+                                return Err(CLIError::ParseError(
+                                    "--limit requires a value".into(),
+                                ));
                             }
-                        }
+                        },
                         "--timeout" => {
                             if i + 1 < args.len() {
                                 timeout = args[i + 1].parse::<u64>().ok();
@@ -294,14 +298,17 @@ impl CommandParser {
                                 }
                                 i += 2;
                             } else {
-                                return Err(CLIError::ParseError("--timeout requires a value".into()));
+                                return Err(CLIError::ParseError(
+                                    "--timeout requires a value".into(),
+                                ));
                             }
-                        }
+                        },
                         _ => {
-                            return Err(CLIError::ParseError(
-                                format!("Unknown option for \\consume: {}", args[i]),
-                            ));
-                        }
+                            return Err(CLIError::ParseError(format!(
+                                "Unknown option for \\consume: {}",
+                                args[i]
+                            )));
+                        },
                     }
                 }
 
@@ -312,7 +319,8 @@ impl CommandParser {
                     limit,
                     timeout,
                 })
-            }            _ => Ok(Command::Unknown(command.to_string())),
+            },
+            _ => Ok(Command::Unknown(command.to_string())),
         }
     }
 }

@@ -7,6 +7,7 @@
 
 pub mod base;
 pub mod core;
+pub mod datafusion_dml;
 pub mod parquet;
 pub mod pk; // Primary key utilities and existence checking
 pub mod row_utils;
@@ -18,13 +19,13 @@ pub mod test_backend;
 
 // Provider implementations live alongside table stores
 pub mod users {
-	pub use crate::user_tables::user_table_provider::*;
+    pub use crate::user_tables::user_table_provider::*;
 }
 pub mod shared {
-	pub use crate::shared_tables::shared_table_provider::*;
+    pub use crate::shared_tables::shared_table_provider::*;
 }
 pub mod streams {
-	pub use crate::stream_tables::stream_table_provider::*;
+    pub use crate::stream_tables::stream_table_provider::*;
 }
 
 // Re-export key types for convenience
@@ -34,10 +35,15 @@ pub use streams::StreamTableProvider;
 pub use users::UserTableProvider;
 
 // Re-export unified DML functions
-pub use unified_dml::{append_version, append_version_sync, extract_user_pk_value, resolve_latest_version, validate_primary_key};
+pub use unified_dml::{
+    append_version, append_version_sync, extract_user_pk_value, resolve_latest_version,
+    validate_primary_key,
+};
 
 // Re-export version resolution helpers
-pub use version_resolution::{resolve_latest_version as resolve_latest_version_batch, scan_with_version_resolution_to_kvs};
+pub use version_resolution::{
+    resolve_latest_version as resolve_latest_version_batch, scan_with_version_resolution_to_kvs,
+};
 
 /// Provider consolidation summary
 ///

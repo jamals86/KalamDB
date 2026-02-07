@@ -30,7 +30,7 @@ use std::sync::Arc;
 
 use super::events::{
     auth::handle_authenticate, batch::handle_next_batch, cleanup::cleanup_connection, send_error,
-    subscription::handle_subscribe, unsubscribe::handle_unsubscribe, send_json,
+    send_json, subscription::handle_subscribe, unsubscribe::handle_unsubscribe,
 };
 use crate::handlers::ws::models::WsErrorCode;
 use crate::limiter::RateLimiter;

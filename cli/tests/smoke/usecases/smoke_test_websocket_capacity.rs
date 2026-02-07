@@ -1,8 +1,8 @@
 // Smoke test to stress WebSocket connection capacity and ensure HTTP API stays responsive
 
+use crate::common::*;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
-use crate::common::*;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::json;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -266,10 +266,8 @@ async fn open_authenticated_connection(
     .await
     .unwrap_or_else(|_| panic!("Websocket #{} auth response timed out", idx));
 
-    let value: serde_json::Value =
-        serde_json::from_str(&auth_payload).unwrap_or_else(|e| {
-            panic!("Invalid auth response JSON on websocket #{}: {}", idx, e)
-        });
+    let value: serde_json::Value = serde_json::from_str(&auth_payload)
+        .unwrap_or_else(|e| panic!("Invalid auth response JSON on websocket #{}: {}", idx, e));
     let msg_type = value.get("type").and_then(|v| v.as_str()).unwrap_or_default();
     assert_eq!(
         msg_type, "auth_success",
@@ -299,11 +297,11 @@ async fn open_authenticated_connection(
             Ok(()) => {
                 last_error = None;
                 break;
-            }
+            },
             Err(err) => {
                 last_error = Some(err);
                 tokio::time::sleep(Duration::from_millis(200 + attempt * 200)).await;
-            }
+            },
         }
     }
 
@@ -394,26 +392,26 @@ async fn wait_for_subscription_ack(
                 });
                 if let Some(msg_type) = value.get("type").and_then(|v| v.as_str()) {
                     match msg_type {
-                    "subscription_ack" => {
-                        let sub_id = value
-                            .get("subscription_id")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or_default();
-                        assert_eq!(
-                            sub_id, expected_id,
-                            "Websocket #{} subscription ack mismatch (expected {}, got {})",
-                            idx, expected_id, sub_id
-                        );
-                        return Ok(());
-                    }
-                    "initial_data_batch" => continue,
-                    other => {
-                        return Err(format!(
+                        "subscription_ack" => {
+                            let sub_id = value
+                                .get("subscription_id")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or_default();
+                            assert_eq!(
+                                sub_id, expected_id,
+                                "Websocket #{} subscription ack mismatch (expected {}, got {})",
+                                idx, expected_id, sub_id
+                            );
+                            return Ok(());
+                        },
+                        "initial_data_batch" => continue,
+                        other => {
+                            return Err(format!(
                             "Websocket #{} received unexpected message type '{}' while awaiting ack: {}",
                             idx, other, payload
                         ));
+                        },
                     }
-                }
                 }
             },
             Message::Close(frame) => {

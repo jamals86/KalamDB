@@ -5,14 +5,14 @@
 use actix_web::{web, HttpRequest, HttpResponse};
 use chrono::{Duration, Utc};
 use kalamdb_auth::{
-    authenticate, create_and_sign_token, create_auth_cookie, extract_client_ip_secure,
-    AuthRequest, CookieConfig, UserRepository,
+    authenticate, create_and_sign_token, create_auth_cookie, extract_client_ip_secure, AuthRequest,
+    CookieConfig, UserRepository,
 };
 use kalamdb_configs::AuthSettings;
 use std::sync::Arc;
 
-use super::{extract_bearer_or_cookie_token, map_auth_error_to_response};
 use super::models::{AuthErrorResponse, LoginResponse, UserInfo};
+use super::{extract_bearer_or_cookie_token, map_auth_error_to_response};
 use crate::limiter::RateLimiter;
 
 /// POST /v1/api/auth/refresh
@@ -41,7 +41,9 @@ pub async fn refresh_handler(
     };
 
     // Validate existing token via unified auth (uses configured trusted issuers)
-    let auth_request = AuthRequest::Jwt { token: token.clone() };
+    let auth_request = AuthRequest::Jwt {
+        token: token.clone(),
+    };
     let auth_result = match authenticate(auth_request, &connection_info, user_repo.get_ref()).await
     {
         Ok(result) => result,

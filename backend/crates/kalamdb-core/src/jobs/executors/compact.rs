@@ -24,8 +24,8 @@ use async_trait::async_trait;
 use kalamdb_commons::constants::ColumnFamilyNames;
 use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::TableId;
-use kalamdb_system::JobType;
 use kalamdb_store::storage_trait::{Partition, StorageBackendAsync};
+use kalamdb_system::JobType;
 use serde::{Deserialize, Serialize};
 
 /// Typed parameters for compaction operations

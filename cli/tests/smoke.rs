@@ -43,12 +43,12 @@ mod smoke_test_timing_output;
 mod smoke_test_websocket_capacity;
 
 // Impersonation tests
-#[path = "smoke/impersonating/smoke_test_as_user_impersonation.rs"]
-mod smoke_test_as_user_impersonation;
-#[path = "smoke/impersonating/smoke_test_as_user_chat_impersonation.rs"]
-mod smoke_test_as_user_chat_impersonation;
 #[path = "smoke/impersonating/smoke_test_as_user_authorization.rs"]
 mod smoke_test_as_user_authorization;
+#[path = "smoke/impersonating/smoke_test_as_user_chat_impersonation.rs"]
+mod smoke_test_as_user_chat_impersonation;
+#[path = "smoke/impersonating/smoke_test_as_user_impersonation.rs"]
+mod smoke_test_as_user_impersonation;
 
 // Subscription tests
 #[path = "smoke/subscription/smoke_test_stream_subscription.rs"]
@@ -83,22 +83,22 @@ mod smoke_test_flush_operations;
 mod smoke_test_flush_pk_integrity;
 
 // Storage tests
-#[path = "smoke/storage/smoke_test_storage_compact.rs"]
-mod smoke_test_storage_compact;
-#[path = "smoke/storage/smoke_test_storage_templates.rs"]
-mod smoke_test_storage_templates;
-#[path = "smoke/storage/smoke_test_storage_health.rs"]
-mod smoke_test_storage_health;
 #[path = "smoke/storage/smoke_test_show_storages.rs"]
 mod smoke_test_show_storages;
+#[path = "smoke/storage/smoke_test_storage_compact.rs"]
+mod smoke_test_storage_compact;
+#[path = "smoke/storage/smoke_test_storage_health.rs"]
+mod smoke_test_storage_health;
+#[path = "smoke/storage/smoke_test_storage_templates.rs"]
+mod smoke_test_storage_templates;
 
 // DDL tests
 #[path = "smoke/ddl/smoke_test_alter_with_data.rs"]
 mod smoke_test_alter_with_data;
-#[path = "smoke/ddl/smoke_test_ddl_alter.rs"]
-mod smoke_test_ddl_alter;
 #[path = "smoke/ddl/smoke_test_datatype_preservation.rs"]
 mod smoke_test_datatype_preservation;
+#[path = "smoke/ddl/smoke_test_ddl_alter.rs"]
+mod smoke_test_ddl_alter;
 
 // DML tests
 #[path = "smoke/dml/smoke_test_dml_extended.rs"]
@@ -121,14 +121,14 @@ mod smoke_test_00_parallel_query_burst;
 mod smoke_test_queries_benchmark;
 
 // System tests
+#[path = "smoke/system/smoke_test_all_system_tables_schemas.rs"]
+mod smoke_test_all_system_tables_schemas;
+#[path = "smoke/system/smoke_test_cleanup_job.rs"]
+mod smoke_test_cleanup_job;
 #[path = "smoke/system/smoke_test_system_and_users.rs"]
 mod smoke_test_system_and_users;
 #[path = "smoke/system/smoke_test_system_tables_extended.rs"]
 mod smoke_test_system_tables_extended;
-#[path = "smoke/system/smoke_test_cleanup_job.rs"]
-mod smoke_test_cleanup_job;
-#[path = "smoke/system/smoke_test_all_system_tables_schemas.rs"]
-mod smoke_test_all_system_tables_schemas;
 
 // Security tests
 #[path = "smoke/security/smoke_test_security_access.rs"]

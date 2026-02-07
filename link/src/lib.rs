@@ -115,9 +115,9 @@ pub mod credentials;
 #[cfg(feature = "tokio-runtime")]
 pub mod auth;
 #[cfg(feature = "tokio-runtime")]
-pub mod consumer;
-#[cfg(feature = "tokio-runtime")]
 pub mod client;
+#[cfg(feature = "tokio-runtime")]
+pub mod consumer;
 #[cfg(feature = "tokio-runtime")]
 pub mod query;
 #[cfg(feature = "tokio-runtime")]

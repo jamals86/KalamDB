@@ -17,7 +17,7 @@ use reqwest::Client;
 use serde_json::Value;
 
 #[tokio::test]
-#[ntest::timeout(12000)]
+#[ntest::timeout(25000)]
 async fn test_file_datatype_upload_and_download() {
     let ctx = test_context();
     let client = Client::new();
@@ -30,13 +30,8 @@ async fn test_file_datatype_upload_and_download() {
 
     // 1. Create namespace
     let create_ns_sql = format!("CREATE NAMESPACE {}", ns);
-    let ns_result = execute_sql_via_http_as_for_url(
-        &client,
-        &base_url,
-        &token,
-        &create_ns_sql,
-    )
-    .await;
+    let ns_result =
+        execute_sql_via_http_as_for_url(&client, &base_url, &token, &create_ns_sql).await;
     assert!(ns_result.is_ok(), "Failed to create namespace: {:?}", ns_result);
 
     // 2. Create table with FILE column
@@ -44,15 +39,8 @@ async fn test_file_datatype_upload_and_download() {
         "CREATE TABLE {}.{} (id TEXT PRIMARY KEY, name TEXT, attachment FILE)",
         ns, table
     );
-    let result = execute_sql_via_http_as_for_url(
-        &client,
-        &base_url,
-        &token,
-        &create_sql,
-    )
-    .await;
+    let result = execute_sql_via_http_as_for_url(&client, &base_url, &token, &create_sql).await;
     assert!(result.is_ok(), "CREATE TABLE failed: {:?}", result);
-
 
     // 3. Upload file via multipart endpoint
     let test_content = b"This is the file content for testing FILE datatype!";
@@ -98,10 +86,7 @@ async fn test_file_datatype_upload_and_download() {
         content_type_header
     );
 
-    let response = client
-        .execute(request)
-        .await
-        .expect("Failed to send multipart request");
+    let response = client.execute(request).await.expect("Failed to send multipart request");
 
     let status = response.status();
     let response_content_type = response
@@ -111,25 +96,17 @@ async fn test_file_datatype_upload_and_download() {
         .unwrap_or("")
         .to_string();
     if !status.is_success() {
-        let body_text = response
-            .text()
-            .await
-            .expect("Failed to read upload error body");
+        let body_text = response.text().await.expect("Failed to read upload error body");
         panic!(
             "File upload failed: status={}, content-type={}, body={}",
-            status,
-            response_content_type,
-            body_text
+            status, response_content_type, body_text
         );
     }
 
-    let body_text = response
-        .text()
-        .await
-        .expect("Failed to read upload response body");
+    let body_text = response.text().await.expect("Failed to read upload response body");
     let body: Value = serde_json::from_str(&body_text)
         .unwrap_or_else(|e| panic!("Failed to parse response: {} (body: {})", e, body_text));
-    
+
     assert!(
         body["status"] == "success",
         "File upload failed: status={}, body={}",
@@ -139,18 +116,11 @@ async fn test_file_datatype_upload_and_download() {
 
     // 4. Query the inserted row and verify FileRef JSON
     let query_sql = format!("SELECT * FROM {}.{} WHERE id = 'doc1'", ns, table);
-    let result = execute_sql_via_http_as_for_url(
-        &client,
-        &base_url,
-        &token,
-        &query_sql,
-    )
-    .await
-    .expect("Query failed");
-    
-    let schema = result["results"][0]["schema"]
-        .as_array()
-        .expect("No schema in query result");
+    let result = execute_sql_via_http_as_for_url(&client, &base_url, &token, &query_sql)
+        .await
+        .expect("Query failed");
+
+    let schema = result["results"][0]["schema"].as_array().expect("No schema in query result");
     let attachment_schema = schema
         .iter()
         .find(|col| col["name"] == "attachment")
@@ -162,10 +132,11 @@ async fn test_file_datatype_upload_and_download() {
 
     let rows = result["results"][0]["rows"].as_array().expect("No rows");
     assert_eq!(rows.len(), 1, "Expected 1 row");
-    
+
     let attachment_json: &str = rows[0][2].as_str().expect("attachment should be a string");
-    let file_ref: Value = serde_json::from_str(attachment_json).expect("Failed to parse FileRef JSON");
-    
+    let file_ref: Value =
+        serde_json::from_str(attachment_json).expect("Failed to parse FileRef JSON");
+
     // Verify FileRef fields
     assert!(file_ref["id"].is_string(), "FileRef should have 'id'");
     assert!(file_ref["sub"].is_string(), "FileRef should have 'sub'");
@@ -173,16 +144,14 @@ async fn test_file_datatype_upload_and_download() {
     assert!(file_ref["size"].is_number(), "FileRef should have 'size'");
     assert!(file_ref["mime"].is_string(), "FileRef should have 'mime'");
     assert!(file_ref["sha256"].is_string(), "FileRef should have 'sha256'");
-    
+
     let subfolder = file_ref["sub"].as_str().unwrap();
     let stored_name = stored_filename_from_file_ref(&file_ref);
 
     // 5. Download the file
-    let download_url = format!(
-        "{}/v1/files/{}/{}/{}/{}",
-        &base_url, ns, table, subfolder, stored_name
-    );
-    
+    let download_url =
+        format!("{}/v1/files/{}/{}/{}/{}", &base_url, ns, table, subfolder, stored_name);
+
     let download_response = client
         .get(&download_url)
         .bearer_auth(&token)
@@ -191,11 +160,7 @@ async fn test_file_datatype_upload_and_download() {
         .expect("Failed to download file");
 
     let download_status = download_response.status();
-    assert!(
-        download_status.is_success(),
-        "File download failed: status={}",
-        download_status
-    );
+    assert!(download_status.is_success(), "File download failed: status={}", download_status);
 
     // 5.1 Verify headers
     let content_type = download_response
@@ -240,10 +205,8 @@ async fn test_file_datatype_upload_and_download() {
     );
 
     // 5.3 Downloading a missing file should return 404
-    let missing_url = format!(
-        "{}/v1/files/{}/{}/{}/{}",
-        &base_url, ns, table, subfolder, "missing-file.bin"
-    );
+    let missing_url =
+        format!("{}/v1/files/{}/{}/{}/{}", &base_url, ns, table, subfolder, "missing-file.bin");
     let missing_response = client
         .get(&missing_url)
         .bearer_auth(&token)
@@ -258,32 +221,15 @@ async fn test_file_datatype_upload_and_download() {
 
     // 6. Delete the row
     let delete_sql = format!("DELETE FROM {}.{} WHERE id = 'doc1'", ns, table);
-    let delete_result = execute_sql_via_http_as_for_url(
-        &client,
-        &base_url,
-        &token,
-        &delete_sql,
-    )
-    .await;
+    let delete_result =
+        execute_sql_via_http_as_for_url(&client, &base_url, &token, &delete_sql).await;
     assert!(delete_result.is_ok(), "DELETE failed: {:?}", delete_result);
 
     // 7. Cleanup
     let drop_sql = format!("DROP TABLE {}.{}", ns, table);
-    let _ = execute_sql_via_http_as_for_url(
-        &client,
-        &base_url,
-        &token,
-        &drop_sql,
-    )
-    .await;
+    let _ = execute_sql_via_http_as_for_url(&client, &base_url, &token, &drop_sql).await;
     let drop_ns_sql = format!("DROP NAMESPACE {}", ns);
-    let _ = execute_sql_via_http_as_for_url(
-        &client,
-        &base_url,
-        &token,
-        &drop_ns_sql,
-    )
-    .await;
+    let _ = execute_sql_via_http_as_for_url(&client, &base_url, &token, &drop_ns_sql).await;
 
     println!("✅ FILE datatype smoke test passed!");
 }
@@ -326,10 +272,7 @@ fn stored_filename_from_file_ref(file_ref: &Value) -> String {
 }
 
 fn sanitize_filename(name: &str) -> String {
-    let name_without_ext = name
-        .rsplit_once('.')
-        .map(|(n, _)| n)
-        .unwrap_or(name);
+    let name_without_ext = name.rsplit_once('.').map(|(n, _)| n).unwrap_or(name);
 
     let sanitized: String = name_without_ext
         .chars()

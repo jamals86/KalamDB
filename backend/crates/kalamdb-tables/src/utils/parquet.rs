@@ -6,9 +6,8 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::logical_expr::Expr;
 use kalamdb_commons::models::schemas::TableType;
 use kalamdb_commons::models::UserId;
-use kalamdb_system::Manifest;
 use kalamdb_commons::TableId;
-
+use kalamdb_system::Manifest;
 
 /// Async helper for loading Parquet batches via ManifestAccessPlanner.
 ///
@@ -34,25 +33,23 @@ pub(crate) async fn scan_parquet_files_as_batch_async(
     let storage_registry = core.storage_registry.as_ref().ok_or_else(|| {
         KalamDbError::InvalidOperation("Storage registry not configured".to_string())
     })?;
-    let storage_cached = storage_registry
-        .get_cached(&storage_id)?
-        .ok_or_else(|| {
-            KalamDbError::InvalidOperation(format!("Storage '{}' not found", storage_id.as_str()))
-        })?;
+    let storage_cached = storage_registry.get_cached(&storage_id)?.ok_or_else(|| {
+        KalamDbError::InvalidOperation(format!("Storage '{}' not found", storage_id.as_str()))
+    })?;
 
     let manifest_service = core.manifest_service.clone();
-	    log::debug!(
-	        "[PARQUET_SCAN_ASYNC] About to get_or_load manifest: table={} {}",
-	        table_id,
-	        scope_label
-	    );
-	    let cache_result = manifest_service.get_or_load_async(table_id, user_id).await;
-	    let mut manifest_opt: Option<Manifest> = None;
-	    let mut use_degraded_mode = false;
+    log::debug!(
+        "[PARQUET_SCAN_ASYNC] About to get_or_load manifest: table={} {}",
+        table_id,
+        scope_label
+    );
+    let cache_result = manifest_service.get_or_load_async(table_id, user_id).await;
+    let mut manifest_opt: Option<Manifest> = None;
+    let mut use_degraded_mode = false;
 
-	    match &cache_result {
-	        Ok(Some(entry)) => {
-	            let manifest = entry.manifest.clone();
+    match &cache_result {
+        Ok(Some(entry)) => {
+            let manifest = entry.manifest.clone();
             log::debug!(
                 "[PARQUET_SCAN_ASYNC] Got manifest: table={} {} segments={} sync_state={:?}",
                 table_id,
@@ -75,22 +72,20 @@ pub(crate) async fn scan_parquet_files_as_batch_async(
                         scope_label,
                         mark_err
                     );
-	                }
-	                use_degraded_mode = true;
-	                let uid = user_id.cloned();
-	                let scope_for_spawn = scope_label.clone();
-	                let table_id_for_spawn = table_id.clone();
-	                let manifest_service_clone = core.manifest_service.clone();
-	                tokio::task::spawn_blocking(move || {
-	                    log::info!(
-	                        "🔧 [MANIFEST REBUILD STARTED] table={} {}",
-	                        table_id_for_spawn,
-	                        scope_for_spawn
-	                    );
-                    match manifest_service_clone.rebuild_manifest(
-                        &table_id_for_spawn,
-                        uid.as_ref(),
-                    ) {
+                }
+                use_degraded_mode = true;
+                let uid = user_id.cloned();
+                let scope_for_spawn = scope_label.clone();
+                let table_id_for_spawn = table_id.clone();
+                let manifest_service_clone = core.manifest_service.clone();
+                tokio::task::spawn_blocking(move || {
+                    log::info!(
+                        "🔧 [MANIFEST REBUILD STARTED] table={} {}",
+                        table_id_for_spawn,
+                        scope_for_spawn
+                    );
+                    match manifest_service_clone.rebuild_manifest(&table_id_for_spawn, uid.as_ref())
+                    {
                         Ok(_) => {
                             log::info!(
                                 "✅ [MANIFEST REBUILD COMPLETED] table={} {}",
@@ -103,15 +98,15 @@ pub(crate) async fn scan_parquet_files_as_batch_async(
                                 "❌ [MANIFEST REBUILD FAILED] table={} {} error={}",
                                 table_id_for_spawn,
                                 scope_for_spawn,
-	                                e
-	                            );
-	                        },
-	                    }
-	                });
-	            } else {
-	                manifest_opt = Some(manifest);
-	            }
-	        },
+                                e
+                            );
+                        },
+                    }
+                });
+            } else {
+                manifest_opt = Some(manifest);
+            }
+        },
         Ok(None) => {
             log::debug!(
                 "[PARQUET_SCAN_ASYNC] Manifest cache MISS | table={} | {} | fallback=directory_scan",
@@ -140,17 +135,19 @@ pub(crate) async fn scan_parquet_files_as_batch_async(
         _ => None,
     };
 
-    let (combined, (total_batches, skipped, scanned)) = planner.scan_parquet_files_async(
-        manifest_opt.as_ref(),
-        storage_cached,
-        table_type,
-        table_id,
-        user_id,
-        seq_range,
-        use_degraded_mode,
-        schema.clone(),
-        core.schema_registry.as_ref(),
-    ).await?;
+    let (combined, (total_batches, skipped, scanned)) = planner
+        .scan_parquet_files_async(
+            manifest_opt.as_ref(),
+            storage_cached,
+            table_type,
+            table_id,
+            user_id,
+            seq_range,
+            use_degraded_mode,
+            schema.clone(),
+            core.schema_registry.as_ref(),
+        )
+        .await?;
 
     log::debug!(
         "[PARQUET_SCAN_ASYNC] Scan complete: table={} {} total_batches={} skipped={} scanned={} rows={} use_degraded_mode={}",

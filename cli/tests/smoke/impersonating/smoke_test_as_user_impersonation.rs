@@ -328,10 +328,8 @@ fn smoke_as_user_delete_with_dba_role() {
     );
 
     // DELETE AS USER
-    let delete_sql = format!(
-        "EXECUTE AS USER '{}' (DELETE FROM {} WHERE id = 1)",
-        target_user_id, full_table
-    );
+    let delete_sql =
+        format!("EXECUTE AS USER '{}' (DELETE FROM {} WHERE id = 1)", target_user_id, full_table);
     let result = execute_sql_via_client_as(&dba_user, password, &delete_sql);
     assert!(result.is_ok(), "DBA should be able to DELETE AS USER: {:?}", result);
 
@@ -550,10 +548,7 @@ fn smoke_as_user_full_workflow() {
     execute_sql_via_client_as(
         &service_user,
         password,
-        &format!(
-            "EXECUTE AS USER '{}' (DELETE FROM {} WHERE id = 2)",
-            alice_user_id, full_table
-        ),
+        &format!("EXECUTE AS USER '{}' (DELETE FROM {} WHERE id = 2)", alice_user_id, full_table),
     )
     .expect("Failed to DELETE AS USER alice");
 
@@ -648,10 +643,7 @@ fn smoke_as_user_select_scopes_reads_for_user_tables() {
     let service_as_user1 = execute_sql_via_client_as(
         &service_user,
         password,
-        &format!(
-            "EXECUTE AS USER '{}' (SELECT * FROM {} ORDER BY id)",
-            user1_id, full_table
-        ),
+        &format!("EXECUTE AS USER '{}' (SELECT * FROM {} ORDER BY id)", user1_id, full_table),
     )
     .expect("Service SELECT AS USER user1 failed");
     assert!(service_as_user1.contains("u1-only"));
@@ -719,12 +711,9 @@ fn smoke_as_user_stream_table_isolation() {
     )
     .expect("Failed to insert stream row for user1");
 
-    let user2_direct = execute_sql_via_client_as(
-        &user2,
-        password,
-        &format!("SELECT * FROM {}", full_table),
-    )
-    .expect("User2 stream select failed");
+    let user2_direct =
+        execute_sql_via_client_as(&user2, password, &format!("SELECT * FROM {}", full_table))
+            .expect("User2 stream select failed");
     assert!(!user2_direct.contains("stream-u1"));
 
     let service_as_user1 = execute_sql_via_client_as(

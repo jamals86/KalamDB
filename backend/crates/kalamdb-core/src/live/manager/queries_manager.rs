@@ -14,13 +14,13 @@
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
-use crate::live::manager::ConnectionsManager;
 use crate::live::helpers::filter_eval::parse_where_clause;
-use crate::live::helpers::initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult};
-use crate::live::models::{
-    RegistryStats, SharedConnectionState, SubscriptionResult,
+use crate::live::helpers::initial_data::{
+    InitialDataFetcher, InitialDataOptions, InitialDataResult,
 };
 use crate::live::helpers::query_parser::QueryParser;
+use crate::live::manager::ConnectionsManager;
+use crate::live::models::{RegistryStats, SharedConnectionState, SubscriptionResult};
 use crate::live::subscription::SubscriptionService;
 use crate::sql::executor::SqlExecutor;
 use datafusion::execution::context::SessionContext;
@@ -221,8 +221,8 @@ impl LiveQueryManager {
 
         // Extract column projections from SELECT clause (None = SELECT *, all columns)
         let projections = QueryParser::extract_projections(&request.sql)
-             .map_err(|e| KalamDbError::InvalidSql(format!("Failed to parse projections: {}", e)))?;
-        
+            .map_err(|e| KalamDbError::InvalidSql(format!("Failed to parse projections: {}", e)))?;
+
         if let Some(ref cols) = projections {
             log::info!("Subscription projections: {:?}", cols);
         }

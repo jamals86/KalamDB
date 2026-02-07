@@ -5,7 +5,6 @@
 //! limited for now; most statements return a structured error until
 //! handler implementations are in place.
 
-pub mod default_evaluator;
 pub mod default_ordering;
 pub mod handler_adapter;
 pub mod handler_registry;
@@ -21,7 +20,6 @@ pub use crate::sql::ExecutionMetadata;
 pub use datafusion::scalar::ScalarValue;
 use std::sync::Arc;
 
-
 /// Public facade for SQL execution routing.
 pub struct SqlExecutor {
     app_context: Arc<crate::app_context::AppContext>,
@@ -30,4 +28,3 @@ pub struct SqlExecutor {
 }
 
 pub type ExecutorMetadataAlias = ExecutionMetadata;
-

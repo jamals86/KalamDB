@@ -217,8 +217,7 @@ mod tests {
 
     #[test]
     fn test_storage_health_result_with_capacity() {
-        let result = StorageHealthResult::healthy(50)
-            .with_capacity(Some(1_000_000), Some(500_000));
+        let result = StorageHealthResult::healthy(50).with_capacity(Some(1_000_000), Some(500_000));
         assert_eq!(result.total_bytes, Some(1_000_000));
         assert_eq!(result.used_bytes, Some(500_000));
     }

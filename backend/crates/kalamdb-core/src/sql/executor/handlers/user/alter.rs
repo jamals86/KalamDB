@@ -3,8 +3,8 @@
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
-use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
+use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use kalamdb_auth::security::password::{validate_password_with_policy, PasswordPolicy};
 use kalamdb_commons::AuthType;
 use kalamdb_sql::ddl::{AlterUserStatement, UserModification};

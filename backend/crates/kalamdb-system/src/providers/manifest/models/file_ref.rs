@@ -132,9 +132,7 @@ impl FileRef {
     pub fn is_valid_subfolder(subfolder: &str) -> bool {
         subfolder.len() == SUBFOLDER_PREFIX.len() + SUBFOLDER_DIGITS
             && subfolder.starts_with(SUBFOLDER_PREFIX)
-            && subfolder[SUBFOLDER_PREFIX.len()..]
-                .chars()
-                .all(|c| c.is_ascii_digit())
+            && subfolder[SUBFOLDER_PREFIX.len()..].chars().all(|c| c.is_ascii_digit())
     }
 
     /// Get the relative path within the table folder
@@ -167,10 +165,7 @@ impl FileRef {
     /// - Limit to 50 characters
     /// - Returns empty string if result is all non-ASCII
     fn sanitize_filename(name: &str) -> String {
-        let name_without_ext = name
-            .rsplit_once('.')
-            .map(|(n, _)| n)
-            .unwrap_or(name);
+        let name_without_ext = name.rsplit_once('.').map(|(n, _)| n).unwrap_or(name);
 
         let sanitized: String = name_without_ext
             .chars()

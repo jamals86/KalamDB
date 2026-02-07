@@ -95,15 +95,9 @@ impl FlushExecutor {
         let table_def = match schema_registry.get_table_if_exists(&table_id)? {
             Some(def) => def,
             None => {
-                ctx.log_info(&format!(
-                    "Table {} no longer exists, skipping flush job",
-                    table_id
-                ));
+                ctx.log_info(&format!("Table {} no longer exists, skipping flush job", table_id));
                 return Ok(JobDecision::Skipped {
-                    message: format!(
-                        "Table {} not found (table may have been dropped)",
-                        table_id
-                    ),
+                    message: format!("Table {} not found (table may have been dropped)", table_id),
                 });
             },
         };

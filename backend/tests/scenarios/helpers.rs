@@ -20,17 +20,18 @@ use crate::test_support::http_server::HttpTestServer;
 
 // Re-export commonly used consolidated helpers
 pub use helpers::{
-    assert_error_contains, assert_min_row_count, assert_no_duplicates, assert_query_has_results,
-    assert_query_success, assert_row_count, assert_success, create_test_users, create_user_and_client,
+    assert_error_contains, assert_manifest_exists, assert_min_row_count, assert_no_duplicates,
+    assert_parquet_exists_and_nonempty, assert_query_has_results, assert_query_success,
+    assert_row_count, assert_success, create_test_users, create_user_and_client,
     drain_initial_data, ensure_user_exists, find_files_recursive, get_column_index, get_count,
-    get_count_value, get_first_i64, get_first_string, get_i64_value, get_response_rows,
-    get_rows, get_string_value, json_to_i64, run_parallel_users, unique_namespace, unique_table,
-    wait_for_ack, assert_manifest_exists, assert_parquet_exists_and_nonempty,
+    get_count_value, get_first_i64, get_first_string, get_i64_value, get_response_rows, get_rows,
+    get_string_value, json_to_i64, run_parallel_users, unique_namespace, unique_table,
+    wait_for_ack,
 };
 
 // =============================================================================
 // Scenario-Specific Helpers
-// ============================================================================= 
+// =============================================================================
 
 /// Alias for unique_namespace - generates unique namespace for test isolation
 pub fn unique_ns(prefix: &str) -> String {
@@ -46,7 +47,6 @@ pub async fn wait_for_flush_complete(
 ) -> Result<()> {
     crate::test_support::flush::wait_for_flush_jobs_settled(server, ns, table).await
 }
-
 
 // =============================================================================
 // User Isolation Assertions
@@ -102,7 +102,7 @@ pub async fn assert_user_isolation(
 // Subscription Assertions
 // =============================================================================
 
-// Scenario-specific subscription helpers  
+// Scenario-specific subscription helpers
 /// Wait for N insert events and return the total rows inserted
 pub async fn wait_for_inserts(
     subscription: &mut SubscriptionManager,

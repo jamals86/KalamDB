@@ -45,10 +45,10 @@ impl OutputFormatter {
 
         match self.format {
             OutputFormat::Table => {
-                let payload_str = serde_json::to_string(&payload)
-                    .unwrap_or_else(|_| "null".to_string());
+                let payload_str =
+                    serde_json::to_string(&payload).unwrap_or_else(|_| "null".to_string());
                 format!("[offset={}] {}: {}", offset, operation, payload_str)
-            }
+            },
             OutputFormat::Json => {
                 let record = serde_json::json!({
                     "offset": offset,
@@ -56,12 +56,12 @@ impl OutputFormatter {
                     "payload": payload,
                 });
                 serde_json::to_string(&record).unwrap_or_else(|_| "{}".to_string())
-            }
+            },
             OutputFormat::Csv => {
-                let payload_str = serde_json::to_string(&payload)
-                    .unwrap_or_else(|_| "null".to_string());
+                let payload_str =
+                    serde_json::to_string(&payload).unwrap_or_else(|_| "null".to_string());
                 format!("{},{},{}", offset, operation, payload_str)
-            }
+            },
         }
     }
 

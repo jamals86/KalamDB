@@ -48,10 +48,8 @@ async fn test_current_user_with_username() {
 
     // Verify the returned value is the username
     let column = batch.column(0);
-    let string_array = column
-        .as_any()
-        .downcast_ref::<datafusion::arrow::array::StringArray>()
-        .unwrap();
+    let string_array =
+        column.as_any().downcast_ref::<datafusion::arrow::array::StringArray>().unwrap();
     assert_eq!(string_array.value(0), "alice");
 }
 
@@ -72,10 +70,7 @@ async fn test_current_user_without_username_fails() {
 
     let df = result.unwrap();
     let batches_result = df.collect().await;
-    assert!(
-        batches_result.is_err(),
-        "Expected error when username is not set"
-    );
+    assert!(batches_result.is_err(), "Expected error when username is not set");
 }
 
 #[tokio::test]
@@ -112,10 +107,8 @@ async fn test_current_user_id_with_dba_role() {
 
     // Verify the returned value is the user_id
     let column = batch.column(0);
-    let string_array = column
-        .as_any()
-        .downcast_ref::<datafusion::arrow::array::StringArray>()
-        .unwrap();
+    let string_array =
+        column.as_any().downcast_ref::<datafusion::arrow::array::StringArray>().unwrap();
     assert_eq!(string_array.value(0), "u_admin");
 }
 
@@ -143,10 +136,8 @@ async fn test_current_user_id_with_system_role() {
 
     // Verify the returned value is the user_id
     let column = batch.column(0);
-    let string_array = column
-        .as_any()
-        .downcast_ref::<datafusion::arrow::array::StringArray>()
-        .unwrap();
+    let string_array =
+        column.as_any().downcast_ref::<datafusion::arrow::array::StringArray>().unwrap();
     assert_eq!(string_array.value(0), "system");
 }
 
@@ -172,10 +163,8 @@ async fn test_current_user_id_with_service_role() {
     assert_eq!(batches[0].num_rows(), 1);
 
     let column = batches[0].column(0);
-    let string_array = column
-        .as_any()
-        .downcast_ref::<datafusion::arrow::array::StringArray>()
-        .unwrap();
+    let string_array =
+        column.as_any().downcast_ref::<datafusion::arrow::array::StringArray>().unwrap();
     assert_eq!(string_array.value(0), "u_service");
 }
 
@@ -196,10 +185,7 @@ async fn test_current_user_id_with_user_role_fails() {
 
     let df = result.unwrap();
     let batches_result = df.collect().await;
-    assert!(
-        batches_result.is_err(),
-        "Expected error for unauthorized User role"
-    );
+    assert!(batches_result.is_err(), "Expected error for unauthorized User role");
 
     let err = batches_result.unwrap_err();
     assert!(
@@ -243,10 +229,8 @@ async fn test_current_role_user() {
 
     // Verify the returned value is "user"
     let column = batch.column(0);
-    let string_array = column
-        .as_any()
-        .downcast_ref::<datafusion::arrow::array::StringArray>()
-        .unwrap();
+    let string_array =
+        column.as_any().downcast_ref::<datafusion::arrow::array::StringArray>().unwrap();
     assert_eq!(string_array.value(0), "user");
 }
 
@@ -263,10 +247,8 @@ async fn test_current_role_dba() {
 
     assert_eq!(batches.len(), 1);
     let column = batches[0].column(0);
-    let string_array = column
-        .as_any()
-        .downcast_ref::<datafusion::arrow::array::StringArray>()
-        .unwrap();
+    let string_array =
+        column.as_any().downcast_ref::<datafusion::arrow::array::StringArray>().unwrap();
     assert_eq!(string_array.value(0), "dba");
 }
 
@@ -282,10 +264,8 @@ async fn test_current_role_system() {
     let batches = result.collect().await.unwrap();
 
     let column = batches[0].column(0);
-    let string_array = column
-        .as_any()
-        .downcast_ref::<datafusion::arrow::array::StringArray>()
-        .unwrap();
+    let string_array =
+        column.as_any().downcast_ref::<datafusion::arrow::array::StringArray>().unwrap();
     assert_eq!(string_array.value(0), "system");
 }
 
@@ -301,10 +281,8 @@ async fn test_current_role_service() {
     let batches = result.collect().await.unwrap();
 
     let column = batches[0].column(0);
-    let string_array = column
-        .as_any()
-        .downcast_ref::<datafusion::arrow::array::StringArray>()
-        .unwrap();
+    let string_array =
+        column.as_any().downcast_ref::<datafusion::arrow::array::StringArray>().unwrap();
     assert_eq!(string_array.value(0), "service");
 }
 
@@ -414,9 +392,7 @@ async fn test_functions_with_no_arguments() {
     let session = exec_ctx.create_session_with_user();
 
     // All three functions should work without arguments
-    let result = session
-        .sql("SELECT CURRENT_USER(), CURRENT_ROLE()")
-        .await;
+    let result = session.sql("SELECT CURRENT_USER(), CURRENT_ROLE()").await;
     assert!(result.is_ok(), "Query should succeed: {:?}", result.err());
 
     let df = result.unwrap();

@@ -117,36 +117,36 @@ impl NotificationService {
             app_context: OnceCell::new(),
         });
 
-	        // Notification worker (single task, no per-notification spawn)
-	        let notify_service = Arc::clone(&service);
-	        tokio::spawn(async move {
-	            while let Some(task) = notify_rx.recv().await {
-	                // Step 0: Leadership check (Raft cluster mode)
-	                //
-	                // Keep notifications strictly leader-only to prevent duplicates across the cluster.
-	                // This runs in the background worker to avoid spawning a per-notification task in
-	                // the hot path (higher throughput under load).
-	                if let Some(weak_ctx) = notify_service.app_context.get() {
-	                    if let Some(ctx) = weak_ctx.upgrade() {
-	                        let is_leader = match task.user_id.as_ref() {
-	                            Some(uid) => ctx.is_leader_for_user(uid).await,
-	                            None => ctx.is_leader_for_shared().await,
-	                        };
+        // Notification worker (single task, no per-notification spawn)
+        let notify_service = Arc::clone(&service);
+        tokio::spawn(async move {
+            while let Some(task) = notify_rx.recv().await {
+                // Step 0: Leadership check (Raft cluster mode)
+                //
+                // Keep notifications strictly leader-only to prevent duplicates across the cluster.
+                // This runs in the background worker to avoid spawning a per-notification task in
+                // the hot path (higher throughput under load).
+                if let Some(weak_ctx) = notify_service.app_context.get() {
+                    if let Some(ctx) = weak_ctx.upgrade() {
+                        let is_leader = match task.user_id.as_ref() {
+                            Some(uid) => ctx.is_leader_for_user(uid).await,
+                            None => ctx.is_leader_for_shared().await,
+                        };
 
-	                        if !is_leader {
-	                            log::trace!(
-	                                "Skipping notification on follower node for table {}",
-	                                task.table_id
-	                            );
-	                            continue;
-	                        }
-	                    }
-	                }
+                        if !is_leader {
+                            log::trace!(
+                                "Skipping notification on follower node for table {}",
+                                task.table_id
+                            );
+                            continue;
+                        }
+                    }
+                }
 
-	                // Step 1: Route to topic publisher if configured (CDC integration)
-	                // Always check topics for both user and shared tables
-	                if let Some(topic_publisher) = notify_service.topic_publisher() {
-	                    // Check if any topics are subscribed to this table
+                // Step 1: Route to topic publisher if configured (CDC integration)
+                // Always check topics for both user and shared tables
+                if let Some(topic_publisher) = notify_service.topic_publisher() {
+                    // Check if any topics are subscribed to this table
                     if topic_publisher.has_topics_for_table(&task.table_id) {
                         // Map ChangeType to TopicOp
                         let operation = match task.notification.change_type {
@@ -217,17 +217,17 @@ impl NotificationService {
     /// In Raft cluster mode, only the leader node fires notifications to prevent
     /// duplicate messages. Followers silently drop notifications since they
     /// already persist data via the Raft applier.
-	    pub fn notify_async(
-	        &self,
-	        user_id: Option<UserId>,
-	        table_id: TableId,
-	        notification: ChangeNotification,
-	    ) {
-	        let task = NotificationTask {
-	            user_id,
-	            table_id,
-	            notification,
-	        };
+    pub fn notify_async(
+        &self,
+        user_id: Option<UserId>,
+        table_id: TableId,
+        notification: ChangeNotification,
+    ) {
+        let task = NotificationTask {
+            user_id,
+            table_id,
+            notification,
+        };
         if let Err(e) = self.notify_tx.try_send(task) {
             if matches!(e, mpsc::error::TrySendError::Full(_)) {
                 log::warn!("Notification queue full, dropping notification");
@@ -383,7 +383,7 @@ impl NotificationService {
                 ),
                 ChangeType::Delete => {
                     kalamdb_commons::Notification::delete(live_id_str, vec![row_json])
-                }
+                },
             };
 
             // Send notification through channel (non-blocking, bounded)
@@ -438,14 +438,14 @@ impl NotificationServiceTrait for NotificationService {
                 return true;
             }
         }
-        
+
         // Check live query subscriptions only if user_id is provided
         if let Some(uid) = user_id {
             if self.registry.has_subscriptions(uid, table_id) {
                 return true;
             }
         }
-        
+
         false
     }
 

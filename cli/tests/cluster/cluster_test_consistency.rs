@@ -143,7 +143,6 @@ fn cluster_test_table_replication() {
         execute_on_node(&urls[0], sql).expect(&format!("Failed to create {}", name));
     }
 
-
     // Verify tables exist on all nodes
     println!("Verifying tables exist on all nodes...");
     for (i, url) in urls.iter().enumerate() {

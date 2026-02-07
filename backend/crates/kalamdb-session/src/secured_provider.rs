@@ -143,8 +143,9 @@ mod tests {
     fn create_mock_provider() -> Arc<dyn TableProvider> {
         let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Utf8, false)]));
         let array = StringArray::from(vec!["test_id"]);
-        let batch = arrow::record_batch::RecordBatch::try_new(schema.clone(), vec![Arc::new(array)])
-            .unwrap();
+        let batch =
+            arrow::record_batch::RecordBatch::try_new(schema.clone(), vec![Arc::new(array)])
+                .unwrap();
         Arc::new(MemTable::try_new(schema, vec![vec![batch]]).unwrap())
     }
 

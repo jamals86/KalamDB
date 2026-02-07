@@ -139,13 +139,13 @@ impl CommandHistory {
     /// This ensures the most recent selection is at the end without duplicates
     pub fn deduplicate_and_move_to_end(&self, command: &str) -> Result<()> {
         let mut history = self.load()?;
-        
+
         // Remove all occurrences of this command
         history.retain(|entry| entry != command);
-        
+
         // Add it at the end
         history.push(command.to_string());
-        
+
         self.save(&history)?;
         Ok(())
     }

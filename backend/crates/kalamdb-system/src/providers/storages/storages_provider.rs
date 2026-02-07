@@ -6,6 +6,7 @@
 use super::{new_storages_store, StoragesStore, StoragesTableSchema};
 use crate::error::{SystemError, SystemResultExt};
 use crate::providers::base::SimpleSystemTableScan;
+use crate::providers::storages::models::Storage;
 use crate::system_table_trait::SystemTableProviderExt;
 use async_trait::async_trait;
 use datafusion::arrow::array::RecordBatch;
@@ -14,7 +15,6 @@ use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
-use crate::providers::storages::models::Storage;
 use kalamdb_commons::{RecordBatchBuilder, StorageId};
 use kalamdb_store::entity_store::{EntityStore, EntityStoreAsync};
 use kalamdb_store::StorageBackend;
@@ -298,8 +298,8 @@ impl SystemTableProviderExt for StoragesTableProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_store::test_utils::InMemoryBackend;
     use crate::StorageType;
+    use kalamdb_store::test_utils::InMemoryBackend;
 
     fn create_test_provider() -> StoragesTableProvider {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());

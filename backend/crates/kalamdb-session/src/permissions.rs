@@ -34,7 +34,9 @@ pub fn can_access_system_table(role: Role) -> bool {
 pub fn can_access_table_type(role: Role, table_type: TableType) -> bool {
     match role {
         Role::System | Role::Dba => true,
-        Role::Service => matches!(table_type, TableType::Shared | TableType::Stream | TableType::User),
+        Role::Service => {
+            matches!(table_type, TableType::Shared | TableType::Stream | TableType::User)
+        },
         Role::User => matches!(table_type, TableType::User | TableType::Stream),
         Role::Anonymous => false,
     }
@@ -46,7 +48,9 @@ pub fn can_create_table(role: Role, table_type: TableType) -> bool {
     match role {
         Role::System => true,
         Role::Dba => matches!(table_type, TableType::User | TableType::Shared | TableType::Stream),
-        Role::Service => matches!(table_type, TableType::User | TableType::Shared | TableType::Stream),
+        Role::Service => {
+            matches!(table_type, TableType::User | TableType::Shared | TableType::Stream)
+        },
         Role::User => matches!(table_type, TableType::User | TableType::Stream),
         Role::Anonymous => false,
     }
@@ -72,7 +76,9 @@ pub fn can_delete_table(role: Role, table_type: TableType, _is_owner: bool) -> b
 pub fn can_alter_table(role: Role, table_type: TableType, _is_owner: bool) -> bool {
     match role {
         Role::System | Role::Dba => true,
-        Role::Service => matches!(table_type, TableType::Shared | TableType::User | TableType::Stream),
+        Role::Service => {
+            matches!(table_type, TableType::Shared | TableType::User | TableType::Stream)
+        },
         Role::User => matches!(table_type, TableType::User | TableType::Stream),
         Role::Anonymous => false,
     }
@@ -117,9 +123,7 @@ pub fn extract_session_context(session: &dyn Session) -> Result<&SessionUserCont
     session
         .as_any()
         .downcast_ref::<SessionState>()
-        .ok_or(SessionError::InvalidSessionState(
-            "Expected SessionState".to_string(),
-        ))?
+        .ok_or(SessionError::InvalidSessionState("Expected SessionState".to_string()))?
         .config()
         .options()
         .extensions
@@ -132,9 +136,7 @@ pub fn extract_session_context(session: &dyn Session) -> Result<&SessionUserCont
 /// Falls back to Role::User (least privileged) if context is not found.
 /// This is the fail-closed behavior for security.
 pub fn extract_user_role(session: &dyn Session) -> Role {
-    extract_session_context(session)
-        .map(|ctx| ctx.role)
-        .unwrap_or(Role::User) // Fail closed: default to least privileged
+    extract_session_context(session).map(|ctx| ctx.role).unwrap_or(Role::User) // Fail closed: default to least privileged
 }
 
 /// Extract user ID from DataFusion session.
@@ -217,7 +219,7 @@ pub fn check_user_table_access(
             table_name: table_id.table_name().clone(),
             role,
             reason: "User tables require user/service or admin role".to_string(),
-         })
+        })
     }
 }
 
@@ -337,8 +339,8 @@ pub fn can_access_shared_table(access_level: TableAccess, role: Role) -> bool {
     }
 
     match access_level {
-        TableAccess::Public => true,     // All authenticated users can read public tables
-        TableAccess::Private => false,   // Only privileged roles (checked above)
+        TableAccess::Public => true, // All authenticated users can read public tables
+        TableAccess::Private => false, // Only privileged roles (checked above)
         TableAccess::Restricted => false, // TODO: Only owner (future grants) or privileged roles
     }
 }
@@ -352,8 +354,8 @@ pub fn can_write_shared_table(access_level: TableAccess, role: Role) -> bool {
     }
 
     match access_level {
-        TableAccess::Public => false,     // Regular users cannot write public shared tables
-        TableAccess::Private => false,    // Only privileged roles (checked above)
+        TableAccess::Public => false, // Regular users cannot write public shared tables
+        TableAccess::Private => false, // Only privileged roles (checked above)
         TableAccess::Restricted => false, // TODO: Only owner (future grants) or privileged roles
     }
 }
@@ -376,10 +378,7 @@ pub fn check_shared_table_access(
             namespace_id: table_def.namespace_id.clone(),
             table_name: table_def.table_name.clone(),
             role,
-            reason: format!(
-                "Shared table access denied (access_level={:?})",
-                access_level
-            ),
+            reason: format!("Shared table access denied (access_level={:?})", access_level),
         })
     }
 }
@@ -401,10 +400,7 @@ pub fn check_shared_table_write_access(
             namespace_id: table_def.namespace_id.clone(),
             table_name: table_def.table_name.clone(),
             role,
-            reason: format!(
-                "Shared table write denied (access_level={:?})",
-                access_level
-            ),
+            reason: format!("Shared table write denied (access_level={:?})", access_level),
         })
     }
 }
@@ -423,10 +419,7 @@ pub fn check_shared_table_write_access_level(
             namespace_id: namespace_id.clone(),
             table_name: table_name.clone(),
             role,
-            reason: format!(
-                "Shared table write denied (access_level={:?})",
-                access_level
-            ),
+            reason: format!("Shared table write denied (access_level={:?})", access_level),
         })
     }
 }

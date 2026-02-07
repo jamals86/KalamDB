@@ -218,9 +218,13 @@ async fn test_role_based_auth_e2e() {
     println!("✅ Regular user created user table");
 
     // Service user creates user table (should succeed)
-    let service_table_sql =
-        format!("CREATE TABLE {}.test_table (id BIGINT PRIMARY KEY)", service_user.user_id.as_str());
-    let response = server.execute_sql_as_user(&service_table_sql, service_user.user_id.as_str()).await;
+    let service_table_sql = format!(
+        "CREATE TABLE {}.test_table (id BIGINT PRIMARY KEY)",
+        service_user.user_id.as_str()
+    );
+    let response = server
+        .execute_sql_as_user(&service_table_sql, service_user.user_id.as_str())
+        .await;
     assert_eq!(
         response.status,
         ResponseStatus::Success,
@@ -230,7 +234,10 @@ async fn test_role_based_auth_e2e() {
 
     // Cleanup
     server
-        .execute_sql_as_user(&format!("DROP NAMESPACE {} CASCADE", namespace), dba_user.user_id.as_str())
+        .execute_sql_as_user(
+            &format!("DROP NAMESPACE {} CASCADE", namespace),
+            dba_user.user_id.as_str(),
+        )
         .await;
     server.execute_sql("DROP USER regular_user").await;
     server.execute_sql("DROP USER service_user").await;

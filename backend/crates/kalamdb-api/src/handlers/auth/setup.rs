@@ -77,16 +77,12 @@ pub async fn server_setup_handler(
 
     // Validate passwords
     if let Err(e) = validate_password(&body.password) {
-        return HttpResponse::BadRequest().json(AuthErrorResponse::new(
-            "weak_password",
-            format!("DBA user password: {}", e),
-        ));
+        return HttpResponse::BadRequest()
+            .json(AuthErrorResponse::new("weak_password", format!("DBA user password: {}", e)));
     }
     if let Err(e) = validate_password(&body.root_password) {
-        return HttpResponse::BadRequest().json(AuthErrorResponse::new(
-            "weak_password",
-            format!("Root password: {}", e),
-        ));
+        return HttpResponse::BadRequest()
+            .json(AuthErrorResponse::new("weak_password", format!("Root password: {}", e)));
     }
 
     // Check username is not root

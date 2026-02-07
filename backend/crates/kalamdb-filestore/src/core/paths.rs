@@ -57,5 +57,4 @@ mod tests {
         let result = parse_remote_url("http://bucket/key", &["s3://", "gs://"]);
         assert!(result.is_err(), "Should error on invalid scheme");
     }
-
 }

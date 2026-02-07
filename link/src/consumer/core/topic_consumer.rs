@@ -4,9 +4,7 @@ use crate::auth::AuthProvider;
 use crate::client::KalamLinkClientBuilder;
 use crate::consumer::core::offset_manager::OffsetManager;
 use crate::consumer::core::poller::{AckRequest, ConsumeRequest, ConsumeResponse, ConsumerPoller};
-use crate::consumer::models::{
-    AutoOffsetReset, CommitResult, ConsumerConfig, ConsumerRecord,
-};
+use crate::consumer::models::{AutoOffsetReset, CommitResult, ConsumerConfig, ConsumerRecord};
 use crate::error::{KalamLinkError, Result};
 use crate::models::ConnectionOptions;
 use crate::timeouts::KalamLinkTimeouts;
@@ -46,10 +44,9 @@ impl TopicConsumer {
 
     pub async fn commit_sync(&mut self) -> Result<CommitResult> {
         self.ensure_open()?;
-        let offset = self
-            .offsets
-            .commit_offset()
-            .ok_or_else(|| KalamLinkError::ConfigurationError("No processed offsets to commit".into()))?;
+        let offset = self.offsets.commit_offset().ok_or_else(|| {
+            KalamLinkError::ConfigurationError("No processed offsets to commit".into())
+        })?;
 
         let request = AckRequest {
             topic_id: self.config.topic.clone(),
@@ -316,9 +313,9 @@ impl ConsumerBuilder {
     }
 
     pub fn build(self) -> Result<TopicConsumer> {
-        let group_id = self.group_id.ok_or_else(|| {
-            KalamLinkError::ConfigurationError("group_id is required".into())
-        })?;
+        let group_id = self
+            .group_id
+            .ok_or_else(|| KalamLinkError::ConfigurationError("group_id is required".into()))?;
         let topic = self
             .topic
             .ok_or_else(|| KalamLinkError::ConfigurationError("topic is required".into()))?;

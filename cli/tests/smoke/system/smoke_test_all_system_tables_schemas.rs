@@ -80,13 +80,10 @@ fn smoke_test_all_system_tables_and_views_queryable() {
                         println!("    Parse error: {}", err);
                         failed_tables.push(format!("system.{}", table_name));
                         continue;
-                    }
+                    },
                 };
 
-                let status = parsed
-                    .get("status")
-                    .and_then(|s| s.as_str())
-                    .unwrap_or("");
+                let status = parsed.get("status").and_then(|s| s.as_str()).unwrap_or("");
                 if status.eq_ignore_ascii_case("success") {
                     println!("✅ OK");
                     tested_count += 1;
@@ -95,11 +92,11 @@ fn smoke_test_all_system_tables_and_views_queryable() {
                     println!("    Output: {}", output);
                     failed_tables.push(format!("system.{}", table_name));
                 }
-            }
+            },
             Err(e) => {
                 println!("❌ ERROR: {}", e);
                 failed_tables.push(format!("system.{}", table_name));
-            }
+            },
         }
     }
 
@@ -122,13 +119,10 @@ fn smoke_test_all_system_tables_and_views_queryable() {
                         println!("    Parse error: {}", err);
                         failed_tables.push(format!("system.{}", view_name));
                         continue;
-                    }
+                    },
                 };
 
-                let status = parsed
-                    .get("status")
-                    .and_then(|s| s.as_str())
-                    .unwrap_or("");
+                let status = parsed.get("status").and_then(|s| s.as_str()).unwrap_or("");
                 if status.eq_ignore_ascii_case("success") {
                     println!("✅ OK");
                     tested_count += 1;
@@ -137,13 +131,12 @@ fn smoke_test_all_system_tables_and_views_queryable() {
                     println!("    Output: {}", output);
                     failed_tables.push(format!("system.{}", view_name));
                 }
-            }
+            },
             Err(e) => {
                 println!("❌ ERROR: {}", e);
                 failed_tables.push(format!("system.{}", view_name));
-            }
+            },
         }
-
     }
 
     // Summary
@@ -186,8 +179,8 @@ fn smoke_test_topic_offsets_schema_and_operations() {
 
     // Query topic_offsets (may be empty, but schema should work)
     let query = "SELECT topic_id, group_id, partition_id, last_acked_offset, updated_at FROM system.topic_offsets LIMIT 5";
-    let output = execute_sql_as_root_via_client(query)
-        .expect("Failed to query system.topic_offsets");
+    let output =
+        execute_sql_as_root_via_client(query).expect("Failed to query system.topic_offsets");
 
     println!("Query result:\n{}", output);
 
@@ -257,14 +250,8 @@ fn smoke_test_system_tables_in_information_schema() {
         })
     };
 
-    assert!(
-        has_table("users"),
-        "system.users should appear in information_schema"
-    );
-    assert!(
-        has_table("topics"),
-        "system.topics should appear in information_schema"
-    );
+    assert!(has_table("users"), "system.users should appear in information_schema");
+    assert!(has_table("topics"), "system.topics should appear in information_schema");
     assert!(
         has_table("topic_offsets"),
         "system.topic_offsets should appear in information_schema"
@@ -304,16 +291,16 @@ fn smoke_test_system_table_column_counts() {
 
     for (table_name, min_cols) in expected_min_columns {
         let query = format!("SELECT * FROM system.{} LIMIT 1", table_name);
-        
+
         match execute_sql_as_root_via_client_json(&query) {
             Ok(output) => {
                 print!("  system.{:<20} ", table_name);
-                
+
                 // Parse JSON to count columns (basic heuristic)
                 if output.contains("\"status\":\"success\"") {
                     // Check if we have column data
                     let has_sufficient_data = output.matches(",").count() >= min_cols;
-                    
+
                     if has_sufficient_data || output.contains("\"row_count\":0") {
                         println!("✅ OK (>= {} columns expected)", min_cols);
                     } else {
@@ -324,16 +311,16 @@ fn smoke_test_system_table_column_counts() {
                     println!("❌ FAILED: {}", output);
                     all_passed = false;
                 }
-            }
+            },
             Err(e) => {
                 println!("  system.{:<20} ❌ ERROR: {}", table_name, e);
                 all_passed = false;
-            }
+            },
         }
     }
 
     println!("{}", "=".repeat(70));
-    
+
     if !all_passed {
         println!("⚠️  Some column count validations failed");
     } else {

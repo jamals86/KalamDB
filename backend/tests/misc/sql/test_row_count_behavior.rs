@@ -87,10 +87,7 @@ async fn test_update_returns_correct_row_count() {
     // Test 1: UPDATE existing row returns count of 1
     let response = server
         .execute_sql_as_user(
-            &format!(
-                "UPDATE {}.users SET email = 'alice.new@example.com' WHERE id = 'user1'",
-                ns
-            ),
+            &format!("UPDATE {}.users SET email = 'alice.new@example.com' WHERE id = 'user1'", ns),
             "user1",
         )
         .await;
@@ -100,10 +97,7 @@ async fn test_update_returns_correct_row_count() {
     // Test 2: UPDATE non-existent row returns count of 0
     let response = server
         .execute_sql_as_user(
-            &format!(
-                "UPDATE {}.users SET email = 'test@example.com' WHERE id = 'user999'",
-                ns
-            ),
+            &format!("UPDATE {}.users SET email = 'test@example.com' WHERE id = 'user999'", ns),
             "user1",
         )
         .await;
@@ -243,7 +237,10 @@ async fn test_delete_already_deleted_returns_zero() {
     // Insert test data
     server
         .execute_sql_as_user(
-            &format!("INSERT INTO {}.tasks (id, title) VALUES ('task1', 'Task to delete twice')", ns),
+            &format!(
+                "INSERT INTO {}.tasks (id, title) VALUES ('task1', 'Task to delete twice')",
+                ns
+            ),
             "user1",
         )
         .await;
@@ -254,10 +251,7 @@ async fn test_delete_already_deleted_returns_zero() {
         .await;
 
     if response.status == ResponseStatus::Success {
-        let result = response
-            .results
-            .first()
-            .expect("DELETE response missing QueryResult entry");
+        let result = response.results.first().expect("DELETE response missing QueryResult entry");
         assert!(
             result.row_count <= 1,
             "Expected at most 1 row affected, got {}",
@@ -265,11 +259,7 @@ async fn test_delete_already_deleted_returns_zero() {
         );
     } else {
         let err = response.error.as_ref().expect("DELETE error missing details");
-        assert!(
-            err.message.contains("not found"),
-            "Unexpected DELETE error: {:?}",
-            err
-        );
+        assert!(err.message.contains("not found"), "Unexpected DELETE error: {:?}", err);
     }
 
     let verify = server
@@ -295,11 +285,7 @@ async fn test_delete_already_deleted_returns_zero() {
         }
     } else {
         let err = verify.error.as_ref().expect("COUNT error missing details");
-        assert!(
-            err.message.contains("not found"),
-            "Unexpected COUNT error: {:?}",
-            err
-        );
+        assert!(err.message.contains("not found"), "Unexpected COUNT error: {:?}", err);
     }
 
     // Second DELETE on same row (should return 0 because already deleted)

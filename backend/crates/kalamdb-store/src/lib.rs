@@ -39,7 +39,7 @@ pub use kalamdb_commons::StorageKey;
 pub use entity_store::{
     CrossUserTableStore,
     EntityStore,
-    EntityStoreAsync,             // Async versions using spawn_blocking internally
+    EntityStoreAsync, // Async versions using spawn_blocking internally
 };
 
 // Export index types

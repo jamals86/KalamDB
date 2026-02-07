@@ -230,7 +230,7 @@ fn extract_value(expr: &Expr, row_data: &Row) -> Result<ScalarValue, KalamDbErro
                     column_name
                 ))
             })
-        }
+        },
 
         // Qualified identifier (e.g. table.column) - use the last part
         Expr::CompoundIdentifier(parts) => {
@@ -243,9 +243,7 @@ fn extract_value(expr: &Expr, row_data: &Row) -> Result<ScalarValue, KalamDbErro
                     ))
                 })
             } else {
-                Err(KalamDbError::InvalidOperation(
-                    "Empty compound identifier".to_string(),
-                ))
+                Err(KalamDbError::InvalidOperation("Empty compound identifier".to_string()))
             }
         },
 

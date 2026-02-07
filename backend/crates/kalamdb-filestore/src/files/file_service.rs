@@ -9,9 +9,9 @@ use crate::registry::{StorageCached, StorageRegistry};
 use bytes::Bytes;
 use kalamdb_commons::ids::SnowflakeGenerator;
 use kalamdb_commons::models::ids::StorageId;
-use kalamdb_system::{FileRef, FileSubfolderState};
 use kalamdb_commons::models::{TableId, UserId};
 use kalamdb_commons::schemas::TableType;
+use kalamdb_system::{FileRef, FileSubfolderState};
 use std::fs;
 use std::sync::Arc;
 
@@ -81,7 +81,11 @@ impl FileStorageService {
     }
 
     /// Create a staging directory for a request.
-    pub fn create_staging_dir(&self, request_id: &str, user_id: &kalamdb_commons::UserId) -> Result<std::path::PathBuf> {
+    pub fn create_staging_dir(
+        &self,
+        request_id: &str,
+        user_id: &kalamdb_commons::UserId,
+    ) -> Result<std::path::PathBuf> {
         self.staging.create_request_dir(request_id, user_id)
     }
 
@@ -102,7 +106,8 @@ impl FileStorageService {
             )));
         }
 
-        self.staging.stage_file(request_dir, part_name, original_name, data, provided_mime)
+        self.staging
+            .stage_file(request_dir, part_name, original_name, data, provided_mime)
     }
 
     /// Finalize a staged file to permanent storage.
@@ -137,7 +142,9 @@ impl FileStorageService {
         }
 
         // Generate unique file ID
-        let file_id = self.snowflake.next_id()
+        let file_id = self
+            .snowflake
+            .next_id()
             .map_err(|e| FilestoreError::Other(format!("Failed to generate file ID: {}", e)))?
             .to_string();
 
@@ -175,13 +182,9 @@ impl FileStorageService {
 
         // Get storage from registry and write to permanent storage
         let storage = self.get_storage(storage_id)?;
-        storage.put(
-            table_type,
-            table_id,
-            user_id,
-            &relative_path,
-            Bytes::from(content),
-        ).await?;
+        storage
+            .put(table_type, table_id, user_id, &relative_path, Bytes::from(content))
+            .await?;
 
         log::info!(
             "Finalized file: table={}, storage={}, path={}, size={}, mime={}",
@@ -271,7 +274,8 @@ impl FileStorageService {
     ) -> Vec<Result<()>> {
         let mut results = Vec::with_capacity(file_refs.len());
         for file_ref in file_refs {
-            results.push(self.delete_file(file_ref, storage_id, table_type, table_id, user_id).await);
+            results
+                .push(self.delete_file(file_ref, storage_id, table_type, table_id, user_id).await);
         }
         results
     }

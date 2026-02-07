@@ -82,7 +82,6 @@ fn smoke_test_system_tables_options_column() {
     );
     execute_sql_as_root_via_client(&create_stream_sql).expect("Failed to create stream table");
 
-
     println!("✅ Created 3 tables (USER, SHARED, STREAM)");
 
     // Query system.schemas for our namespace
@@ -115,7 +114,10 @@ fn smoke_test_system_tables_options_column() {
     // Verify table_type column
     // Note: JSON output will have "table_type" field, but exact format depends on implementation
     // For smoke test, we just verify the column exists
-    assert!(output.contains("\"table_type\""), "Expected table_type column in system.schemas");
+    assert!(
+        output.contains("\"table_type\""),
+        "Expected table_type column in system.schemas"
+    );
 
     // Verify options column exists
     assert!(output.contains("\"options\""), "Expected options column in system.schemas");
@@ -297,7 +299,6 @@ fn smoke_test_dt_meta_command() {
         execute_sql_as_root_via_client(&create_sql).expect("Failed to create table");
     }
 
-
     println!("✅ Created 2 tables");
 
     // Query system.schemas directly (equivalent to \dt for our namespace)
@@ -305,7 +306,8 @@ fn smoke_test_dt_meta_command() {
         "SELECT table_name, table_type FROM system.schemas WHERE namespace_id = '{}' ORDER BY table_name",
         namespace
     );
-    let output = execute_sql_as_root_via_client(&query_sql).expect("Failed to query system.schemas");
+    let output =
+        execute_sql_as_root_via_client(&query_sql).expect("Failed to query system.schemas");
 
     println!("\\dt equivalent output:\n{}", output);
 

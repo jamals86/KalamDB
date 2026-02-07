@@ -103,11 +103,11 @@ where
                                 match binary.op {
                                     Operator::Eq => {
                                         prefix = self.parse_key(s);
-                                    }
+                                    },
                                     Operator::Gt | Operator::GtEq => {
                                         start_key = self.parse_key(s);
-                                    }
-                                    _ => {}
+                                    },
+                                    _ => {},
                                 }
                             }
                         }
@@ -128,9 +128,8 @@ where
                 index_idx,
                 filters
             );
-            let iter = store
-                .scan_by_index_iter(index_idx, Some(&index_prefix), limit)
-                .map_err(|e| {
+            let iter =
+                store.scan_by_index_iter(index_idx, Some(&index_prefix), limit).map_err(|e| {
                     DataFusionError::Execution(format!(
                         "Failed to scan {} by index: {}",
                         self.table_name(),
@@ -159,7 +158,11 @@ where
                 filters
             );
             let iter = store.scan_iterator(prefix.as_ref(), start_key.as_ref()).map_err(|e| {
-                DataFusionError::Execution(format!("Failed to create iterator for {}: {}", self.table_name(), e))
+                DataFusionError::Execution(format!(
+                    "Failed to create iterator for {}: {}",
+                    self.table_name(),
+                    e
+                ))
             })?;
 
             let effective_limit = limit.unwrap_or(100_000);
@@ -170,23 +173,26 @@ where
                         if pairs.len() >= effective_limit {
                             break;
                         }
-                    }
+                    },
                     Err(e) => {
                         log::warn!("Error during scan of {}: {}", self.table_name(), e);
                         continue;
-                    }
+                    },
                 }
             }
         }
 
         let batch = self.create_batch_from_pairs(pairs).map_err(|e| {
-            DataFusionError::Execution(format!("Failed to build {} batch: {}", self.table_name(), e))
+            DataFusionError::Execution(format!(
+                "Failed to build {} batch: {}",
+                self.table_name(),
+                e
+            ))
         })?;
 
         let partitions = vec![vec![batch]];
-        let table = MemTable::try_new(schema, partitions).map_err(|e| {
-            DataFusionError::Execution(format!("Failed to create MemTable: {}", e))
-        })?;
+        let table = MemTable::try_new(schema, partitions)
+            .map_err(|e| DataFusionError::Execution(format!("Failed to create MemTable: {}", e)))?;
 
         // Pass through projection and filters to MemTable
         table.scan(state, projection, filters, limit).await
@@ -225,11 +231,11 @@ where
                                 match binary.op {
                                     Operator::Eq => {
                                         prefix = self.parse_key(s);
-                                    }
+                                    },
                                     Operator::Gt | Operator::GtEq => {
                                         start_key = self.parse_key(s);
-                                    }
-                                    _ => {}
+                                    },
+                                    _ => {},
                                 }
                             }
                         }
@@ -243,13 +249,17 @@ where
 
         // Use iterator for memory-efficient scanning
         let iter = store.scan_iterator(prefix.as_ref(), start_key.as_ref()).map_err(|e| {
-            DataFusionError::Execution(format!("Failed to create iterator for {}: {}", self.table_name(), e))
+            DataFusionError::Execution(format!(
+                "Failed to create iterator for {}: {}",
+                self.table_name(),
+                e
+            ))
         })?;
 
         // Collect with limit - only takes what we need
         let effective_limit = limit.unwrap_or(100_000);
         let mut pairs = Vec::with_capacity(effective_limit.min(1000));
-        
+
         for result in iter {
             match result {
                 Ok((key, value)) => {
@@ -257,22 +267,25 @@ where
                     if pairs.len() >= effective_limit {
                         break;
                     }
-                }
+                },
                 Err(e) => {
                     log::warn!("Error during streaming scan of {}: {}", self.table_name(), e);
                     continue;
-                }
+                },
             }
         }
 
         let batch = self.create_batch_from_pairs(pairs).map_err(|e| {
-            DataFusionError::Execution(format!("Failed to build {} batch: {}", self.table_name(), e))
+            DataFusionError::Execution(format!(
+                "Failed to build {} batch: {}",
+                self.table_name(),
+                e
+            ))
         })?;
 
         let partitions = vec![vec![batch]];
-        let table = MemTable::try_new(schema, partitions).map_err(|e| {
-            DataFusionError::Execution(format!("Failed to create MemTable: {}", e))
-        })?;
+        let table = MemTable::try_new(schema, partitions)
+            .map_err(|e| DataFusionError::Execution(format!("Failed to create MemTable: {}", e)))?;
 
         table.scan(state, projection, filters, limit).await
     }
@@ -306,13 +319,16 @@ where
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         let schema = self.arrow_schema();
         let batch = self.scan_all_to_batch().map_err(|e| {
-            DataFusionError::Execution(format!("Failed to build {} batch: {}", self.table_name(), e))
+            DataFusionError::Execution(format!(
+                "Failed to build {} batch: {}",
+                self.table_name(),
+                e
+            ))
         })?;
 
         let partitions = vec![vec![batch]];
-        let table = MemTable::try_new(schema, partitions).map_err(|e| {
-            DataFusionError::Execution(format!("Failed to create MemTable: {}", e))
-        })?;
+        let table = MemTable::try_new(schema, partitions)
+            .map_err(|e| DataFusionError::Execution(format!("Failed to create MemTable: {}", e)))?;
 
         table.scan(state, projection, &[], limit).await
     }
@@ -338,7 +354,10 @@ pub fn extract_filter_value(filters: &[Expr], column_name: &str) -> Option<Strin
 }
 
 /// Helper function to extract range filter values for a column
-pub fn extract_range_filters(filters: &[Expr], column_name: &str) -> (Option<String>, Option<String>) {
+pub fn extract_range_filters(
+    filters: &[Expr],
+    column_name: &str,
+) -> (Option<String>, Option<String>) {
     use datafusion::logical_expr::Operator;
     use datafusion::scalar::ScalarValue;
 
@@ -353,7 +372,7 @@ pub fn extract_range_filters(filters: &[Expr], column_name: &str) -> (Option<Str
                         match binary.op {
                             Operator::Gt | Operator::GtEq => start = Some(s.clone()),
                             Operator::Lt | Operator::LtEq => end = Some(s.clone()),
-                            _ => {}
+                            _ => {},
                         }
                     }
                 }
@@ -371,13 +390,20 @@ mod tests {
     use datafusion::execution::context::SessionContext;
     use datafusion::logical_expr::{col, lit};
     use kalamdb_commons::{KSerializable, StorageKey};
-    use kalamdb_store::{IndexedEntityStore, StorageBackend};
     use kalamdb_store::test_utils::InMemoryBackend;
+    use kalamdb_store::{IndexedEntityStore, StorageBackend};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
 
-    #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-    #[derive(bincode::Encode, bincode::Decode)]
+    #[derive(
+        Debug,
+        Clone,
+        PartialEq,
+        serde::Serialize,
+        serde::Deserialize,
+        bincode::Encode,
+        bincode::Decode,
+    )]
     struct DummyValue {
         value: String,
     }
@@ -447,12 +473,10 @@ mod tests {
             prefix: Option<&[u8]>,
             start_key: Option<&[u8]>,
             limit: Option<usize>,
-        ) -> kalamdb_store::storage_trait::Result<kalamdb_commons::storage::KvIterator<'_>> {
-            *self.last_scan.lock().unwrap() = Some((
-                prefix.map(|p| p.to_vec()),
-                start_key.map(|k| k.to_vec()),
-                limit,
-            ));
+        ) -> kalamdb_store::storage_trait::Result<kalamdb_commons::storage::KvIterator<'_>>
+        {
+            *self.last_scan.lock().unwrap() =
+                Some((prefix.map(|p| p.to_vec()), start_key.map(|k| k.to_vec()), limit));
             self.scan_calls.fetch_add(1, Ordering::SeqCst);
             self.inner.scan(partition, prefix, start_key, limit)
         }
@@ -470,7 +494,8 @@ mod tests {
 
         fn list_partitions(
             &self,
-        ) -> kalamdb_store::storage_trait::Result<Vec<kalamdb_commons::storage::Partition>> {
+        ) -> kalamdb_store::storage_trait::Result<Vec<kalamdb_commons::storage::Partition>>
+        {
             self.inner.list_partitions()
         }
 
@@ -530,16 +555,11 @@ mod tests {
             &self,
             pairs: Vec<(kalamdb_commons::models::UserId, DummyValue)>,
         ) -> Result<RecordBatch, SystemError> {
-            let values: Vec<Option<String>> = pairs
-                .into_iter()
-                .map(|(id, _)| Some(id.as_str().to_string()))
-                .collect();
+            let values: Vec<Option<String>> =
+                pairs.into_iter().map(|(id, _)| Some(id.as_str().to_string())).collect();
             let array = StringArray::from(values);
-            RecordBatch::try_new(
-                self.arrow_schema(),
-                vec![Arc::new(array)],
-            )
-            .map_err(|e| SystemError::Other(e.to_string()))
+            RecordBatch::try_new(self.arrow_schema(), vec![Arc::new(array)])
+                .map_err(|e| SystemError::Other(e.to_string()))
         }
     }
 
@@ -551,17 +571,19 @@ mod tests {
         let user_id = kalamdb_commons::models::UserId::new("u1");
         provider
             .store
-            .insert(&user_id, &DummyValue { value: "v".to_string() })
+            .insert(
+                &user_id,
+                &DummyValue {
+                    value: "v".to_string(),
+                },
+            )
             .unwrap();
 
         let ctx = SessionContext::new();
         let state = ctx.state();
         let filter = col("user_id").eq(lit("u1"));
 
-        let _plan = provider
-            .base_system_scan(&state, None, &[filter], None)
-            .await
-            .unwrap();
+        let _plan = provider.base_system_scan(&state, None, &[filter], None).await.unwrap();
 
         assert_eq!(backend.scan_calls(), 1);
         let last = backend.last_scan().expect("missing scan");

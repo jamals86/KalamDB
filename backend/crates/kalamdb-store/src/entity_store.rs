@@ -206,8 +206,7 @@ where
         )?;
 
         let mapped = iter.map(|(key_bytes, value_bytes)| {
-            let key = K::from_storage_key(&key_bytes)
-                .map_err(StorageError::SerializationError)?;
+            let key = K::from_storage_key(&key_bytes).map_err(StorageError::SerializationError)?;
             let value = V::decode(&value_bytes)?;
             Ok((key, value))
         });
@@ -353,14 +352,14 @@ where
                 Err(e) => {
                     log::warn!("Skipping entry with malformed key: {}", e);
                     continue;
-                }
+                },
             };
             let entity = match self.deserialize(&value_bytes) {
                 Ok(v) => v,
                 Err(e) => {
                     log::warn!("Skipping entry with malformed value: {}", e);
                     continue;
-                }
+                },
             };
             results.push((key, entity));
             if results.len() >= effective_limit {
@@ -416,14 +415,14 @@ where
                 Err(e) => {
                     log::warn!("Skipping entry with malformed key: {}", e);
                     continue;
-                }
+                },
             };
             let entity = match self.deserialize(&value_bytes) {
                 Ok(v) => v,
                 Err(e) => {
                     log::warn!("Skipping entry with malformed value: {}", e);
                     continue;
-                }
+                },
             };
             results.push((key, entity));
             if results.len() >= effective_limit {
@@ -465,14 +464,14 @@ where
                 Err(e) => {
                     log::warn!("Skipping entry with malformed key: {}", e);
                     continue;
-                }
+                },
             };
             let entity = match self.deserialize(&value_bytes) {
                 Ok(v) => v,
                 Err(e) => {
                     log::warn!("Skipping entry with malformed value: {}", e);
                     continue;
-                }
+                },
             };
             results.push((key, entity));
             if results.len() >= limit {
@@ -509,14 +508,14 @@ where
                 Err(e) => {
                     log::warn!("Skipping entry with malformed key: {}", e);
                     continue;
-                }
+                },
             };
             let entity = match self.deserialize(&value_bytes) {
                 Ok(v) => v,
                 Err(e) => {
                     log::warn!("Skipping entry with malformed value: {}", e);
                     continue;
-                }
+                },
             };
             results.push((key, entity));
             if results.len() >= limit {
@@ -557,7 +556,7 @@ where
                 Err(e) => {
                     log::warn!("Skipping entry with malformed key: {}", e);
                     continue;
-                }
+                },
             };
             keys.push(key);
             if keys.len() >= limit {
@@ -605,7 +604,7 @@ where
                 Err(e) => {
                     log::warn!("Skipping entry with malformed key: {}", e);
                     continue;
-                }
+                },
             };
             keys.push(key);
             if keys.len() >= limit {
@@ -720,14 +719,12 @@ where
     fn delete_batch(&self, keys: &[K]) -> Result<()> {
         use crate::storage_trait::Operation;
         let partition = self.partition();
-        
+
         let operations: Vec<Operation> = keys
             .iter()
-            .map(|key| {
-                Operation::Delete {
-                    partition: partition.clone(),
-                    key: key.storage_key(),
-                }
+            .map(|key| Operation::Delete {
+                partition: partition.clone(),
+                key: key.storage_key(),
             })
             .collect();
 

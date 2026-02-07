@@ -48,7 +48,8 @@ async fn test_scenario_06_jobs_lifecycle() -> anyhow::Result<()> {
     for i in 1..=20 {
         let resp = client
             .execute_query(
-                &format!("INSERT INTO {}.data (id, value) VALUES ({}, 'value_{}')", ns, i, i), None,
+                &format!("INSERT INTO {}.data (id, value) VALUES ({}, 'value_{}')", ns, i, i),
+                None,
                 None,
                 None,
             )
@@ -158,7 +159,8 @@ async fn test_scenario_06_job_idempotency() -> anyhow::Result<()> {
     for i in 1..=10 {
         let resp = client
             .execute_query(
-                &format!("INSERT INTO {}.data (id, value) VALUES ({}, 'value_{}')", ns, i, i), None,
+                &format!("INSERT INTO {}.data (id, value) VALUES ({}, 'value_{}')", ns, i, i),
+                None,
                 None,
                 None,
             )
@@ -248,7 +250,8 @@ async fn test_scenario_06_job_status_transitions() -> anyhow::Result<()> {
     for i in 1..=50 {
         let resp = client
             .execute_query(
-                &format!("INSERT INTO {}.data (id, value) VALUES ({}, 'value_{}')", ns, i, i), None,
+                &format!("INSERT INTO {}.data (id, value) VALUES ({}, 'value_{}')", ns, i, i),
+                None,
                 None,
                 None,
             )

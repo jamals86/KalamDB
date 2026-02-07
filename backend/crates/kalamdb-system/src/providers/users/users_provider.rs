@@ -18,6 +18,7 @@
 use super::users_indexes::create_users_indexes;
 use super::UsersTableSchema;
 use crate::error::{SystemError, SystemResultExt};
+use crate::providers::users::models::User;
 use crate::system_table_trait::SystemTableProviderExt;
 use crate::{StoragePartition, SystemTable};
 use async_trait::async_trait;
@@ -28,7 +29,6 @@ use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::Expr;
 use datafusion::logical_expr::TableProviderFilterPushDown;
 use datafusion::physical_plan::ExecutionPlan;
-use crate::providers::users::models::User;
 use kalamdb_commons::RecordBatchBuilder;
 use kalamdb_commons::UserId;
 use kalamdb_store::entity_store::EntityStore;
@@ -107,9 +107,7 @@ impl UsersTableProvider {
         }
 
         // Insert user - indexes are managed automatically
-        self.store
-            .insert(&user.user_id, &user)
-            .into_system_error("insert user error")
+        self.store.insert(&user.user_id, &user).into_system_error("insert user error")
     }
 
     /// Update an existing user.
@@ -126,10 +124,7 @@ impl UsersTableProvider {
         // Check if user exists
         let existing = self.store.get(&user.user_id)?;
         if existing.is_none() {
-            return Err(SystemError::NotFound(format!(
-                "User not found: {}",
-                user.user_id
-            )));
+            return Err(SystemError::NotFound(format!("User not found: {}", user.user_id)));
         }
 
         let existing_user = existing.unwrap();
@@ -333,7 +328,10 @@ impl SystemTableScan<UserId, User> for UsersTableProvider {
         Some(UserId::new(value))
     }
 
-    fn create_batch_from_pairs(&self, pairs: Vec<(UserId, User)>) -> Result<RecordBatch, SystemError> {
+    fn create_batch_from_pairs(
+        &self,
+        pairs: Vec<(UserId, User)>,
+    ) -> Result<RecordBatch, SystemError> {
         self.create_batch(pairs)
     }
 }

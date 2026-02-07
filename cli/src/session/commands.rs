@@ -296,9 +296,18 @@ impl CLISession {
         );
         println!("{}", "║  Topic Consumption".bright_blue().bold());
         println!("║    {:<48} Basic consume", "\\consume app.events".cyan());
-        println!("║    {:<48} With consumer group", "\\consume app.events --group my-group".cyan());
-        println!("║    {:<48} From earliest offset", "\\consume app.events --from earliest --limit 10".cyan());
-        println!("║    {}", "CLI args: kalam --consume --topic app.events --group my-group".green());
+        println!(
+            "║    {:<48} With consumer group",
+            "\\consume app.events --group my-group".cyan()
+        );
+        println!(
+            "║    {:<48} From earliest offset",
+            "\\consume app.events --from earliest --limit 10".cyan()
+        );
+        println!(
+            "║    {}",
+            "CLI args: kalam --consume --topic app.events --group my-group".green()
+        );
 
         // Tips & examples
         println!(
@@ -338,18 +347,14 @@ impl CLISession {
         if group.is_none() {
             println!(
                 "{}",
-                "⚠️  Running without consumer group - offsets will not be saved"
-                    .yellow()
+                "⚠️  Running without consumer group - offsets will not be saved".yellow()
             );
             println!("{}", "   Use --group NAME to persist progress".dimmed());
             println!();
         }
 
         // Build consumer
-        let mut builder = self
-            .client
-            .consumer()
-            .topic(topic);
+        let mut builder = self.client.consumer().topic(topic);
 
         if let Some(group_id) = group {
             builder = builder.group_id(group_id);
@@ -374,15 +379,10 @@ impl CLISession {
             builder = builder.auto_offset_reset(auto_offset);
         }
 
-        let mut consumer = builder.build().map_err(|e| {
-            CLIError::LinkError(e)
-        })?;
+        let mut consumer = builder.build().map_err(|e| CLIError::LinkError(e))?;
 
         // Print header
-        println!(
-            "{}",
-            format!("Consuming from topic: {}", topic).bright_green().bold()
-        );
+        println!("{}", format!("Consuming from topic: {}", topic).bright_green().bold());
         if let Some(group_id) = group {
             println!("{}", format!("  Consumer group: {}", group_id).dimmed());
         }
@@ -393,10 +393,7 @@ impl CLISession {
             println!("{}", format!("  Limit: {} messages", limit_val).dimmed());
         }
         if let Some(timeout_val) = timeout {
-            println!(
-                "{}",
-                format!("  Timeout: {}s", timeout_val).dimmed()
-            );
+            println!("{}", format!("  Timeout: {}s", timeout_val).dimmed());
         }
         println!("{}", "Press Ctrl+C to stop...".dimmed());
         println!();
@@ -451,7 +448,7 @@ impl CLISession {
                 },
                 Err(e) => {
                     error_count += 1;
-                    
+
                     // Format detailed error message
                     let error_msg = format!("{}", e);
                     let detailed_error = if error_msg.contains("404") {
@@ -473,19 +470,16 @@ impl CLISession {
                     } else {
                         format!("❌ Poll error: {}", error_msg)
                     };
-                    
+
                     eprintln!("{}", detailed_error.red());
-                    
+
                     // Exit after 3 consecutive errors instead of infinite retry
                     if error_count >= 3 {
                         eprintln!();
-                        eprintln!(
-                            "{}",
-                            "❌ Too many consecutive errors. Exiting.".red().bold()
-                        );
+                        eprintln!("{}", "❌ Too many consecutive errors. Exiting.".red().bold());
                         break;
                     }
-                    
+
                     sleep(Duration::from_secs(1)).await;
                     continue;
                 },
@@ -508,11 +502,8 @@ impl CLISession {
                 };
 
                 // Format and display record
-                let formatted = self.formatter.format_consumer_record(
-                    record.offset,
-                    op_str,
-                    &record.payload,
-                );
+                let formatted =
+                    self.formatter.format_consumer_record(record.offset, op_str, &record.payload);
                 println!("{}", formatted);
 
                 // Mark as processed

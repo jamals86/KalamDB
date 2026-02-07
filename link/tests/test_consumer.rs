@@ -69,14 +69,9 @@ async fn setup_topic_and_table(client: &KalamLinkClient, topic_name: &str, table
 
 async fn insert_messages(client: &KalamLinkClient, table_name: &str, count: usize) {
     for i in 0..count {
-        let sql = format!(
-            "INSERT INTO {} (id, message) VALUES ({}, 'Message {}')",
-            table_name, i, i
-        );
-        client
-            .execute_query(&sql, None, None, None)
-            .await
-            .expect("Insert failed");
+        let sql =
+            format!("INSERT INTO {} (id, message) VALUES ({}, 'Message {}')", table_name, i, i);
+        client.execute_query(&sql, None, None, None).await.expect("Insert failed");
     }
 }
 
@@ -115,10 +110,7 @@ fn test_consumer_builder_requires_topic() {
 
 #[test]
 fn test_consumer_builder_requires_base_url_without_client() {
-    let result = TopicConsumer::builder()
-        .group_id("test-group")
-        .topic("test.topic")
-        .build();
+    let result = TopicConsumer::builder().group_id("test-group").topic("test.topic").build();
 
     assert!(result.is_err());
     let err = match result {
@@ -331,10 +323,7 @@ async fn test_poll_with_timeout_returns_empty() {
         .expect("Consumer build failed");
 
     let start = std::time::Instant::now();
-    let records = consumer
-        .poll_with_timeout(Duration::from_secs(2))
-        .await
-        .expect("Poll failed");
+    let records = consumer.poll_with_timeout(Duration::from_secs(2)).await.expect("Poll failed");
 
     assert!(records.is_empty());
     assert!(start.elapsed() >= Duration::from_secs(1));

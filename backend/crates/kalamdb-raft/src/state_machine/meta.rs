@@ -183,8 +183,7 @@ impl MetaStateMachine {
                     String::new()
                 };
 
-                self.approximate_size
-                    .fetch_add(500, Ordering::Relaxed);
+                self.approximate_size.fetch_add(500, Ordering::Relaxed);
                 Ok(MetaResponse::TableCreated { table_id, message })
             },
 
@@ -224,8 +223,7 @@ impl MetaStateMachine {
                     a.register_storage(&storage_id, &storage).await?;
                 }
 
-                self.approximate_size
-                    .fetch_add(300, Ordering::Relaxed);
+                self.approximate_size.fetch_add(300, Ordering::Relaxed);
                 Ok(MetaResponse::Ok)
             },
 
@@ -306,11 +304,7 @@ impl MetaStateMachine {
             // Job Operations
             // =================================================================
             MetaCommand::CreateJob { job } => {
-                log::debug!(
-                    "MetaStateMachine: CreateJob {} (type: {})",
-                    job.job_id,
-                    job.job_type
-                );
+                log::debug!("MetaStateMachine: CreateJob {} (type: {})", job.job_id, job.job_type);
 
                 let message = if let Some(ref a) = applier {
                     a.create_job(&job).await?
@@ -351,15 +345,10 @@ impl MetaStateMachine {
                 node_id,
                 claimed_at,
             } => {
-                log::debug!(
-                    "MetaStateMachine: ClaimJobNode job={} node={}",
-                    job_id,
-                    node_id
-                );
+                log::debug!("MetaStateMachine: ClaimJobNode job={} node={}", job_id, node_id);
 
                 if let Some(ref a) = applier {
-                    a.claim_job_node(&job_id, node_id, claimed_at.timestamp_millis())
-                        .await?;
+                    a.claim_job_node(&job_id, node_id, claimed_at.timestamp_millis()).await?;
                 }
 
                 Ok(MetaResponse::Ok)
@@ -436,12 +425,8 @@ impl MetaStateMachine {
                 log::debug!("MetaStateMachine: CompleteJob {}", job_id);
 
                 if let Some(ref a) = applier {
-                    a.complete_job(
-                        &job_id,
-                        result.as_deref(),
-                        completed_at.timestamp_millis(),
-                    )
-                    .await?;
+                    a.complete_job(&job_id, result.as_deref(), completed_at.timestamp_millis())
+                        .await?;
                 }
 
                 Ok(MetaResponse::Ok)

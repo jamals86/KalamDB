@@ -51,20 +51,18 @@ impl AlterTableHandler {
         )?;
 
         let registry = self.app_context.schema_registry();
-        let table_def_arc = registry
-            .get_table_if_exists(&table_id)?
-            .ok_or_else(|| {
-                log::warn!(
-                    "⚠️  ALTER TABLE failed: Table '{}' not found in namespace '{}'",
-                    statement.table_name.as_str(),
-                    namespace_id.as_str()
-                );
-                KalamDbError::NotFound(format!(
-                    "Table '{}' not found in namespace '{}'",
-                    statement.table_name.as_str(),
-                    namespace_id.as_str()
-                ))
-            })?;
+        let table_def_arc = registry.get_table_if_exists(&table_id)?.ok_or_else(|| {
+            log::warn!(
+                "⚠️  ALTER TABLE failed: Table '{}' not found in namespace '{}'",
+                statement.table_name.as_str(),
+                namespace_id.as_str()
+            );
+            KalamDbError::NotFound(format!(
+                "Table '{}' not found in namespace '{}'",
+                statement.table_name.as_str(),
+                namespace_id.as_str()
+            ))
+        })?;
 
         let mut table_def: TableDefinition = (*table_def_arc).clone();
 
@@ -286,10 +284,7 @@ fn apply_alter_operation(
                 data_type.sql_name(),
                 nullable
             );
-            Ok((
-                format!("ADD COLUMN {} {}", column_name, data_type.sql_name()),
-                true,
-            ))
+            Ok((format!("ADD COLUMN {} {}", column_name, data_type.sql_name()), true))
         },
         ColumnOperation::Drop { column_name } => {
             // Block dropping system columns
@@ -377,14 +372,7 @@ fn apply_alter_operation(
                     new_data_type.sql_name()
                 );
             }
-            Ok((
-                format!(
-                    "MODIFY COLUMN {} {}",
-                    column_name,
-                    new_data_type.sql_name()
-                ),
-                changed,
-            ))
+            Ok((format!("MODIFY COLUMN {} {}", column_name, new_data_type.sql_name()), changed))
         },
         ColumnOperation::Rename {
             old_column_name,
@@ -480,11 +468,7 @@ fn get_operation_summary(op: &ColumnOperation) -> String {
             column_name,
             new_data_type,
             ..
-        } => format!(
-            "MODIFY COLUMN {} {}",
-            column_name,
-            new_data_type.sql_name()
-        ),
+        } => format!("MODIFY COLUMN {} {}", column_name, new_data_type.sql_name()),
         ColumnOperation::Rename {
             old_column_name,
             new_column_name,

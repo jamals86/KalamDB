@@ -151,12 +151,7 @@ impl UserTableFlushJob {
             .get_file_path(TableType::User, &self.table_id, Some(&user_id_typed), &temp_filename)
             .full_path;
         let destination_path = storage_cached
-            .get_file_path(
-                TableType::User,
-                &self.table_id,
-                Some(&user_id_typed),
-                &batch_filename,
-            )
+            .get_file_path(TableType::User, &self.table_id, Some(&user_id_typed), &batch_filename)
             .full_path;
 
         // ===== ATOMIC FLUSH PATTERN =====
@@ -350,7 +345,8 @@ impl TableFlush for UserTableFlushJob {
             }
 
             // Convert to JSON and inject system columns
-            let row_data = helpers::add_system_columns(row.fields.clone(), row._seq.as_i64(), false);
+            let row_data =
+                helpers::add_system_columns(row.fields.clone(), row._seq.as_i64(), false);
 
             rows_by_user.entry(user_id).or_default().push((key_bytes, row_data));
         }
@@ -395,8 +391,12 @@ impl TableFlush for UserTableFlushJob {
                     total_rows_flushed += rows_count;
                 },
                 Err(e) => {
-                    let error_msg =
-                        format!("Failed to flush {} rows for user {}: {}", rows.len(), user_id.as_str(), e);
+                    let error_msg = format!(
+                        "Failed to flush {} rows for user {}: {}",
+                        rows.len(),
+                        user_id.as_str(),
+                        e
+                    );
                     log::error!("{}. Rows kept in buffer.", error_msg);
                     error_messages.push(error_msg);
                     flush_succeeded = false;
@@ -415,7 +415,7 @@ impl TableFlush for UserTableFlushJob {
                 log::error!("Failed to delete flushed rows: {}", e);
                 error_messages.push(format!("Failed to delete flushed rows: {}", e));
             }
-            
+
             // Manifest cache is already updated during flush; keep entries to
             // ensure system.manifest reflects the latest segments.
         }

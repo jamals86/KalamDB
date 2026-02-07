@@ -69,7 +69,10 @@ async fn start_server_with_retry(
             Ok(server) => return Ok(server),
             Err(e) => {
                 let msg = e.to_string();
-                if msg.contains("LOCK") || msg.contains("lock file") || msg.contains("No locks available") {
+                if msg.contains("LOCK")
+                    || msg.contains("lock file")
+                    || msg.contains("No locks available")
+                {
                     if Instant::now() >= deadline {
                         return Err(e);
                     }
@@ -125,16 +128,16 @@ async fn test_cluster_snapshot_creation_and_reuse() -> Result<()> {
     .await;
 
     server.shutdown().await;
-    
+
     // Give RocksDB time to fully release locks
     sleep(Duration::from_secs(1)).await;
-    
+
     let lock_path = data_path.join("rocksdb").join("LOCK");
     let _ = wait_for_lock_release(&lock_path).await;
-    
+
     // Additional delay to ensure all resources are released
     sleep(Duration::from_millis(500)).await;
-    
+
     result?;
 
     let server = start_server_with_retry(&data_path).await?;

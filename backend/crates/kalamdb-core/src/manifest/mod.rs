@@ -16,8 +16,8 @@ pub use kalamdb_tables::manifest::planner;
 mod service;
 
 pub use flush::{
-	FlushDedupStats, FlushJobResult, FlushMetadata, SharedTableFlushJob,
-	SharedTableFlushMetadata, TableFlush, UserTableFlushJob, UserTableFlushMetadata,
+    FlushDedupStats, FlushJobResult, FlushMetadata, SharedTableFlushJob, SharedTableFlushMetadata,
+    TableFlush, UserTableFlushJob, UserTableFlushMetadata,
 };
 pub use flush_helper::FlushManifestHelper;
 pub use kalamdb_tables::manifest::{ensure_manifest_ready, load_row_from_parquet_by_seq};

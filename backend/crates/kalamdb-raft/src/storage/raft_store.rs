@@ -290,10 +290,8 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
 
                     // Recover state from snapshot payload
                     let sm_data = decode::<StateMachineData>(&bytes).ok();
-                    let recovered_membership = sm_data
-                        .as_ref()
-                        .map(|d| d.last_membership.clone())
-                        .unwrap_or_default();
+                    let recovered_membership =
+                        sm_data.as_ref().map(|d| d.last_membership.clone()).unwrap_or_default();
                     let recovered_last_applied = sm_data.as_ref().and_then(|d| d.last_applied_log);
 
                     let snapshot = StoredSnapshot {
@@ -794,8 +792,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftStorage<KalamTypeConfig>
 
         // Trim cache if too large (by count or bytes)
         let max_bytes = LOG_CACHE_MAX_BYTES as u64;
-        while log.len() > LOG_CACHE_SIZE
-            || self.log_cache_bytes.load(Ordering::Relaxed) > max_bytes
+        while log.len() > LOG_CACHE_SIZE || self.log_cache_bytes.load(Ordering::Relaxed) > max_bytes
         {
             if let Some((&first_key, entry)) = log.iter().next() {
                 let removed_bytes = entry.payload.len() as u64;

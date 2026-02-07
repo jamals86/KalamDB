@@ -116,7 +116,6 @@ fn cluster_test_final_row_count_consistency() {
                     table_name, expected_count, counts
                 );
             }
-
         }
 
         assert!(consistent, "Failed to achieve consistency for {}", table_name);

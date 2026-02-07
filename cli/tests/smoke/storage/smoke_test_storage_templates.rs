@@ -515,7 +515,8 @@ fn assert_manifest_path_contains(namespace: &str, table_name: &str, expected_sub
             };
 
             if let Some(manifest_json) = manifest_json {
-                if let Some(segments) = manifest_json.get("segments").and_then(JsonValue::as_array) {
+                if let Some(segments) = manifest_json.get("segments").and_then(JsonValue::as_array)
+                {
                     for segment in segments {
                         if let Some(path) = segment.get("path").and_then(JsonValue::as_str) {
                             paths.push(path.to_string());

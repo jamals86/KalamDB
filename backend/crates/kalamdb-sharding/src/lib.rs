@@ -67,9 +67,7 @@ impl ShardRouter {
     }
 
     pub fn from_optional_cluster_config(config: Option<&ClusterConfig>) -> Self {
-        config
-            .map(Self::from_cluster_config)
-            .unwrap_or_else(Self::default_config)
+        config.map(Self::from_cluster_config).unwrap_or_else(Self::default_config)
     }
 
     pub fn default_config() -> Self {

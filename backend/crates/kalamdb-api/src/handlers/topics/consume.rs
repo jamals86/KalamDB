@@ -50,8 +50,9 @@ pub async fn consume_handler(
 
     // Authorization check
     if !is_topic_authorized(&session) {
-        return HttpResponse::Forbidden()
-            .json(TopicErrorResponse::forbidden("Topic consumption requires service, dba, or system role"));
+        return HttpResponse::Forbidden().json(TopicErrorResponse::forbidden(
+            "Topic consumption requires service, dba, or system role",
+        ));
     }
 
     let topic_id = &body.topic_id;
@@ -62,13 +63,16 @@ pub async fn consume_handler(
     let topic = match topics_provider.get_topic_by_id_async(topic_id).await {
         Ok(Some(t)) => t,
         Ok(None) => {
-            return HttpResponse::NotFound()
-                .json(TopicErrorResponse::not_found(&format!("Topic '{}' does not exist", topic_id)));
-        }
+            return HttpResponse::NotFound().json(TopicErrorResponse::not_found(&format!(
+                "Topic '{}' does not exist",
+                topic_id
+            )));
+        },
         Err(e) => {
-            return HttpResponse::InternalServerError()
-                .json(TopicErrorResponse::internal_error(&format!("Failed to lookup topic: {}", e)));
-        }
+            return HttpResponse::InternalServerError().json(TopicErrorResponse::internal_error(
+                &format!("Failed to lookup topic: {}", e),
+            ));
+        },
     };
 
     let topic_publisher = app_context.topic_publisher();
@@ -81,10 +85,8 @@ pub async fn consume_handler(
     //   - Earliest: start from offset 0 (replay all history)
     //   - Latest: start from offset 0 (same as Earliest for now — new groups see all messages)
     //   - Offset: start from the explicit offset
-    let committed_offset = topic_publisher
-        .get_group_offsets(topic_id, group_id)
-        .ok()
-        .and_then(|offsets| {
+    let committed_offset =
+        topic_publisher.get_group_offsets(topic_id, group_id).ok().and_then(|offsets| {
             offsets
                 .iter()
                 .find(|o| o.partition_id == body.partition_id)
@@ -109,9 +111,10 @@ pub async fn consume_handler(
     ) {
         Ok(msgs) => msgs,
         Err(e) => {
-            return HttpResponse::InternalServerError()
-                .json(TopicErrorResponse::internal_error(&format!("Failed to fetch messages: {}", e)));
-        }
+            return HttpResponse::InternalServerError().json(TopicErrorResponse::internal_error(
+                &format!("Failed to fetch messages: {}", e),
+            ));
+        },
     };
 
     // Convert to response format (matching topic_message_schema fields)

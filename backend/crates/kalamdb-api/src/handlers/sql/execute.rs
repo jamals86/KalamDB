@@ -17,8 +17,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use super::file_utils::{
-    extract_file_placeholders, extract_table_from_sql, parse_sql_payload,
-    stage_and_finalize_files, substitute_file_placeholders,
+    extract_file_placeholders, extract_table_from_sql, parse_sql_payload, stage_and_finalize_files,
+    substitute_file_placeholders,
 };
 use super::forward::{forward_sql_if_follower, handle_not_leader_error};
 use super::helpers::{cleanup_files, execute_single_statement, parse_scalar_params};
@@ -83,8 +83,7 @@ fn parse_execute_statement(statement: &str) -> Result<ParsedExecutionStatement, 
         }
     }
 
-    let close_idx =
-        close_idx.ok_or_else(|| "EXECUTE AS USER missing closing ')'".to_string())?;
+    let close_idx = close_idx.ok_or_else(|| "EXECUTE AS USER missing closing ')'".to_string())?;
     let inner_sql = after_username[1..close_idx].trim();
     if inner_sql.is_empty() {
         return Err("EXECUTE AS USER requires a non-empty inner SQL statement".to_string());
@@ -95,12 +94,8 @@ fn parse_execute_statement(statement: &str) -> Result<ParsedExecutionStatement, 
         return Err("EXECUTE AS USER must contain exactly one wrapped SQL statement".to_string());
     }
 
-    let inner_statements = kalamdb_sql::split_statements(inner_sql).map_err(|e| {
-        format!(
-            "Failed to parse inner SQL for EXECUTE AS USER: {}",
-            e
-        )
-    })?;
+    let inner_statements = kalamdb_sql::split_statements(inner_sql)
+        .map_err(|e| format!("Failed to parse inner SQL for EXECUTE AS USER: {}", e))?;
     if inner_statements.len() != 1 {
         return Err("EXECUTE AS USER can only wrap a single SQL statement".to_string());
     }
@@ -108,7 +103,8 @@ fn parse_execute_statement(statement: &str) -> Result<ParsedExecutionStatement, 
     Ok(ParsedExecutionStatement {
         sql: inner_statements[0].trim().to_string(),
         execute_as_username: Some(
-            Username::try_new(username).map_err(|e| format!("Invalid execute-as username: {}", e))?,
+            Username::try_new(username)
+                .map_err(|e| format!("Invalid execute-as username: {}", e))?,
         ),
     })
 }
@@ -125,9 +121,7 @@ fn resolve_result_username(
     authorized_username: &Username,
     execute_as_username: Option<&Username>,
 ) -> Username {
-    execute_as_username
-        .cloned()
-        .unwrap_or_else(|| authorized_username.clone())
+    execute_as_username.cloned().unwrap_or_else(|| authorized_username.clone())
 }
 
 /// POST /v1/api/sql - Execute SQL statement(s)
@@ -191,7 +185,7 @@ pub async fn execute_sql_v1(
                 let took = start_time.elapsed().as_secs_f64() * 1000.0;
                 return HttpResponse::BadRequest()
                     .json(SqlResponse::error(e.code, &e.message, took));
-            }
+            },
         }
     } else {
         let json = match web::Json::<QueryRequest>::from_request(&http_req, &mut payload).await {
@@ -203,7 +197,7 @@ pub async fn execute_sql_v1(
                     &format!("Invalid JSON payload: {}", e),
                     took,
                 ));
-            }
+            },
         };
         match parse_sql_payload(Either::Left(json), &app_context.config().files).await {
             Ok(p) => p,
@@ -211,7 +205,7 @@ pub async fn execute_sql_v1(
                 let took = start_time.elapsed().as_secs_f64() * 1000.0;
                 return HttpResponse::BadRequest()
                     .json(SqlResponse::error(e.code, &e.message, took));
-            }
+            },
         }
     };
 
@@ -267,9 +261,12 @@ pub async fn execute_sql_v1(
         Ok(p) => p,
         Err(err) => {
             let took = start_time.elapsed().as_secs_f64() * 1000.0;
-            return HttpResponse::BadRequest()
-                .json(SqlResponse::error(ErrorCode::InvalidParameter, &err, took));
-        }
+            return HttpResponse::BadRequest().json(SqlResponse::error(
+                ErrorCode::InvalidParameter,
+                &err,
+                took,
+            ));
+        },
     };
 
     // Handle FILE uploads (multipart only)
@@ -293,7 +290,7 @@ pub async fn execute_sql_v1(
                     &format!("Failed to parse SQL batch: {}", err),
                     took,
                 ));
-            }
+            },
         };
 
         if statements.len() != 1 {
@@ -309,8 +306,11 @@ pub async fn execute_sql_v1(
             Ok(parsed) => parsed,
             Err(err) => {
                 let took = start_time.elapsed().as_secs_f64() * 1000.0;
-                return HttpResponse::BadRequest()
-                    .json(SqlResponse::error(ErrorCode::InvalidInput, &err, took));
+                return HttpResponse::BadRequest().json(SqlResponse::error(
+                    ErrorCode::InvalidInput,
+                    &err,
+                    took,
+                ));
             },
         };
 
@@ -337,13 +337,14 @@ pub async fn execute_sql_v1(
 
         let mut files_map = files.take().unwrap_or_default();
         if !required_files.is_empty() {
-            files_map = files_map
-                .into_iter()
-                .filter(|(key, _)| required_files.contains(key))
-                .collect();
+            files_map =
+                files_map.into_iter().filter(|(key, _)| required_files.contains(key)).collect();
         }
 
-        let table_id = match extract_table_from_sql(&parsed_statement.sql, default_namespace.as_str()) {
+        let table_id = match extract_table_from_sql(
+            &parsed_statement.sql,
+            default_namespace.as_str(),
+        ) {
             Some(tid) => tid,
             None => {
                 let took = start_time.elapsed().as_secs_f64() * 1000.0;
@@ -352,7 +353,7 @@ pub async fn execute_sql_v1(
                     "Could not determine target table from SQL. Use fully qualified table name (namespace.table).",
                     took,
                 ));
-            }
+            },
         };
 
         let schema_registry = app_context.schema_registry();
@@ -365,16 +366,14 @@ pub async fn execute_sql_v1(
                     &format!("Table '{}' not found", table_id),
                     took,
                 ));
-            }
+            },
         };
 
         let storage_id = table_entry.storage_id.clone();
         let table_type = table_entry.table_type;
 
         let user_id = match table_type {
-            TableType::User => execute_as_user
-                .clone()
-                .or_else(|| Some(exec_ctx.user_id().clone())),
+            TableType::User => execute_as_user.clone().or_else(|| Some(exec_ctx.user_id().clone())),
             TableType::Shared => None,
             TableType::Stream | TableType::System => {
                 let took = start_time.elapsed().as_secs_f64() * 1000.0;
@@ -383,7 +382,7 @@ pub async fn execute_sql_v1(
                     "File uploads are not supported for stream or system tables",
                     took,
                 ));
-            }
+            },
         };
 
         let manifest_service = app_context.manifest_service();
@@ -393,7 +392,7 @@ pub async fn execute_sql_v1(
             Err(e) => {
                 log::warn!("Failed to get subfolder state for {}: {}", table_id, e);
                 FileSubfolderState::new()
-            }
+            },
         };
 
         let file_service = app_context.file_storage_service();
@@ -409,23 +408,22 @@ pub async fn execute_sql_v1(
                 user_id.as_ref(),
                 &mut subfolder_state,
                 None,
-            ).await {
+            )
+            .await
+            {
                 Ok(refs) => refs,
                 Err(e) => {
                     let took = start_time.elapsed().as_secs_f64() * 1000.0;
                     return HttpResponse::InternalServerError()
                         .json(SqlResponse::error(e.code, &e.message, took));
-                }
+                },
             }
         };
 
         let modified_sql = substitute_file_placeholders(&parsed_statement.sql, &file_refs);
 
-        let effective_username = parsed_statement
-            .execute_as_username
-            .as_ref();
-        let effective_username =
-            resolve_result_username(&authorized_username, effective_username);
+        let effective_username = parsed_statement.execute_as_username.as_ref();
+        let effective_username = resolve_result_username(&authorized_username, effective_username);
 
         return match execute_single_statement(
             &modified_sql,
@@ -448,7 +446,7 @@ pub async fn execute_sql_v1(
 
                 let took = start_time.elapsed().as_secs_f64() * 1000.0;
                 HttpResponse::Ok().json(SqlResponse::success(vec![result], took))
-            }
+            },
             Err(err) => {
                 cleanup_files(
                     &file_refs,
@@ -457,7 +455,8 @@ pub async fn execute_sql_v1(
                     &table_id,
                     user_id.as_ref(),
                     app_context.get_ref(),
-                ).await;
+                )
+                .await;
                 let took = start_time.elapsed().as_secs_f64() * 1000.0;
                 HttpResponse::BadRequest().json(SqlResponse::error_with_details(
                     ErrorCode::SqlExecutionError,
@@ -465,7 +464,7 @@ pub async fn execute_sql_v1(
                     &modified_sql,
                     took,
                 ))
-            }
+            },
         };
     }
 
@@ -479,7 +478,7 @@ pub async fn execute_sql_v1(
                 &format!("Failed to parse SQL batch: {}", err),
                 took,
             ));
-        }
+        },
     };
 
     if statements.is_empty() {
@@ -512,8 +511,11 @@ pub async fn execute_sql_v1(
             Ok(parsed) => parsed,
             Err(err) => {
                 let took = start_time.elapsed().as_secs_f64() * 1000.0;
-                return HttpResponse::BadRequest()
-                    .json(SqlResponse::error(ErrorCode::InvalidInput, &err, took));
+                return HttpResponse::BadRequest().json(SqlResponse::error(
+                    ErrorCode::InvalidInput,
+                    &err,
+                    took,
+                ));
             },
         };
 
@@ -539,11 +541,8 @@ pub async fn execute_sql_v1(
         };
 
         let stmt_start = Instant::now();
-        let effective_username = parsed_statement
-            .execute_as_username
-            .as_ref();
-        let effective_username =
-            resolve_result_username(&authorized_username, effective_username);
+        let effective_username = parsed_statement.execute_as_username.as_ref();
+        let effective_username = resolve_result_username(&authorized_username, effective_username);
         match execute_single_statement(
             &parsed_statement.sql,
             app_context.get_ref(),
@@ -602,7 +601,7 @@ pub async fn execute_sql_v1(
                 }
 
                 results.push(result);
-            }
+            },
             Err(err) => {
                 // Check if NOT_LEADER error and auto-forward to leader
                 if let Some(kalamdb_err) = err.downcast_ref::<kalamdb_core::error::KalamDbError>() {
@@ -626,29 +625,38 @@ pub async fn execute_sql_v1(
                     &parsed_statement.sql,
                     took,
                 ));
-            }
+            },
         }
     }
 
     // Add accumulated DML results for multi-statement batches
     if statements.len() > 1 {
         if total_inserted > 0 {
-            results.push(QueryResult::with_affected_rows(
-                total_inserted,
-                Some(format!("Inserted {} row(s)", total_inserted)),
-            ).with_as_user(authorized_username.clone()));
+            results.push(
+                QueryResult::with_affected_rows(
+                    total_inserted,
+                    Some(format!("Inserted {} row(s)", total_inserted)),
+                )
+                .with_as_user(authorized_username.clone()),
+            );
         }
         if total_updated > 0 {
-            results.push(QueryResult::with_affected_rows(
-                total_updated,
-                Some(format!("Updated {} row(s)", total_updated)),
-            ).with_as_user(authorized_username.clone()));
+            results.push(
+                QueryResult::with_affected_rows(
+                    total_updated,
+                    Some(format!("Updated {} row(s)", total_updated)),
+                )
+                .with_as_user(authorized_username.clone()),
+            );
         }
         if total_deleted > 0 {
-            results.push(QueryResult::with_affected_rows(
-                total_deleted,
-                Some(format!("Deleted {} row(s)", total_deleted)),
-            ).with_as_user(authorized_username.clone()));
+            results.push(
+                QueryResult::with_affected_rows(
+                    total_deleted,
+                    Some(format!("Deleted {} row(s)", total_deleted)),
+                )
+                .with_as_user(authorized_username.clone()),
+            );
         }
     }
 
@@ -674,18 +682,15 @@ mod tests {
 
     #[test]
     fn reject_multi_statement_inside_wrapper() {
-        let err = parse_execute_statement(
-            "EXECUTE AS USER 'alice' (SELECT 1; SELECT 2)",
-        )
-        .expect_err("multiple statements should be rejected");
+        let err = parse_execute_statement("EXECUTE AS USER 'alice' (SELECT 1; SELECT 2)")
+            .expect_err("multiple statements should be rejected");
         assert!(err.contains("single SQL statement"));
     }
 
     #[test]
     fn passthrough_non_wrapper_statement() {
-        let parsed =
-            parse_execute_statement("SELECT * FROM default.todos WHERE id = 10")
-                .expect("statement should pass through");
+        let parsed = parse_execute_statement("SELECT * FROM default.todos WHERE id = 10")
+            .expect("statement should pass through");
         assert!(parsed.execute_as_username.is_none());
         assert_eq!(parsed.sql, "SELECT * FROM default.todos WHERE id = 10");
     }

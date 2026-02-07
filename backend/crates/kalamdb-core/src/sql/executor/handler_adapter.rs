@@ -4,9 +4,9 @@
 //! in the HandlerRegistry without writing custom adapters for each handler.
 
 use crate::error::KalamDbError;
+use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
 use crate::sql::executor::handler_registry::SqlStatementHandler;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
-use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
 use kalamdb_sql::statement_classifier::SqlStatement;
 use kalamdb_sql::DdlAst;
 use std::marker::PhantomData;
@@ -188,8 +188,11 @@ mod tests {
             },
             _ => None,
         });
-        let ctx =
-            ExecutionContext::new(UserId::from("test_user"), Role::Dba, create_test_session_simple());
+        let ctx = ExecutionContext::new(
+            UserId::from("test_user"),
+            Role::Dba,
+            create_test_session_simple(),
+        );
 
         let stmt = kalamdb_sql::statement_classifier::SqlStatement::new(
             "CREATE NAMESPACE test_adapter_ns".to_string(),
@@ -217,8 +220,11 @@ mod tests {
             },
             _ => None,
         });
-        let ctx =
-            ExecutionContext::new(UserId::from("test_user"), Role::Dba, create_test_session_simple());
+        let ctx = ExecutionContext::new(
+            UserId::from("test_user"),
+            Role::Dba,
+            create_test_session_simple(),
+        );
 
         // Pass wrong statement type (ShowNamespaces instead of CreateNamespace)
         let stmt = kalamdb_sql::statement_classifier::SqlStatement::new(

@@ -44,7 +44,7 @@ impl<'de> Deserialize<'de> for StartPosition {
                 } else {
                     Err(D::Error::custom("Expected 'Offset' key with numeric value"))
                 }
-            }
+            },
             _ => Err(D::Error::custom(
                 "Expected string ('Latest', 'Earliest') or object {'Offset': n}",
             )),

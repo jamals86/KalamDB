@@ -6,6 +6,7 @@
 use super::{new_namespaces_store, NamespacesStore, NamespacesTableSchema};
 use crate::error::{SystemError, SystemResultExt};
 use crate::providers::base::SimpleSystemTableScan;
+use crate::providers::namespaces::models::Namespace;
 use crate::system_table_trait::SystemTableProviderExt;
 use async_trait::async_trait;
 use datafusion::arrow::array::RecordBatch;
@@ -14,7 +15,6 @@ use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
-use crate::providers::namespaces::models::Namespace;
 use kalamdb_commons::NamespaceId;
 use kalamdb_commons::RecordBatchBuilder;
 use kalamdb_store::entity_store::{EntityStore, EntityStoreAsync};
@@ -350,7 +350,10 @@ mod tests {
 
         // Insert multiple namespaces
         for i in 1..=3 {
-            let namespace = create_test_namespace(&NamespaceId::new(&format!("ns{}", i)), &format!("namespace{}", i));
+            let namespace = create_test_namespace(
+                &NamespaceId::new(&format!("ns{}", i)),
+                &format!("namespace{}", i),
+            );
             provider.create_namespace(namespace).unwrap();
         }
 

@@ -13,12 +13,12 @@ use async_trait::async_trait;
 use kalamdb_commons::models::schemas::TableDefinition;
 use kalamdb_commons::models::{JobId, NamespaceId, NodeId, StorageId, TableId, UserId};
 use kalamdb_commons::schemas::TableType;
-use kalamdb_system::{JobNode, Storage};
-use kalamdb_system::providers::jobs::models::Job;
-use kalamdb_system::User;
-use kalamdb_system::JobStatus;
 use kalamdb_raft::applier::MetaApplier;
 use kalamdb_raft::RaftError;
+use kalamdb_system::providers::jobs::models::Job;
+use kalamdb_system::JobStatus;
+use kalamdb_system::User;
+use kalamdb_system::{JobNode, Storage};
 use std::sync::Arc;
 
 /// Unified applier that persists all metadata operations to system tables
@@ -241,11 +241,7 @@ impl MetaApplier for ProviderMetaApplier {
     // =========================================================================
 
     async fn create_job(&self, job: &Job) -> Result<String, RaftError> {
-        log::debug!(
-            "ProviderMetaApplier: Creating job {} (type: {:?})",
-            job.job_id,
-            job.job_type
-        );
+        log::debug!("ProviderMetaApplier: Creating job {} (type: {:?})", job.job_id, job.job_type);
 
         self.app_context
             .system_tables()
@@ -336,7 +332,13 @@ impl MetaApplier for ProviderMetaApplier {
             node.status = status;
             node.updated_at = updated_at;
             node.error_message = error_message.map(|s| s.to_string());
-            if matches!(status, JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled | JobStatus::Skipped) {
+            if matches!(
+                status,
+                JobStatus::Completed
+                    | JobStatus::Failed
+                    | JobStatus::Cancelled
+                    | JobStatus::Skipped
+            ) {
                 node.finished_at = Some(updated_at);
             }
 
@@ -412,7 +414,9 @@ impl MetaApplier for ProviderMetaApplier {
             job.status = status;
             job.updated_at = updated_at;
 
-            if matches!(status, JobStatus::Running | JobStatus::Retrying) && job.started_at.is_none() {
+            if matches!(status, JobStatus::Running | JobStatus::Retrying)
+                && job.started_at.is_none()
+            {
                 job.started_at = Some(updated_at);
             }
 
@@ -454,13 +458,9 @@ impl MetaApplier for ProviderMetaApplier {
         {
             let job_type = job.job_type;
             job.status = JobStatus::Completed;
-            job.message = Some(
-                result
-                    .map(String::from)
-                    .unwrap_or_else(|| {
-                        serde_json::json!({ "message": "Job completed successfully" }).to_string()
-                    }),
-            );
+            job.message = Some(result.map(String::from).unwrap_or_else(|| {
+                serde_json::json!({ "message": "Job completed successfully" }).to_string()
+            }));
             if job.started_at.is_none() {
                 job.started_at = Some(completed_at);
             }

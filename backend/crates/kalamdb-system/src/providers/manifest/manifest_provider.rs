@@ -6,17 +6,17 @@
 use super::{create_manifest_indexes, ManifestTableSchema};
 use crate::error::{SystemError, SystemResultExt};
 use crate::providers::base::SimpleSystemTableScan;
+use crate::providers::manifest::ManifestCacheEntry;
 use crate::system_table_trait::SystemTableProviderExt;
 use async_trait::async_trait;
 use datafusion::arrow::array::RecordBatch;
-use kalamdb_commons::{ManifestId, StorageKey, TableId};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
-use crate::providers::manifest::ManifestCacheEntry;
 use kalamdb_commons::RecordBatchBuilder;
+use kalamdb_commons::{ManifestId, StorageKey, TableId};
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_store::{IndexedEntityStore, StorageBackend};
 use std::any::Any;
@@ -152,7 +152,8 @@ impl ManifestTableProvider {
         &self,
         prefix: Option<&[u8]>,
         limit: Option<usize>,
-    ) -> Result<Box<dyn Iterator<Item = Result<ManifestId, SystemError>> + Send + '_>, SystemError> {
+    ) -> Result<Box<dyn Iterator<Item = Result<ManifestId, SystemError>> + Send + '_>, SystemError>
+    {
         let iter = self
             .store
             .scan_index_keys_iter(0, prefix, limit)
@@ -289,12 +290,8 @@ mod tests {
         // Insert test entries directly via store
         let table_id = TableId::new(NamespaceId::new("ns1"), TableName::new("tbl1"));
         let manifest = Manifest::new(table_id, None);
-        let entry = ManifestCacheEntry::new(
-            manifest,
-            Some("etag123".to_string()),
-            1000,
-            SyncState::InSync,
-        );
+        let entry =
+            ManifestCacheEntry::new(manifest, Some("etag123".to_string()), 1000, SyncState::InSync);
 
         let key = ManifestId::from("ns1:tbl1:shared");
         provider.store.put(&key, &entry).unwrap();

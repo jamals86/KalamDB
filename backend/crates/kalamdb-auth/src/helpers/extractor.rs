@@ -230,7 +230,7 @@ impl FromRequest for AuthSessionExtractor {
                             ),
                             took,
                         ));
-                    }
+                    },
                 },
                 None => {
                     let took = start_time.elapsed().as_secs_f64() * 1000.0;
@@ -241,7 +241,7 @@ impl FromRequest for AuthSessionExtractor {
                         ),
                         took,
                     ));
-                }
+                },
             };
 
             // Reject Basic auth (password auth only via login endpoint)
@@ -304,11 +304,11 @@ impl FromRequest for AuthSessionExtractor {
                     }
 
                     Ok(AuthSessionExtractor(session))
-                }
+                },
                 Err(e) => {
                     let took = start_time.elapsed().as_secs_f64() * 1000.0;
                     Err(AuthExtractError::new(e, took))
-                }
+                },
             }
         })
     }

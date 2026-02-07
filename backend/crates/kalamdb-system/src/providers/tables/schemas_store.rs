@@ -96,10 +96,7 @@ impl SchemasStore {
     #[allow(dead_code)]
     pub fn debug_dump_keys_for_table(&self, table_id: &TableId) {
         let prefix_key = TableVersionId::latest(table_id.clone());
-        log::debug!(
-            "[SchemasStore::debug_dump] Partition: {}",
-            self.partition()
-        );
+        log::debug!("[SchemasStore::debug_dump] Partition: {}", self.partition());
         match self.scan_keys_typed(Some(&prefix_key), None, 1000) {
             Ok(keys) => {
                 log::debug!("[SchemasStore::debug_dump] Keys for table_id={}:", table_id);
@@ -107,10 +104,10 @@ impl SchemasStore {
                     log::debug!("  Key: {:?}", key);
                 }
                 log::debug!("[SchemasStore::debug_dump] Total keys found: {}", keys.len());
-            }
+            },
             Err(e) => {
                 log::debug!("[SchemasStore::debug_dump] Error scanning: {:?}", e);
-            }
+            },
         }
     }
 
@@ -150,7 +147,7 @@ impl SchemasStore {
     ) -> Result<Vec<(u32, TableDefinition)>, kalamdb_store::StorageError> {
         // Scan all and filter by table_id
         let entries = self.scan_all_typed(None, None, None)?;
-        
+
         let mut versions: Vec<(u32, TableDefinition)> = entries
             .into_iter()
             .filter_map(|(version_key, table_def)| {
@@ -188,8 +185,7 @@ impl SchemasStore {
             .into_iter()
             .filter_map(|(version_key, table_def)| {
                 // Only include latest entries for the target namespace
-                if version_key.is_latest()
-                    && version_key.table_id().namespace_id() == namespace_id
+                if version_key.is_latest() && version_key.table_id().namespace_id() == namespace_id
                 {
                     Some((version_key.table_id().clone(), table_def))
                 } else {

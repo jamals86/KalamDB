@@ -33,9 +33,7 @@ async fn test_health_check_local_filesystem() {
 
     let storage = create_test_storage(&temp_dir.to_string_lossy());
 
-    let result = StorageHealthService::run_full_health_check(&storage)
-        .await
-        .unwrap();
+    let result = StorageHealthService::run_full_health_check(&storage).await.unwrap();
 
     assert_eq!(result.status, HealthStatus::Healthy);
     assert!(result.readable);
@@ -57,9 +55,7 @@ async fn test_connectivity_test_local_filesystem() {
 
     let storage = create_test_storage(&temp_dir.to_string_lossy());
 
-    let result = StorageHealthService::test_connectivity(&storage)
-        .await
-        .unwrap();
+    let result = StorageHealthService::test_connectivity(&storage).await.unwrap();
 
     assert!(result.connected);
     assert!(result.error.is_none());
@@ -79,9 +75,7 @@ async fn test_health_check_nonexistent_directory() {
 
     let storage = create_test_storage(bad_path);
 
-    let result = StorageHealthService::run_full_health_check(&storage)
-        .await
-        .unwrap();
+    let result = StorageHealthService::run_full_health_check(&storage).await.unwrap();
 
     // Should fail to initialize or write
     assert!(result.has_issues());
@@ -106,8 +100,8 @@ async fn test_health_result_structure() {
 
 #[tokio::test]
 async fn test_health_result_with_capacity() {
-    let result = StorageHealthResult::healthy(50)
-        .with_capacity(Some(1_000_000_000), Some(500_000_000));
+    let result =
+        StorageHealthResult::healthy(50).with_capacity(Some(1_000_000_000), Some(500_000_000));
 
     assert_eq!(result.total_bytes, Some(1_000_000_000));
     assert_eq!(result.used_bytes, Some(500_000_000));

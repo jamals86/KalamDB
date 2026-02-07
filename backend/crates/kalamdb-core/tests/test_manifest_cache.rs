@@ -12,8 +12,8 @@ use kalamdb_commons::{NamespaceId, TableId, TableName, UserId};
 use kalamdb_configs::ManifestCacheSettings;
 use kalamdb_core::manifest::ManifestService;
 use kalamdb_store::{test_utils::InMemoryBackend, StorageBackend};
-use kalamdb_system::{Manifest, SyncState};
 use kalamdb_system::providers::ManifestTableProvider;
+use kalamdb_system::{Manifest, SyncState};
 use std::sync::Arc;
 
 fn create_test_service_with_config(config: ManifestCacheSettings) -> ManifestService {
@@ -229,7 +229,6 @@ fn test_cache_eviction_and_repopulation() {
     let entry = result3.unwrap();
     assert_eq!(entry.etag, Some("etag-v2".to_string()), "Should have new ETag");
 }
-
 
 // Additional test: Multiple updates to same cache key
 #[test]
@@ -460,12 +459,7 @@ fn test_tiered_eviction_shared_tables_stay_longer() {
         let user_id = UserId::from(format!("user_{}", i));
         let user_manifest = Manifest::new(table_id.clone(), Some(user_id.clone()));
         service
-            .update_after_flush(
-                &table_id,
-                Some(&user_id),
-                &user_manifest,
-                None,
-            )
+            .update_after_flush(&table_id, Some(&user_id), &user_manifest, None)
             .unwrap();
     }
 
@@ -506,20 +500,13 @@ fn test_equal_weight_factor() {
 
     // Add shared table
     let shared_manifest = Manifest::new(table_id.clone(), None);
-    service
-        .update_after_flush(&table_id, None, &shared_manifest, None)
-        .unwrap();
+    service.update_after_flush(&table_id, None, &shared_manifest, None).unwrap();
 
     // Add user table
     let user_id = UserId::from("user_1");
     let user_manifest = Manifest::new(table_id.clone(), Some(user_id.clone()));
     service
-        .update_after_flush(
-            &table_id,
-            Some(&user_id),
-            &user_manifest,
-            None,
-        )
+        .update_after_flush(&table_id, Some(&user_id), &user_manifest, None)
         .unwrap();
 
     // Both should be in cache with equal priority

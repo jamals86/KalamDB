@@ -1,10 +1,10 @@
 //! SQL execution helpers
 
+use kalamdb_commons::models::UserId;
+use kalamdb_commons::Role;
 use kalamdb_core::sql::context::ExecutionContext;
 use kalamdb_core::sql::executor::{ExecutorMetadataAlias, ScalarValue, SqlExecutor};
 use kalamdb_core::sql::ExecutionResult;
-use kalamdb_commons::Role;
-use kalamdb_commons::models::UserId;
 use std::sync::Arc;
 
 use super::super::models::QueryResult;
@@ -26,10 +26,7 @@ pub async fn execute_single_statement(
         exec_ctx.clone()
     };
 
-    match sql_executor
-        .execute_with_metadata(sql, &effective_ctx, metadata, params)
-        .await
-    {
+    match sql_executor.execute_with_metadata(sql, &effective_ctx, metadata, params).await {
         Ok(exec_result) => match exec_result {
             ExecutionResult::Success { message } => Ok(QueryResult::with_message(message)),
             ExecutionResult::Rows {
@@ -52,11 +49,7 @@ pub async fn execute_single_statement(
                 bytes_written,
             } => Ok(QueryResult::with_affected_rows(
                 tables.len(),
-                Some(format!(
-                    "Flushed {} table(s), {} bytes written",
-                    tables.len(),
-                    bytes_written
-                )),
+                Some(format!("Flushed {} table(s), {} bytes written", tables.len(), bytes_written)),
             )),
             ExecutionResult::Subscription {
                 subscription_id,
@@ -73,10 +66,10 @@ pub async fn execute_single_statement(
                     "message": "WebSocket subscription created. Connect to ws_url to receive updates."
                 });
                 Ok(QueryResult::subscription(sub_data))
-            }
+            },
             ExecutionResult::JobKilled { job_id, status } => {
                 Ok(QueryResult::with_message(format!("Job {} killed: {}", job_id, status)))
-            }
+            },
         },
         Err(e) => Err(Box::new(e) as Box<dyn std::error::Error>),
     }

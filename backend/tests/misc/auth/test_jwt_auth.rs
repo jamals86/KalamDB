@@ -28,15 +28,9 @@ fn jwt_secret_for_tests() -> String {
 }
 
 fn trusted_issuer_for_tests() -> String {
-    let issuers = kalamdb_configs::ServerConfig::default()
-        .auth
-        .jwt_trusted_issuers;
-    let first = issuers
-        .split(',')
-        .map(|s| s.trim())
-        .find(|s| !s.is_empty());
-    first.map(|s| s.to_string())
-        .unwrap_or_else(|| KALAMDB_ISSUER.to_string())
+    let issuers = kalamdb_configs::ServerConfig::default().auth.jwt_trusted_issuers;
+    let first = issuers.split(',').map(|s| s.trim()).find(|s| !s.is_empty());
+    first.map(|s| s.to_string()).unwrap_or_else(|| KALAMDB_ISSUER.to_string())
 }
 
 /// Create a test JWT token

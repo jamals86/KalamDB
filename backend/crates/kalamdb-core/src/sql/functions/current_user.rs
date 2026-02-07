@@ -10,6 +10,7 @@ use datafusion::logical_expr::{
 };
 use kalamdb_commons::arrow_utils::{arrow_utf8, ArrowDataType};
 use kalamdb_commons::UserName;
+use kalamdb_session::SessionUserContext;
 use std::any::Any;
 use std::sync::Arc;
 
@@ -66,13 +67,22 @@ impl ScalarUDFImpl for CurrentUserFunction {
             return Err(DataFusionError::Plan("CURRENT_USER() takes no arguments".to_string()));
         }
 
-        let username = self.username.as_ref().ok_or_else(|| {
-            DataFusionError::Execution(
-                "CURRENT_USER() failed: Username must not be null or empty".to_string(),
-            )
-        })?;
+        let current_user = if let Some(username) = &self.username {
+            username.as_str().to_string()
+        } else if let Some(session_ctx) = args.config_options.extensions.get::<SessionUserContext>()
+        {
+            if let Some(username) = &session_ctx.username {
+                username.as_str().to_string()
+            } else {
+                session_ctx.user_id.as_str().to_string()
+            }
+        } else {
+            return Err(DataFusionError::Execution(
+                "CURRENT_USER() failed: session user context not found".to_string(),
+            ));
+        };
 
-        let array = StringArray::from(vec![username.as_str()]);
+        let array = StringArray::from(vec![current_user.as_str()]);
         Ok(ColumnarValue::Array(Arc::new(array) as ArrayRef))
     }
 }

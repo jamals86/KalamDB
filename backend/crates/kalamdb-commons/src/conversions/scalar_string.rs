@@ -40,74 +40,72 @@ pub fn parse_string_as_scalar(
 ) -> Result<ScalarValue, String> {
     match data_type {
         DataType::Int64 => {
-            let val = value_str.parse::<i64>().map_err(|e| {
-                format!("Failed to parse '{}' as Int64: {}", value_str, e)
-            })?;
+            let val = value_str
+                .parse::<i64>()
+                .map_err(|e| format!("Failed to parse '{}' as Int64: {}", value_str, e))?;
             Ok(ScalarValue::Int64(Some(val)))
-        }
+        },
         DataType::Int32 => {
-            let val = value_str.parse::<i32>().map_err(|e| {
-                format!("Failed to parse '{}' as Int32: {}", value_str, e)
-            })?;
+            let val = value_str
+                .parse::<i32>()
+                .map_err(|e| format!("Failed to parse '{}' as Int32: {}", value_str, e))?;
             Ok(ScalarValue::Int32(Some(val)))
-        }
+        },
         DataType::Int16 => {
-            let val = value_str.parse::<i16>().map_err(|e| {
-                format!("Failed to parse '{}' as Int16: {}", value_str, e)
-            })?;
+            let val = value_str
+                .parse::<i16>()
+                .map_err(|e| format!("Failed to parse '{}' as Int16: {}", value_str, e))?;
             Ok(ScalarValue::Int16(Some(val)))
-        }
+        },
         DataType::Int8 => {
-            let val = value_str.parse::<i8>().map_err(|e| {
-                format!("Failed to parse '{}' as Int8: {}", value_str, e)
-            })?;
+            let val = value_str
+                .parse::<i8>()
+                .map_err(|e| format!("Failed to parse '{}' as Int8: {}", value_str, e))?;
             Ok(ScalarValue::Int8(Some(val)))
-        }
+        },
         DataType::UInt64 => {
-            let val = value_str.parse::<u64>().map_err(|e| {
-                format!("Failed to parse '{}' as UInt64: {}", value_str, e)
-            })?;
+            let val = value_str
+                .parse::<u64>()
+                .map_err(|e| format!("Failed to parse '{}' as UInt64: {}", value_str, e))?;
             Ok(ScalarValue::UInt64(Some(val)))
-        }
+        },
         DataType::UInt32 => {
-            let val = value_str.parse::<u32>().map_err(|e| {
-                format!("Failed to parse '{}' as UInt32: {}", value_str, e)
-            })?;
+            let val = value_str
+                .parse::<u32>()
+                .map_err(|e| format!("Failed to parse '{}' as UInt32: {}", value_str, e))?;
             Ok(ScalarValue::UInt32(Some(val)))
-        }
+        },
         DataType::UInt16 => {
-            let val = value_str.parse::<u16>().map_err(|e| {
-                format!("Failed to parse '{}' as UInt16: {}", value_str, e)
-            })?;
+            let val = value_str
+                .parse::<u16>()
+                .map_err(|e| format!("Failed to parse '{}' as UInt16: {}", value_str, e))?;
             Ok(ScalarValue::UInt16(Some(val)))
-        }
+        },
         DataType::UInt8 => {
-            let val = value_str.parse::<u8>().map_err(|e| {
-                format!("Failed to parse '{}' as UInt8: {}", value_str, e)
-            })?;
+            let val = value_str
+                .parse::<u8>()
+                .map_err(|e| format!("Failed to parse '{}' as UInt8: {}", value_str, e))?;
             Ok(ScalarValue::UInt8(Some(val)))
-        }
-        DataType::Utf8 | DataType::LargeUtf8 => {
-            Ok(ScalarValue::Utf8(Some(value_str.to_string())))
-        }
+        },
+        DataType::Utf8 | DataType::LargeUtf8 => Ok(ScalarValue::Utf8(Some(value_str.to_string()))),
         DataType::Boolean => {
-            let val = value_str.parse::<bool>().map_err(|e| {
-                format!("Failed to parse '{}' as Boolean: {}", value_str, e)
-            })?;
+            let val = value_str
+                .parse::<bool>()
+                .map_err(|e| format!("Failed to parse '{}' as Boolean: {}", value_str, e))?;
             Ok(ScalarValue::Boolean(Some(val)))
-        }
+        },
         DataType::Float64 => {
-            let val = value_str.parse::<f64>().map_err(|e| {
-                format!("Failed to parse '{}' as Float64: {}", value_str, e)
-            })?;
+            let val = value_str
+                .parse::<f64>()
+                .map_err(|e| format!("Failed to parse '{}' as Float64: {}", value_str, e))?;
             Ok(ScalarValue::Float64(Some(val)))
-        }
+        },
         DataType::Float32 => {
-            let val = value_str.parse::<f32>().map_err(|e| {
-                format!("Failed to parse '{}' as Float32: {}", value_str, e)
-            })?;
+            let val = value_str
+                .parse::<f32>()
+                .map_err(|e| format!("Failed to parse '{}' as Float32: {}", value_str, e))?;
             Ok(ScalarValue::Float32(Some(val)))
-        }
+        },
         other => {
             // For any other type, use string representation and let caller handle coercion
             log::warn!(
@@ -116,7 +114,7 @@ pub fn parse_string_as_scalar(
                 value_str
             );
             Ok(ScalarValue::Utf8(Some(value_str.to_string())))
-        }
+        },
     }
 }
 

@@ -32,7 +32,7 @@ pub fn estimate_scalar_value_size(value: &ScalarValue) -> usize {
     match value {
         // Null values - minimal overhead
         ScalarValue::Null => 1,
-        
+
         // Fixed-size numeric types - 8 bytes each
         ScalarValue::Boolean(_) => 8,
         ScalarValue::Float64(_) => 8,
@@ -45,56 +45,56 @@ pub fn estimate_scalar_value_size(value: &ScalarValue) -> usize {
         ScalarValue::UInt16(_) => 8,
         ScalarValue::UInt32(_) => 8,
         ScalarValue::UInt64(_) => 8,
-        
+
         // String types - 24 bytes (String struct) + string length
         ScalarValue::Utf8(Some(s)) | ScalarValue::LargeUtf8(Some(s)) => 24 + s.len(),
         ScalarValue::Utf8(None) | ScalarValue::LargeUtf8(None) => 24,
-        
+
         // Binary types - 24 bytes (Vec struct) + data length
         ScalarValue::Binary(Some(b)) | ScalarValue::LargeBinary(Some(b)) => 24 + b.len(),
         ScalarValue::Binary(None) | ScalarValue::LargeBinary(None) => 24,
-        
+
         // Timestamp types - 8 bytes for the i64 value
         ScalarValue::TimestampSecond(_, _) => 8,
         ScalarValue::TimestampMillisecond(_, _) => 8,
         ScalarValue::TimestampMicrosecond(_, _) => 8,
         ScalarValue::TimestampNanosecond(_, _) => 8,
-        
+
         // Date types - 4 or 8 bytes
         ScalarValue::Date32(_) => 4,
         ScalarValue::Date64(_) => 8,
-        
+
         // Time types
         ScalarValue::Time32Second(_) => 4,
         ScalarValue::Time32Millisecond(_) => 4,
         ScalarValue::Time64Microsecond(_) => 8,
         ScalarValue::Time64Nanosecond(_) => 8,
-        
+
         // Duration types
         ScalarValue::DurationSecond(_) => 8,
         ScalarValue::DurationMillisecond(_) => 8,
         ScalarValue::DurationMicrosecond(_) => 8,
         ScalarValue::DurationNanosecond(_) => 8,
-        
+
         // Interval types
         ScalarValue::IntervalYearMonth(_) => 4,
         ScalarValue::IntervalDayTime(_) => 8,
         ScalarValue::IntervalMonthDayNano(_) => 16,
-        
+
         // Decimal types - 16 bytes for i128
         ScalarValue::Decimal128(_, _, _) => 16,
         ScalarValue::Decimal256(_, _, _) => 32,
-        
+
         // List types - conservative estimate (24 bytes for Vec overhead + average element size)
         ScalarValue::List(_) => 24 + 64, // Assume average 64 bytes per list
         ScalarValue::LargeList(_) => 24 + 64,
-        
+
         // Struct types - conservative estimate
         ScalarValue::Struct(_) => 64, // Assume 64 bytes average struct size
-        
+
         // Dictionary types - assume 8 bytes for key + value size estimate
         ScalarValue::Dictionary(_, value) => 8 + estimate_scalar_value_size(value),
-        
+
         // For any other types, use a conservative estimate
         _ => 8,
     }
@@ -114,7 +114,7 @@ mod tests {
     fn test_estimate_string() {
         let value = ScalarValue::Utf8(Some("hello".to_string()));
         assert_eq!(estimate_scalar_value_size(&value), 24 + 5);
-        
+
         let empty = ScalarValue::Utf8(Some(String::new()));
         assert_eq!(estimate_scalar_value_size(&empty), 24);
     }

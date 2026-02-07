@@ -38,10 +38,7 @@ use serde::{Deserialize, Serialize};
 /// ```
 /// Namespace struct with fields ordered for optimal memory alignment.
 /// 8-byte aligned fields first (i64, String types), then smaller types.
-#[table(
-    name = "namespaces",
-    comment = "Database namespaces for multi-tenancy"
-)]
+#[table(name = "namespaces", comment = "Database namespaces for multi-tenancy")]
 #[derive(Serialize, Deserialize, Encode, Decode, Clone, Debug, PartialEq)]
 pub struct Namespace {
     #[column(
@@ -93,7 +90,7 @@ pub struct Namespace {
         default = "None",
         comment = "Number of tables in this namespace"
     )]
-    pub table_count: i32,        //TODO: Remove this field and calculate on the fly
+    pub table_count: i32, //TODO: Remove this field and calculate on the fly
 }
 
 impl Namespace {

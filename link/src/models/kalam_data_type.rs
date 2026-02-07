@@ -49,5 +49,5 @@ pub enum KalamDataType {
     /// 16-bit signed integer
     SmallInt,
     /// As json representation
-    File
+    File,
 }

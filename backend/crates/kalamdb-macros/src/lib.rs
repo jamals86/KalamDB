@@ -12,9 +12,9 @@ pub fn table(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let struct_ident = &item_struct.ident;
 
-        let mut columns = Vec::new();
-        let mut column_ids = std::collections::HashSet::new();
-        let mut ordinals = std::collections::HashSet::new();
+    let mut columns = Vec::new();
+    let mut column_ids = std::collections::HashSet::new();
+    let mut ordinals = std::collections::HashSet::new();
     for field in item_struct.fields.iter_mut() {
         let column_attr = extract_column_attr(&mut field.attrs);
         let column_attr = match column_attr {
@@ -107,10 +107,8 @@ pub fn table(attr: TokenStream, item: TokenStream) -> TokenStream {
         Some(comment) => quote!(Some(#comment.to_string())),
         None => quote!(None),
     };
-    let error_message = format!(
-        "Failed to create {}.{} table definition",
-        namespace_for_error, table_name
-    );
+    let error_message =
+        format!("Failed to create {}.{} table definition", namespace_for_error, table_name);
 
     let output = quote! {
         #item_struct
@@ -336,10 +334,7 @@ impl Parse for ColumnArgs {
                         args.comment = Some(value.value());
                     },
                     _ => {
-                        return Err(syn::Error::new_spanned(
-                            key,
-                            "unsupported #[column] argument",
-                        ));
+                        return Err(syn::Error::new_spanned(key, "unsupported #[column] argument"));
                     },
                 }
             }
@@ -350,17 +345,11 @@ impl Parse for ColumnArgs {
         }
 
         if args.column_id == 0 {
-            return Err(syn::Error::new(
-                input.span(),
-                "#[column] requires id = <u64>",
-            ));
+            return Err(syn::Error::new(input.span(), "#[column] requires id = <u64>"));
         }
 
         if args.ordinal_position == 0 {
-            return Err(syn::Error::new(
-                input.span(),
-                "#[column] requires ordinal = <u32>",
-            ));
+            return Err(syn::Error::new(input.span(), "#[column] requires ordinal = <u32>"));
         }
 
         if args.data_type.is_none() {
@@ -371,10 +360,7 @@ impl Parse for ColumnArgs {
         }
 
         if args.default_value.is_empty() {
-            return Err(syn::Error::new(
-                input.span(),
-                "#[column] requires default = \"...\"",
-            ));
+            return Err(syn::Error::new(input.span(), "#[column] requires default = \"...\""));
         }
 
         for required in ["nullable", "primary_key"] {

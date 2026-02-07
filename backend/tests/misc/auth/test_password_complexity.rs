@@ -61,10 +61,7 @@ async fn create_admin_user(app_context: &Arc<AppContext>) -> UserId {
     user_id
 }
 
-fn assert_complexity_error(
-    result: Result<ExecutionResult, KalamDbError>,
-    expected_fragment: &str,
-) {
+fn assert_complexity_error(result: Result<ExecutionResult, KalamDbError>, expected_fragment: &str) {
     match result {
         Err(KalamDbError::InvalidOperation(msg)) => {
             assert!(
@@ -82,11 +79,7 @@ fn assert_complexity_error(
 async fn test_complexity_uppercase_required() {
     let (executor, app_context, session_ctx) = setup_executor(true).await;
     let admin_id = create_admin_user(&app_context).await;
-    let exec_ctx = ExecutionContext::new(
-        admin_id.clone(),
-        Role::System,
-        session_ctx.clone(),
-    );
+    let exec_ctx = ExecutionContext::new(admin_id.clone(), Role::System, session_ctx.clone());
 
     let result = executor
         .execute(
@@ -103,11 +96,7 @@ async fn test_complexity_uppercase_required() {
 async fn test_complexity_lowercase_required() {
     let (executor, app_context, session_ctx) = setup_executor(true).await;
     let admin_id = create_admin_user(&app_context).await;
-    let exec_ctx = ExecutionContext::new(
-        admin_id.clone(),
-        Role::System,
-        session_ctx.clone(),
-    );
+    let exec_ctx = ExecutionContext::new(admin_id.clone(), Role::System, session_ctx.clone());
 
     let result = executor
         .execute(
@@ -124,11 +113,7 @@ async fn test_complexity_lowercase_required() {
 async fn test_complexity_digit_required() {
     let (executor, app_context, session_ctx) = setup_executor(true).await;
     let admin_id = create_admin_user(&app_context).await;
-    let exec_ctx = ExecutionContext::new(
-        admin_id.clone(),
-        Role::System,
-        session_ctx.clone(),
-    );
+    let exec_ctx = ExecutionContext::new(admin_id.clone(), Role::System, session_ctx.clone());
 
     let result = executor
         .execute(
@@ -145,11 +130,7 @@ async fn test_complexity_digit_required() {
 async fn test_complexity_special_required() {
     let (executor, app_context, session_ctx) = setup_executor(true).await;
     let admin_id = create_admin_user(&app_context).await;
-    let exec_ctx = ExecutionContext::new(
-        admin_id.clone(),
-        Role::System,
-        session_ctx.clone(),
-    );
+    let exec_ctx = ExecutionContext::new(admin_id.clone(), Role::System, session_ctx.clone());
 
     let result = executor
         .execute(
@@ -166,11 +147,7 @@ async fn test_complexity_special_required() {
 async fn test_complexity_valid_password_succeeds() {
     let (executor, app_context, session_ctx) = setup_executor(true).await;
     let admin_id = create_admin_user(&app_context).await;
-    let exec_ctx = ExecutionContext::new(
-        admin_id.clone(),
-        Role::System,
-        session_ctx.clone(),
-    );
+    let exec_ctx = ExecutionContext::new(admin_id.clone(), Role::System, session_ctx.clone());
 
     let result = executor
         .execute(
@@ -187,11 +164,7 @@ async fn test_complexity_valid_password_succeeds() {
 async fn test_complexity_disabled_allows_simple_password() {
     let (executor, app_context, session_ctx) = setup_executor(false).await;
     let admin_id = create_admin_user(&app_context).await;
-    let exec_ctx = ExecutionContext::new(
-        admin_id.clone(),
-        Role::System,
-        session_ctx.clone(),
-    );
+    let exec_ctx = ExecutionContext::new(admin_id.clone(), Role::System, session_ctx.clone());
 
     let result = executor
         .execute(
@@ -212,11 +185,7 @@ async fn test_complexity_disabled_allows_simple_password() {
 async fn test_complexity_alter_user_requires_special_character() {
     let (executor, app_context, session_ctx) = setup_executor(true).await;
     let admin_id = create_admin_user(&app_context).await;
-    let exec_ctx = ExecutionContext::new(
-        admin_id.clone(),
-        Role::System,
-        session_ctx.clone(),
-    );
+    let exec_ctx = ExecutionContext::new(admin_id.clone(), Role::System, session_ctx.clone());
 
     let username = format!("alter_target_{}", std::process::id());
 
@@ -244,11 +213,7 @@ async fn test_complexity_alter_user_requires_special_character() {
 async fn test_complexity_alter_user_valid_password_succeeds() {
     let (executor, app_context, session_ctx) = setup_executor(true).await;
     let admin_id = create_admin_user(&app_context).await;
-    let exec_ctx = ExecutionContext::new(
-        admin_id.clone(),
-        Role::System,
-        session_ctx.clone(),
-    );
+    let exec_ctx = ExecutionContext::new(admin_id.clone(), Role::System, session_ctx.clone());
 
     let username = format!("alter_target_ok_{}", std::process::id());
 

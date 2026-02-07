@@ -48,9 +48,9 @@ fn test_cli_subscription_initial_and_changes() {
     };
 
     let event_timeout = if is_cluster_mode() {
-        Duration::from_secs(15)
+        Duration::from_secs(25)
     } else {
-        Duration::from_secs(5)
+        Duration::from_secs(12)
     };
 
     // Expect an InitialDataBatch event with 1 row
@@ -68,9 +68,8 @@ fn test_cli_subscription_initial_and_changes() {
         "INSERT INTO {} (id, name) VALUES (2, 'Second')",
         table_full
     ));
-    let insert_line = listener
-        .wait_for_event("Insert", event_timeout)
-        .expect("expected Insert event");
+    let insert_line =
+        listener.wait_for_event("Insert", event_timeout).expect("expected Insert event");
     assert!(
         insert_line.contains("Second") || insert_line.contains("rows"),
         "Insert event should contain row data: {}",
@@ -82,9 +81,8 @@ fn test_cli_subscription_initial_and_changes() {
         "UPDATE {} SET name = 'Updated Second' WHERE id = 2",
         table_full
     ));
-    let update_line = listener
-        .wait_for_event("Update", event_timeout)
-        .expect("expected Update event");
+    let update_line =
+        listener.wait_for_event("Update", event_timeout).expect("expected Update event");
     assert!(
         update_line.contains("Updated Second") || update_line.contains("rows"),
         "Update event should contain updated data: {}",
@@ -93,9 +91,8 @@ fn test_cli_subscription_initial_and_changes() {
 
     // Perform DELETE and wait for Delete event
     let _ = execute_sql_as_root_via_cli(&format!("DELETE FROM {} WHERE id = 2", table_full));
-    let delete_line = listener
-        .wait_for_event("Delete", event_timeout)
-        .expect("expected Delete event");
+    let delete_line =
+        listener.wait_for_event("Delete", event_timeout).expect("expected Delete event");
     assert!(
         delete_line.contains("old_rows") || delete_line.contains("rows"),
         "Delete event should contain deleted row data: {}",

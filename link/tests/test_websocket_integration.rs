@@ -44,7 +44,7 @@ fn is_table_not_found_event(event: &ChangeEvent) -> bool {
         ChangeEvent::Error { code, message, .. } => {
             code.eq_ignore_ascii_case("not_found")
                 || message.to_ascii_lowercase().contains("table not found")
-        }
+        },
         _ => false,
     }
 }
@@ -87,22 +87,18 @@ async fn execute_query_with_retry(
                 last_err = Some(e);
                 let backoff_ms = 100 + (attempt as u64 * 100);
                 sleep(Duration::from_millis(backoff_ms)).await;
-            }
+            },
         }
     }
 
-    Err(last_err.unwrap_or_else(|| {
-        kalam_link::KalamLinkError::InternalError("query failed".into())
-    }))
+    Err(last_err
+        .unwrap_or_else(|| kalam_link::KalamLinkError::InternalError("query failed".into())))
 }
 
 /// Wait until a newly created table is visible for queries
 async fn wait_for_table_ready(table: &str) -> Result<(), Box<dyn std::error::Error>> {
     for _ in 0..20 {
-        if execute_sql_checked(&format!("SELECT 1 FROM {} LIMIT 1", table))
-            .await
-            .is_ok()
-        {
+        if execute_sql_checked(&format!("SELECT 1 FROM {} LIMIT 1", table)).await.is_ok() {
             return Ok(());
         }
         sleep(Duration::from_millis(100)).await;
@@ -162,9 +158,7 @@ async fn cleanup_test_data(table_full_name: &str) -> Result<(), Box<dyn std::err
 
 #[tokio::test]
 async fn test_kalam_link_client_creation() {
-    let result = KalamLinkClient::builder()
-        .base_url(common::server_url())
-        .build();
+    let result = KalamLinkClient::builder().base_url(common::server_url()).build();
 
     assert!(result.is_ok(), "Client should be created successfully");
 }
@@ -172,10 +166,7 @@ async fn test_kalam_link_client_creation() {
 #[tokio::test]
 async fn test_kalam_link_query_execution() {
     if !common::is_server_running().await {
-        eprintln!(
-            "⚠️  Server not running at {}. Skipping test.",
-            common::server_url()
-        );
+        eprintln!("⚠️  Server not running at {}. Skipping test.", common::server_url());
         return;
     }
 
@@ -233,7 +224,12 @@ async fn test_kalam_link_parametrized_query() {
 
     // Query to verify
     let query_result = client
-        .execute_query(&format!("SELECT * FROM {} WHERE event_type = 'test'", table), None, None, None)
+        .execute_query(
+            &format!("SELECT * FROM {} WHERE event_type = 'test'", table),
+            None,
+            None,
+            None,
+        )
         .await;
 
     assert!(query_result.is_ok(), "Query should succeed");
@@ -360,40 +356,37 @@ async fn test_websocket_initial_data_snapshot() {
                 last_error = Some(e.to_string());
                 sleep(Duration::from_millis(150 + attempt * 100)).await;
                 continue;
-            }
+            },
             Err(_) => {
                 last_error = Some("Subscription creation timed out".to_string());
                 sleep(Duration::from_millis(150 + attempt * 100)).await;
                 continue;
-            }
+            },
         };
 
         let mut saw_table_not_found = false;
         let per_attempt_deadline = std::time::Instant::now() + Duration::from_secs(12);
         while std::time::Instant::now() < per_attempt_deadline {
-            if let Ok(Some(Ok(event))) =
-                timeout(Duration::from_secs(2), subscription.next()).await
+            if let Ok(Some(Ok(event))) = timeout(Duration::from_secs(2), subscription.next()).await
             {
                 match event {
                     ChangeEvent::InitialDataBatch { rows, .. } => {
                         assert!(!rows.is_empty(), "Initial snapshot should contain data");
                         received_initial_data = true;
                         break;
-                    }
+                    },
                     ChangeEvent::Ack { .. } => {
                         continue;
-                    }
+                    },
                     ChangeEvent::Error { .. } if is_table_not_found_event(&event) => {
                         saw_table_not_found = true;
                         break;
-                    }
+                    },
                     other => {
-                        last_error = Some(format!(
-                            "Unexpected event during initial snapshot: {:?}",
-                            other
-                        ));
+                        last_error =
+                            Some(format!("Unexpected event during initial snapshot: {:?}", other));
                         break;
-                    }
+                    },
                 }
             }
         }
@@ -424,13 +417,8 @@ async fn test_websocket_initial_data_snapshot() {
             }
         }
 
-        if matches!(
-            last_error.as_deref(),
-            Some("Table not found during initial snapshot")
-        ) {
-            eprintln!(
-                "⚠️  Table not found during initial snapshot. Skipping strict assertion."
-            );
+        if matches!(last_error.as_deref(), Some("Table not found during initial snapshot")) {
+            eprintln!("⚠️  Table not found during initial snapshot. Skipping strict assertion.");
             cleanup_test_data(&table).await.ok();
             return;
         }
@@ -695,7 +683,12 @@ async fn test_sql_insert_select() {
 
     // SELECT
     let select = client
-        .execute_query(&format!("SELECT * FROM {} WHERE event_type = 'test'", table), None, None, None)
+        .execute_query(
+            &format!("SELECT * FROM {} WHERE event_type = 'test'", table),
+            None,
+            None,
+            None,
+        )
         .await;
     assert!(select.is_ok(), "SELECT should succeed");
 
@@ -751,7 +744,8 @@ async fn test_sql_system_tables() {
     assert!(users.is_ok(), "Should query system.users");
 
     // Query system.namespaces
-    let namespaces = client.execute_query("SELECT * FROM system.namespaces", None, None, None).await;
+    let namespaces =
+        client.execute_query("SELECT * FROM system.namespaces", None, None, None).await;
     assert!(namespaces.is_ok(), "Should query system.namespaces");
 
     // Query system.tables
@@ -948,9 +942,7 @@ async fn test_error_connection_refused() {
         .build()
         .expect("Client creation should succeed");
 
-    let result = client
-        .execute_query("SELECT 1", None, None, None)
-        .await;
+    let result = client.execute_query("SELECT 1", None, None, None).await;
     assert!(result.is_err(), "Connection to non-existent server should fail");
 }
 

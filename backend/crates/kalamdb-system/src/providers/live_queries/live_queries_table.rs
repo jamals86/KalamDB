@@ -4,8 +4,8 @@
 //! - TableDefinition: Source of truth for columns, types, comments
 //! - Arrow schema: Derived from TableDefinition, memoized via OnceLock
 
-use datafusion::arrow::datatypes::SchemaRef;
 use crate::providers::live_queries::models::LiveQuery;
+use datafusion::arrow::datatypes::SchemaRef;
 use kalamdb_commons::schemas::TableDefinition;
 use kalamdb_commons::SystemTable;
 use std::sync::OnceLock;

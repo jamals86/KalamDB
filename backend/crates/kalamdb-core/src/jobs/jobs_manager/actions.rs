@@ -3,10 +3,10 @@ use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use crate::jobs::executors::JobParams;
 use chrono::Utc;
-use kalamdb_system::providers::jobs::models::{Job, JobOptions};
 use kalamdb_commons::JobId;
-use kalamdb_system::{JobStatus, JobType};
 use kalamdb_raft::commands::MetaCommand;
+use kalamdb_system::providers::jobs::models::{Job, JobOptions};
+use kalamdb_system::{JobStatus, JobType};
 use log::Level;
 
 impl JobsManager {
@@ -56,14 +56,11 @@ impl JobsManager {
         if !self.is_cluster_leader().await {
             let app_ctx = self.get_attached_app_context();
             let cluster_info = app_ctx.executor().get_cluster_info();
-            
+
             // Find leader's API address for error message
-            let leader_addr = cluster_info
-                .nodes
-                .iter()
-                .find(|n| n.is_leader)
-                .map(|n| n.api_addr.clone());
-            
+            let leader_addr =
+                cluster_info.nodes.iter().find(|n| n.is_leader).map(|n| n.api_addr.clone());
+
             return Err(KalamDbError::NotLeader { leader_addr });
         }
 
@@ -273,9 +270,7 @@ impl JobsManager {
         let app_ctx = self.get_attached_app_context();
         let cmd = MetaCommand::CompleteJob {
             job_id: job_id.clone(),
-            result: Some(
-                serde_json::json!({ "message": success_message.clone() }).to_string(),
-            ),
+            result: Some(serde_json::json!({ "message": success_message.clone() }).to_string()),
             completed_at: Utc::now(),
         };
 
@@ -285,8 +280,7 @@ impl JobsManager {
             .await
             .map_err(|e| KalamDbError::Other(format!("Failed to complete job via Raft: {}", e)))?;
 
-        self.finalize_job_nodes(job_id, JobStatus::Completed, None)
-            .await?;
+        self.finalize_job_nodes(job_id, JobStatus::Completed, None).await?;
 
         self.log_job_event(job_id, &Level::Info, &success_message);
         Ok(())

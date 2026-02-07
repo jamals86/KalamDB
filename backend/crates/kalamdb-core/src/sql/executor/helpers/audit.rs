@@ -6,8 +6,8 @@
 use crate::error::KalamDbError;
 use crate::sql::context::ExecutionContext;
 use chrono::Utc;
-use kalamdb_system::AuditLogEntry;
 use kalamdb_commons::models::AuditLogId;
+use kalamdb_system::AuditLogEntry;
 
 /// Create an audit log entry for a SQL operation
 ///

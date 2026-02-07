@@ -10,9 +10,9 @@ use kalamdb_api::repositories::CoreUsersRepo;
 use kalamdb_auth::UserRepository;
 use kalamdb_commons::constants::AuthConstants;
 use kalamdb_commons::{AuthType, Role, StorageId, UserId, UserName};
-use kalamdb_system::providers::storages::models::StorageMode;
 use kalamdb_core::app_context::AppContext;
 use kalamdb_core::sql::executor::SqlExecutor;
+use kalamdb_system::providers::storages::models::StorageMode;
 use std::sync::Arc;
 
 /// Test server instance backed by the shared HTTP server.
@@ -28,7 +28,7 @@ impl TestServer {
     /// Create a new TestServer with an isolated HTTP server instance.
     /// Each test gets its own server, RocksDB instance, and temp directory.
     /// This ensures complete test isolation but is slower than using the global server.
-    /// 
+    ///
     /// **DEPRECATED**: Use `new_shared()` instead. Isolated servers have issues with
     /// table catalog and query routing. All tests should use the shared global server.
     #[deprecated(note = "Use new_shared() instead - isolated servers have catalog issues")]
@@ -39,7 +39,7 @@ impl TestServer {
                 .await
                 .expect("Failed to start isolated HTTP test server"),
         ));
-        
+
         let app_context = http.app_context();
         let session_context = app_context.base_session_context();
         let sql_executor = app_context.sql_executor();

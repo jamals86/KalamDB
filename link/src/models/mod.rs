@@ -61,7 +61,9 @@ pub use query_result::QueryResult;
 pub use response_status::ResponseStatus;
 pub use schema_field::SchemaField;
 pub use server_message::ServerMessage;
-pub use setup_models::{ServerSetupRequest, ServerSetupResponse, SetupStatusResponse, SetupUserInfo};
+pub use setup_models::{
+    ServerSetupRequest, ServerSetupResponse, SetupStatusResponse, SetupUserInfo,
+};
 pub use subscription_config::SubscriptionConfig;
 pub use subscription_options::SubscriptionOptions;
 pub use subscription_request::SubscriptionRequest;

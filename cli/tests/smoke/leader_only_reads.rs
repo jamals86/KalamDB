@@ -35,13 +35,10 @@ fn smoke_test_leader_read_succeeds_on_leader() {
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
         .expect("CREATE NAMESPACE should succeed");
 
-    let create_table_sql = format!(
-        "CREATE TABLE {} (id BIGINT PRIMARY KEY, name TEXT NOT NULL)",
-        full_table_name
-    );
+    let create_table_sql =
+        format!("CREATE TABLE {} (id BIGINT PRIMARY KEY, name TEXT NOT NULL)", full_table_name);
     execute_sql_as_root_via_client(&create_table_sql).expect("CREATE TABLE should succeed");
-    wait_for_table_ready(&full_table_name, Duration::from_secs(3))
-        .expect("table should be ready");
+    wait_for_table_ready(&full_table_name, Duration::from_secs(3)).expect("table should be ready");
 
     // Insert test data
     execute_sql_as_root_via_client(&format!(
@@ -96,15 +93,17 @@ fn smoke_test_leader_read_with_filters() {
         full_table_name
     );
     execute_sql_as_root_via_client(&create_table_sql).expect("CREATE TABLE should succeed");
-    wait_for_table_ready(&full_table_name, Duration::from_secs(3))
-        .expect("table should be ready");
+    wait_for_table_ready(&full_table_name, Duration::from_secs(3)).expect("table should be ready");
 
     // Insert multiple rows
     for i in 0..10 {
         let category = if i % 2 == 0 { "even" } else { "odd" };
         execute_sql_as_root_via_client(&format!(
             "INSERT INTO {} (id, category, value) VALUES ({}, '{}', {})",
-            full_table_name, i, category, i * 10
+            full_table_name,
+            i,
+            category,
+            i * 10
         ))
         .expect(&format!("INSERT {} should succeed", i));
     }
@@ -154,13 +153,10 @@ fn smoke_test_leader_read_shared_table() {
         .expect("CREATE NAMESPACE should succeed");
 
     // Create a SHARED table
-    let create_table_sql = format!(
-        "CREATE SHARED TABLE {} (key TEXT PRIMARY KEY, value TEXT)",
-        full_table_name
-    );
+    let create_table_sql =
+        format!("CREATE SHARED TABLE {} (key TEXT PRIMARY KEY, value TEXT)", full_table_name);
     execute_sql_as_root_via_client(&create_table_sql).expect("CREATE SHARED TABLE should succeed");
-    wait_for_table_ready(&full_table_name, Duration::from_secs(3))
-        .expect("table should be ready");
+    wait_for_table_ready(&full_table_name, Duration::from_secs(3)).expect("table should be ready");
 
     // Insert data
     execute_sql_as_root_via_client(&format!(
@@ -193,10 +189,7 @@ fn smoke_test_leader_read_shared_table() {
 #[test]
 fn smoke_test_system_table_reads() {
     if !is_server_running() {
-        println!(
-            "Skipping smoke_test_system_table_reads: server not running at {}",
-            server_url()
-        );
+        println!("Skipping smoke_test_system_table_reads: server not running at {}", server_url());
         return;
     }
 
@@ -249,11 +242,7 @@ fn smoke_test_not_leader_error_detection() {
             "  {} is_leader_error({:?}) = {} (expected {})",
             status, message, result, expected
         );
-        assert_eq!(
-            result, expected,
-            "is_leader_error mismatch for: {}",
-            message
-        );
+        assert_eq!(result, expected, "is_leader_error mismatch for: {}", message);
     }
 
     println!("\n  ✅ PASS: NOT_LEADER error detection works correctly");
@@ -281,10 +270,8 @@ fn smoke_test_read_after_write_consistency() {
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
         .expect("CREATE NAMESPACE should succeed");
 
-    let create_table_sql = format!(
-        "CREATE TABLE {} (id BIGINT PRIMARY KEY, counter INT)",
-        full_table_name
-    );
+    let create_table_sql =
+        format!("CREATE TABLE {} (id BIGINT PRIMARY KEY, counter INT)", full_table_name);
     execute_sql_as_root_via_client(&create_table_sql).expect("CREATE TABLE should succeed");
 
     // Perform write-then-read cycles

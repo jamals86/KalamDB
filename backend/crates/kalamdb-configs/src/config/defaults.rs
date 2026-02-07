@@ -201,6 +201,14 @@ pub fn default_max_parameter_size_bytes() -> usize {
     524288 // 512KB maximum parameter size
 }
 
+pub fn default_sql_plan_cache_max_entries() -> u64 {
+    1000 // bounded SQL logical plan cache entries
+}
+
+pub fn default_sql_plan_cache_ttl_seconds() -> u64 {
+    900 // 15 minutes idle TTL for unused cached plans
+}
+
 // Rate limiter defaults
 pub fn default_rate_limit_queries_per_sec() -> u32 {
     100 // 100 queries per second per user

@@ -1,13 +1,13 @@
 //! Live query subscription entity for system.live_queries table.
 
+use super::LiveQueryStatus;
+use bincode::{Decode, Encode};
 use kalamdb_commons::datatypes::KalamDataType;
 use kalamdb_commons::models::{
     ids::{LiveQueryId, NamespaceId, UserId},
     NodeId, TableName,
 };
 use kalamdb_commons::KSerializable;
-use super::LiveQueryStatus;
-use bincode::{Decode, Encode};
 use kalamdb_macros::table;
 use serde::{Deserialize, Serialize};
 
@@ -83,7 +83,7 @@ pub struct LiveQuery {
         default = "None",
         comment = "Live query creation timestamp"
     )]
-    pub created_at: i64,   // Unix timestamp in milliseconds
+    pub created_at: i64, // Unix timestamp in milliseconds
     #[column(
         id = 11,
         ordinal = 11,
@@ -93,7 +93,7 @@ pub struct LiveQuery {
         default = "None",
         comment = "Last update sent to client"
     )]
-    pub last_update: i64,  // Unix timestamp in milliseconds
+    pub last_update: i64, // Unix timestamp in milliseconds
     #[column(
         id = 14,
         ordinal = 14,

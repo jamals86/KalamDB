@@ -55,7 +55,7 @@ impl CreateViewStatement {
             }) => {
                 // Determine if_not_exists/temporary if fields missing
                 let if_not_exists = false; // Placeholder until verified
-                let temporary = false;     // Placeholder until verified
+                let temporary = false; // Placeholder until verified
 
                 if materialized {
                     return Err("MATERIALIZED VIEWS are not supported yet".to_string());

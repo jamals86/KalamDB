@@ -100,10 +100,7 @@ impl CommandExecutor for RaftExecutor {
             self.manager.config().user_shards,
             self.manager.config().shared_shards,
         );
-        let response = self
-            .manager
-            .propose_shared_data(router.shared_shard_id(), cmd)
-            .await?;
+        let response = self.manager.propose_shared_data(router.shared_shard_id(), cmd).await?;
 
         // Check if the response is an error and convert to RaftError
         // Use Internal instead of Provider since the message already contains full context
@@ -176,19 +173,13 @@ impl CommandExecutor for RaftExecutor {
             // Use auto-detected metadata for self node
             nodes_map.insert(
                 config.node_id.as_u64(),
-                KalamNode::with_auto_metadata(
-                    config.rpc_addr.clone(),
-                    config.api_addr.clone(),
-                ),
+                KalamNode::with_auto_metadata(config.rpc_addr.clone(), config.api_addr.clone()),
             );
             for peer in &config.peers {
                 // Peers don't have metadata in fallback mode (will be NULL)
                 nodes_map.insert(
                     peer.node_id.as_u64(),
-                    KalamNode::new(
-                        peer.rpc_addr.clone(),
-                        peer.api_addr.clone(),
-                    ),
+                    KalamNode::new(peer.rpc_addr.clone(), peer.api_addr.clone()),
                 );
             }
             voter_ids.extend(nodes_map.keys().copied());

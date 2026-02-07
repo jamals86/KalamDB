@@ -1325,7 +1325,8 @@ Query OK, 0 rows affected
 171) when using consume from topic if the network disconnected keep looping and reconnect, follow the same configuration of the websocket reconnection logics, we can use this logic in both the subscription and the consumer
 
 172) Whenever we subscribe to a query and there is an update only push the updated columns and not all the other columns data
-5
+173) Support admin ui download file as_user=<user> so we can support downloading files from the service as well
+
 
 
 

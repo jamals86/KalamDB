@@ -10,6 +10,7 @@ use datafusion::logical_expr::{
 };
 use kalamdb_commons::arrow_utils::{arrow_utf8, ArrowDataType};
 use kalamdb_commons::{Role, UserId};
+use kalamdb_session::SessionUserContext;
 use std::any::Any;
 use std::sync::Arc;
 
@@ -41,12 +42,8 @@ impl CurrentUserIdFunction {
         }
     }
 
-    /// Check if the user role is allowed to call this function
-    fn is_authorized(&self) -> bool {
-        matches!(
-            self.role,
-            Some(Role::System) | Some(Role::Dba) | Some(Role::Service)
-        )
+    fn is_authorized(role: Role) -> bool {
+        matches!(role, Role::System | Role::Dba | Role::Service)
     }
 }
 
@@ -77,25 +74,29 @@ impl ScalarUDFImpl for CurrentUserIdFunction {
 
     fn invoke_with_args(&self, args: ScalarFunctionArgs) -> DataFusionResult<ColumnarValue> {
         if !args.args.is_empty() {
-            return Err(DataFusionError::Plan(
-                "CURRENT_USER_ID() takes no arguments".to_string(),
-            ));
+            return Err(DataFusionError::Plan("CURRENT_USER_ID() takes no arguments".to_string()));
         }
 
-        // Check authorization
-        if !self.is_authorized() {
+        let (resolved_user_id, resolved_role) = if let (Some(user_id), Some(role)) =
+            (self.user_id.as_ref(), self.role)
+        {
+            (user_id.clone(), role)
+        } else if let Some(session_ctx) = args.config_options.extensions.get::<SessionUserContext>()
+        {
+            (session_ctx.user_id.clone(), session_ctx.role)
+        } else {
+            return Err(DataFusionError::Execution(
+                "CURRENT_USER_ID() failed: session user context not found".to_string(),
+            ));
+        };
+
+        if !Self::is_authorized(resolved_role) {
             return Err(DataFusionError::Plan(
                 "CURRENT_USER_ID() can only be called by system, dba, or service roles".to_string(),
             ));
         }
 
-        let user_id = self.user_id.as_ref().ok_or_else(|| {
-            DataFusionError::Execution(
-                "CURRENT_USER_ID() failed: User ID must not be null or empty".to_string(),
-            )
-        })?;
-
-        let array = StringArray::from(vec![user_id.as_str()]);
+        let array = StringArray::from(vec![resolved_user_id.as_str()]);
         Ok(ColumnarValue::Array(Arc::new(array) as ArrayRef))
     }
 }
@@ -122,7 +123,7 @@ mod tests {
         // Verify configured user_id and role
         assert_eq!(func_impl.user_id, Some(user_id));
         assert_eq!(func_impl.role, Some(Role::Dba));
-        assert!(func_impl.is_authorized());
+        assert!(CurrentUserIdFunction::is_authorized(Role::Dba));
     }
 
     #[test]
@@ -130,13 +131,13 @@ mod tests {
         let user_id = UserId::new("u_123");
 
         // Test authorized roles
-        assert!(CurrentUserIdFunction::with_user(&user_id, Role::System).is_authorized());
-        assert!(CurrentUserIdFunction::with_user(&user_id, Role::Dba).is_authorized());
-        assert!(CurrentUserIdFunction::with_user(&user_id, Role::Service).is_authorized());
+        assert!(CurrentUserIdFunction::is_authorized(Role::System));
+        assert!(CurrentUserIdFunction::is_authorized(Role::Dba));
+        assert!(CurrentUserIdFunction::is_authorized(Role::Service));
 
         // Test unauthorized roles
-        assert!(!CurrentUserIdFunction::with_user(&user_id, Role::User).is_authorized());
-        assert!(!CurrentUserIdFunction::with_user(&user_id, Role::Anonymous).is_authorized());
+        assert!(!CurrentUserIdFunction::is_authorized(Role::User));
+        assert!(!CurrentUserIdFunction::is_authorized(Role::Anonymous));
     }
 
     #[test]

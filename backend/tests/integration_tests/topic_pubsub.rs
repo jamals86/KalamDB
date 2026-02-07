@@ -24,11 +24,15 @@ async fn test_create_topic_basic() {
 
     let sql = "CREATE TOPIC user_events_topic PARTITIONS 1";
     let result = server.execute_sql(sql).await;
-    
+
     // Basic smoke test - verify command executes (or already exists)
     assert!(
-        result.status == ResponseStatus::Success 
-            || result.error.as_ref().map(|e| e.message.contains("already exists")).unwrap_or(false),
+        result.status == ResponseStatus::Success
+            || result
+                .error
+                .as_ref()
+                .map(|e| e.message.contains("already exists"))
+                .unwrap_or(false),
         "CREATE TOPIC failed: {:?}",
         result.error
     );
@@ -42,13 +46,15 @@ async fn test_alter_topic_add_source() {
 
     // Setup
     server.execute_sql("CREATE NAMESPACE test_alter_ns").await;
-    server.execute_sql("CREATE TABLE test_alter_ns.data (id TEXT PRIMARY KEY, value TEXT)").await;
+    server
+        .execute_sql("CREATE TABLE test_alter_ns.data (id TEXT PRIMARY KEY, value TEXT)")
+        .await;
     server.execute_sql("CREATE TOPIC data_changes_tp PARTITIONS 1").await;
 
     // Add source - Syntax: ALTER TOPIC <name> ADD SOURCE <table> ON <operation>
     let sql = "ALTER TOPIC data_changes_tp ADD SOURCE test_alter_ns.data ON INSERT";
     let result = server.execute_sql(sql).await;
-    
+
     assert!(
         result.status == ResponseStatus::Success,
         "ALTER TOPIC ADD SOURCE failed: {:?}",
@@ -68,7 +74,7 @@ async fn test_consume_from_topic() {
     // Consume (should return empty initially or succeed)
     let sql = "CONSUME FROM test_consume_tp GROUP 'consumers' START EARLIEST LIMIT 10";
     let result = server.execute_sql(sql).await;
-    
+
     // Should succeed (empty result set is still success)
     assert!(
         result.status == ResponseStatus::Success,
@@ -87,12 +93,14 @@ async fn test_ack_offset() {
     server.execute_sql("CREATE TOPIC test_ack_tp PARTITIONS 1").await;
 
     // Consume first to create offset record
-    server.execute_sql("CONSUME FROM test_ack_tp GROUP 'test_ack_group' START EARLIEST LIMIT 10").await;
+    server
+        .execute_sql("CONSUME FROM test_ack_tp GROUP 'test_ack_group' START EARLIEST LIMIT 10")
+        .await;
 
     // ACK offset (should succeed)
     let sql = "ACK test_ack_tp GROUP 'test_ack_group' UPTO OFFSET 0";
     let result = server.execute_sql(sql).await;
-    
+
     assert!(
         result.status == ResponseStatus::Success,
         "ACK should succeed: {:?}",
@@ -108,10 +116,10 @@ async fn test_drop_topic() {
 
     // Create and drop
     server.execute_sql("CREATE TOPIC temp_drop_tp PARTITIONS 1").await;
-    
+
     let sql = "DROP TOPIC temp_drop_tp";
     let result = server.execute_sql(sql).await;
-    
+
     assert!(
         result.status == ResponseStatus::Success,
         "DROP TOPIC should succeed: {:?}",
@@ -130,21 +138,27 @@ async fn test_consume_user_role_forbidden() {
     let server = TestServer::new_shared().await;
 
     // Create a regular user (not service/dba/system)
-    server.execute_sql("CREATE USER test_user WITH PASSWORD 'testpass' ROLE user").await;
-    
+    server
+        .execute_sql("CREATE USER test_user WITH PASSWORD 'testpass' ROLE user")
+        .await;
+
     // Create topic
     server.execute_sql("CREATE TOPIC forbidden_consume_tp PARTITIONS 1").await;
 
     // Try to consume as user role (should fail)
     let sql = "CONSUME FROM forbidden_consume_tp GROUP 'test_group' START EARLIEST LIMIT 10";
     let result = server.execute_sql_as_user(sql, "test_user").await;
-    
+
     assert!(
         result.status == ResponseStatus::Error,
         "User role should be forbidden from consuming topics"
     );
     assert!(
-        result.error.as_ref().map(|e| e.message.contains("service, dba, or system")).unwrap_or(false),
+        result
+            .error
+            .as_ref()
+            .map(|e| e.message.contains("service, dba, or system"))
+            .unwrap_or(false),
         "Error message should mention required roles: {:?}",
         result.error
     );
@@ -157,9 +171,11 @@ async fn test_consume_privileged_roles_allowed() {
     let server = TestServer::new_shared().await;
 
     // Create users with privileged roles
-    server.execute_sql("CREATE USER test_service WITH PASSWORD 'pass' ROLE service").await;
+    server
+        .execute_sql("CREATE USER test_service WITH PASSWORD 'pass' ROLE service")
+        .await;
     server.execute_sql("CREATE USER test_dba WITH PASSWORD 'pass' ROLE dba").await;
-    
+
     // Create topic
     server.execute_sql("CREATE TOPIC privileged_consume_tp PARTITIONS 1").await;
 
@@ -198,15 +214,17 @@ async fn test_ack_user_role_forbidden() {
     let server = TestServer::new_shared().await;
 
     // Create a regular user
-    server.execute_sql("CREATE USER test_user_ack WITH PASSWORD 'testpass' ROLE user").await;
-    
+    server
+        .execute_sql("CREATE USER test_user_ack WITH PASSWORD 'testpass' ROLE user")
+        .await;
+
     // Create topic
     server.execute_sql("CREATE TOPIC forbidden_ack_tp PARTITIONS 1").await;
 
     // Try to ACK as user role (should fail)
     let sql = "ACK forbidden_ack_tp GROUP 'test_group' UPTO OFFSET 0";
     let result = server.execute_sql_as_user(sql, "test_user_ack").await;
-    
+
     assert!(
         result.status == ResponseStatus::Error,
         "User role should be forbidden from ACK: {:?}",
@@ -236,18 +254,16 @@ async fn test_cdc_insert_to_consume_workflow() {
 
     // 2. Create topic and add CDC source
     server.execute_sql("CREATE TOPIC events_stream PARTITIONS 1").await;
-    server.execute_sql("ALTER TOPIC events_stream ADD SOURCE test_cdc_ns.events ON INSERT").await;
+    server
+        .execute_sql("ALTER TOPIC events_stream ADD SOURCE test_cdc_ns.events ON INSERT")
+        .await;
 
     // 3. Insert data (should trigger CDC → topic)
     let insert = "INSERT INTO test_cdc_ns.events (id, event_type, data) VALUES 
         ('evt1', 'user_signup', 'John Doe'),
         ('evt2', 'user_login', 'Jane Smith')";
     let result = server.execute_sql(insert).await;
-    assert!(
-        result.status == ResponseStatus::Success,
-        "INSERT failed: {:?}",
-        result.error
-    );
+    assert!(result.status == ResponseStatus::Success, "INSERT failed: {:?}", result.error);
 
     // 4. Wait briefly for CDC processing (async)
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
@@ -255,26 +271,20 @@ async fn test_cdc_insert_to_consume_workflow() {
     // 5. Consume from topic (should see the messages)
     let consume = "CONSUME FROM events_stream GROUP 'cdc_consumers' START EARLIEST LIMIT 10";
     let result = server.execute_sql(consume).await;
-    
-    assert!(
-        result.status == ResponseStatus::Success,
-        "CONSUME failed: {:?}",
-        result.error
-    );
+
+    assert!(result.status == ResponseStatus::Success, "CONSUME failed: {:?}", result.error);
 
     // 6. Verify we got results (schema: topic, partition, offset, key, payload, timestamp_ms)
-    assert!(
-        !result.results.is_empty(),
-        "CONSUME should return batches"
-    );
-    
+    assert!(!result.results.is_empty(), "CONSUME should return batches");
+
     if let Some(first_batch) = result.results.first() {
         // Check we have the expected 6 columns from topic_message_schema
         assert_eq!(
-            first_batch.schema.len(), 6,
+            first_batch.schema.len(),
+            6,
             "Should have 6 schema fields (topic, partition, offset, key, payload, timestamp_ms)"
         );
-        
+
         // Verify column names match schema
         assert_eq!(first_batch.schema[0].name, "topic");
         assert_eq!(first_batch.schema[1].name, "partition");
@@ -282,7 +292,7 @@ async fn test_cdc_insert_to_consume_workflow() {
         assert_eq!(first_batch.schema[3].name, "key");
         assert_eq!(first_batch.schema[4].name, "payload");
         assert_eq!(first_batch.schema[5].name, "timestamp_ms");
-        
+
         // Should have at least 2 rows (2 INSERTs)
         assert!(
             first_batch.row_count >= 2,
@@ -305,7 +315,7 @@ async fn test_consume_schema_structure() {
     // Consume (empty is fine, we're testing schema)
     let sql = "CONSUME FROM schema_test_tp GROUP 'schema_group' START EARLIEST LIMIT 10";
     let result = server.execute_sql(sql).await;
-    
+
     assert!(
         result.status == ResponseStatus::Success,
         "CONSUME should succeed: {:?}",
@@ -315,15 +325,19 @@ async fn test_consume_schema_structure() {
     // Verify schema structure matches topic_message_schema
     if !result.results.is_empty() {
         let batch = &result.results[0];
-        
+
         // Must have exactly 6 schema fields
-        assert_eq!(
-            batch.schema.len(), 6,
-            "Topic message schema must have 6 fields"
-        );
-        
+        assert_eq!(batch.schema.len(), 6, "Topic message schema must have 6 fields");
+
         // Verify field names and order
-        let expected_fields = vec!["topic", "partition", "offset", "key", "payload", "timestamp_ms"];
+        let expected_fields = vec![
+            "topic",
+            "partition",
+            "offset",
+            "key",
+            "payload",
+            "timestamp_ms",
+        ];
         for (i, expected_name) in expected_fields.iter().enumerate() {
             assert_eq!(
                 &batch.schema[i].name, expected_name,
@@ -367,40 +381,67 @@ async fn test_consume_schema_structure() {
 #[ntest::timeout(15000)]
 async fn test_clear_topic() {
     let server = TestServer::new_shared().await;
-    
+
     // Setup: Create namespace, table, and topic
     server.execute_sql("CREATE NAMESPACE test_clear_ns").await;
-    server.execute_sql("CREATE TABLE test_clear_ns.messages (id TEXT PRIMARY KEY, content TEXT)").await;
+    server
+        .execute_sql("CREATE TABLE test_clear_ns.messages (id TEXT PRIMARY KEY, content TEXT)")
+        .await;
     server.execute_sql("CREATE TOPIC messages_topic PARTITIONS 1").await;
-    server.execute_sql("ALTER TOPIC messages_topic ADD SOURCE test_clear_ns.messages ON INSERT").await;
-    
+    server
+        .execute_sql("ALTER TOPIC messages_topic ADD SOURCE test_clear_ns.messages ON INSERT")
+        .await;
+
     // Insert some data to generate messages
-    server.execute_sql("INSERT INTO test_clear_ns.messages (id, content) VALUES ('1', 'message1')").await;
-    server.execute_sql("INSERT INTO test_clear_ns.messages (id, content) VALUES ('2', 'message2')").await;
-    server.execute_sql("INSERT INTO test_clear_ns.messages (id, content) VALUES ('3', 'message3')").await;
-    
+    server
+        .execute_sql("INSERT INTO test_clear_ns.messages (id, content) VALUES ('1', 'message1')")
+        .await;
+    server
+        .execute_sql("INSERT INTO test_clear_ns.messages (id, content) VALUES ('2', 'message2')")
+        .await;
+    server
+        .execute_sql("INSERT INTO test_clear_ns.messages (id, content) VALUES ('3', 'message3')")
+        .await;
+
     // Give CDC some time to process
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-    
+
     // Consume to verify messages exist
-    let consume_result = server.execute_sql("CONSUME FROM messages_topic GROUP 'test_group' START EARLIEST LIMIT 10").await;
+    let consume_result = server
+        .execute_sql("CONSUME FROM messages_topic GROUP 'test_group' START EARLIEST LIMIT 10")
+        .await;
     assert_eq!(consume_result.status, ResponseStatus::Success, "Initial consume should succeed");
-    
+
     // Clear the topic
     let clear_result = server.execute_sql("CLEAR TOPIC messages_topic").await;
-    assert_eq!(clear_result.status, ResponseStatus::Success, "CLEAR TOPIC should succeed: {:?}", clear_result.error);
-    
+    assert_eq!(
+        clear_result.status,
+        ResponseStatus::Success,
+        "CLEAR TOPIC should succeed: {:?}",
+        clear_result.error
+    );
+
     // Give the cleanup job time to execute
     tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
-    
+
     // Verify messages are cleared by consuming again
-    let verify_result = server.execute_sql("CONSUME FROM messages_topic GROUP 'verify_group' START EARLIEST LIMIT 10").await;
-    assert_eq!(verify_result.status, ResponseStatus::Success, "Consume after clear should succeed");
-    
+    let verify_result = server
+        .execute_sql("CONSUME FROM messages_topic GROUP 'verify_group' START EARLIEST LIMIT 10")
+        .await;
+    assert_eq!(
+        verify_result.status,
+        ResponseStatus::Success,
+        "Consume after clear should succeed"
+    );
+
     // Topic metadata should still exist
     let topic_check = server.execute_sql("CREATE TOPIC messages_topic PARTITIONS 1").await;
     assert!(
-        topic_check.error.as_ref().map(|e| e.message.contains("already exists")).unwrap_or(false),
+        topic_check
+            .error
+            .as_ref()
+            .map(|e| e.message.contains("already exists"))
+            .unwrap_or(false),
         "Topic should still exist after CLEAR"
     );
 }
@@ -410,11 +451,15 @@ async fn test_clear_topic() {
 #[ntest::timeout(10000)]
 async fn test_clear_topic_not_found() {
     let server = TestServer::new_shared().await;
-    
+
     let result = server.execute_sql("CLEAR TOPIC nonexistent_topic").await;
     assert_eq!(result.status, ResponseStatus::Error, "Should fail for non-existent topic");
     assert!(
-        result.error.as_ref().map(|e| e.message.contains("does not exist")).unwrap_or(false),
+        result
+            .error
+            .as_ref()
+            .map(|e| e.message.contains("does not exist"))
+            .unwrap_or(false),
         "Error should mention topic doesn't exist"
     );
 }
@@ -424,19 +469,23 @@ async fn test_clear_topic_not_found() {
 #[ntest::timeout(10000)]
 async fn test_clear_topic_user_role_forbidden() {
     let server = TestServer::new_shared().await;
-    
+
     // Create a regular user
-    server.execute_sql("CREATE USER clear_test_user WITH PASSWORD 'password123' ROLE user").await;
-    
+    server
+        .execute_sql("CREATE USER clear_test_user WITH PASSWORD 'password123' ROLE user")
+        .await;
+
     // Create topic as admin
     server.execute_sql("CREATE TOPIC admin_topic PARTITIONS 1").await;
-    
+
     // Try to clear as regular user (should fail)
-    let result = server
-        .execute_sql_as_user("CLEAR TOPIC admin_topic", "clear_test_user")
-        .await;
-    
-    assert_eq!(result.status, ResponseStatus::Error, "Regular user should not be able to clear topic");
+    let result = server.execute_sql_as_user("CLEAR TOPIC admin_topic", "clear_test_user").await;
+
+    assert_eq!(
+        result.status,
+        ResponseStatus::Error,
+        "Regular user should not be able to clear topic"
+    );
     assert!(
         result
             .error
@@ -455,39 +504,58 @@ async fn test_clear_topic_user_role_forbidden() {
 #[ntest::timeout(15000)]
 async fn test_drop_topic_schedules_cleanup_job() {
     let server = TestServer::new_shared().await;
-    
+
     // Setup: Create namespace, table, and topic
     server.execute_sql("CREATE NAMESPACE test_drop_ns").await;
-    server.execute_sql("CREATE TABLE test_drop_ns.events (id TEXT PRIMARY KEY, data TEXT)").await;
+    server
+        .execute_sql("CREATE TABLE test_drop_ns.events (id TEXT PRIMARY KEY, data TEXT)")
+        .await;
     server.execute_sql("CREATE TOPIC events_topic PARTITIONS 1").await;
-    server.execute_sql("ALTER TOPIC events_topic ADD SOURCE test_drop_ns.events ON INSERT").await;
-    
+    server
+        .execute_sql("ALTER TOPIC events_topic ADD SOURCE test_drop_ns.events ON INSERT")
+        .await;
+
     // Insert some data to generate messages
-    server.execute_sql("INSERT INTO test_drop_ns.events (id, data) VALUES ('1', 'event1')").await;
-    server.execute_sql("INSERT INTO test_drop_ns.events (id, data) VALUES ('2', 'event2')").await;
-    
+    server
+        .execute_sql("INSERT INTO test_drop_ns.events (id, data) VALUES ('1', 'event1')")
+        .await;
+    server
+        .execute_sql("INSERT INTO test_drop_ns.events (id, data) VALUES ('2', 'event2')")
+        .await;
+
     // Give CDC some time to process
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-    
+
     // Drop the topic (should schedule cleanup job)
     let drop_result = server.execute_sql("DROP TOPIC events_topic").await;
-    assert_eq!(drop_result.status, ResponseStatus::Success, "DROP TOPIC should succeed: {:?}", drop_result.error);
+    assert_eq!(
+        drop_result.status,
+        ResponseStatus::Success,
+        "DROP TOPIC should succeed: {:?}",
+        drop_result.error
+    );
     assert!(
-        drop_result.results.first()
+        drop_result
+            .results
+            .first()
             .and_then(|r| r.message.as_ref())
             .map(|msg| msg.contains("cleanup job"))
             .unwrap_or(false),
         "DROP TOPIC should mention cleanup job in message"
     );
-    
+
     // Give the cleanup job time to execute
     tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
-    
+
     // Verify topic is gone
     let topic_check = server.execute_sql("DROP TOPIC events_topic").await;
     assert_eq!(topic_check.status, ResponseStatus::Error, "Topic should not exist after drop");
     assert!(
-        topic_check.error.as_ref().map(|e| e.message.contains("does not exist")).unwrap_or(false),
+        topic_check
+            .error
+            .as_ref()
+            .map(|e| e.message.contains("does not exist"))
+            .unwrap_or(false),
         "Error should mention topic doesn't exist"
     );
 }

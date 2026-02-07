@@ -52,9 +52,9 @@
 //! ```
 
 use super::DdlResult;
+use crate::parser::utils::parse_sql_statements;
 use kalamdb_commons::websocket::SubscriptionOptions;
 use kalamdb_commons::{NamespaceId, TableName};
-use crate::parser::utils::parse_sql_statements;
 use sqlparser::ast::{ObjectName, ObjectNamePart, SetExpr, Statement, TableFactor};
 use sqlparser::dialect::{GenericDialect, PostgreSqlDialect};
 

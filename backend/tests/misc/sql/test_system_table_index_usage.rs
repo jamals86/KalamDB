@@ -18,13 +18,12 @@ use super::test_support::TestServer;
 use kalam_link::models::ResponseStatus;
 use kalam_link::parse_i64;
 use kalamdb_commons::models::{ConnectionId, UserName};
-use kalamdb_system::{Job, JobStatus, JobType, LiveQuery, User};
 use kalamdb_commons::{
-    AuthType, JobId, LiveQueryId, NamespaceId, NodeId, Role, StorageId,
-    TableName, UserId,
+    AuthType, JobId, LiveQueryId, NamespaceId, NodeId, Role, StorageId, TableName, UserId,
 };
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use kalamdb_system::providers::storages::models::StorageMode;
+use kalamdb_system::{Job, JobStatus, JobType, LiveQuery, User};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 /// Test: system.users uses username index for WHERE username = '...' queries
 ///

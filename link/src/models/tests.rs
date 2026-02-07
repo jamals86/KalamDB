@@ -212,9 +212,8 @@ fn test_subscription_options_deserialization_empty() {
 #[test]
 fn test_connection_and_subscription_options_are_independent() {
     // Ensure the two option types don't overlap in their fields
-    let conn_opts = ConnectionOptions::new()
-        .with_auto_reconnect(true)
-        .with_reconnect_delay_ms(1000);
+    let conn_opts =
+        ConnectionOptions::new().with_auto_reconnect(true).with_reconnect_delay_ms(1000);
 
     let sub_opts = SubscriptionOptions::new().with_batch_size(100).with_last_rows(50);
 

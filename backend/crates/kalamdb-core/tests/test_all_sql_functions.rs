@@ -17,11 +17,7 @@ fn create_test_session() -> Arc<SessionContext> {
 }
 
 /// Helper to create ExecutionContext with username
-fn create_exec_context_with_user(
-    username: &str,
-    user_id: &str,
-    role: Role,
-) -> ExecutionContext {
+fn create_exec_context_with_user(username: &str, user_id: &str, role: Role) -> ExecutionContext {
     let auth_session = AuthSession::with_username_and_auth_details(
         UserId::new(user_id),
         UserName::new(username),
@@ -41,18 +37,12 @@ async fn test_current_user_basic() {
     let exec_ctx = create_exec_context_with_user("alice", "u_alice", Role::User);
     let session = exec_ctx.create_session_with_user();
 
-    let result = session
-        .sql("SELECT CURRENT_USER() AS username")
-        .await
-        .unwrap();
+    let result = session.sql("SELECT CURRENT_USER() AS username").await.unwrap();
     let batches = result.collect().await.unwrap();
 
     assert_eq!(batches[0].num_rows(), 1);
     let col = batches[0].column(0);
-    let arr = col
-        .as_any()
-        .downcast_ref::<datafusion::arrow::array::StringArray>()
-        .unwrap();
+    let arr = col.as_any().downcast_ref::<datafusion::arrow::array::StringArray>().unwrap();
     assert_eq!(arr.value(0), "alice");
 }
 
@@ -61,18 +51,12 @@ async fn test_current_user_id_dba() {
     let exec_ctx = create_exec_context_with_user("admin", "u_admin", Role::Dba);
     let session = exec_ctx.create_session_with_user();
 
-    let result = session
-        .sql("SELECT CURRENT_USER_ID() AS user_id")
-        .await
-        .unwrap();
+    let result = session.sql("SELECT CURRENT_USER_ID() AS user_id").await.unwrap();
     let batches = result.collect().await.unwrap();
 
     assert_eq!(batches[0].num_rows(), 1);
     let col = batches[0].column(0);
-    let arr = col
-        .as_any()
-        .downcast_ref::<datafusion::arrow::array::StringArray>()
-        .unwrap();
+    let arr = col.as_any().downcast_ref::<datafusion::arrow::array::StringArray>().unwrap();
     assert_eq!(arr.value(0), "u_admin");
 }
 
@@ -81,17 +65,11 @@ async fn test_current_user_id_system() {
     let exec_ctx = create_exec_context_with_user("system", "system", Role::System);
     let session = exec_ctx.create_session_with_user();
 
-    let result = session
-        .sql("SELECT CURRENT_USER_ID() AS user_id")
-        .await
-        .unwrap();
+    let result = session.sql("SELECT CURRENT_USER_ID() AS user_id").await.unwrap();
     let batches = result.collect().await.unwrap();
 
     let col = batches[0].column(0);
-    let arr = col
-        .as_any()
-        .downcast_ref::<datafusion::arrow::array::StringArray>()
-        .unwrap();
+    let arr = col.as_any().downcast_ref::<datafusion::arrow::array::StringArray>().unwrap();
     assert_eq!(arr.value(0), "system");
 }
 
@@ -100,17 +78,11 @@ async fn test_current_user_id_service_role() {
     let exec_ctx = create_exec_context_with_user("job_worker", "svc_worker", Role::Service);
     let session = exec_ctx.create_session_with_user();
 
-    let result = session
-        .sql("SELECT CURRENT_USER_ID() AS user_id")
-        .await
-        .unwrap();
+    let result = session.sql("SELECT CURRENT_USER_ID() AS user_id").await.unwrap();
     let batches = result.collect().await.unwrap();
 
     let col = batches[0].column(0);
-    let arr = col
-        .as_any()
-        .downcast_ref::<datafusion::arrow::array::StringArray>()
-        .unwrap();
+    let arr = col.as_any().downcast_ref::<datafusion::arrow::array::StringArray>().unwrap();
     assert_eq!(arr.value(0), "svc_worker");
 }
 
@@ -119,10 +91,7 @@ async fn test_current_user_id_unauthorized_user_role() {
     let exec_ctx = create_exec_context_with_user("regular_user", "u_regular", Role::User);
     let session = exec_ctx.create_session_with_user();
 
-    let result = session
-        .sql("SELECT CURRENT_USER_ID() AS user_id")
-        .await
-        .unwrap();
+    let result = session.sql("SELECT CURRENT_USER_ID() AS user_id").await.unwrap();
 
     // Query execution should fail due to authorization check
     let batches_result = result.collect().await;
@@ -134,17 +103,11 @@ async fn test_current_role_user() {
     let exec_ctx = create_exec_context_with_user("bob", "u_bob", Role::User);
     let session = exec_ctx.create_session_with_user();
 
-    let result = session
-        .sql("SELECT CURRENT_ROLE() AS role")
-        .await
-        .unwrap();
+    let result = session.sql("SELECT CURRENT_ROLE() AS role").await.unwrap();
     let batches = result.collect().await.unwrap();
 
     let col = batches[0].column(0);
-    let arr = col
-        .as_any()
-        .downcast_ref::<datafusion::arrow::array::StringArray>()
-        .unwrap();
+    let arr = col.as_any().downcast_ref::<datafusion::arrow::array::StringArray>().unwrap();
     assert_eq!(arr.value(0), "user");
 }
 
@@ -153,17 +116,11 @@ async fn test_current_role_dba() {
     let exec_ctx = create_exec_context_with_user("admin", "u_admin", Role::Dba);
     let session = exec_ctx.create_session_with_user();
 
-    let result = session
-        .sql("SELECT CURRENT_ROLE() AS role")
-        .await
-        .unwrap();
+    let result = session.sql("SELECT CURRENT_ROLE() AS role").await.unwrap();
     let batches = result.collect().await.unwrap();
 
     let col = batches[0].column(0);
-    let arr = col
-        .as_any()
-        .downcast_ref::<datafusion::arrow::array::StringArray>()
-        .unwrap();
+    let arr = col.as_any().downcast_ref::<datafusion::arrow::array::StringArray>().unwrap();
     assert_eq!(arr.value(0), "dba");
 }
 
@@ -172,17 +129,11 @@ async fn test_current_role_system() {
     let exec_ctx = create_exec_context_with_user("system", "system", Role::System);
     let session = exec_ctx.create_session_with_user();
 
-    let result = session
-        .sql("SELECT CURRENT_ROLE() AS role")
-        .await
-        .unwrap();
+    let result = session.sql("SELECT CURRENT_ROLE() AS role").await.unwrap();
     let batches = result.collect().await.unwrap();
 
     let col = batches[0].column(0);
-    let arr = col
-        .as_any()
-        .downcast_ref::<datafusion::arrow::array::StringArray>()
-        .unwrap();
+    let arr = col.as_any().downcast_ref::<datafusion::arrow::array::StringArray>().unwrap();
     assert_eq!(arr.value(0), "system");
 }
 
@@ -202,26 +153,17 @@ async fn test_all_context_functions_together() {
 
     // Verify username (column 0)
     let col0 = batches[0].column(0);
-    let arr0 = col0
-        .as_any()
-        .downcast_ref::<datafusion::arrow::array::StringArray>()
-        .unwrap();
+    let arr0 = col0.as_any().downcast_ref::<datafusion::arrow::array::StringArray>().unwrap();
     assert_eq!(arr0.value(0), "testuser");
 
     // Verify user_id (column 1)
     let col1 = batches[0].column(1);
-    let arr1 = col1
-        .as_any()
-        .downcast_ref::<datafusion::arrow::array::StringArray>()
-        .unwrap();
+    let arr1 = col1.as_any().downcast_ref::<datafusion::arrow::array::StringArray>().unwrap();
     assert_eq!(arr1.value(0), "u_test");
 
     // Verify role (column 2)
     let col2 = batches[0].column(2);
-    let arr2 = col2
-        .as_any()
-        .downcast_ref::<datafusion::arrow::array::StringArray>()
-        .unwrap();
+    let arr2 = col2.as_any().downcast_ref::<datafusion::arrow::array::StringArray>().unwrap();
     assert_eq!(arr2.value(0), "dba");
 }
 
@@ -234,18 +176,12 @@ async fn test_snowflake_id_function() {
     let exec_ctx = create_exec_context_with_user("alice", "u_alice", Role::User);
     let session = exec_ctx.create_session_with_user();
 
-    let result = session
-        .sql("SELECT SNOWFLAKE_ID() AS id")
-        .await
-        .unwrap();
+    let result = session.sql("SELECT SNOWFLAKE_ID() AS id").await.unwrap();
     let batches = result.collect().await.unwrap();
 
     assert_eq!(batches[0].num_rows(), 1);
     let col = batches[0].column(0);
-    let arr = col
-        .as_any()
-        .downcast_ref::<datafusion::arrow::array::Int64Array>()
-        .unwrap();
+    let arr = col.as_any().downcast_ref::<datafusion::arrow::array::Int64Array>().unwrap();
 
     // Snowflake ID should be a positive 64-bit integer
     let id = arr.value(0);
@@ -257,18 +193,12 @@ async fn test_uuid_v7_function() {
     let exec_ctx = create_exec_context_with_user("bob", "u_bob", Role::User);
     let session = exec_ctx.create_session_with_user();
 
-    let result = session
-        .sql("SELECT UUID_V7() AS id")
-        .await
-        .unwrap();
+    let result = session.sql("SELECT UUID_V7() AS id").await.unwrap();
     let batches = result.collect().await.unwrap();
 
     assert_eq!(batches[0].num_rows(), 1);
     let col = batches[0].column(0);
-    let arr = col
-        .as_any()
-        .downcast_ref::<datafusion::arrow::array::StringArray>()
-        .unwrap();
+    let arr = col.as_any().downcast_ref::<datafusion::arrow::array::StringArray>().unwrap();
 
     let uuid = arr.value(0);
     // UUID_V7 should be a valid UUID string (36 characters with hyphens)
@@ -280,18 +210,12 @@ async fn test_ulid_function() {
     let exec_ctx = create_exec_context_with_user("charlie", "u_charlie", Role::User);
     let session = exec_ctx.create_session_with_user();
 
-    let result = session
-        .sql("SELECT ULID() AS id")
-        .await
-        .unwrap();
+    let result = session.sql("SELECT ULID() AS id").await.unwrap();
     let batches = result.collect().await.unwrap();
 
     assert_eq!(batches[0].num_rows(), 1);
     let col = batches[0].column(0);
-    let arr = col
-        .as_any()
-        .downcast_ref::<datafusion::arrow::array::StringArray>()
-        .unwrap();
+    let arr = col.as_any().downcast_ref::<datafusion::arrow::array::StringArray>().unwrap();
 
     let ulid = arr.value(0);
     // ULID should be 26 characters long
@@ -308,10 +232,7 @@ async fn test_current_user_in_where_clause() {
     let session = exec_ctx.create_session_with_user();
 
     // Test WHERE clause with CURRENT_USER comparison
-    let result = session
-        .sql("SELECT 1 WHERE CURRENT_USER() = 'alice'")
-        .await
-        .unwrap();
+    let result = session.sql("SELECT 1 WHERE CURRENT_USER() = 'alice'").await.unwrap();
     let batches = result.collect().await.unwrap();
 
     // Should return 1 row (condition is true)
@@ -324,14 +245,11 @@ async fn test_current_user_where_no_match() {
     let session = exec_ctx.create_session_with_user();
 
     // Test WHERE clause with non-matching condition
-    let result = session
-        .sql("SELECT 1 WHERE CURRENT_USER() = 'bob'")
-        .await
-        .unwrap();
+    let result = session.sql("SELECT 1 WHERE CURRENT_USER() = 'bob'").await.unwrap();
     let batches = result.collect().await.unwrap();
 
     // Should return 0 rows (condition is false)
-    assert_eq!(batches.len(), 0 || batches[0].num_rows() == 0);
+    assert!(batches.is_empty() || batches[0].num_rows() == 0);
 }
 
 #[tokio::test]
@@ -339,10 +257,7 @@ async fn test_current_role_in_where_clause() {
     let exec_ctx = create_exec_context_with_user("admin", "u_admin", Role::Dba);
     let session = exec_ctx.create_session_with_user();
 
-    let result = session
-        .sql("SELECT 1 WHERE CURRENT_ROLE() = 'dba'")
-        .await
-        .unwrap();
+    let result = session.sql("SELECT 1 WHERE CURRENT_ROLE() = 'dba'").await.unwrap();
     let batches = result.collect().await.unwrap();
 
     // Should return 1 row (condition is true)
@@ -384,26 +299,17 @@ async fn test_multiple_id_functions_in_select() {
 
     // Verify snowflake_id (column 0)
     let col0 = batches[0].column(0);
-    let arr0 = col0
-        .as_any()
-        .downcast_ref::<datafusion::arrow::array::Int64Array>()
-        .unwrap();
+    let arr0 = col0.as_any().downcast_ref::<datafusion::arrow::array::Int64Array>().unwrap();
     assert!(arr0.value(0) > 0);
 
     // Verify uuid (column 1)
     let col1 = batches[0].column(1);
-    let arr1 = col1
-        .as_any()
-        .downcast_ref::<datafusion::arrow::array::StringArray>()
-        .unwrap();
+    let arr1 = col1.as_any().downcast_ref::<datafusion::arrow::array::StringArray>().unwrap();
     assert_eq!(arr1.value(0).len(), 36);
 
     // Verify ulid (column 2)
     let col2 = batches[0].column(2);
-    let arr2 = col2
-        .as_any()
-        .downcast_ref::<datafusion::arrow::array::StringArray>()
-        .unwrap();
+    let arr2 = col2.as_any().downcast_ref::<datafusion::arrow::array::StringArray>().unwrap();
     assert_eq!(arr2.value(0).len(), 26);
 }
 
@@ -437,17 +343,11 @@ async fn test_context_function_with_coalesce() {
     let exec_ctx = create_exec_context_with_user("alice", "u_alice", Role::User);
     let session = exec_ctx.create_session_with_user();
 
-    let result = session
-        .sql("SELECT COALESCE(CURRENT_USER(), 'unknown') AS user")
-        .await
-        .unwrap();
+    let result = session.sql("SELECT COALESCE(CURRENT_USER(), 'unknown') AS user").await.unwrap();
     let batches = result.collect().await.unwrap();
 
     let col = batches[0].column(0);
-    let arr = col
-        .as_any()
-        .downcast_ref::<datafusion::arrow::array::StringArray>()
-        .unwrap();
+    let arr = col.as_any().downcast_ref::<datafusion::arrow::array::StringArray>().unwrap();
     assert_eq!(arr.value(0), "alice");
 }
 
@@ -463,10 +363,7 @@ async fn test_context_function_with_concat() {
     let batches = result.collect().await.unwrap();
 
     let col = batches[0].column(0);
-    let arr = col
-        .as_any()
-        .downcast_ref::<datafusion::arrow::array::StringArray>()
-        .unwrap();
+    let arr = col.as_any().downcast_ref::<datafusion::arrow::array::StringArray>().unwrap();
     assert_eq!(arr.value(0), "User: bob Role: dba");
 }
 
@@ -517,10 +414,7 @@ async fn test_context_function_in_case_statement() {
     let batches = result.collect().await.unwrap();
 
     let col = batches[0].column(0);
-    let arr = col
-        .as_any()
-        .downcast_ref::<datafusion::arrow::array::StringArray>()
-        .unwrap();
+    let arr = col.as_any().downcast_ref::<datafusion::arrow::array::StringArray>().unwrap();
     assert_eq!(arr.value(0), "Regular User");
 }
 
@@ -541,10 +435,7 @@ async fn test_id_function_in_case_statement() {
     let batches = result.collect().await.unwrap();
 
     let col = batches[0].column(0);
-    let arr = col
-        .as_any()
-        .downcast_ref::<datafusion::arrow::array::StringArray>()
-        .unwrap();
+    let arr = col.as_any().downcast_ref::<datafusion::arrow::array::StringArray>().unwrap();
     assert_eq!(arr.value(0), "Valid ID");
 }
 
@@ -557,17 +448,11 @@ async fn test_current_user_empty_check() {
     let exec_ctx = create_exec_context_with_user("testuser", "u_test", Role::User);
     let session = exec_ctx.create_session_with_user();
 
-    let result = session
-        .sql("SELECT CURRENT_USER() IS NOT NULL AS is_not_null")
-        .await
-        .unwrap();
+    let result = session.sql("SELECT CURRENT_USER() IS NOT NULL AS is_not_null").await.unwrap();
     let batches = result.collect().await.unwrap();
 
     let col = batches[0].column(0);
-    let arr = col
-        .as_any()
-        .downcast_ref::<datafusion::arrow::array::BooleanArray>()
-        .unwrap();
+    let arr = col.as_any().downcast_ref::<datafusion::arrow::array::BooleanArray>().unwrap();
     assert!(arr.value(0), "CURRENT_USER() should never be NULL");
 }
 
@@ -576,17 +461,11 @@ async fn test_uuid_v7_format_validation() {
     let exec_ctx = create_exec_context_with_user("alice", "u_alice", Role::User);
     let session = exec_ctx.create_session_with_user();
 
-    let result = session
-        .sql("SELECT UUID_V7() AS uuid_val")
-        .await
-        .unwrap();
+    let result = session.sql("SELECT UUID_V7() AS uuid_val").await.unwrap();
     let batches = result.collect().await.unwrap();
 
     let col = batches[0].column(0);
-    let arr = col
-        .as_any()
-        .downcast_ref::<datafusion::arrow::array::StringArray>()
-        .unwrap();
+    let arr = col.as_any().downcast_ref::<datafusion::arrow::array::StringArray>().unwrap();
 
     let uuid = arr.value(0);
     // UUID format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx (36 chars, 4 hyphens)
@@ -598,17 +477,11 @@ async fn test_ulid_format_validation() {
     let exec_ctx = create_exec_context_with_user("bob", "u_bob", Role::User);
     let session = exec_ctx.create_session_with_user();
 
-    let result = session
-        .sql("SELECT ULID() AS ulid_val")
-        .await
-        .unwrap();
+    let result = session.sql("SELECT ULID() AS ulid_val").await.unwrap();
     let batches = result.collect().await.unwrap();
 
     let col = batches[0].column(0);
-    let arr = col
-        .as_any()
-        .downcast_ref::<datafusion::arrow::array::StringArray>()
-        .unwrap();
+    let arr = col.as_any().downcast_ref::<datafusion::arrow::array::StringArray>().unwrap();
 
     let ulid = arr.value(0);
     // ULID should only contain valid base32 characters (no hyphens)
@@ -626,9 +499,7 @@ async fn test_context_function_in_subquery() {
     let session = exec_ctx.create_session_with_user();
 
     let result = session
-        .sql(
-            "SELECT * FROM (SELECT CURRENT_USER() AS name, CURRENT_ROLE() AS role) AS sub",
-        )
+        .sql("SELECT * FROM (SELECT CURRENT_USER() AS name, CURRENT_ROLE() AS role) AS sub")
         .await
         .unwrap();
     let batches = result.collect().await.unwrap();
@@ -642,9 +513,7 @@ async fn test_id_function_in_subquery() {
     let session = exec_ctx.create_session_with_user();
 
     let result = session
-        .sql(
-            "SELECT * FROM (SELECT SNOWFLAKE_ID() AS id, UUID_V7() AS uuid) AS sub",
-        )
+        .sql("SELECT * FROM (SELECT SNOWFLAKE_ID() AS id, UUID_V7() AS uuid) AS sub")
         .await
         .unwrap();
     let batches = result.collect().await.unwrap();

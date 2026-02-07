@@ -14,9 +14,9 @@ use kalamdb_core::live::ConnectionsManager;
 use kalamdb_core::live_query::LiveQueryManager;
 use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
 use kalamdb_core::sql::executor::SqlExecutor;
-use kalamdb_system::providers::storages::models::StorageMode;
 use kalamdb_store::RocksDBBackend;
 use kalamdb_store::RocksDbInit;
+use kalamdb_system::providers::storages::models::StorageMode;
 use log::debug;
 use log::{info, warn};
 use std::net::{SocketAddr, TcpListener};
@@ -899,7 +899,7 @@ async fn create_default_system_user(
             };
 
             let user = User {
-                user_id: user_id,
+                user_id,
                 username: username.clone().into(),
                 password_hash,
                 role,

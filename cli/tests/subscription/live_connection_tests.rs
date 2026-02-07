@@ -18,7 +18,9 @@ fn start_subscription_with_retry(query: &str) -> SubscriptionListener {
         let mut listener = SubscriptionListener::start(query)
             .unwrap_or_else(|e| panic!("subscription should start: {}", e));
         if let Ok(Some(line)) = listener.try_read_line(Duration::from_secs(2)) {
-            if line.contains("SUBSCRIPTION_FAILED") || line.contains("Subscription registration failed") {
+            if line.contains("SUBSCRIPTION_FAILED")
+                || line.contains("Subscription registration failed")
+            {
                 listener.stop().ok();
                 if attempt == 1 {
                     panic!("subscription failed to register after retry");

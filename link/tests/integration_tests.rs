@@ -65,7 +65,9 @@ async fn setup_namespace(ns: &str) {
     // Wait for drop to complete (cleanup is async)
     sleep(Duration::from_millis(50)).await;
     // Create the namespace
-    let _ = client.execute_query(&format!("CREATE NAMESPACE {}", ns), None, None, None).await;
+    let _ = client
+        .execute_query(&format!("CREATE NAMESPACE {}", ns), None, None, None)
+        .await;
     sleep(Duration::from_millis(20)).await;
 }
 
@@ -178,7 +180,9 @@ async fn test_execute_query_with_results() {
         .ok();
 
     // Query
-    let result = client.execute_query(&format!("SELECT * FROM {}.items", ns), None, None, None).await;
+    let result = client
+        .execute_query(&format!("SELECT * FROM {}.items", ns), None, None, None)
+        .await;
 
     assert!(result.is_ok());
     let response = result.unwrap();
@@ -454,7 +458,9 @@ async fn test_create_namespace() {
     sleep(Duration::from_millis(20)).await;
 
     // Create
-    let result = client.execute_query(&format!("CREATE NAMESPACE {}", ns), None, None, None).await;
+    let result = client
+        .execute_query(&format!("CREATE NAMESPACE {}", ns), None, None, None)
+        .await;
     assert!(result.is_ok(), "CREATE NAMESPACE should succeed");
 
     // Cleanup
@@ -586,7 +592,12 @@ async fn test_update_operation() {
 
     // Update
     let update = client
-        .execute_query(&format!("UPDATE {}.items SET status = 'new' WHERE id = 1", ns), None, None, None)
+        .execute_query(
+            &format!("UPDATE {}.items SET status = 'new' WHERE id = 1", ns),
+            None,
+            None,
+            None,
+        )
         .await;
     assert!(update.is_ok(), "UPDATE should succeed");
 
@@ -790,7 +801,12 @@ async fn test_limit_clause() {
 
     for i in 1..=10 {
         client
-            .execute_query(&format!("INSERT INTO {}.items (id) VALUES ({})", ns, i), None, None, None)
+            .execute_query(
+                &format!("INSERT INTO {}.items (id) VALUES ({})", ns, i),
+                None,
+                None,
+                None,
+            )
             .await
             .ok();
     }
@@ -888,7 +904,12 @@ async fn test_concurrent_queries() {
         let ns = ns.clone();
         let handle = tokio::spawn(async move {
             client_clone
-                .execute_query(&format!("INSERT INTO {}.data (id) VALUES ({})", ns, i), None, None, None)
+                .execute_query(
+                    &format!("INSERT INTO {}.data (id) VALUES ({})", ns, i),
+                    None,
+                    None,
+                    None,
+                )
                 .await
         });
         handles.push(handle);

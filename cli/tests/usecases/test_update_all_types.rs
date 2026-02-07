@@ -255,8 +255,8 @@ fn test_update_all_types_user_table() {
     let col_datetime = normalize_value(row.get("col_datetime").expect("Missing col_datetime"));
     assert_eq!(value_as_i64(&col_datetime, "col_datetime", &output), dt_expected);
 
-    let time_expected = NaiveTime::parse_from_str("10:00:00", "%H:%M:%S")
-        .expect("Invalid time literal");
+    let time_expected =
+        NaiveTime::parse_from_str("10:00:00", "%H:%M:%S").expect("Invalid time literal");
     let time_micros = (time_expected.num_seconds_from_midnight() as i64) * 1_000_000
         + (time_expected.nanosecond() as i64 / 1_000);
     let col_time = normalize_value(row.get("col_time").expect("Missing col_time"));
@@ -292,24 +292,28 @@ fn test_update_all_types_user_table() {
         Ok(id) => {
             println!("[DEBUG] Parsed initial flush job ID: {}", id);
             id
-        }
+        },
         Err(e) => {
-            panic!("[ERROR] Failed to parse job ID from flush output: {} | Output: {}", e, flush_output);
-        }
+            panic!(
+                "[ERROR] Failed to parse job ID from flush output: {} | Output: {}",
+                e, flush_output
+            );
+        },
     };
-    
+
     println!("[DEBUG] Waiting for initial flush job {}...", job_id);
     match verify_job_completed(&job_id, Duration::from_secs(20)) {
         Ok(()) => println!("[DEBUG] Initial flush job {} completed successfully", job_id),
         Err(e) => {
             // Query job status for debugging
             if let Ok(status_out) = execute_sql_as_root_via_cli_json(&format!(
-                "SELECT job_id, status, error_message FROM system.jobs WHERE job_id = '{}'", job_id
+                "SELECT job_id, status, error_message FROM system.jobs WHERE job_id = '{}'",
+                job_id
             )) {
                 eprintln!("[DEBUG] Job status query result: {}", status_out);
             }
             panic!("[ERROR] Initial flush job {} failed or timed out: {}", job_id, e);
-        }
+        },
     }
 
     // Verify initial data is still readable after flush
@@ -409,7 +413,9 @@ fn test_update_all_types_user_table() {
 #[test]
 fn test_update_all_types_shared_table() {
     if cfg!(windows) {
-        eprintln!("⚠️  Skipping on Windows due to intermittent access violations in shared table tests.");
+        eprintln!(
+            "⚠️  Skipping on Windows due to intermittent access violations in shared table tests."
+        );
         return;
     }
     if !is_server_running() {

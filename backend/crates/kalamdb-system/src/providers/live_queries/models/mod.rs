@@ -8,4 +8,3 @@ mod live_query_status;
 
 pub use live_query::LiveQuery;
 pub use live_query_status::LiveQueryStatus;
-

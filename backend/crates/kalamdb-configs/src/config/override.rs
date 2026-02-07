@@ -90,9 +90,9 @@ impl ServerConfig {
 
         // JWT expiry hours
         if let Ok(hours) = env::var("KALAMDB_JWT_EXPIRY_HOURS") {
-            self.auth.jwt_expiry_hours = hours
-                .parse()
-                .map_err(|_| anyhow::anyhow!("Invalid KALAMDB_JWT_EXPIRY_HOURS value: {}", hours))?;
+            self.auth.jwt_expiry_hours = hours.parse().map_err(|_| {
+                anyhow::anyhow!("Invalid KALAMDB_JWT_EXPIRY_HOURS value: {}", hours)
+            })?;
         }
 
         // Cookie secure flag
@@ -155,12 +155,8 @@ impl ServerConfig {
             let cluster = self.cluster.get_or_insert_with(|| ClusterConfig {
                 cluster_id: cluster_id.clone().unwrap_or_else(|| "cluster".to_string()),
                 node_id: parsed_node_id,
-                rpc_addr: rpc_addr
-                    .clone()
-                    .unwrap_or_else(|| "0.0.0.0:9100".to_string()),
-                api_addr: api_addr
-                    .clone()
-                    .unwrap_or_else(|| "0.0.0.0:8080".to_string()),
+                rpc_addr: rpc_addr.clone().unwrap_or_else(|| "0.0.0.0:9100".to_string()),
+                api_addr: api_addr.clone().unwrap_or_else(|| "0.0.0.0:8080".to_string()),
                 peers: Vec::new(),
                 user_shards: 12,
                 shared_shards: 1,
