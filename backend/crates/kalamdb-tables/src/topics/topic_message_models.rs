@@ -4,7 +4,7 @@
 //! - TopicMessageId: Composite key for message identification
 //! - TopicMessage: Message envelope with payload and metadata
 
-use kalamdb_commons::models::TopicId;
+use kalamdb_commons::models::{TopicId, UserId};
 use kalamdb_commons::{decode_key, encode_key, encode_prefix, KSerializable, StorageKey};
 use serde::{Deserialize, Serialize};
 
@@ -43,20 +43,12 @@ impl StorageKey for TopicMessageId {
     fn storage_key(&self) -> Vec<u8> {
         // Use composite key encoding: (topic_id, partition_id, offset)
         // This enables efficient prefix scans by topic or topic+partition
-        encode_key(&(
-            self.topic_id.as_str(),
-            self.partition_id,
-            self.offset,
-        ))
+        encode_key(&(self.topic_id.as_str(), self.partition_id, self.offset))
     }
 
     fn from_storage_key(bytes: &[u8]) -> Result<Self, String> {
         let (topic_str, partition_id, offset): (String, u32, u64) = decode_key(bytes)?;
-        Ok(Self::new(
-            TopicId::from(topic_str.as_str()),
-            partition_id,
-            offset,
-        ))
+        Ok(Self::new(TopicId::from(topic_str.as_str()), partition_id, offset))
     }
 }
 
@@ -66,8 +58,7 @@ impl StorageKey for TopicMessageId {
 /// - Serialized using bincode for efficiency
 /// - Contains full message envelope (not just payload)
 /// - Immutable once written (append-only)
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[derive(bincode::Encode, bincode::Decode)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, bincode::Encode, bincode::Decode)]
 pub struct TopicMessage {
     /// Topic identifier
     pub topic_id: TopicId,
@@ -81,6 +72,9 @@ pub struct TopicMessage {
     pub key: Option<String>,
     /// Timestamp when message was published (milliseconds since epoch)
     pub timestamp_ms: i64,
+    /// User who triggered the event that produced this message
+    #[serde(default)]
+    pub user_id: Option<UserId>,
 }
 
 impl TopicMessage {
@@ -100,6 +94,28 @@ impl TopicMessage {
             payload,
             key,
             timestamp_ms,
+            user_id: None,
+        }
+    }
+
+    /// Create a new topic message with an associated user
+    pub fn new_with_user(
+        topic_id: TopicId,
+        partition_id: u32,
+        offset: u64,
+        payload: Vec<u8>,
+        key: Option<String>,
+        timestamp_ms: i64,
+        user_id: Option<UserId>,
+    ) -> Self {
+        Self {
+            topic_id,
+            partition_id,
+            offset,
+            payload,
+            key,
+            timestamp_ms,
+            user_id,
         }
     }
 
@@ -119,7 +135,7 @@ mod tests {
     fn test_message_id_storage_key() {
         let msg_id = TopicMessageId::new(TopicId::from("my_topic"), 3, 42);
         let key = msg_id.storage_key();
-        
+
         // Should be able to decode it back
         let decoded = TopicMessageId::from_storage_key(&key).unwrap();
         assert_eq!(decoded, msg_id);
@@ -132,7 +148,7 @@ mod tests {
         let key2 = TopicMessageId::new(TopicId::from("topic_a"), 0, 20).storage_key();
         let key3 = TopicMessageId::new(TopicId::from("topic_a"), 1, 5).storage_key();
         let key4 = TopicMessageId::new(TopicId::from("topic_b"), 0, 0).storage_key();
-        
+
         assert!(key1 < key2, "Offset ordering within same partition");
         assert!(key2 < key3, "Partition ordering within same topic");
         assert!(key3 < key4, "Topic ordering");
@@ -148,7 +164,7 @@ mod tests {
             Some("key1".to_string()),
             1706745600000,
         );
-        
+
         assert_eq!(msg.topic_id, TopicId::from("test_topic"));
         assert_eq!(msg.partition_id, 0);
         assert_eq!(msg.offset, 100);
@@ -158,15 +174,8 @@ mod tests {
 
     #[test]
     fn test_message_id_extraction() {
-        let msg = TopicMessage::new(
-            TopicId::from("test"),
-            5,
-            99,
-            vec![],
-            None,
-            0,
-        );
-        
+        let msg = TopicMessage::new(TopicId::from("test"), 5, 99, vec![], None, 0);
+
         let id = msg.id();
         assert_eq!(id.topic_id, TopicId::from("test"));
         assert_eq!(id.partition_id, 5);

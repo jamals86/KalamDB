@@ -1,78 +1,23 @@
 use crate::classifier::types::{SqlStatement, SqlStatementKind, StatementClassificationError};
 use crate::ddl::*;
 use crate::parser::utils::{collect_non_whitespace_tokens, parse_sql_statements, tokens_to_words};
-use kalamdb_commons::models::{NamespaceId, UserId};
+use kalamdb_commons::models::NamespaceId;
 use kalamdb_commons::Role;
 use kalamdb_session::is_admin_role;
 
 impl SqlStatement {
-    /// Extract AS USER 'user_id' clause from SQL if present
-    /// Returns (cleaned_sql, optional_user_id)
-    pub(crate) fn extract_as_user(sql: &str) -> (String, Option<UserId>) {
-        let upper = sql.to_ascii_uppercase();
-
-        // Find "AS USER 'user_id'" or "AS USER \"user_id\"" pattern
-        if let Some(as_user_pos) = upper.find(" AS USER ") {
-            // Extract after "AS USER "
-            let after_as_user = &sql[as_user_pos + 9..].trim_start();
-
-            // Determine quote type and extract user_id
-            let user_id_str = if let Some(after_quote) = after_as_user.strip_prefix('\'') {
-                // Single quote: 'user_id'
-                if let Some(end_quote) = after_quote.find('\'') {
-                    &after_quote[..end_quote]
-                } else {
-                    return (sql.to_string(), None); // Malformed, ignore
-                }
-            } else if let Some(after_quote) = after_as_user.strip_prefix('"') {
-                // Double quote: "user_id"
-                if let Some(end_quote) = after_quote.find('"') {
-                    &after_quote[..end_quote]
-                } else {
-                    return (sql.to_string(), None); // Malformed, ignore
-                }
-            } else {
-                return (sql.to_string(), None); // No quote, ignore
-            };
-
-            // Remove AS USER clause from SQL
-            let before_as_user = &sql[..as_user_pos];
-            let quote_end_pos = as_user_pos + 9 + 1 + user_id_str.len() + 1; // " AS USER " + quote + user_id + quote
-            let after_as_user_clause = if quote_end_pos < sql.len() {
-                &sql[quote_end_pos..]
-            } else {
-                ""
-            };
-
-            let before_trimmed = before_as_user.trim();
-            let after_trimmed = after_as_user_clause.trim();
-            let mut cleaned_sql =
-                String::with_capacity(before_trimmed.len() + after_trimmed.len() + 1);
-            cleaned_sql.push_str(before_trimmed);
-            if !after_trimmed.is_empty() {
-                cleaned_sql.push(' ');
-                cleaned_sql.push_str(after_trimmed);
-            }
-            let user_id = UserId::from(user_id_str.to_string());
-
-            (cleaned_sql, Some(user_id))
-        } else {
-            (sql.to_string(), None)
-        }
-    }
-
     /// Wrap a parsed statement into SqlStatement with sql_text
     fn wrap<F, E>(sql: &str, parser: F) -> Result<Self, StatementClassificationError>
     where
         F: FnOnce() -> Result<SqlStatementKind, E>,
         E: std::fmt::Display,
     {
-        parser()
-            .map(|kind| Self::new(sql.to_string(), kind))
-            .map_err(|err| StatementClassificationError::InvalidSql {
+        parser().map(|kind| Self::new(sql.to_string(), kind)).map_err(|err| {
+            StatementClassificationError::InvalidSql {
                 sql: sql.to_string(),
                 message: err.to_string(),
-            })
+            }
+        })
     }
 
     /// Classify and parse SQL statement in one pass with authorization check
@@ -128,54 +73,26 @@ impl SqlStatement {
         // Hot path: Check SELECT/INSERT/DELETE first (99% of queries)
         // DML statements - create typed markers for handler pattern
         match first_keyword_upper.as_str() {
-            "SELECT" => return Ok(Self::new(sql.to_string(), SqlStatementKind::Select)),
+            "SELECT" => {
+                return Ok(Self::new(sql.to_string(), SqlStatementKind::Select));
+            },
             "INSERT" => {
-                // T151: Extract AS USER clause from INSERT statement (Phase 7)
-                let (cleaned_sql2, as_user_id) = Self::extract_as_user(sql);
-                return if let Some(user_id) = as_user_id {
-                    Ok(Self::with_as_user(
-                        cleaned_sql2,
-                        SqlStatementKind::Insert(crate::ddl::InsertStatement),
-                        user_id,
-                    ))
-                } else {
-                    Ok(Self::new(
-                        sql.to_string(),
-                        SqlStatementKind::Insert(crate::ddl::InsertStatement),
-                    ))
-                };
+                return Ok(Self::new(
+                    sql.to_string(),
+                    SqlStatementKind::Insert(crate::ddl::InsertStatement),
+                ));
             },
             "DELETE" => {
-                // T151: Extract AS USER clause from DELETE statement (Phase 7)
-                let (cleaned_sql2, as_user_id) = Self::extract_as_user(sql);
-                return if let Some(user_id) = as_user_id {
-                    Ok(Self::with_as_user(
-                        cleaned_sql2,
-                        SqlStatementKind::Delete(crate::ddl::DeleteStatement),
-                        user_id,
-                    ))
-                } else {
-                    Ok(Self::new(
-                        sql.to_string(),
-                        SqlStatementKind::Delete(crate::ddl::DeleteStatement),
-                    ))
-                };
+                return Ok(Self::new(
+                    sql.to_string(),
+                    SqlStatementKind::Delete(crate::ddl::DeleteStatement),
+                ));
             },
             "UPDATE" => {
-                // T151: Extract AS USER clause from UPDATE statement (Phase 7)
-                let (cleaned_sql2, as_user_id) = Self::extract_as_user(sql);
-                return if let Some(user_id) = as_user_id {
-                    Ok(Self::with_as_user(
-                        cleaned_sql2,
-                        SqlStatementKind::Update(crate::ddl::UpdateStatement),
-                        user_id,
-                    ))
-                } else {
-                    Ok(Self::new(
-                        sql.to_string(),
-                        SqlStatementKind::Update(crate::ddl::UpdateStatement),
-                    ))
-                };
+                return Ok(Self::new(
+                    sql.to_string(),
+                    SqlStatementKind::Update(crate::ddl::UpdateStatement),
+                ));
             },
             _ => {},
         }
@@ -324,15 +241,13 @@ impl SqlStatement {
             | ["ALTER", "USER", "TABLE", ..]
             | ["ALTER", "SHARED", "TABLE", ..]
             | ["ALTER", "STREAM", "TABLE", ..] => Self::wrap(sql, || {
-                AlterTableStatement::parse(sql, default_namespace)
-                    .map(SqlStatementKind::AlterTable)
+                AlterTableStatement::parse(sql, default_namespace).map(SqlStatementKind::AlterTable)
             }),
             ["DROP", "USER", "TABLE", ..]
             | ["DROP", "SHARED", "TABLE", ..]
             | ["DROP", "STREAM", "TABLE", ..]
             | ["DROP", "TABLE", ..] => Self::wrap(sql, || {
-                DropTableStatement::parse(sql, default_namespace)
-                    .map(SqlStatementKind::DropTable)
+                DropTableStatement::parse(sql, default_namespace).map(SqlStatementKind::DropTable)
             }),
             ["SHOW", "TABLES", ..] => {
                 // Read-only, allowed for all users
@@ -573,9 +488,9 @@ impl SqlStatement {
             },
 
             // Live query subscriptions - allowed for all users
-            ["SUBSCRIBE", "TO", ..] => Self::wrap(sql, || {
-                SubscribeStatement::parse(sql).map(SqlStatementKind::Subscribe)
-            }),
+            ["SUBSCRIBE", "TO", ..] => {
+                Self::wrap(sql, || SubscribeStatement::parse(sql).map(SqlStatementKind::Subscribe))
+            },
 
             // Topic pub/sub commands
             ["CREATE", "TOPIC", ..] => {
@@ -636,8 +551,7 @@ impl SqlStatement {
             ["ACK", ..] => {
                 // All authenticated users can acknowledge topic offsets
                 Self::wrap(sql, || {
-                    crate::ddl::topic_commands::parse_ack(sql)
-                        .map(SqlStatementKind::AckTopic)
+                    crate::ddl::topic_commands::parse_ack(sql).map(SqlStatementKind::AckTopic)
                 })
             },
 
@@ -655,9 +569,7 @@ impl SqlStatement {
             },
             ["ALTER", "USER", ..] => {
                 // Authorization deferred to handler (users can alter their own account)
-                Self::wrap(sql, || {
-                    AlterUserStatement::parse(sql).map(SqlStatementKind::AlterUser)
-                })
+                Self::wrap(sql, || AlterUserStatement::parse(sql).map(SqlStatementKind::AlterUser))
             },
             ["DROP", "USER", ..] => {
                 if !is_admin {
@@ -666,9 +578,7 @@ impl SqlStatement {
                             .to_string(),
                     ));
                 }
-                Self::wrap(sql, || {
-                    DropUserStatement::parse(sql).map(SqlStatementKind::DropUser)
-                })
+                Self::wrap(sql, || DropUserStatement::parse(sql).map(SqlStatementKind::DropUser))
             },
 
             // DataFusion Meta Commands - Admin only
@@ -897,4 +807,49 @@ fn is_create_view(tokens: &[&str]) -> bool {
     tokens[1..view_pos]
         .iter()
         .all(|token| matches!(*token, "OR" | "REPLACE" | "TEMP" | "TEMPORARY" | "MATERIALIZED"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classify_select_keeps_original_sql() {
+        let sql = "SELECT * FROM default.tasks WHERE id = 1";
+        let stmt = SqlStatement::classify_and_parse(sql, &NamespaceId::new("default"), Role::User)
+            .expect("SELECT should classify");
+
+        assert!(matches!(stmt.kind(), SqlStatementKind::Select));
+        assert_eq!(stmt.as_str(), sql);
+    }
+
+    #[test]
+    fn classify_select_with_current_user_call_defers_to_datafusion() {
+        let sql = "SELECT current_user()";
+        let stmt = SqlStatement::classify_and_parse(sql, &NamespaceId::new("default"), Role::User)
+            .expect("SELECT should classify without custom parser rejection");
+
+        assert!(matches!(stmt.kind(), SqlStatementKind::Select));
+        assert_eq!(stmt.as_str(), sql);
+    }
+
+    #[test]
+    fn classify_select_with_custom_udf_call_defers_to_datafusion() {
+        let sql = "SELECT SNOWFLAKE_ID()";
+        let stmt = SqlStatement::classify_and_parse(sql, &NamespaceId::new("default"), Role::User)
+            .expect("SELECT should classify without custom parser rejection");
+
+        assert!(matches!(stmt.kind(), SqlStatementKind::Select));
+        assert_eq!(stmt.as_str(), sql);
+    }
+
+    #[test]
+    fn classify_dml_defers_parse_errors_to_datafusion() {
+        let sql = "UPDATE default.tasks SET value = WHERE id = 1";
+        let stmt = SqlStatement::classify_and_parse(sql, &NamespaceId::new("default"), Role::User)
+            .expect("UPDATE should classify and let DataFusion own parse/plan errors");
+
+        assert!(matches!(stmt.kind(), SqlStatementKind::Update(_)));
+        assert_eq!(stmt.as_str(), sql);
+    }
 }

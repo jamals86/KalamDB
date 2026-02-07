@@ -21,8 +21,8 @@ pub fn read_kalam_data_type_metadata(field: &Field) -> Option<KalamDataType> {
 ///
 /// Preserves any existing metadata on the field.
 pub fn with_kalam_data_type_metadata(mut field: Field, kalam_type: &KalamDataType) -> Field {
-    let kalam_type_json = serde_json::to_string(kalam_type)
-        .unwrap_or_else(|_| "\"Text\"".to_string());
+    let kalam_type_json =
+        serde_json::to_string(kalam_type).unwrap_or_else(|_| "\"Text\"".to_string());
     let mut metadata = field.metadata().clone();
     metadata.insert(KALAM_DATA_TYPE_METADATA_KEY.to_string(), kalam_type_json);
     field = field.with_metadata(metadata);

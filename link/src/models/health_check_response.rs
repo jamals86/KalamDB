@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 
 /// Health check response from the server
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct HealthCheckResponse {
     /// Health status (e.g., "healthy")
     pub status: String,

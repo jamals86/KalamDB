@@ -2,9 +2,9 @@
 //!
 //! This module provides a SystemTableStore<AuditLogId, AuditLogEntry> wrapper for the system.audit_log table.
 
+use crate::providers::audit_logs::models::AuditLogEntry;
 use crate::SystemTable;
 use kalamdb_commons::models::AuditLogId;
-use crate::providers::audit_logs::models::AuditLogEntry;
 use kalamdb_store::StorageBackend;
 use std::sync::Arc;
 
@@ -59,7 +59,7 @@ mod tests {
         let expected_partition = kalamdb_store::Partition::new(
             SystemTable::AuditLog
                 .column_family_name()
-                .expect("AuditLog is a table, not a view")
+                .expect("AuditLog is a table, not a view"),
         );
         assert_eq!(store.partition(), expected_partition);
     }

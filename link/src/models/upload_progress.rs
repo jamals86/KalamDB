@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 
 /// Upload progress information for a single file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct UploadProgress {
     /// 1-based index of the current file being uploaded.
     pub file_index: usize,

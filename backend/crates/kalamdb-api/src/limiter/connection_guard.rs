@@ -52,9 +52,7 @@ impl IpState {
     /// Check if this IP is currently banned
     #[inline]
     fn is_banned(&self) -> Option<Instant> {
-        let mut banned_until = self
-            .banned_until
-            .lock();
+        let mut banned_until = self.banned_until.lock();
         if let Some(until) = *banned_until {
             if Instant::now() < until {
                 return Some(until);
@@ -68,17 +66,13 @@ impl IpState {
     /// Set ban expiration
     #[inline]
     fn set_banned_until(&self, until: Instant) {
-        *self
-            .banned_until
-            .lock() = Some(until);
+        *self.banned_until.lock() = Some(until);
     }
 
     /// Clear ban
     #[inline]
     fn clear_ban(&self) {
-        *self
-            .banned_until
-            .lock() = None;
+        *self.banned_until.lock() = None;
     }
 }
 
@@ -160,8 +154,7 @@ impl ConnectionGuard {
     #[inline]
     fn get_or_create_state(&self, ip: IpAddr) -> Arc<IpState> {
         let max_requests = self.max_requests_per_ip_per_sec;
-        self.ip_states
-            .get_with(ip, || Arc::new(IpState::new(max_requests)))
+        self.ip_states.get_with(ip, || Arc::new(IpState::new(max_requests)))
     }
 
     /// Check if a request from the given IP should be allowed
@@ -200,11 +193,7 @@ impl ConnectionGuard {
         }
 
         // Check request rate limit
-        if !state
-            .request_bucket
-            .lock()
-            .try_consume(1)
-        {
+        if !state.request_bucket.lock().try_consume(1) {
             let violations = state.violation_count.fetch_add(1, Ordering::Relaxed) + 1;
 
             // Ban IP after repeated violations (escalating ban duration)
@@ -289,9 +278,7 @@ impl ConnectionGuard {
         if let Some(state) = self.ip_states.get(&ip) {
             state
                 .active_connections
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
-                    Some(v.saturating_sub(1))
-                })
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| Some(v.saturating_sub(1)))
                 .ok();
         }
     }
@@ -308,10 +295,7 @@ impl ConnectionGuard {
     /// Check if an IP is currently banned
     #[inline]
     pub fn is_banned(&self, ip: IpAddr) -> bool {
-        self.ip_states
-            .get(&ip)
-            .and_then(|state| state.is_banned())
-            .is_some()
+        self.ip_states.get(&ip).and_then(|state| state.is_banned()).is_some()
     }
 
     /// Manually ban an IP (for external threat detection)
@@ -406,10 +390,7 @@ mod tests {
         let ip: IpAddr = "192.168.1.1".parse().unwrap();
 
         // Should allow normal requests
-        assert_eq!(
-            guard.check_request(ip, Some(1000)),
-            ConnectionGuardResult::Allowed
-        );
+        assert_eq!(guard.check_request(ip, Some(1000)), ConnectionGuardResult::Allowed);
     }
 
     #[test]
@@ -435,10 +416,7 @@ mod tests {
 
         // Third should fail
         let result = guard.register_connection(ip);
-        assert!(matches!(
-            result,
-            ConnectionGuardResult::TooManyConnections { .. }
-        ));
+        assert!(matches!(result, ConnectionGuardResult::TooManyConnections { .. }));
 
         // After unregistering one, should succeed again
         guard.unregister_connection(ip);
@@ -457,10 +435,7 @@ mod tests {
         }
 
         // 6th should fail
-        assert_eq!(
-            guard.check_request(ip, None),
-            ConnectionGuardResult::RateLimitExceeded
-        );
+        assert_eq!(guard.check_request(ip, None), ConnectionGuardResult::RateLimitExceeded);
     }
 
     #[test]
@@ -529,10 +504,7 @@ mod tests {
 
         // Localhost should always be allowed regardless of rate limit
         for _ in 0..100 {
-            assert_eq!(
-                guard.check_request(localhost, None),
-                ConnectionGuardResult::Allowed
-            );
+            assert_eq!(guard.check_request(localhost, None), ConnectionGuardResult::Allowed);
         }
     }
 

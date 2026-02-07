@@ -11,33 +11,37 @@
 //! - Commit log-backed storage (append-only, no Parquet)
 //! - TTL-based eviction in scan operations
 
-use crate::utils::base::{extract_seq_bounds_from_filter, BaseTableProvider, TableProviderCore};
-use crate::utils::row_utils::extract_user_context;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
-use kalamdb_commons::schemas::TableType;
+use crate::stream_tables::{StreamTableRow, StreamTableStore};
+use crate::utils::base::{extract_seq_bounds_from_filter, BaseTableProvider, TableProviderCore};
+use crate::utils::row_utils::extract_user_context;
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::catalog::Session;
 use datafusion::datasource::TableProvider;
+use datafusion::error::DataFusionError;
 use datafusion::error::Result as DataFusionResult;
+use datafusion::logical_expr::dml::InsertOp;
 use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::ids::{SeqId, StreamTableRowId};
 use kalamdb_commons::models::UserId;
+use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::TableId;
-use crate::stream_tables::{StreamTableRow, StreamTableStore};
+use kalamdb_session::check_user_table_write_access;
 use kalamdb_system::SchemaRegistry as SchemaRegistryTrait;
 use std::any::Any;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 // Arrow <-> JSON helpers
-use kalamdb_commons::websocket::ChangeNotification;
 use kalamdb_commons::models::rows::Row;
+use kalamdb_commons::websocket::ChangeNotification;
 
 /// Stream table provider with RLS and TTL filtering
 ///
@@ -67,6 +71,8 @@ pub struct StreamTableProvider {
     /// Whether the Arrow schema includes a user_id column
     has_user_column: bool,
 
+    /// DataFusion column defaults used by INSERT planning.
+    column_defaults: HashMap<String, Expr>,
 }
 
 impl StreamTableProvider {
@@ -84,6 +90,16 @@ impl StreamTableProvider {
         ttl_seconds: Option<u64>,
         primary_key_field_name: String,
     ) -> Self {
+        Self::new_with_defaults(core, store, ttl_seconds, primary_key_field_name, HashMap::new())
+    }
+
+    pub fn new_with_defaults(
+        core: Arc<TableProviderCore>,
+        store: Arc<StreamTableStore>,
+        ttl_seconds: Option<u64>,
+        primary_key_field_name: String,
+        column_defaults: HashMap<String, Expr>,
+    ) -> Self {
         // Cache schema at creation time to avoid "Table not found" panics if table is dropped
         // while provider is still in use by a query plan
         let schema = core
@@ -99,6 +115,7 @@ impl StreamTableProvider {
             primary_key_field_name,
             schema,
             has_user_column,
+            column_defaults,
         }
     }
 
@@ -184,14 +201,18 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         Ok(None)
     }
 
-    async fn insert(&self, user_id: &UserId, row_data: Row) -> Result<StreamTableRowId, KalamDbError> {
+    async fn insert(
+        &self,
+        user_id: &UserId,
+        row_data: Row,
+    ) -> Result<StreamTableRowId, KalamDbError> {
         let table_id = self.core.table_id();
 
         // Call SystemColumnsService to generate SeqId
         let sys_cols = self.core.system_columns.clone();
-        let seq_id = sys_cols
-            .generate_seq_id()
-            .map_err(|e| KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e)))?;
+        let seq_id = sys_cols.generate_seq_id().map_err(|e| {
+            KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e))
+        })?;
 
         // Create StreamTableRow (no _deleted field for stream tables)
         let user_id = user_id.clone();
@@ -222,10 +243,10 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
 
         if manager.has_subscribers(Some(&user_id), &table_id) {
             let table_name = table_id.full_name();
-            
+
             // Build complete row including system column (_seq)
             let row = Self::build_notification_row(&entity);
-            
+
             let notification = ChangeNotification::insert(table_id.clone(), row);
             log::debug!(
                 "[StreamProvider] Notifying change: table={} type=INSERT user={} seq={}",
@@ -288,17 +309,19 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         Ok(())
     }
 
-    async fn delete_by_pk_value(&self, user_id: &UserId, pk_value: &str) -> Result<bool, KalamDbError> {
+    async fn delete_by_pk_value(
+        &self,
+        user_id: &UserId,
+        pk_value: &str,
+    ) -> Result<bool, KalamDbError> {
         // STREAM tables support DELETE by PK value for hard delete
         // PK column is typically an auto-generated ID (e.g., ULID(), event_id, etc.)
-        
+
         // Scan all rows for this user to find matching PK values
         // Note: This is O(n) but STREAM tables are typically append-only with TTL eviction
-        let rows = self.store
-            .scan_user(user_id, None, usize::MAX)
-            .map_err(|e| {
-                KalamDbError::InvalidOperation(format!("Failed to scan stream table keys: {}", e))
-            })?;
+        let rows = self.store.scan_user(user_id, None, usize::MAX).map_err(|e| {
+            KalamDbError::InvalidOperation(format!("Failed to scan stream table keys: {}", e))
+        })?;
 
         let pk_name = self.primary_key_field_name();
         let mut deleted_count = 0;
@@ -316,7 +339,10 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
                 if row_pk_str == pk_value {
                     // Delete this row
                     self.store.delete(&key).map_err(|e| {
-                        KalamDbError::InvalidOperation(format!("Failed to delete stream event: {}", e))
+                        KalamDbError::InvalidOperation(format!(
+                            "Failed to delete stream event: {}",
+                            e
+                        ))
                     })?;
 
                     deleted_count += 1;
@@ -326,9 +352,15 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
                     let table_id = self.core.table_id().clone();
 
                     if notification_service.has_subscribers(Some(&user_id), &table_id) {
-                        let row_id_str = format!("{}:{}", key.user_id().as_str(), key.seq().as_i64());
-                        let notification = ChangeNotification::delete_hard(table_id.clone(), row_id_str);
-                        notification_service.notify_table_change(Some(user_id.clone()), table_id, notification);
+                        let row_id_str =
+                            format!("{}:{}", key.user_id().as_str(), key.seq().as_i64());
+                        let notification =
+                            ChangeNotification::delete_hard(table_id.clone(), row_id_str);
+                        notification_service.notify_table_change(
+                            Some(user_id.clone()),
+                            table_id,
+                            notification,
+                        );
                     }
                 }
             }
@@ -356,13 +388,15 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
 
         // Perform KV scan (hot-only) and convert to batch
         let keep_deleted = false; // Stream tables don't support soft delete yet
-        let kvs = self.scan_with_version_resolution_to_kvs_async(
-            user_id,
-            filter,
-            since_seq,
-            limit,
-            keep_deleted,
-        ).await?;
+        let kvs = self
+            .scan_with_version_resolution_to_kvs_async(
+                user_id,
+                filter,
+                since_seq,
+                limit,
+                keep_deleted,
+            )
+            .await?;
         let table_id = self.core.table_id();
         log::debug!(
             "[StreamProvider] scan_rows: table={} rows={} user={} ttl={:?}",
@@ -392,13 +426,13 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         _keep_deleted: bool,
     ) -> Result<Vec<(StreamTableRowId, StreamTableRow)>, KalamDbError> {
         let table_id = self.core.table_id();
-        
+
         // since_seq is exclusive, so start at seq + 1
         let start_seq = since_seq.map(|seq| SeqId::from_i64(seq.as_i64().saturating_add(1)));
 
         let ttl_ms = self.ttl_seconds.map(|s| s * 1000);
         let now_ms = Self::now_millis()?;
-        
+
         log::debug!(
             "[StreamProvider] streaming scan: table={} user={} ttl_ms={:?} limit={:?}",
             table_id,
@@ -410,9 +444,10 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         // Use streaming scan with TTL filtering and early termination
         // This is more efficient than the pagination loop for LIMIT queries
         let scan_limit = limit.unwrap_or(100_000);
-        
+
         // Use async version to avoid blocking the runtime
-        let results = self.store
+        let results = self
+            .store
             .scan_user_streaming_async(user_id, start_seq, scan_limit, ttl_ms, now_ms)
             .await
             .map_err(|e| {
@@ -466,6 +501,10 @@ impl TableProvider for StreamTableProvider {
         datafusion::logical_expr::TableType::Base
     }
 
+    fn get_column_default(&self, column: &str) -> Option<&Expr> {
+        self.column_defaults.get(column)
+    }
+
     async fn scan(
         &self,
         state: &dyn Session,
@@ -481,6 +520,81 @@ impl TableProvider for StreamTableProvider {
         filters: &[&Expr],
     ) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
         self.base_supports_filters_pushdown(filters)
+    }
+
+    async fn insert_into(
+        &self,
+        state: &dyn Session,
+        input: Arc<dyn ExecutionPlan>,
+        insert_op: InsertOp,
+    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        check_user_table_write_access(state, self.core.table_id())
+            .map_err(DataFusionError::from)?;
+
+        if insert_op != InsertOp::Append {
+            return Err(DataFusionError::Plan(format!(
+                "{} is not supported for stream tables",
+                insert_op
+            )));
+        }
+
+        let (user_id, _role) =
+            extract_user_context(state).map_err(|e| DataFusionError::Execution(e.to_string()))?;
+        let rows = crate::utils::datafusion_dml::collect_input_rows(state, input).await?;
+        let inserted = self
+            .insert_batch(user_id, rows)
+            .await
+            .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+
+        crate::utils::datafusion_dml::rows_affected_plan(state, inserted.len() as u64).await
+    }
+
+    async fn delete_from(
+        &self,
+        state: &dyn Session,
+        filters: Vec<Expr>,
+    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        check_user_table_write_access(state, self.core.table_id())
+            .map_err(DataFusionError::from)?;
+        crate::utils::datafusion_dml::validate_where_clause(&filters, "DELETE")?;
+
+        let rows =
+            crate::utils::datafusion_dml::collect_matching_rows(self, state, &filters).await?;
+        if rows.is_empty() {
+            return crate::utils::datafusion_dml::rows_affected_plan(state, 0).await;
+        }
+
+        let pk_column = self.primary_key_field_name().to_string();
+        let (user_id, _role) =
+            extract_user_context(state).map_err(|e| DataFusionError::Execution(e.to_string()))?;
+        let mut seen = HashSet::new();
+        let mut deleted: u64 = 0;
+
+        for row in rows {
+            let pk_value = crate::utils::datafusion_dml::extract_pk_value(&row, &pk_column)?;
+            if !seen.insert(pk_value.clone()) {
+                continue;
+            }
+
+            if self
+                .delete_by_pk_value(user_id, &pk_value)
+                .await
+                .map_err(|e| DataFusionError::Execution(e.to_string()))?
+            {
+                deleted += 1;
+            }
+        }
+
+        crate::utils::datafusion_dml::rows_affected_plan(state, deleted).await
+    }
+
+    async fn update(
+        &self,
+        _state: &dyn Session,
+        _assignments: Vec<(String, Expr)>,
+        _filters: Vec<Expr>,
+    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        Err(DataFusionError::Plan("UPDATE not supported for STREAM tables".to_string()))
     }
 
     fn statistics(&self) -> Option<datafusion::physical_plan::Statistics> {

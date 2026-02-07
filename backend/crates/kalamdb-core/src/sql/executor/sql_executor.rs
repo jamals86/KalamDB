@@ -1,11 +1,50 @@
 use super::SqlExecutor;
 use crate::error::KalamDbError;
-use crate::sql::{ExecutionContext, ExecutionMetadata, ExecutionResult};
+use crate::sql::executor::helpers::guards::block_system_namespace_modification;
 use crate::sql::plan_cache::PlanCacheKey;
+use crate::sql::{ExecutionContext, ExecutionMetadata, ExecutionResult};
+use arrow::array::RecordBatch;
 use datafusion::scalar::ScalarValue;
-use kalamdb_sql::statement_classifier::SqlStatement;
+use kalamdb_commons::conversions::arrow_json_conversion::arrow_value_to_scalar;
+use kalamdb_sql::statement_classifier::{SqlStatement, SqlStatementKind};
+use std::time::Duration;
+
+#[derive(Debug, Clone, Copy)]
+enum DmlKind {
+    Insert,
+    Update,
+    Delete,
+}
 
 impl SqlExecutor {
+    fn dml_operation_name(dml_kind: DmlKind) -> &'static str {
+        match dml_kind {
+            DmlKind::Insert => "INSERT",
+            DmlKind::Update => "UPDATE",
+            DmlKind::Delete => "DELETE",
+        }
+    }
+
+    fn block_system_namespace_dml(
+        &self,
+        sql: &str,
+        exec_ctx: &ExecutionContext,
+        dml_kind: DmlKind,
+    ) -> Result<(), KalamDbError> {
+        let Some(table_id) =
+            kalamdb_sql::extract_dml_table_id(sql, exec_ctx.default_namespace().as_str())
+        else {
+            return Ok(());
+        };
+
+        block_system_namespace_modification(
+            table_id.namespace_id(),
+            Self::dml_operation_name(dml_kind),
+            "TABLE",
+            Some(table_id.table_name().as_str()),
+        )
+    }
+
     fn is_table_not_found_error(e: &datafusion::error::DataFusionError) -> bool {
         let msg = e.to_string().to_lowercase();
         (msg.contains("table") && msg.contains("not found"))
@@ -18,13 +57,15 @@ impl SqlExecutor {
         app_context: std::sync::Arc<crate::app_context::AppContext>,
         enforce_password_complexity: bool,
     ) -> Self {
-        let handler_registry = std::sync::Arc::new(
-            crate::sql::executor::handler_registry::HandlerRegistry::new(
+        let handler_registry =
+            std::sync::Arc::new(crate::sql::executor::handler_registry::HandlerRegistry::new(
                 app_context.clone(),
                 enforce_password_complexity,
-            ),
-        );
-        let plan_cache = std::sync::Arc::new(crate::sql::plan_cache::PlanCache::new());
+            ));
+        let plan_cache = std::sync::Arc::new(crate::sql::plan_cache::PlanCache::with_config(
+            app_context.config().execution.sql_plan_cache_max_entries,
+            Duration::from_secs(app_context.config().execution.sql_plan_cache_ttl_seconds),
+        ));
         Self {
             app_context,
             handler_registry,
@@ -94,17 +135,47 @@ impl SqlExecutor {
         })?;
 
         // Step 2: Route based on statement type
-        use kalamdb_sql::statement_classifier::SqlStatementKind;
         match classified.kind() {
             // Hot path: SELECT queries use DataFusion
             // Tables are already registered in base session, we just inject user_id
-            SqlStatementKind::Select => self.execute_via_datafusion(sql, params, exec_ctx).await,
+            SqlStatementKind::Select => {
+                self.execute_via_datafusion(classified.as_str(), params, exec_ctx).await
+            },
 
             // DataFusion meta commands (EXPLAIN, SET, SHOW, etc.) - admin only
             // No caching needed - these are diagnostic/config commands
             // Authorization already checked in classifier
             SqlStatementKind::DataFusionMetaCommand => {
                 self.execute_meta_command(sql, exec_ctx).await
+            },
+
+            // Native DataFusion DML path (provider insert/update/delete hooks)
+            SqlStatementKind::Insert(_) => {
+                self.execute_dml_via_datafusion(
+                    classified.as_str(),
+                    params,
+                    exec_ctx,
+                    DmlKind::Insert,
+                )
+                .await
+            },
+            SqlStatementKind::Update(_) => {
+                self.execute_dml_via_datafusion(
+                    classified.as_str(),
+                    params,
+                    exec_ctx,
+                    DmlKind::Update,
+                )
+                .await
+            },
+            SqlStatementKind::Delete(_) => {
+                self.execute_dml_via_datafusion(
+                    classified.as_str(),
+                    params,
+                    exec_ctx,
+                    DmlKind::Delete,
+                )
+                .await
             },
 
             // DDL operations that modify table/view structure require plan cache invalidation
@@ -115,8 +186,7 @@ impl SqlExecutor {
             | SqlStatementKind::CreateView(_)
             | SqlStatementKind::CreateNamespace(_)
             | SqlStatementKind::DropNamespace(_) => {
-                let result =
-                    self.handler_registry.handle(classified, params, exec_ctx).await;
+                let result = self.handler_registry.handle(classified, params, exec_ctx).await;
                 // Clear plan cache after DDL to invalidate any cached plans
                 // that may reference the modified schema
                 if result.is_ok() {
@@ -129,6 +199,163 @@ impl SqlExecutor {
             // All other statements: Delegate to handler registry (no cache invalidation needed)
             _ => self.handler_registry.handle(classified, params, exec_ctx).await,
         }
+    }
+
+    async fn execute_dml_via_datafusion(
+        &self,
+        sql: &str,
+        params: Vec<ScalarValue>,
+        exec_ctx: &ExecutionContext,
+        dml_kind: DmlKind,
+    ) -> Result<ExecutionResult, KalamDbError> {
+        self.block_system_namespace_dml(sql, exec_ctx, dml_kind)?;
+
+        use crate::sql::executor::parameter_binding::{
+            replace_placeholders_in_plan, validate_params,
+        };
+
+        if !params.is_empty() {
+            validate_params(&params)?;
+        }
+
+        // Parameterized DML: reuse cached template plans and only bind placeholders per request.
+        // This avoids reparsing/replanning the same INSERT/UPDATE/DELETE shape repeatedly.
+        let df = if params.is_empty() {
+            let session = exec_ctx.create_session_with_user();
+            match session.sql(sql).await {
+                Ok(df) => df,
+                Err(e) => {
+                    if Self::is_table_not_found_error(&e) {
+                        if let Err(load_err) = self.load_existing_tables().await {
+                            log::warn!(
+                                target: "sql::dml",
+                                "⚠️  Failed to reload table providers after missing table in DML | sql='{}' | error='{}'",
+                                sql,
+                                load_err
+                            );
+                        }
+                        let retry_session = exec_ctx.create_session_with_user();
+                        retry_session
+                            .sql(sql)
+                            .await
+                            .map_err(|e2| self.log_sql_error(sql, exec_ctx, e2))?
+                    } else {
+                        return Err(self.log_sql_error(sql, exec_ctx, e));
+                    }
+                },
+            }
+        } else {
+            let cache_key =
+                PlanCacheKey::new(exec_ctx.default_namespace().clone(), exec_ctx.user_role(), sql);
+            let session = exec_ctx.create_session_with_user();
+
+            if let Some(template_plan) = self.plan_cache.get(&cache_key) {
+                let bound_plan = replace_placeholders_in_plan((*template_plan).clone(), &params)?;
+                match session.execute_logical_plan(bound_plan).await {
+                    Ok(df) => df,
+                    Err(e) => {
+                        log::warn!(
+                            target: "sql::dml",
+                            "Failed to execute cached DML plan, reparsing SQL: {}",
+                            e
+                        );
+
+                        match session.sql(sql).await {
+                            Ok(planned_df) => {
+                                let template_plan = planned_df.logical_plan().clone();
+                                self.plan_cache.insert(cache_key.clone(), template_plan.clone());
+                                let rebound_plan =
+                                    replace_placeholders_in_plan(template_plan, &params)?;
+                                session
+                                    .execute_logical_plan(rebound_plan)
+                                    .await
+                                    .map_err(|e2| KalamDbError::ExecutionError(e2.to_string()))?
+                            },
+                            Err(e) => {
+                                if Self::is_table_not_found_error(&e) {
+                                    if let Err(load_err) = self.load_existing_tables().await {
+                                        log::warn!(
+                                            target: "sql::dml",
+                                            "⚠️  Failed to reload table providers after missing table in DML | sql='{}' | error='{}'",
+                                            sql,
+                                            load_err
+                                        );
+                                    }
+                                    let retry_session = exec_ctx.create_session_with_user();
+                                    let retry_df = retry_session
+                                        .sql(sql)
+                                        .await
+                                        .map_err(|e2| self.log_sql_error(sql, exec_ctx, e2))?;
+                                    let template_plan = retry_df.logical_plan().clone();
+                                    self.plan_cache.insert(cache_key.clone(), template_plan.clone());
+                                    let rebound_plan =
+                                        replace_placeholders_in_plan(template_plan, &params)?;
+                                    retry_session
+                                        .execute_logical_plan(rebound_plan)
+                                        .await
+                                        .map_err(|e3| {
+                                            KalamDbError::ExecutionError(e3.to_string())
+                                        })?
+                                } else {
+                                    return Err(self.log_sql_error(sql, exec_ctx, e));
+                                }
+                            },
+                        }
+                    },
+                }
+            } else {
+                match session.sql(sql).await {
+                    Ok(planned_df) => {
+                        let template_plan = planned_df.logical_plan().clone();
+                        self.plan_cache.insert(cache_key.clone(), template_plan.clone());
+                        let bound_plan = replace_placeholders_in_plan(template_plan, &params)?;
+                        session
+                            .execute_logical_plan(bound_plan)
+                            .await
+                            .map_err(|e2| KalamDbError::ExecutionError(e2.to_string()))?
+                    },
+                    Err(e) => {
+                        if Self::is_table_not_found_error(&e) {
+                            if let Err(load_err) = self.load_existing_tables().await {
+                                log::warn!(
+                                    target: "sql::dml",
+                                    "⚠️  Failed to reload table providers after missing table in DML | sql='{}' | error='{}'",
+                                    sql,
+                                    load_err
+                                );
+                            }
+                            let retry_session = exec_ctx.create_session_with_user();
+                            let retry_df = retry_session
+                                .sql(sql)
+                                .await
+                                .map_err(|e2| self.log_sql_error(sql, exec_ctx, e2))?;
+
+                            let template_plan = retry_df.logical_plan().clone();
+                            self.plan_cache.insert(cache_key.clone(), template_plan.clone());
+                            let bound_plan = replace_placeholders_in_plan(template_plan, &params)?;
+                            retry_session
+                                .execute_logical_plan(bound_plan)
+                                .await
+                                .map_err(|e3| KalamDbError::ExecutionError(e3.to_string()))?
+                        } else {
+                            return Err(self.log_sql_error(sql, exec_ctx, e));
+                        }
+                    },
+                }
+            }
+        };
+
+        let batches = df.collect().await.map_err(|e| {
+            KalamDbError::Other(format!("Error executing DML statement '{}': {}", sql, e))
+        })?;
+
+        let rows_affected = Self::extract_rows_affected(&batches)?;
+
+        Ok(match dml_kind {
+            DmlKind::Insert => ExecutionResult::Inserted { rows_affected },
+            DmlKind::Update => ExecutionResult::Updated { rows_affected },
+            DmlKind::Delete => ExecutionResult::Deleted { rows_affected },
+        })
     }
 
     /// Execute SELECT via DataFusion with per-user session
@@ -148,138 +375,84 @@ impl SqlExecutor {
             validate_params(&params)?;
         }
 
-        // Create per-request SessionContext with user_id injected
-        // Tables are already registered in base session (done once on CREATE TABLE or server startup)
-        // The user_id injection allows UserTableProvider::scan() to filter by current user
         let session = exec_ctx.create_session_with_user();
 
-        // Try to get cached plan first (only if no params - parameterized queries can't use cached plans)
-        // Note: Cached plans already have default ORDER BY applied
-        // Key excludes user_id because LogicalPlan is user-agnostic - filtering happens at scan time
+        // Try cached template plan first (works for both plain and parameterized SQL).
+        // Key excludes user_id because LogicalPlan is user-agnostic - filtering happens at scan time.
         let cache_key =
             PlanCacheKey::new(exec_ctx.default_namespace().clone(), exec_ctx.user_role(), sql);
 
-        let df = if params.is_empty() {
-            if let Some(plan) = self.plan_cache.get(&cache_key) {
-                // Cache hit: Create DataFrame directly from plan
-                // This skips parsing, logical planning, and optimization (~1-5ms)
-                // The cached plan already has default ORDER BY applied
-                // Clone the Arc'd plan for execution (cheap reference count bump)
-                match session.execute_logical_plan((*plan).clone()).await {
-                    Ok(df) => df,
-                    Err(e) => {
-                        log::warn!("Failed to create DataFrame from cached plan: {}", e);
-                        // Fallback to full planning if cache fails
-                        match session.sql(sql).await {
-                            Ok(df) => {
-                                // Apply default ORDER BY for consistency
-                                let plan = df.logical_plan().clone();
-                                let ordered_plan = apply_default_order_by(plan, &self.app_context).await?;
-                                session
-                                    .execute_logical_plan(ordered_plan)
-                                    .await
-                                    .map_err(|e| KalamDbError::ExecutionError(e.to_string()))?
-                            },
-                            Err(e) => {
-                                if Self::is_table_not_found_error(&e) {
-                                    log::warn!(
-                                        target: "sql::plan",
-                                        "⚠️  Table not found during planning; reloading table providers and retrying once | sql='{}'",
-                                        sql
-                                    );
-                                    if let Err(e) = self.load_existing_tables().await {
-                                        log::warn!(
-                                            target: "sql::plan",
-                                            "⚠️  Failed to reload table providers after missing table | sql='{}' | error='{}'",
-                                            sql,
-                                            e
-                                        );
-                                    }
-                                    let retry_session = exec_ctx.create_session_with_user();
-                                    match retry_session.sql(sql).await {
-                                        Ok(df) => {
-                                            let plan = df.logical_plan().clone();
-                                            let ordered_plan =
-                                                apply_default_order_by(plan, &self.app_context).await?;
-                                            retry_session
-                                                .execute_logical_plan(ordered_plan)
-                                                .await
-                                                .map_err(|e| {
-                                                KalamDbError::ExecutionError(e.to_string())
-                                            })?
-                                        },
-                                        Err(e2) => {
-                                            return Err(self.log_sql_error(sql, exec_ctx, e2));
-                                        },
-                                    }
-                                } else {
-                                    return Err(self.log_sql_error(sql, exec_ctx, e));
-                                }
-                            },
-                        }
-                    },
-                }
+        let df = if let Some(template_plan) = self.plan_cache.get(&cache_key) {
+            let executable_plan = if params.is_empty() {
+                (*template_plan).clone()
             } else {
-                // Cache miss: Parse SQL and get DataFrame (with detailed logging on failure)
-                match session.sql(sql).await {
-                    Ok(df) => {
-                        // Apply default ORDER BY by primary key columns (or _seq as fallback)
-                        // This ensures consistent ordering between hot (RocksDB) and cold (Parquet) storage
-                        let plan = df.logical_plan().clone();
-                        let ordered_plan = apply_default_order_by(plan, &self.app_context).await?;
+                replace_placeholders_in_plan((*template_plan).clone(), &params)?
+            };
 
-                        // Cache the ordered plan for future use (scoped by namespace+role)
-                        self.plan_cache.insert(cache_key, ordered_plan.clone());
-
-                        // Execute the ordered plan
-                        session
-                            .execute_logical_plan(ordered_plan)
-                            .await
-                            .map_err(|e| KalamDbError::ExecutionError(e.to_string()))?
-                    },
-                    Err(e) => {
-                        if Self::is_table_not_found_error(&e) {
-                            log::warn!(
-                                target: "sql::plan",
-                                "⚠️  Table not found during planning; reloading table providers and retrying once | sql='{}'",
-                                sql
-                            );
-                            if let Err(e) = self.load_existing_tables().await {
+            match session.execute_logical_plan(executable_plan).await {
+                Ok(df) => df,
+                Err(e) => {
+                    log::warn!("Failed to execute cached plan, reparsing SQL: {}", e);
+                    let planned_df = match session.sql(sql).await {
+                        Ok(df) => df,
+                        Err(e) => {
+                            if Self::is_table_not_found_error(&e) {
                                 log::warn!(
                                     target: "sql::plan",
-                                    "⚠️  Failed to reload table providers after missing table | sql='{}' | error='{}'",
-                                    sql,
-                                    e
+                                    "⚠️  Table not found during planning; reloading table providers and retrying once | sql='{}'",
+                                    sql
                                 );
+                                if let Err(e) = self.load_existing_tables().await {
+                                    log::warn!(
+                                        target: "sql::plan",
+                                        "⚠️  Failed to reload table providers after missing table | sql='{}' | error='{}'",
+                                        sql,
+                                        e
+                                    );
+                                }
+                                let retry_session = exec_ctx.create_session_with_user();
+                                match retry_session.sql(sql).await {
+                                    Ok(df) => df,
+                                    Err(e2) => {
+                                        return Err(self.log_sql_error(sql, exec_ctx, e2));
+                                    },
+                                }
+                            } else {
+                                return Err(self.log_sql_error(sql, exec_ctx, e));
                             }
-                            let retry_session = exec_ctx.create_session_with_user();
-                            match retry_session.sql(sql).await {
-                                Ok(df) => {
-                                    let plan = df.logical_plan().clone();
-                                    let ordered_plan =
-                                        apply_default_order_by(plan, &self.app_context).await?;
+                        },
+                    };
 
-                                    self.plan_cache.insert(cache_key, ordered_plan.clone());
+                    let ordered_template = apply_default_order_by(
+                        planned_df.logical_plan().clone(),
+                        &self.app_context,
+                    )
+                    .await?;
+                    self.plan_cache.insert(cache_key.clone(), ordered_template.clone());
 
-                                    retry_session
-                                        .execute_logical_plan(ordered_plan)
-                                        .await
-                                        .map_err(|e| KalamDbError::ExecutionError(e.to_string()))?
-                                },
-                                Err(e2) => {
-                                    return Err(self.log_sql_error(sql, exec_ctx, e2));
-                                },
-                            }
-                        } else {
-                            return Err(self.log_sql_error(sql, exec_ctx, e));
-                        }
-                    },
-                }
+                    let executable_plan = if params.is_empty() {
+                        ordered_template
+                    } else {
+                        replace_placeholders_in_plan(ordered_template, &params)?
+                    };
+
+                    match session.execute_logical_plan(executable_plan).await {
+                        Ok(df) => df,
+                        Err(e) => {
+                            log::error!(
+                                target: "sql::exec",
+                                "❌ SQL execution failed after replan | sql='{}' | params={} | error='{}'",
+                                sql,
+                                params.len(),
+                                e
+                            );
+                            return Err(KalamDbError::ExecutionError(e.to_string()));
+                        },
+                    }
+                },
             }
         } else {
-            // Parameterized query: Parse, bind parameters, then execute
-            // Don't cache parameterized queries (cache key would need to include params)
-            let df = match session.sql(sql).await {
+            let planned_df = match session.sql(sql).await {
                 Ok(df) => df,
                 Err(e) => {
                     if Self::is_table_not_found_error(&e) {
@@ -309,20 +482,25 @@ impl SqlExecutor {
                 },
             };
 
-            // Get the logical plan and replace placeholders with parameter values
-            let plan = df.logical_plan().clone();
-            let bound_plan = replace_placeholders_in_plan(plan, &params)?;
+            // Apply default ORDER BY by primary key columns (or _seq as fallback)
+            // and cache the ordered template plan for subsequent executions.
+            let ordered_template =
+                apply_default_order_by(planned_df.logical_plan().clone(), &self.app_context)
+                    .await?;
+            self.plan_cache.insert(cache_key, ordered_template.clone());
 
-            // Apply default ORDER BY to the bound plan
-            let ordered_plan = apply_default_order_by(bound_plan, &self.app_context).await?;
+            let executable_plan = if params.is_empty() {
+                ordered_template
+            } else {
+                replace_placeholders_in_plan(ordered_template, &params)?
+            };
 
-            // Execute the ordered plan
-            match session.execute_logical_plan(ordered_plan).await {
+            match session.execute_logical_plan(executable_plan).await {
                 Ok(df) => df,
                 Err(e) => {
                     log::error!(
                         target: "sql::exec",
-                        "❌ Parameter binding execution failed | sql='{}' | params={} | error='{}'",
+                        "❌ SQL execution failed | sql='{}' | params={} | error='{}'",
                         sql,
                         params.len(),
                         e
@@ -464,6 +642,76 @@ impl SqlExecutor {
             );
         }
         KalamDbError::ExecutionError(e.to_string())
+    }
+
+    fn extract_rows_affected(batches: &[RecordBatch]) -> Result<usize, KalamDbError> {
+        let mut total: usize = 0;
+
+        for batch in batches {
+            if batch.num_columns() == 0 || batch.num_rows() == 0 {
+                continue;
+            }
+
+            let count_column = batch.column_by_name("count").unwrap_or_else(|| batch.column(0));
+
+            for row_idx in 0..batch.num_rows() {
+                let count_value =
+                    arrow_value_to_scalar(count_column.as_ref(), row_idx).map_err(|e| {
+                        KalamDbError::ExecutionError(format!(
+                            "Failed to decode DML count value from result batch: {}",
+                            e
+                        ))
+                    })?;
+                total += Self::scalar_count_to_usize(count_value)?;
+            }
+        }
+
+        Ok(total)
+    }
+
+    fn scalar_count_to_usize(value: ScalarValue) -> Result<usize, KalamDbError> {
+        let invalid = |v: ScalarValue| {
+            KalamDbError::ExecutionError(format!(
+                "DML result does not contain a valid count value: {:?}",
+                v
+            ))
+        };
+
+        match value {
+            ScalarValue::UInt64(Some(v)) => usize::try_from(v).map_err(|_| {
+                KalamDbError::ExecutionError(format!(
+                    "DML count {} exceeds platform usize range",
+                    v
+                ))
+            }),
+            ScalarValue::UInt32(Some(v)) => Ok(v as usize),
+            ScalarValue::UInt16(Some(v)) => Ok(v as usize),
+            ScalarValue::UInt8(Some(v)) => Ok(v as usize),
+            ScalarValue::Int64(Some(v)) if v >= 0 => usize::try_from(v as u64).map_err(|_| {
+                KalamDbError::ExecutionError(format!(
+                    "DML count {} exceeds platform usize range",
+                    v
+                ))
+            }),
+            ScalarValue::Int32(Some(v)) if v >= 0 => Ok(v as usize),
+            ScalarValue::Int16(Some(v)) if v >= 0 => Ok(v as usize),
+            ScalarValue::Int8(Some(v)) if v >= 0 => Ok(v as usize),
+            ScalarValue::Utf8(Some(v)) | ScalarValue::LargeUtf8(Some(v)) => {
+                let parsed = v.parse::<u64>().map_err(|e| {
+                    KalamDbError::ExecutionError(format!(
+                        "Failed to parse DML count '{}' as number: {}",
+                        v, e
+                    ))
+                })?;
+                usize::try_from(parsed).map_err(|_| {
+                    KalamDbError::ExecutionError(format!(
+                        "DML count {} exceeds platform usize range",
+                        parsed
+                    ))
+                })
+            },
+            other => Err(invalid(other)),
+        }
     }
 
     /// Load existing tables from system.tables and register providers

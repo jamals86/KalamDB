@@ -6,9 +6,9 @@
 //! - ALTER TOPIC ADD SOURCE: Add a table route to a topic
 //! - CONSUME FROM: Consume messages from a topic
 
-use kalamdb_commons::models::{PayloadMode, TableId, TopicOp};
 use crate::parser::utils::{extract_identifier, extract_keyword_value, normalize_sql};
 use crate::DdlAst;
+use kalamdb_commons::models::{PayloadMode, TableId, TopicOp};
 
 /// CREATE TOPIC statement
 ///
@@ -313,9 +313,7 @@ pub fn parse_ack(sql: &str) -> Result<AckStatement, String> {
     }
 
     // Extract offset value after "OFFSET"
-    let offset_pos = sql_upper
-        .find(" OFFSET ")
-        .ok_or_else(|| "OFFSET not found".to_string())?;
+    let offset_pos = sql_upper.find(" OFFSET ").ok_or_else(|| "OFFSET not found".to_string())?;
     let after_offset = normalized[offset_pos + 8..].trim();
     let offset_str = after_offset
         .split_whitespace()
@@ -357,35 +355,26 @@ fn parse_topic_operation(op_str: &str) -> Result<TopicOp, String> {
         "INSERT" => Ok(TopicOp::Insert),
         "UPDATE" => Ok(TopicOp::Update),
         "DELETE" => Ok(TopicOp::Delete),
-        op => Err(format!(
-            "Invalid operation '{}'. Expected INSERT, UPDATE, or DELETE",
-            op
-        )),
+        op => Err(format!("Invalid operation '{}'. Expected INSERT, UPDATE, or DELETE", op)),
     }
 }
 
 fn extract_where_clause(sql: &str) -> Result<String, String> {
     let sql_upper = sql.to_uppercase();
-    let where_pos = sql_upper
-        .find(" WHERE ")
-        .ok_or_else(|| "WHERE clause not found".to_string())?;
+    let where_pos =
+        sql_upper.find(" WHERE ").ok_or_else(|| "WHERE clause not found".to_string())?;
 
     let after_where = &sql[where_pos + 7..]; // Skip " WHERE "
 
     // Find end of WHERE clause (WITH keyword or end of string)
-    let end_pos = after_where
-        .to_uppercase()
-        .find(" WITH ")
-        .unwrap_or(after_where.len());
+    let end_pos = after_where.to_uppercase().find(" WITH ").unwrap_or(after_where.len());
 
     Ok(after_where[..end_pos].trim().to_string())
 }
 
 fn parse_payload_mode_from_sql(sql: &str) -> Result<PayloadMode, String> {
     let sql_upper = sql.to_uppercase();
-    let with_pos = sql_upper
-        .find(" WITH ")
-        .ok_or_else(|| "WITH clause not found".to_string())?;
+    let with_pos = sql_upper.find(" WITH ").ok_or_else(|| "WITH clause not found".to_string())?;
 
     let after_with = &sql[with_pos + 6..]; // Skip " WITH "
 
@@ -395,9 +384,7 @@ fn parse_payload_mode_from_sql(sql: &str) -> Result<PayloadMode, String> {
     }
 
     // Find the value after =
-    let eq_pos = after_with
-        .find('=')
-        .ok_or_else(|| "Expected '=' after 'payload'".to_string())?;
+    let eq_pos = after_with.find('=').ok_or_else(|| "Expected '=' after 'payload'".to_string())?;
 
     let after_eq = &after_with[eq_pos + 1..].trim();
 
@@ -414,9 +401,8 @@ fn parse_payload_mode_from_sql(sql: &str) -> Result<PayloadMode, String> {
         &after_eq[1..end_quote + 1]
     } else {
         // Unquoted - take until space or )
-        let end_pos = after_eq
-            .find(|c: char| c.is_whitespace() || c == ')')
-            .unwrap_or(after_eq.len());
+        let end_pos =
+            after_eq.find(|c: char| c.is_whitespace() || c == ')').unwrap_or(after_eq.len());
         &after_eq[..end_pos]
     };
 
@@ -424,18 +410,14 @@ fn parse_payload_mode_from_sql(sql: &str) -> Result<PayloadMode, String> {
         "key" => Ok(PayloadMode::Key),
         "full" => Ok(PayloadMode::Full),
         "diff" => Ok(PayloadMode::Diff),
-        m => Err(format!(
-            "Invalid payload mode '{}'. Expected 'key', 'full', or 'diff'",
-            m
-        )),
+        m => Err(format!("Invalid payload mode '{}'. Expected 'key', 'full', or 'diff'", m)),
     }
 }
 
 fn extract_group_id(sql: &str) -> Result<String, String> {
     let sql_upper = sql.to_uppercase();
-    let group_pos = sql_upper
-        .find(" GROUP ")
-        .ok_or_else(|| "GROUP keyword not found".to_string())?;
+    let group_pos =
+        sql_upper.find(" GROUP ").ok_or_else(|| "GROUP keyword not found".to_string())?;
 
     let after_group = &sql[group_pos + 7..]; // Skip " GROUP "
 
@@ -452,9 +434,7 @@ fn extract_group_id(sql: &str) -> Result<String, String> {
         after_group[1..end_quote + 1].to_string()
     } else {
         // Unquoted - take until space
-        let end_pos = after_group
-            .find(char::is_whitespace)
-            .unwrap_or(after_group.len());
+        let end_pos = after_group.find(char::is_whitespace).unwrap_or(after_group.len());
         after_group[..end_pos].to_string()
     };
 
@@ -463,7 +443,7 @@ fn extract_group_id(sql: &str) -> Result<String, String> {
 
 fn parse_consume_position_from_sql(sql: &str) -> Result<ConsumePosition, String> {
     let sql_upper = sql.to_uppercase();
-    
+
     // Find the second FROM (first is "CONSUME FROM")
     let first_from_pos = sql_upper.find(" FROM ").ok_or_else(|| "FROM not found".to_string())?;
     let remaining = &sql_upper[first_from_pos + 6..];
@@ -484,7 +464,7 @@ fn parse_consume_position_from_sql(sql: &str) -> Result<ConsumePosition, String>
                     .parse::<u64>()
                     .map_err(|_| format!("Invalid offset '{}'. Must be a number", num))?;
                 Ok(ConsumePosition::Offset(offset))
-            }
+            },
         }
     } else {
         Ok(ConsumePosition::Latest)
@@ -549,7 +529,8 @@ mod tests {
 
     #[test]
     fn test_parse_ack_with_partition() {
-        let stmt = parse_ack("ACK app.messages GROUP 'ai-service' PARTITION 2 UPTO OFFSET 500").unwrap();
+        let stmt =
+            parse_ack("ACK app.messages GROUP 'ai-service' PARTITION 2 UPTO OFFSET 500").unwrap();
         assert_eq!(stmt.topic_name, "app.messages");
         assert_eq!(stmt.group_id, "ai-service");
         assert_eq!(stmt.partition_id, 2);

@@ -309,6 +309,14 @@ max_parameters = 50
 # Prevents memory exhaustion from individual large parameters
 max_parameter_size_bytes = 524288
 
+# Maximum number of cached SQL logical plans (default: 1000)
+# Bound memory used by SQL plan cache
+sql_plan_cache_max_entries = 1000
+
+# Time-to-idle TTL for SQL cached plans in seconds (default: 900 = 15 minutes)
+# Unused plans are evicted automatically after this idle period
+sql_plan_cache_ttl_seconds = 900
+
 # ==========================================================================
 # CLUSTER CONFIGURATION (Raft-based Replication)
 # ==========================================================================

@@ -33,8 +33,7 @@ fn test_cli_explicit_flush() {
         full_table_name
     ))
     .expect("CREATE TABLE failed");
-    wait_for_table_ready(&full_table_name, Duration::from_secs(3))
-        .expect("table should be ready");
+    wait_for_table_ready(&full_table_name, Duration::from_secs(3)).expect("table should be ready");
 
     // Insert some data first via CLI
     execute_sql_as_root_via_cli(&format!(

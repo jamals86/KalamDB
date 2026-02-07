@@ -55,14 +55,8 @@ impl TopicMessageStore {
         key: Option<String>,
         timestamp_ms: i64,
     ) -> kalamdb_store::storage_trait::Result<()> {
-        let message = TopicMessage::new(
-            topic_id.clone(),
-            partition_id,
-            offset,
-            payload,
-            key,
-            timestamp_ms,
-        );
+        let message =
+            TopicMessage::new(topic_id.clone(), partition_id, offset, payload, key, timestamp_ms);
         let msg_id = message.id();
         self.put(&msg_id, &message)
     }
@@ -87,7 +81,10 @@ impl TopicMessageStore {
     ///
     /// This method scans all messages for the topic and deletes them.
     /// Returns the count of deleted messages.
-    pub fn delete_topic_messages(&self, topic_id: &TopicId) -> kalamdb_store::storage_trait::Result<usize> {
+    pub fn delete_topic_messages(
+        &self,
+        topic_id: &TopicId,
+    ) -> kalamdb_store::storage_trait::Result<usize> {
         // Use topic_id as prefix to scan all partitions.
         // Delete using raw keys to avoid deserializing large/corrupt values.
         let prefix = kalamdb_commons::encode_prefix(&(topic_id.as_str(),));
@@ -139,8 +136,8 @@ impl EntityStore<TopicMessageId, TopicMessage> for TopicMessageStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::StorageKey;
     use crate::utils::test_backend::RecordingBackend;
+    use kalamdb_commons::StorageKey;
 
     fn setup_test_store() -> TopicMessageStore {
         let backend = Arc::new(RecordingBackend::new());
@@ -183,9 +180,7 @@ mod tests {
         let topic_id = TopicId::from("test_topic");
         let partition_id = 0;
 
-        store
-            .publish(&topic_id, partition_id, 0, b"test".to_vec(), None, 1000)
-            .unwrap();
+        store.publish(&topic_id, partition_id, 0, b"test".to_vec(), None, 1000).unwrap();
 
         let msg_id = TopicMessageId::new(topic_id.clone(), partition_id, 0);
         let message = store.get(&msg_id).unwrap();
@@ -204,14 +199,10 @@ mod tests {
         let topic_id = TopicId::from("test_topic");
 
         // Publish to partition 0
-        store
-            .publish(&topic_id, 0, 0, b"p0_msg1".to_vec(), None, 1000)
-            .unwrap();
+        store.publish(&topic_id, 0, 0, b"p0_msg1".to_vec(), None, 1000).unwrap();
 
         // Publish to partition 1
-        store
-            .publish(&topic_id, 1, 0, b"p1_msg1".to_vec(), None, 2000)
-            .unwrap();
+        store.publish(&topic_id, 1, 0, b"p1_msg1".to_vec(), None, 2000).unwrap();
 
         // Each partition has independent messages
         let messages0 = store.fetch_messages(&topic_id, 0, 0, 10).unwrap();
@@ -272,23 +263,15 @@ mod tests {
 
         let topic_id = TopicId::from("scan_topic");
         for i in 0..5 {
-            store
-                .publish(&topic_id, 0, i, vec![i as u8], None, 1000 + i as i64)
-                .unwrap();
+            store.publish(&topic_id, 0, i, vec![i as u8], None, 1000 + i as i64).unwrap();
         }
 
         let _ = store.fetch_messages(&topic_id, 0, 2, 3).unwrap();
 
         assert_eq!(backend.scan_calls(), 1);
         let last = backend.last_scan().expect("scan call missing");
-        assert_eq!(
-            last.prefix,
-            Some(TopicMessageId::prefix_for_partition(&topic_id, 0))
-        );
-        assert_eq!(
-            last.start_key,
-            Some(TopicMessageId::start_key_for_partition(&topic_id, 0, 2))
-        );
+        assert_eq!(last.prefix, Some(TopicMessageId::prefix_for_partition(&topic_id, 0)));
+        assert_eq!(last.start_key, Some(TopicMessageId::start_key_for_partition(&topic_id, 0, 2)));
         assert_eq!(last.limit, Some(3));
     }
 }

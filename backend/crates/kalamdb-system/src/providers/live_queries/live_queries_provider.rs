@@ -6,6 +6,7 @@
 use super::{new_live_queries_store, LiveQueriesStore, LiveQueriesTableSchema};
 use crate::error::{SystemError, SystemResultExt};
 use crate::providers::base::SystemTableScan;
+use crate::providers::live_queries::models::{LiveQuery, LiveQueryStatus};
 use crate::system_table_trait::SystemTableProviderExt;
 use async_trait::async_trait;
 use datafusion::arrow::array::RecordBatch;
@@ -15,7 +16,6 @@ use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::models::ConnectionId;
-use crate::providers::live_queries::models::{LiveQuery, LiveQueryStatus};
 use kalamdb_commons::RecordBatchBuilder;
 use kalamdb_commons::{LiveQueryId, NodeId, TableId, UserId};
 use kalamdb_store::entity_store::EntityStore;
@@ -258,7 +258,7 @@ impl LiveQueriesTableProvider {
                 store.scan_with_raw_prefix(&prefix_bytes, None, 100)
             })
             .await
-            .into_system_error("Join error")??  
+            .into_system_error("Join error")??
         };
 
         // Delete each matching key asynchronously
@@ -450,7 +450,10 @@ impl SystemTableScan<LiveQueryId, LiveQuery> for LiveQueriesTableProvider {
         LiveQueryId::from_string(value).ok()
     }
 
-    fn create_batch_from_pairs(&self, pairs: Vec<(LiveQueryId, LiveQuery)>) -> Result<RecordBatch, SystemError> {
+    fn create_batch_from_pairs(
+        &self,
+        pairs: Vec<(LiveQueryId, LiveQuery)>,
+    ) -> Result<RecordBatch, SystemError> {
         self.create_batch(pairs)
     }
 }
@@ -537,7 +540,8 @@ mod tests {
     #[test]
     fn test_create_and_get_live_query() {
         let provider = create_test_provider();
-        let live_query = create_test_live_query("user1-conn1-test-q1", &UserId::new("user1"), "test");
+        let live_query =
+            create_test_live_query("user1-conn1-test-q1", &UserId::new("user1"), "test");
 
         provider.create_live_query(live_query.clone()).unwrap();
 
@@ -551,7 +555,8 @@ mod tests {
     #[test]
     fn test_update_live_query() {
         let provider = create_test_provider();
-        let mut live_query = create_test_live_query("user1-conn1-test-q1", &UserId::new("user1"), "test");
+        let mut live_query =
+            create_test_live_query("user1-conn1-test-q1", &UserId::new("user1"), "test");
         provider.create_live_query(live_query.clone()).unwrap();
 
         // Update
@@ -566,7 +571,8 @@ mod tests {
     #[test]
     fn test_delete_live_query() {
         let provider = create_test_provider();
-        let live_query = create_test_live_query("user1-conn1-test-q1", &UserId::new("user1"), "test");
+        let live_query =
+            create_test_live_query("user1-conn1-test-q1", &UserId::new("user1"), "test");
 
         provider.create_live_query(live_query.clone()).unwrap();
         provider.delete_live_query_str(live_query.live_id.as_ref()).unwrap();
@@ -581,8 +587,11 @@ mod tests {
 
         // Insert multiple live queries
         for i in 1..=3 {
-            let lq =
-                create_test_live_query(&format!("user1-conn{}-test-q{}", i, i), &UserId::new("user1"), "test");
+            let lq = create_test_live_query(
+                &format!("user1-conn{}-test-q{}", i, i),
+                &UserId::new("user1"),
+                "test",
+            );
             provider.create_live_query(lq).unwrap();
         }
 

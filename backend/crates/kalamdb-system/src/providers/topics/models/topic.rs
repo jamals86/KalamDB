@@ -55,10 +55,7 @@ use super::TopicRoute;
 ///     updated_at: 1730000000000,
 /// };
 /// ```
-#[table(
-    name = "topics",
-    comment = "Durable topics for pub/sub messaging"
-)]
+#[table(name = "topics", comment = "Durable topics for pub/sub messaging")]
 #[derive(Serialize, Deserialize, Encode, Decode, Clone, Debug, PartialEq)]
 pub struct Topic {
     // Primary key field first
@@ -191,7 +188,11 @@ impl Topic {
     }
 
     /// Removes all routes matching the given table_id and operation.
-    pub fn remove_route(&mut self, table_id: &kalamdb_commons::models::TableId, op: kalamdb_commons::models::TopicOp) -> usize {
+    pub fn remove_route(
+        &mut self,
+        table_id: &kalamdb_commons::models::TableId,
+        op: kalamdb_commons::models::TopicOp,
+    ) -> usize {
         let before = self.routes.len();
         self.routes.retain(|r| r.table_id != *table_id || r.op != op);
         let removed = before - self.routes.len();
@@ -221,10 +222,7 @@ mod tests {
 
     #[test]
     fn test_topic_creation() {
-        let topic = Topic::new(
-            TopicId::new("topic_123"),
-            "app.notifications".to_string(),
-        );
+        let topic = Topic::new(TopicId::new("topic_123"), "app.notifications".to_string());
 
         assert_eq!(topic.name, "app.notifications");
         assert_eq!(topic.partitions, 1);
@@ -234,10 +232,7 @@ mod tests {
 
     #[test]
     fn test_topic_add_route() {
-        let mut topic = Topic::new(
-            TopicId::new("topic_123"),
-            "app.events".to_string(),
-        );
+        let mut topic = Topic::new(TopicId::new("topic_123"), "app.events".to_string());
 
         let route = TopicRoute::new(
             TableId::new(NamespaceId::new("default"), TableName::new("messages")),
@@ -251,10 +246,7 @@ mod tests {
 
     #[test]
     fn test_topic_remove_route() {
-        let mut topic = Topic::new(
-            TopicId::new("topic_123"),
-            "app.events".to_string(),
-        );
+        let mut topic = Topic::new(TopicId::new("topic_123"), "app.events".to_string());
 
         let table_id = TableId::new(NamespaceId::new("default"), TableName::new("messages"));
         topic.add_route(TopicRoute::new(table_id.clone(), TopicOp::Insert));
@@ -268,16 +260,12 @@ mod tests {
 
     #[test]
     fn test_topic_serialization() {
-        let topic = Topic::new(
-            TopicId::new("topic_456"),
-            "test.topic".to_string(),
-        );
+        let topic = Topic::new(TopicId::new("topic_456"), "test.topic".to_string());
 
         // Test bincode round-trip
         let encoded = bincode::encode_to_vec(&topic, bincode::config::standard()).unwrap();
-        let decoded: Topic = bincode::decode_from_slice(&encoded, bincode::config::standard())
-            .unwrap()
-            .0;
+        let decoded: Topic =
+            bincode::decode_from_slice(&encoded, bincode::config::standard()).unwrap().0;
         assert_eq!(topic, decoded);
     }
 }

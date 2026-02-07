@@ -2,9 +2,9 @@
 //!
 //! This module provides a SystemTableStore<StorageId, Storage> wrapper for the system.storages table.
 
+use crate::providers::storages::models::Storage;
 use crate::system_table_store::SystemTableStore;
 use crate::SystemTable;
-use crate::providers::storages::models::Storage;
 use kalamdb_commons::StorageId;
 use kalamdb_store::StorageBackend;
 use std::sync::Arc;

@@ -17,9 +17,9 @@ use actix_web::{test, web, App};
 use kalamdb_api::repositories::CoreUsersRepo;
 use kalamdb_auth::UserRepository;
 use kalamdb_commons::models::UserName;
-use kalamdb_system::User;
 use kalamdb_commons::{AuthType, Role, StorageId, UserId};
 use kalamdb_system::providers::storages::models::StorageMode;
+use kalamdb_system::User;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -79,11 +79,8 @@ async fn test_system_user_localhost_no_password() {
     let user = create_system_user(&server, username, String::new(), false).await;
 
     // Create Bearer auth header
-    let auth_header = auth_helper::create_bearer_auth_header(
-        username,
-        user.user_id.as_str(),
-        Role::System,
-    );
+    let auth_header =
+        auth_helper::create_bearer_auth_header(username, user.user_id.as_str(), Role::System);
 
     // Create test request with localhost connection
     let req = test::TestRequest::post()
@@ -139,11 +136,8 @@ async fn test_system_user_remote_denied_by_default() {
     let user = create_system_user(&server, username, password_hash, false).await;
 
     // Create Bearer auth header
-    let auth_header = auth_helper::create_bearer_auth_header(
-        username,
-        user.user_id.as_str(),
-        Role::System,
-    );
+    let auth_header =
+        auth_helper::create_bearer_auth_header(username, user.user_id.as_str(), Role::System);
 
     // Create test request with REMOTE IP address
     let req = test::TestRequest::post()
@@ -197,11 +191,8 @@ async fn test_system_user_remote_with_password() {
     let user = create_system_user(&server, username, password_hash, true).await; // allow_remote=true
 
     // Create Bearer auth header
-    let auth_header = auth_helper::create_bearer_auth_header(
-        username,
-        user.user_id.as_str(),
-        Role::System,
-    );
+    let auth_header =
+        auth_helper::create_bearer_auth_header(username, user.user_id.as_str(), Role::System);
 
     // Create test request with REMOTE IP address
     let req = test::TestRequest::post()
@@ -256,11 +247,8 @@ async fn test_system_user_remote_no_password_denied() {
     let user = create_system_user(&server, username, String::new(), true).await; // allow_remote=true, empty password
 
     // Create Bearer auth header
-    let auth_header = auth_helper::create_bearer_auth_header(
-        username,
-        user.user_id.as_str(),
-        Role::System,
-    );
+    let auth_header =
+        auth_helper::create_bearer_auth_header(username, user.user_id.as_str(), Role::System);
 
     // Create test request with REMOTE IP address
     let req = test::TestRequest::post()

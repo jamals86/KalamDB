@@ -14,19 +14,14 @@ fn arrow_value_as_string(value: &JsonValue) -> Option<String> {
 }
 
 fn arrow_value_is_present(value: &JsonValue) -> bool {
-    !extract_arrow_value(value)
-        .unwrap_or_else(|| value.clone())
-        .is_null()
+    !extract_arrow_value(value).unwrap_or_else(|| value.clone()).is_null()
 }
 
 #[ntest::timeout(60_000)]
 #[test]
 fn smoke_show_storages_basic() {
     if !is_server_running() {
-        println!(
-            "Skipping smoke_show_storages_basic: server not running at {}",
-            server_url()
-        );
+        println!("Skipping smoke_show_storages_basic: server not running at {}", server_url());
         return;
     }
 
@@ -38,59 +33,43 @@ fn smoke_show_storages_basic() {
         .unwrap_or_else(|err| panic!("Failed to parse JSON response: {}\n{}", err, result));
 
     let rows = get_rows_as_hashmaps(&json).unwrap_or_default();
-    assert!(
-        !rows.is_empty(),
-        "SHOW STORAGES should return at least 1 row (local storage)"
-    );
+    assert!(!rows.is_empty(), "SHOW STORAGES should return at least 1 row (local storage)");
 
     // Find the 'local' storage
     let local_storage = rows
         .iter()
         .find(|row| {
-            row.get("storage_id")
-                .and_then(arrow_value_as_string)
-                .as_deref()
-                == Some("local")
+            row.get("storage_id").and_then(arrow_value_as_string).as_deref() == Some("local")
         })
         .expect("'local' storage should be present in SHOW STORAGES output");
 
     // Verify required columns for local storage
-    let storage_name = local_storage
-        .get("storage_name")
-        .and_then(arrow_value_as_string);
+    let storage_name = local_storage.get("storage_name").and_then(arrow_value_as_string);
     assert!(
         storage_name.is_some() && !storage_name.as_ref().unwrap().is_empty(),
         "storage_name should be non-empty"
     );
 
-    let storage_type = local_storage
-        .get("storage_type")
-        .and_then(arrow_value_as_string);
+    let storage_type = local_storage.get("storage_type").and_then(arrow_value_as_string);
     assert_eq!(
         storage_type.as_deref(),
         Some("filesystem"),
         "local storage should be filesystem type"
     );
 
-    let base_directory = local_storage
-        .get("base_directory")
-        .and_then(arrow_value_as_string);
+    let base_directory = local_storage.get("base_directory").and_then(arrow_value_as_string);
     assert!(
         base_directory.is_some() && !base_directory.as_ref().unwrap().is_empty(),
         "base_directory should be non-empty for filesystem storage"
     );
 
     // Verify timestamps are present and reasonable
-    let created_at_present = local_storage
-        .get("created_at")
-        .map(arrow_value_is_present)
-        .unwrap_or(false);
+    let created_at_present =
+        local_storage.get("created_at").map(arrow_value_is_present).unwrap_or(false);
     assert!(created_at_present, "created_at should be present");
 
-    let updated_at_present = local_storage
-        .get("updated_at")
-        .map(arrow_value_is_present)
-        .unwrap_or(false);
+    let updated_at_present =
+        local_storage.get("updated_at").map(arrow_value_is_present).unwrap_or(false);
     assert!(updated_at_present, "updated_at should be present");
 }
 
@@ -125,19 +104,13 @@ fn smoke_show_storages_user_access() {
     let sql = "SHOW STORAGES";
     let result = execute_sql_via_client_as_json(&test_user, test_password, sql);
 
-    assert!(
-        result.is_ok(),
-        "Regular user should be able to run SHOW STORAGES"
-    );
+    assert!(result.is_ok(), "Regular user should be able to run SHOW STORAGES");
 
-    let json: JsonValue = serde_json::from_str(&result.unwrap())
-        .expect("Should parse JSON response");
+    let json: JsonValue =
+        serde_json::from_str(&result.unwrap()).expect("Should parse JSON response");
 
     let rows = get_rows_as_hashmaps(&json).unwrap_or_default();
-    assert!(
-        !rows.is_empty(),
-        "User should see at least the local storage"
-    );
+    assert!(!rows.is_empty(), "User should see at least the local storage");
 }
 
 // Helper struct for cleanup on drop

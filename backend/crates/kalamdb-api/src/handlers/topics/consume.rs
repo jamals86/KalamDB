@@ -50,8 +50,9 @@ pub async fn consume_handler(
 
     // Authorization check
     if !is_topic_authorized(&session) {
-        return HttpResponse::Forbidden()
-            .json(TopicErrorResponse::forbidden("Topic consumption requires service, dba, or system role"));
+        return HttpResponse::Forbidden().json(TopicErrorResponse::forbidden(
+            "Topic consumption requires service, dba, or system role",
+        ));
     }
 
     let topic_id = &body.topic_id;
@@ -62,32 +63,43 @@ pub async fn consume_handler(
     let topic = match topics_provider.get_topic_by_id_async(topic_id).await {
         Ok(Some(t)) => t,
         Ok(None) => {
-            return HttpResponse::NotFound()
-                .json(TopicErrorResponse::not_found(&format!("Topic '{}' does not exist", topic_id)));
-        }
+            return HttpResponse::NotFound().json(TopicErrorResponse::not_found(&format!(
+                "Topic '{}' does not exist",
+                topic_id
+            )));
+        },
         Err(e) => {
-            return HttpResponse::InternalServerError()
-                .json(TopicErrorResponse::internal_error(&format!("Failed to lookup topic: {}", e)));
-        }
+            return HttpResponse::InternalServerError().json(TopicErrorResponse::internal_error(
+                &format!("Failed to lookup topic: {}", e),
+            ));
+        },
     };
 
     let topic_publisher = app_context.topic_publisher();
 
     // Determine start offset based on position
-    let start_offset = match &body.start {
-        StartPosition::Offset { offset } => *offset,
-        StartPosition::Earliest => {
-            // Try to get committed offset for group
-            match topic_publisher.get_group_offsets(topic_id, group_id) {
-                Ok(offsets) => offsets
-                    .iter()
-                    .find(|o| o.partition_id == body.partition_id)
-                    .map(|o| o.last_acked_offset + 1)
-                    .unwrap_or(0),
-                Err(_) => 0,
-            }
-        }
-        StartPosition::Latest => 0, // In practice, should use HWM tracking
+    //
+    // All positions first check the consumer group's committed offset.
+    // If a committed offset exists, we resume from there (last_acked + 1).
+    // The position only matters when no offset has been committed yet:
+    //   - Earliest: start from offset 0 (replay all history)
+    //   - Latest: start from offset 0 (same as Earliest for now — new groups see all messages)
+    //   - Offset: start from the explicit offset
+    let committed_offset =
+        topic_publisher.get_group_offsets(topic_id, group_id).ok().and_then(|offsets| {
+            offsets
+                .iter()
+                .find(|o| o.partition_id == body.partition_id)
+                .map(|o| o.last_acked_offset + 1)
+        });
+
+    let start_offset = match committed_offset {
+        Some(committed) => committed,
+        None => match &body.start {
+            StartPosition::Offset { offset } => *offset,
+            StartPosition::Earliest => 0,
+            StartPosition::Latest => 0,
+        },
     };
 
     // Fetch messages
@@ -99,9 +111,10 @@ pub async fn consume_handler(
     ) {
         Ok(msgs) => msgs,
         Err(e) => {
-            return HttpResponse::InternalServerError()
-                .json(TopicErrorResponse::internal_error(&format!("Failed to fetch messages: {}", e)));
-        }
+            return HttpResponse::InternalServerError().json(TopicErrorResponse::internal_error(
+                &format!("Failed to fetch messages: {}", e),
+            ));
+        },
     };
 
     // Convert to response format (matching topic_message_schema fields)
@@ -110,6 +123,16 @@ pub async fn consume_handler(
         .iter()
         .map(|msg| {
             use base64::Engine;
+            // Resolve user_id to username for the consumer
+            let username = msg.user_id.as_ref().and_then(|uid| {
+                app_context
+                    .system_tables()
+                    .users()
+                    .get_user_by_id(uid)
+                    .ok()
+                    .flatten()
+                    .map(|u| u.username.into_string())
+            });
             TopicMessage {
                 topic_id: topic.topic_id.clone(),
                 partition_id: msg.partition_id,
@@ -117,6 +140,7 @@ pub async fn consume_handler(
                 payload: base64::engine::general_purpose::STANDARD.encode(&msg.payload),
                 key: msg.key.clone(),
                 timestamp_ms: msg.timestamp_ms,
+                username,
             }
         })
         .collect();

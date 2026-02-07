@@ -8,13 +8,13 @@ use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use crate::jobs::executors::cleanup::{CleanupOperation, CleanupParams, StorageCleanupDetails};
 use crate::schema_registry::SchemaRegistry;
+use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::helpers::guards::block_system_namespace_modification;
-use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
 use kalamdb_commons::models::TableId;
 use kalamdb_commons::schemas::TableType;
-use kalamdb_system::JobType;
 use kalamdb_sql::ddl::DropTableStatement;
+use kalamdb_system::JobType;
 use std::sync::Arc;
 
 /// Cleanup helper function: Delete table data from RocksDB
@@ -201,10 +201,8 @@ pub async fn cleanup_parquet_files_internal(
     );
 
     // Get StorageCached from registry
-    let storage_cached = app_context
-        .storage_registry()
-        .get_cached(&storage.storage_id)?
-        .ok_or_else(|| {
+    let storage_cached =
+        app_context.storage_registry().get_cached(&storage.storage_id)?.ok_or_else(|| {
             KalamDbError::InvalidOperation(format!(
                 "Storage '{}' not found during cleanup",
                 storage.storage_id.as_str()
@@ -215,9 +213,7 @@ pub async fn cleanup_parquet_files_internal(
     // Note: For user tables, we'd need user_id, but cleanup is table-wide
     let files_deleted = storage_cached
         .delete_prefix(
-            table_type,
-            table_id,
-            None,  // user_id - cleanup is table-wide
+            table_type, table_id, None, // user_id - cleanup is table-wide
         )
         .await
         .into_kalamdb_error("Failed to delete Parquet tree")?

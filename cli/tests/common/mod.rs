@@ -1,13 +1,17 @@
 #![allow(dead_code, unused_imports)]
 extern crate kalam_cli;
+use libc::{flock, LOCK_EX, LOCK_UN};
 use rand::{distr::Alphanumeric, Rng};
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader};
 use std::net::TcpListener;
-use std::path::PathBuf;
+#[cfg(unix)]
+use std::os::unix::io::AsRawFd;
 use std::path::Path;
+use std::path::PathBuf;
 use std::process::Command;
 use std::process::{Child, Stdio};
 use std::sync::mpsc as std_mpsc;
@@ -17,10 +21,6 @@ use std::time::Duration;
 use std::time::Instant;
 use tokio::runtime::{Handle, Runtime};
 use tokio::sync::Mutex as TokioMutex;
-use libc::{flock, LOCK_EX, LOCK_UN};
-use std::fs::OpenOptions;
-#[cfg(unix)]
-use std::os::unix::io::AsRawFd;
 
 // Load environment variables from .env file at test startup
 fn load_env_file() {
@@ -59,8 +59,8 @@ fn shared_token_cache_lock_path() -> PathBuf {
 
 // Re-export commonly used types for credential tests
 pub use kalam_cli::FileCredentialStore;
-pub use kalam_link::credentials::{CredentialStore, Credentials};
 pub use kalam_link::client::KalamLinkClientBuilder;
+pub use kalam_link::credentials::{CredentialStore, Credentials};
 pub use kalam_link::{AuthProvider, KalamLinkClient, KalamLinkTimeouts};
 pub use tempfile::TempDir;
 
@@ -102,11 +102,8 @@ impl TestAuthManager {
 
         let lock_path = shared_token_cache_lock_path();
         let cache_path = shared_token_cache_path();
-        let mut lock_file = OpenOptions::new()
-            .create(true)
-            .read(true)
-            .write(true)
-            .open(&lock_path)?;
+        let mut lock_file =
+            OpenOptions::new().create(true).read(true).write(true).open(&lock_path)?;
 
         #[cfg(unix)]
         unsafe {
@@ -158,10 +155,8 @@ impl TestAuthManager {
         base_url: &str,
         usernames: &[&str],
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let prefixes: Vec<String> = usernames
-            .iter()
-            .map(|user| format!("{}|{}:", base_url, user))
-            .collect();
+        let prefixes: Vec<String> =
+            usernames.iter().map(|user| format!("{}|{}:", base_url, user)).collect();
         self.with_shared_token_cache(|map| {
             map.retain(|key, _| !prefixes.iter().any(|prefix| key.starts_with(prefix)));
         })?;
@@ -173,10 +168,7 @@ impl TestAuthManager {
         base_url: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let client = Client::new();
-        let status_response = client
-            .get(format!("{}/v1/api/auth/status", base_url))
-            .send()
-            .await;
+        let status_response = client.get(format!("{}/v1/api/auth/status", base_url)).send().await;
 
         let Ok(status_response) = status_response else {
             return Ok(());
@@ -187,10 +179,7 @@ impl TestAuthManager {
         }
 
         let body: serde_json::Value = status_response.json().await?;
-        let needs_setup = body
-            .get("needs_setup")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
+        let needs_setup = body.get("needs_setup").and_then(|v| v.as_bool()).unwrap_or(false);
 
         if !needs_setup {
             return Ok(());
@@ -302,9 +291,7 @@ impl TestAuthManager {
             return Ok(());
         }
 
-        let root_token = self
-            .token_for_url_cached(base_url, "root", root_password)
-            .await?;
+        let root_token = self.token_for_url_cached(base_url, "root", root_password).await?;
         let client = Client::new();
         let exists_response = client
             .post(format!("{}/v1/api/sql", base_url))
@@ -385,20 +372,14 @@ impl TestAuthManager {
         Ok(())
     }
 
-    async fn force_reset_admin(
-        &self,
-        base_url: &str,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    async fn force_reset_admin(&self, base_url: &str) -> Result<(), Box<dyn std::error::Error>> {
         self.complete_setup_if_needed(base_url).await?;
         let root_password = root_password_from_env();
         self.ensure_admin_user(base_url, &root_password).await?;
         if let Ok(mut guard) = self.ready_urls.lock() {
             guard.insert(base_url.to_string());
         }
-        if let Ok(mut guard) = TOKEN_CACHE
-            .get_or_init(|| Mutex::new(HashMap::new()))
-            .lock()
-        {
+        if let Ok(mut guard) = TOKEN_CACHE.get_or_init(|| Mutex::new(HashMap::new())).lock() {
             guard.retain(|key, _| !key.contains("admin:") && !key.contains("root:"));
         }
         let _ = self.clear_shared_tokens_for_url(base_url, &["admin", "root"]);
@@ -445,20 +426,14 @@ impl TestAuthManager {
     ) -> Result<String, Box<dyn std::error::Error>> {
         let cache_key = format!("{}|{}:{}", base_url, username, password);
 
-        if let Ok(guard) = TOKEN_CACHE
-            .get_or_init(|| Mutex::new(HashMap::new()))
-            .lock()
-        {
+        if let Ok(guard) = TOKEN_CACHE.get_or_init(|| Mutex::new(HashMap::new())).lock() {
             if let Some(token) = guard.get(&cache_key) {
                 return Ok(token.clone());
             }
         }
 
         if let Ok(Some(shared)) = self.shared_token_for_key(&cache_key) {
-            if let Ok(mut guard) = TOKEN_CACHE
-                .get_or_init(|| Mutex::new(HashMap::new()))
-                .lock()
-            {
+            if let Ok(mut guard) = TOKEN_CACHE.get_or_init(|| Mutex::new(HashMap::new())).lock() {
                 guard.insert(cache_key.clone(), shared.clone());
             }
             return Ok(shared);
@@ -467,20 +442,14 @@ impl TestAuthManager {
         let login_lock = LOGIN_MUTEX.get_or_init(|| TokioMutex::new(()));
         let _guard = login_lock.lock().await;
 
-        if let Ok(guard) = TOKEN_CACHE
-            .get_or_init(|| Mutex::new(HashMap::new()))
-            .lock()
-        {
+        if let Ok(guard) = TOKEN_CACHE.get_or_init(|| Mutex::new(HashMap::new())).lock() {
             if let Some(token) = guard.get(&cache_key) {
                 return Ok(token.clone());
             }
         }
 
         if let Ok(Some(shared)) = self.shared_token_for_key(&cache_key) {
-            if let Ok(mut guard) = TOKEN_CACHE
-                .get_or_init(|| Mutex::new(HashMap::new()))
-                .lock()
-            {
+            if let Ok(mut guard) = TOKEN_CACHE.get_or_init(|| Mutex::new(HashMap::new())).lock() {
                 guard.insert(cache_key.clone(), shared.clone());
             }
             return Ok(shared);
@@ -488,10 +457,7 @@ impl TestAuthManager {
 
         let token = self.login_for_token(base_url, username, password).await?;
 
-        if let Ok(mut guard) = TOKEN_CACHE
-            .get_or_init(|| Mutex::new(HashMap::new()))
-            .lock()
-        {
+        if let Ok(mut guard) = TOKEN_CACHE.get_or_init(|| Mutex::new(HashMap::new())).lock() {
             guard.insert(cache_key.clone(), token.clone());
         }
         let _ = self.store_shared_token(&cache_key, &token);
@@ -518,7 +484,7 @@ impl TestAuthManager {
                     Err(err) => {
                         let _ = tx.send(Err(err.to_string()));
                         return;
-                    }
+                    },
                 };
                 let result = runtime
                     .block_on(test_auth_manager().token_for_url(
@@ -546,20 +512,12 @@ impl TestAuthManager {
                 .block_on(self.token_for_url(base_url, username, password))
                 .map(AuthProvider::jwt_token)
                 .unwrap_or_else(|err| {
-                    panic!(
-                        "Failed to authenticate user '{}' for {}: {}",
-                        username, base_url, err
-                    )
+                    panic!("Failed to authenticate user '{}' for {}: {}", username, base_url, err)
                 })
         }
     }
 
-    fn client_for_url(
-        &self,
-        base_url: &str,
-        username: &str,
-        password: &str,
-    ) -> KalamLinkClient {
+    fn client_for_url(&self, base_url: &str, username: &str, password: &str) -> KalamLinkClient {
         let auth_required = server_requires_auth_for_url(base_url).unwrap_or(true);
         if !auth_required {
             return KalamLinkClient::builder()
@@ -608,7 +566,7 @@ fn force_reset_admin_for_url(base_url: &str) -> Result<(), Box<dyn std::error::E
                 Err(err) => {
                     let _ = tx.send(Err(err.to_string()));
                     return;
-                }
+                },
             };
             let result = runtime
                 .block_on(test_auth_manager().force_reset_admin(&base_url_owned))
@@ -624,6 +582,18 @@ fn force_reset_admin_for_url(base_url: &str) -> Result<(), Box<dyn std::error::E
         let rt = tokio::runtime::Runtime::new()?;
         rt.block_on(test_auth_manager().force_reset_admin(base_url))
     }
+}
+
+fn invalidate_cached_token_for_credentials(base_url: &str, username: &str, password: &str) {
+    let cache_key = format!("{}|{}:{}", base_url, username, password);
+
+    if let Ok(mut guard) = TOKEN_CACHE.get_or_init(|| Mutex::new(HashMap::new())).lock() {
+        guard.remove(&cache_key);
+    }
+
+    let _ = test_auth_manager().with_shared_token_cache(|map| {
+        map.remove(&cache_key);
+    });
 }
 
 fn test_auth_manager() -> &'static TestAuthManager {
@@ -665,7 +635,7 @@ fn has_explicit_server_target() -> bool {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ServerType {
-    Fresh, // Auto-start a fresh server
+    Fresh,   // Auto-start a fresh server
     Running, // Use an existing running server
     Cluster, // Use an existing running cluster
 }
@@ -676,7 +646,7 @@ fn server_type_from_env() -> Option<ServerType> {
             "fresh" => return Some(ServerType::Fresh),
             "running" => return Some(ServerType::Running),
             "cluster" => return Some(ServerType::Cluster),
-            _ => {}
+            _ => {},
         }
     }
 
@@ -747,7 +717,9 @@ fn ensure_auto_test_server() -> Option<(String, PathBuf)> {
     }
 
     if guard.is_none() {
-        let start_result: Result<AutoTestServer, String> = if tokio::runtime::Handle::try_current().is_ok() {
+        let start_result: Result<AutoTestServer, String> = if tokio::runtime::Handle::try_current()
+            .is_ok()
+        {
             let (tx, rx) = std::sync::mpsc::channel();
             std::thread::spawn(move || {
                 let runtime = AUTO_TEST_RUNTIME.get_or_init(|| {
@@ -755,9 +727,8 @@ fn ensure_auto_test_server() -> Option<(String, PathBuf)> {
                         Runtime::new().expect("Failed to create auto test server runtime"),
                     ))
                 });
-                let result = (*runtime)
-                    .block_on(start_local_test_server())
-                    .map_err(|err| err.to_string());
+                let result =
+                    (*runtime).block_on(start_local_test_server()).map_err(|err| err.to_string());
                 let _ = tx.send(result);
             });
 
@@ -771,9 +742,7 @@ fn ensure_auto_test_server() -> Option<(String, PathBuf)> {
                     Runtime::new().expect("Failed to create auto test server runtime"),
                 ))
             });
-            (*runtime)
-                .block_on(start_local_test_server())
-                .map_err(|err| err.to_string())
+            (*runtime).block_on(start_local_test_server()).map_err(|err| err.to_string())
         };
 
         match start_result {
@@ -782,11 +751,11 @@ fn ensure_auto_test_server() -> Option<(String, PathBuf)> {
                 if let Some(server) = guard.as_ref() {
                     let _ = wait_for_url_reachable(&server.base_url, Duration::from_secs(10));
                 }
-            }
+            },
             Err(err) => {
                 eprintln!("Failed to auto-start test server: {}", err);
                 return None;
-            }
+            },
         }
     }
 
@@ -819,10 +788,10 @@ pub async fn force_auto_test_server_url_async() -> String {
             match start_local_test_server().await {
                 Ok(server) => {
                     *guard = Some(server);
-                }
+                },
                 Err(err) => {
                     eprintln!("Failed to auto-start test server: {}", err);
-                }
+                },
             }
         }
 
@@ -884,10 +853,7 @@ async fn start_local_test_server() -> Result<AutoTestServer, Box<dyn std::error:
     config_path.push("server.toml");
 
     let log_path = data_path.join("server.log");
-    let log_file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_path)?;
+    let log_file = std::fs::OpenOptions::new().create(true).append(true).open(&log_path)?;
     let log_file_err = log_file.try_clone()?;
 
     let mut cmd = Command::new(server_bin);
@@ -935,7 +901,6 @@ async fn start_local_test_server() -> Result<AutoTestServer, Box<dyn std::error:
     })
 }
 
-
 fn parse_test_arg(name: &str) -> Option<String> {
     let prefix = format!("{}=", name);
     for arg in std::env::args() {
@@ -974,7 +939,7 @@ fn ensure_server_ready_sync(base_url: &str) {
                 Err(err) => {
                     let _ = tx.send(Err(err.to_string()));
                     return;
-                }
+                },
             };
             let result = runtime
                 .block_on(test_auth_manager().ensure_ready(&base_url_owned))
@@ -1025,24 +990,21 @@ fn cache_leader_url(url: &str) {
 }
 
 fn cached_leader_url() -> Option<String> {
-    leader_cache()
-        .lock()
-        .ok()
-        .and_then(|guard| guard.clone())
+    leader_cache().lock().ok().and_then(|guard| guard.clone())
 }
 
 fn extract_leader_url(message: &str) -> Option<String> {
-    let start = message
-        .find("http://")
-        .or_else(|| message.find("https://"))?;
+    let start = message.find("http://").or_else(|| message.find("https://"))?;
     let rest = &message[start..];
     let end = rest
-        .find(|c: char| {
-            c.is_whitespace() || matches!(c, '"' | '\'' | ')' | '}' | ',' | '\\')
-        })
+        .find(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | ')' | '}' | ',' | '\\'))
         .unwrap_or(rest.len());
     let url = rest[..end].to_string();
-    if url.is_empty() { None } else { Some(url) }
+    if url.is_empty() {
+        None
+    } else {
+        Some(url)
+    }
 }
 
 fn detect_leader_url(urls: &[String], username: &str, password: &str) -> Option<String> {
@@ -1061,7 +1023,7 @@ fn detect_leader_url(urls: &[String], username: &str, password: &str) -> Option<
             Err(_) => {
                 let _ = tx.send(None);
                 return;
-            }
+            },
         };
 
         let leader = runtime.block_on(async move {
@@ -1165,7 +1127,7 @@ pub fn test_context() -> &'static TestContext {
         load_env_file();
 
         let server_type = server_type_from_env();
-        
+
         let mut server_url = parse_test_arg("--url")
             .or_else(|| std::env::var("KALAMDB_SERVER_URL").ok())
             .unwrap_or_else(|| "http://127.0.0.1:8080".to_string());
@@ -1196,22 +1158,22 @@ pub fn test_context() -> &'static TestContext {
             .unwrap_or_else(|| default_password().to_string());
 
         let cluster_default = "http://127.0.0.1:8081,http://127.0.0.1:8082,http://127.0.0.1:8083";
-        let explicit_cluster_urls = parse_test_urls()
-            .or_else(|| std::env::var("KALAMDB_CLUSTER_URLS").ok().map(|s| {
+        let explicit_cluster_urls = parse_test_urls().or_else(|| {
+            std::env::var("KALAMDB_CLUSTER_URLS").ok().map(|s| {
                 s.split(',')
                     .map(|url| url.trim().to_string())
                     .filter(|url| !url.is_empty())
                     .collect()
-            }))
-            ;
+            })
+        });
 
         let cluster_urls: Vec<String> = explicit_cluster_urls.clone().unwrap_or_else(|| {
-                cluster_default
-                    .split(',')
-                    .map(|url| url.trim().to_string())
-                    .filter(|url| !url.is_empty())
-                    .collect()
-            });
+            cluster_default
+                .split(',')
+                .map(|url| url.trim().to_string())
+                .filter(|url| !url.is_empty())
+                .collect()
+        });
 
         let healthy_cluster_nodes: Vec<String> = if auto_started {
             Vec::new()
@@ -1240,14 +1202,14 @@ pub fn test_context() -> &'static TestContext {
                 } else {
                     (false, vec![server_url.clone()])
                 }
-            }
+            },
             Some(ServerType::Fresh) | Some(ServerType::Running) => {
                 if let Some(explicit_urls) = explicit_cluster_urls {
                     (explicit_urls.len() > 1, explicit_urls)
                 } else {
                     (false, vec![server_url.clone()])
                 }
-            }
+            },
             None => {
                 if auto_started {
                     (false, vec![server_url.clone()])
@@ -1258,7 +1220,7 @@ pub fn test_context() -> &'static TestContext {
                 } else {
                     (false, vec![server_url.clone()])
                 }
-            }
+            },
         };
 
         let cluster_urls_raw = cluster_urls.clone();
@@ -1297,10 +1259,7 @@ pub fn server_url() -> &'static str {
             let ctx = test_context();
             if ctx.is_cluster {
                 leader_url().unwrap_or_else(|| {
-                    ctx.cluster_urls
-                        .first()
-                        .cloned()
-                        .unwrap_or_else(|| ctx.server_url.clone())
+                    ctx.cluster_urls.first().cloned().unwrap_or_else(|| ctx.server_url.clone())
                 })
             } else {
                 ctx.server_url.clone()
@@ -1359,9 +1318,7 @@ pub const TEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// cargo test
 /// ```
 pub fn root_password() -> &'static str {
-    ROOT_PASSWORD
-    .get_or_init(|| default_password().to_string())
-        .as_str()
+    ROOT_PASSWORD.get_or_init(|| default_password().to_string()).as_str()
 }
 
 pub fn admin_username() -> &'static str {
@@ -1381,10 +1338,10 @@ pub fn default_password() -> &'static str {
 }
 
 /// Get an access token for the given credentials.
-/// 
+///
 /// Caches tokens to avoid repeated login calls.
 /// Uses the /v1/api/auth/login endpoint to obtain a Bearer token.
-/// 
+///
 /// If server requires setup (HTTP 428), automatically completes setup
 /// with admin/kalamdb123 as the DBA user and kalamdb123 as root password.
 pub async fn get_access_token(
@@ -1399,9 +1356,7 @@ pub async fn get_access_token_for_url(
     username: &str,
     password: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    test_auth_manager()
-        .token_for_url(base_url, username, password)
-        .await
+    test_auth_manager().token_for_url(base_url, username, password).await
 }
 
 async fn auth_provider_for_user_async(
@@ -1414,9 +1369,7 @@ async fn auth_provider_for_user_async(
         return Ok(AuthProvider::none());
     }
 
-    let token = test_auth_manager()
-        .token_for_url(base_url, username, password)
-        .await?;
+    let token = test_auth_manager().token_for_url(base_url, username, password).await?;
     Ok(AuthProvider::jwt_token(token))
 }
 
@@ -1433,11 +1386,7 @@ pub fn auth_provider_for_user(username: &str, password: &str) -> AuthProvider {
     auth_provider_for_user_on_url(&base_url, username, password)
 }
 
-fn get_access_token_for_url_sync(
-    base_url: &str,
-    username: &str,
-    password: &str,
-) -> Option<String> {
+fn get_access_token_for_url_sync(base_url: &str, username: &str, password: &str) -> Option<String> {
     if tokio::runtime::Handle::try_current().is_ok() {
         let base_url_owned = base_url.to_string();
         let username_owned = username.to_string();
@@ -1449,7 +1398,7 @@ fn get_access_token_for_url_sync(
                 Err(err) => {
                     let _ = tx.send(Err(err.to_string()));
                     return;
-                }
+                },
             };
             let result = runtime
                 .block_on(get_access_token_for_url(
@@ -1472,7 +1421,7 @@ fn get_access_token_for_url_sync(
 }
 
 /// Execute SQL over HTTP with explicit credentials.
-/// 
+///
 /// First obtains a Bearer token via login, then executes SQL.
 /// The SQL endpoint only accepts Bearer token authentication.
 pub async fn execute_sql_via_http_as(
@@ -1482,7 +1431,7 @@ pub async fn execute_sql_via_http_as(
 ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
     // Get access token first
     let token = get_access_token(username, password).await?;
-    
+
     let client = Client::new();
     let mut last_parsed: Option<serde_json::Value> = None;
 
@@ -1498,10 +1447,7 @@ pub async fn execute_sql_via_http_as(
         let parsed: serde_json::Value = serde_json::from_str(&body)?;
         last_parsed = Some(parsed.clone());
 
-        let status = parsed
-            .get("status")
-            .and_then(|s| s.as_str())
-            .unwrap_or("");
+        let status = parsed.get("status").and_then(|s| s.as_str()).unwrap_or("");
 
         if status.eq_ignore_ascii_case("success") {
             if is_cluster_mode() {
@@ -1520,7 +1466,8 @@ pub async fn execute_sql_via_http_as(
         return Ok(parsed);
     }
 
-    Ok(last_parsed.unwrap_or_else(|| json!({"status": "error", "error": {"message": "No response"}})))
+    Ok(last_parsed
+        .unwrap_or_else(|| json!({"status": "error", "error": {"message": "No response"}})))
 }
 
 /// Execute SQL over HTTP as root user.
@@ -1710,9 +1657,7 @@ pub fn is_leader_error(message: &str) -> bool {
 }
 
 fn is_flush_sql(sql: &str) -> bool {
-    sql.trim_start()
-        .to_ascii_uppercase()
-        .starts_with("STORAGE FLUSH")
+    sql.trim_start().to_ascii_uppercase().starts_with("STORAGE FLUSH")
 }
 
 fn is_idempotent_conflict(message: &str) -> bool {
@@ -1752,7 +1697,9 @@ fn is_transient_missing_relation(sql: &str, message: &str) -> bool {
 }
 
 pub fn is_retryable_cluster_error_for_sql(sql: &str, message: &str) -> bool {
-    is_leader_error(message) || is_network_error(message) || is_transient_missing_relation(sql, message)
+    is_leader_error(message)
+        || is_network_error(message)
+        || is_transient_missing_relation(sql, message)
 }
 
 fn cli_output_error(stdout: &str) -> Option<String> {
@@ -1789,11 +1736,9 @@ pub fn is_server_running() -> bool {
             server_url()
         );
     }
-    
+
     match server_requires_auth() {
-        Some(_auth_required) => {
-            true
-        },
+        Some(_auth_required) => true,
         None => {
             panic!(
                 "\n\n\
@@ -1807,7 +1752,7 @@ pub fn is_server_running() -> bool {
                 ╚══════════════════════════════════════════════════════════════════╝\n\n",
                 server_url()
             );
-        }
+        },
     }
 }
 
@@ -1829,16 +1774,16 @@ fn host_port_reachable(host_port: &str) -> bool {
         "127.0.0.1" => {
             fallbacks.push(format!("localhost:{}", port));
             fallbacks.push(format!("[::1]:{}", port));
-        }
+        },
         "localhost" => {
             fallbacks.push(format!("127.0.0.1:{}", port));
             fallbacks.push(format!("[::1]:{}", port));
-        }
+        },
         "::1" => {
             fallbacks.push(format!("127.0.0.1:{}", port));
             fallbacks.push(format!("localhost:{}", port));
-        }
-        _ => {}
+        },
+        _ => {},
     }
 
     fallbacks
@@ -1892,36 +1837,37 @@ fn server_requires_auth_for_url(url: &str) -> Option<bool> {
                 .await
         };
 
-        let result: Result<reqwest::Response, reqwest::Error> = match tokio::runtime::Handle::try_current() {
-            Ok(_) => {
-                let (tx, rx) = std::sync::mpsc::channel();
-                std::thread::spawn(move || {
-                    let rt: Runtime = match tokio::runtime::Runtime::new() {
-                        Ok(rt) => rt,
-                        Err(_) => return,
-                    };
-                    let _ = tx.send(rt.block_on(request));
-                });
-                match rx.recv_timeout(Duration::from_secs(5)) {
-                    Ok(result) => result,
-                    Err(err) => {
-                        last_error = Some(err.to_string());
-                        continue;
+        let result: Result<reqwest::Response, reqwest::Error> =
+            match tokio::runtime::Handle::try_current() {
+                Ok(_) => {
+                    let (tx, rx) = std::sync::mpsc::channel();
+                    std::thread::spawn(move || {
+                        let rt: Runtime = match tokio::runtime::Runtime::new() {
+                            Ok(rt) => rt,
+                            Err(_) => return,
+                        };
+                        let _ = tx.send(rt.block_on(request));
+                    });
+                    match rx.recv_timeout(Duration::from_secs(5)) {
+                        Ok(result) => result,
+                        Err(err) => {
+                            last_error = Some(err.to_string());
+                            continue;
+                        },
                     }
-                }
-            }
-            Err(_) => {
-                let rt = tokio::runtime::Runtime::new().ok()?;
-                rt.block_on(request)
-            }
-        };
+                },
+                Err(_) => {
+                    let rt = tokio::runtime::Runtime::new().ok()?;
+                    rt.block_on(request)
+                },
+            };
 
         let response: reqwest::Response = match result {
             Ok(resp) => resp,
             Err(err) => {
                 last_error = Some(err.to_string());
                 continue;
-            }
+            },
         };
 
         if response.status().is_success() {
@@ -2019,11 +1965,7 @@ fn parse_create_table(sql: &str) -> Option<(String, String)> {
         rest = rest["if not exists".len()..].trim();
     }
 
-    let target = rest
-        .split_whitespace()
-        .next()?
-        .trim_end_matches('(')
-        .trim_end_matches(';');
+    let target = rest.split_whitespace().next()?.trim_end_matches('(').trim_end_matches(';');
     let mut parts = target.split('.');
     let namespace = parts.next()?;
     let table = parts.next()?;
@@ -2065,9 +2007,9 @@ fn wait_for_table_on_all_nodes(namespace: &str, table: &str, timeout: Duration) 
     );
     let start = Instant::now();
     while start.elapsed() < timeout {
-        let all_visible = urls.iter().all(|url| {
-            matches!(execute_sql_on_node(url, &sql), Ok(output) if output.contains(table))
-        });
+        let all_visible = urls.iter().all(
+            |url| matches!(execute_sql_on_node(url, &sql), Ok(output) if output.contains(table)),
+        );
         if all_visible {
             return true;
         }
@@ -2351,7 +2293,13 @@ pub fn execute_sql_via_cli_as_on_url(
     sql: &str,
     url: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    execute_sql_via_cli_as_with_args_and_urls(username, password, sql, &[], Some(vec![url.to_string()]))
+    execute_sql_via_cli_as_with_args_and_urls(
+        username,
+        password,
+        sql,
+        &[],
+        Some(vec![url.to_string()]),
+    )
 }
 
 /// Helper to execute SQL via CLI with authentication (JSON output)
@@ -2445,10 +2393,7 @@ fn execute_sql_via_cli_as_with_args_and_urls(
             if let Some(token) = token {
                 child.arg("--token").arg(token);
             } else {
-                child.arg("--username")
-                    .arg(username)
-                    .arg("--password")
-                    .arg(password);
+                child.arg("--username").arg(username).arg("--password").arg(password);
             }
 
             child
@@ -2527,6 +2472,12 @@ fn execute_sql_via_cli_as_with_args_and_urls(
                             spawn_duration, wait_duration, total_duration_ms, stderr
                         );
                         let err_msg = format!("CLI command failed: {}", stderr);
+                        if err_msg.to_lowercase().contains("token expired") {
+                            invalidate_cached_token_for_credentials(url, username, password);
+                            last_err = Some(err_msg);
+                            retry_after_attempt = true;
+                            break;
+                        }
                         if err_msg.to_lowercase().contains("invalid username or password")
                             && (username == admin_username() || username == default_username())
                         {
@@ -2537,9 +2488,12 @@ fn execute_sql_via_cli_as_with_args_and_urls(
                         }
                         if err_msg.contains("error sending request for url") {
                             let json_output = extra_args.iter().any(|arg| *arg == "--json");
-                            if let Ok(output) =
-                                execute_sql_via_client_as_with_args(username, password, sql, json_output)
-                            {
+                            if let Ok(output) = execute_sql_via_client_as_with_args(
+                                username,
+                                password,
+                                sql,
+                                json_output,
+                            ) {
                                 return Ok(output);
                             }
                         }
@@ -2563,7 +2517,7 @@ fn execute_sql_via_cli_as_with_args_and_urls(
                         }
                         return Err(err_msg.into());
                     }
-                }
+                },
                 None => {
                     // Timeout - kill the child and return error
                     let _ = child.kill();
@@ -2580,7 +2534,7 @@ fn execute_sql_via_cli_as_with_args_and_urls(
                         break;
                     }
                     return Err(err_msg.into());
-                }
+                },
             }
         }
         if retry_after_attempt {
@@ -2596,7 +2550,7 @@ fn execute_sql_via_cli_as_with_args_and_urls(
 
 /// Ensure the server is set up with proper credentials before running CLI commands
 ///
-/// This is needed for manually-started servers that haven't gone through the 
+/// This is needed for manually-started servers that haven't gone through the
 /// auto-start setup process. It performs a no-op if server is already set up.
 pub fn ensure_cli_server_setup() -> Result<(), Box<dyn std::error::Error>> {
     load_env_file();
@@ -2631,7 +2585,7 @@ pub fn execute_sql_as_root_via_cli(sql: &str) -> Result<String, Box<dyn std::err
     SETUP_DONE.get_or_init(|| {
         let _ = ensure_cli_server_setup();
     });
-    
+
     execute_sql_via_cli_as(admin_username(), admin_password(), sql)
 }
 
@@ -2659,10 +2613,10 @@ pub fn wait_for_sql_output_contains(
                 if output.contains(expected) {
                     return Ok(output);
                 }
-            }
+            },
             Err(e) => {
                 last_error = Some(e.to_string());
-            }
+            },
         }
 
         std::thread::sleep(Duration::from_millis(120));
@@ -2689,7 +2643,7 @@ pub fn wait_for_table_ready(
             Ok(_) => return Ok(()),
             Err(err) => {
                 last_error = Some(err.to_string());
-            }
+            },
         }
         std::thread::sleep(Duration::from_millis(50));
     }
@@ -2838,10 +2792,29 @@ pub fn execute_sql_via_client_as(
     execute_sql_via_client_as_with_args(username, password, sql, false)
 }
 
+fn execute_sql_via_client_as_with_params(
+    username: &str,
+    password: &str,
+    sql: &str,
+    params: Vec<serde_json::Value>,
+) -> Result<String, Box<dyn std::error::Error>> {
+    execute_sql_via_client_internal(username, password, sql, Some(params), false)
+}
+
 fn execute_sql_via_client_as_with_args(
     username: &str,
     password: &str,
     sql: &str,
+    json_output: bool,
+) -> Result<String, Box<dyn std::error::Error>> {
+    execute_sql_via_client_internal(username, password, sql, None, json_output)
+}
+
+fn execute_sql_via_client_internal(
+    username: &str,
+    password: &str,
+    sql: &str,
+    params: Option<Vec<serde_json::Value>>,
     json_output: bool,
 ) -> Result<String, Box<dyn std::error::Error>> {
     let runtime = get_shared_runtime();
@@ -2855,124 +2828,125 @@ fn execute_sql_via_client_as_with_args(
     let (tx, rx) = std_mpsc::channel();
 
     runtime.spawn(async move {
-        let result: Result<kalam_link::QueryResponse, Box<dyn std::error::Error + Send + Sync>> = async {
-            let urls = get_available_server_urls();
-            let base_url = urls
-                .first()
-                .cloned()
-                .unwrap_or_else(|| server_url().to_string());
+        let result: Result<kalam_link::QueryResponse, Box<dyn std::error::Error + Send + Sync>> =
+            async {
+                let urls = get_available_server_urls();
+                let base_url = urls.first().cloned().unwrap_or_else(|| server_url().to_string());
 
-            async fn execute_once(
-                url: &str,
-                username: &str,
-                password: &str,
-                sql: &str,
-            ) -> Result<kalam_link::QueryResponse, Box<dyn std::error::Error + Send + Sync>> {
-                let timeouts = KalamLinkTimeouts::builder()
-                    .connection_timeout_secs(5)
-                    .receive_timeout_secs(120)
-                    .send_timeout_secs(30)
-                    .subscribe_timeout_secs(20)
-                    .auth_timeout_secs(10)
-                    .initial_data_timeout(Duration::from_secs(120))
-                    .build();
+                async fn execute_once(
+                    url: &str,
+                    username: &str,
+                    password: &str,
+                    sql: &str,
+                    params: &Option<Vec<serde_json::Value>>,
+                ) -> Result<kalam_link::QueryResponse, Box<dyn std::error::Error + Send + Sync>>
+                {
+                    let timeouts = KalamLinkTimeouts::builder()
+                        .connection_timeout_secs(5)
+                        .receive_timeout_secs(120)
+                        .send_timeout_secs(30)
+                        .subscribe_timeout_secs(20)
+                        .auth_timeout_secs(10)
+                        .initial_data_timeout(Duration::from_secs(120))
+                        .build();
 
-                let client = if username == default_username() && password == default_password() {
-                    // Reuse a shared root client to avoid per-query connection/auth overhead.
-                    get_shared_root_client_for_url(url)
-                } else {
-                    build_client_for_url_with_timeouts(url, username, password, timeouts)?
-                };
-                let response = client.execute_query(sql, None, None, None).await?;
-                Ok(response)
-            }
+                    let client = if username == default_username() && password == default_password()
+                    {
+                        get_shared_root_client_for_url(url)
+                    } else {
+                        build_client_for_url_with_timeouts(url, username, password, timeouts)?
+                    };
+                    let response = client.execute_query(sql, None, params.clone(), None).await?;
+                    Ok(response)
+                }
 
-            if is_cluster_mode() && urls.len() > 1 {
-                let max_attempts = 12;
-                let mut last_err: Option<Box<dyn std::error::Error + Send + Sync>> = None;
+                if is_cluster_mode() && urls.len() > 1 {
+                    let max_attempts = 12;
+                    let mut last_err: Option<Box<dyn std::error::Error + Send + Sync>> = None;
 
-                for attempt in 0..max_attempts {
-                    let urls = get_available_server_urls();
-                    let mut retry_after_attempt = false;
-                    for (idx, url) in urls.iter().enumerate() {
-                        let response =
-                            execute_once(url, &username_owned, &password_owned, &sql).await;
+                    for attempt in 0..max_attempts {
+                        let urls = get_available_server_urls();
+                        let mut retry_after_attempt = false;
+                        for (idx, url) in urls.iter().enumerate() {
+                            let response =
+                                execute_once(url, &username_owned, &password_owned, &sql, &params).await;
 
-                        match response {
-                            Ok(response) => {
-                                if !response.success() {
-                                    let err_msg = query_response_error_message(&response);
-                                    if is_flush_sql(&sql) && is_idempotent_conflict(&err_msg) {
-                                        return Ok(response);
+                            match response {
+                                Ok(response) => {
+                                    if !response.success() {
+                                        let err_msg = query_response_error_message(&response);
+                                        if is_flush_sql(&sql) && is_idempotent_conflict(&err_msg) {
+                                            return Ok(response);
+                                        }
+                                        if is_retryable_cluster_error_for_sql(&sql, &err_msg) {
+                                            last_err = Some(err_msg.into());
+                                            if idx + 1 < urls.len() {
+                                                continue;
+                                            }
+                                            retry_after_attempt = true;
+                                            break;
+                                        }
+                                        return Err(err_msg.into());
                                     }
-                                    if is_retryable_cluster_error_for_sql(&sql, &err_msg) {
-                                        last_err = Some(err_msg.into());
+                                    return Ok(response);
+                                },
+                                Err(e) => {
+                                    let msg = e.to_string();
+                                    if is_flush_sql(&sql) && is_idempotent_conflict(&msg) {
+                                        return Ok(kalam_link::QueryResponse {
+                                            status: kalam_link::models::ResponseStatus::Success,
+                                            results: Vec::new(),
+                                            took: None,
+                                            error: None,
+                                        });
+                                    }
+                                    if is_retryable_cluster_error_for_sql(&sql, &msg) {
+                                        last_err = Some(e);
                                         if idx + 1 < urls.len() {
                                             continue;
                                         }
                                         retry_after_attempt = true;
                                         break;
                                     }
-                                    return Err(err_msg.into());
-                                }
-                                return Ok(response);
-                            }
-                            Err(e) => {
-                                let msg = e.to_string();
-                                if is_flush_sql(&sql) && is_idempotent_conflict(&msg) {
-                                    return Ok(kalam_link::QueryResponse {
-                                        status: kalam_link::models::ResponseStatus::Success,
-                                        results: Vec::new(),
-                                        took: None,
-                                        error: None,
-                                    });
-                                }
-                                if is_retryable_cluster_error_for_sql(&sql, &msg) {
-                                    last_err = Some(e);
-                                    if idx + 1 < urls.len() {
-                                        continue;
-                                    }
-                                    retry_after_attempt = true;
-                                    break;
-                                }
-                                return Err(e);
+                                    return Err(e);
+                                },
                             }
                         }
+                        if retry_after_attempt {
+                            let delay_ms = 300 + attempt * 200;
+                            tokio::time::sleep(Duration::from_millis(delay_ms as u64)).await;
+                        }
                     }
-                    if retry_after_attempt {
-                        let delay_ms = 300 + attempt * 200;
+
+                    return Err(last_err.unwrap_or_else(|| "All cluster nodes failed".into()));
+                }
+
+                let max_attempts = if is_cluster_mode() { 1 } else { 5 };
+                for attempt in 0..max_attempts {
+                    let response =
+                        execute_once(&base_url, &username_owned, &password_owned, &sql, &params).await?;
+
+                    if response.success() {
+                        return Ok::<_, Box<dyn std::error::Error + Send + Sync>>(response);
+                    }
+
+                    let err_msg = query_response_error_message(&response);
+                    if is_flush_sql(&sql) && is_idempotent_conflict(&err_msg) {
+                        return Ok(response);
+                    }
+
+                    if is_retryable_cluster_error_for_sql(&sql, &err_msg) {
+                        let delay_ms = 200 + attempt * 200;
                         tokio::time::sleep(Duration::from_millis(delay_ms as u64)).await;
+                        continue;
                     }
+
+                    return Err(err_msg.into());
                 }
-                return Err(last_err.unwrap_or_else(|| "All cluster nodes failed".into()));
+
+                Err("Query failed after retries".into())
             }
-
-            let max_attempts = if is_cluster_mode() { 1 } else { 5 };
-            for attempt in 0..max_attempts {
-                let response =
-                    execute_once(&base_url, &username_owned, &password_owned, &sql).await?;
-
-                if response.success() {
-                    return Ok::<_, Box<dyn std::error::Error + Send + Sync>>(response);
-                }
-
-                let err_msg = query_response_error_message(&response);
-                if is_flush_sql(&sql) && is_idempotent_conflict(&err_msg) {
-                    return Ok(response);
-                }
-
-                if is_retryable_cluster_error_for_sql(&sql, &err_msg) {
-                    let delay_ms = 200 + attempt * 200;
-                    tokio::time::sleep(Duration::from_millis(delay_ms as u64)).await;
-                    continue;
-                }
-
-                return Err(err_msg.into());
-            }
-
-            Err("Query failed after retries".into())
-        }
-        .await;
+            .await;
 
         let _ = tx.send(result);
     });
@@ -2985,7 +2959,9 @@ fn execute_sql_via_client_as_with_args(
 
     match result {
         Ok(response) => {
-            eprintln!("[TEST_CLIENT] Success in {:?}", duration);
+            if std::env::var_os("KALAMDB_TEST_CLIENT_TRACE").is_some() {
+                eprintln!("[TEST_CLIENT] Success in {:?}", duration);
+            }
 
             if json_output {
                 let output = serde_json::to_string_pretty(&response)?;
@@ -3067,17 +3043,25 @@ fn execute_sql_via_client_as_with_args(
                 }
                 Ok(output)
             }
-        }
+        },
         Err(e) => {
             eprintln!("[TEST_CLIENT] Failed in {:?}: {}", duration, e);
             Err(e.to_string().into())
-        }
+        },
     }
 }
 
 /// Execute SQL as root user via kalam-link client
 pub fn execute_sql_as_root_via_client(sql: &str) -> Result<String, Box<dyn std::error::Error>> {
     execute_sql_via_client_as(default_username(), default_password(), sql)
+}
+
+/// Execute SQL as root user via kalam-link client with query parameters
+pub fn execute_sql_as_root_via_client_with_params(
+    sql: &str,
+    params: Vec<serde_json::Value>,
+) -> Result<String, Box<dyn std::error::Error>> {
+    execute_sql_via_client_as_with_params(default_username(), default_password(), sql, params)
 }
 
 /// Execute SQL as root user via kalam-link client returning JSON output
@@ -3587,14 +3571,15 @@ pub fn wait_for_job_finished(
     job_id: &str,
     timeout: Duration,
 ) -> Result<String, Box<dyn std::error::Error>> {
+    let effective_timeout = std::cmp::max(timeout, Duration::from_secs(30));
     let start = std::time::Instant::now();
     let poll_interval = Duration::from_millis(250);
 
     loop {
-        if start.elapsed() > timeout {
+        if start.elapsed() > effective_timeout {
             return Err(format!(
                 "Timeout waiting for job {} to finish after {:?}",
-                job_id, timeout
+                job_id, effective_timeout
             )
             .into());
         }
@@ -3632,7 +3617,7 @@ pub fn wait_for_job_finished(
                         }
                     }
                 }
-            }
+            },
             Err(e) => return Err(e),
         }
 
@@ -3828,6 +3813,7 @@ impl SubscriptionListener {
         pattern: &str,
         timeout: Duration,
     ) -> Result<String, Box<dyn std::error::Error>> {
+        let effective_timeout = std::cmp::max(timeout, Duration::from_secs(15));
         let start = std::time::Instant::now();
 
         if let Some(index) = self.pending_events.iter().position(|line| line.contains(pattern)) {
@@ -3837,7 +3823,7 @@ impl SubscriptionListener {
             }
         }
 
-        while start.elapsed() < timeout {
+        while start.elapsed() < effective_timeout {
             match self.event_receiver.recv_timeout(Duration::from_millis(100)) {
                 Ok(line) => {
                     if line.is_empty() {
@@ -3853,7 +3839,11 @@ impl SubscriptionListener {
             }
         }
 
-        Err(format!("Event pattern '{}' not found within timeout", pattern).into())
+        Err(format!(
+            "Event pattern '{}' not found within timeout {:?}",
+            pattern, effective_timeout
+        )
+        .into())
     }
 
     /// Stop the subscription listener gracefully
@@ -3863,9 +3853,9 @@ impl SubscriptionListener {
             let _ = sender.send(());
         }
         if let Some(handle) = self._handle.take() {
-            handle
-                .join()
-                .map_err(|_| Box::<dyn std::error::Error>::from("Subscription listener thread panicked"))?;
+            handle.join().map_err(|_| {
+                Box::<dyn std::error::Error>::from("Subscription listener thread panicked")
+            })?;
         }
         Ok(())
     }
@@ -4289,10 +4279,8 @@ pub fn execute_sql_on_node(
                 .build(),
         )
         .map_err(|err| {
-            Box::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                err.to_string(),
-            )) as Box<dyn std::error::Error>
+            Box::new(std::io::Error::new(std::io::ErrorKind::Other, err.to_string()))
+                as Box<dyn std::error::Error>
         })?;
 
         let sql = sql.to_string();

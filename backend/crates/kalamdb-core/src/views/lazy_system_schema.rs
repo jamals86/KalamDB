@@ -120,7 +120,8 @@ impl LazySystemSchemaProvider {
         // Create and cache
         let stats_view = Arc::new(StatsView::new());
         let provider = Arc::new(StatsTableProvider::new(Arc::clone(&stats_view)));
-        let secured = secure_provider(provider as Arc<dyn TableProvider>, SystemTable::Stats.table_id());
+        let secured =
+            secure_provider(provider as Arc<dyn TableProvider>, SystemTable::Stats.table_id());
         self.view_cache.insert("stats".to_string(), secured);
         stats_view
     }
@@ -147,7 +148,7 @@ impl LazySystemSchemaProvider {
     fn get_persisted_table(&self, name: &str) -> Option<Arc<dyn TableProvider>> {
         // Parse table name to SystemTable enum
         let system_table = SystemTable::from_name(name).ok()?;
-        
+
         // Only return persisted tables (not virtual views)
         if system_table.is_view() {
             return None;
@@ -164,7 +165,7 @@ impl LazySystemSchemaProvider {
     /// Get or create virtual view provider (lazy path - cached after first access)
     fn get_or_create_view(&self, name: &str) -> Option<Arc<dyn TableProvider>> {
         log::debug!("get_or_create_view('{}') called", name);
-        
+
         // Check cache first
         if let Some(provider) = self.view_cache.get(name) {
             log::debug!("get_or_create_view('{}') found in cache", name);
@@ -174,61 +175,66 @@ impl LazySystemSchemaProvider {
         log::debug!("get_or_create_view('{}') not in cache, creating new view...", name);
 
         // Create provider based on view name
-        let (table, provider): (SystemTable, Arc<dyn TableProvider>) = match SystemTable::from_name(name).ok()? {
-            SystemTable::Stats => {
-                // Stats view - create with empty callback, caller will wire it
-                let stats_view = Arc::new(StatsView::new());
-                let provider = Arc::new(StatsTableProvider::new(stats_view));
-                (SystemTable::Stats, provider as Arc<dyn TableProvider>)
-            }
-            SystemTable::Settings => {
-                let settings_view = Arc::new(SettingsView::with_config((*self.view_config.config).clone()));
-                let provider = Arc::new(SettingsTableProvider::new(settings_view));
-                (SystemTable::Settings, provider as Arc<dyn TableProvider>)
-            }
-            SystemTable::ServerLogs => {
-                let provider = Arc::new(create_server_logs_provider(&self.view_config.logs_path));
-                (SystemTable::ServerLogs, provider as Arc<dyn TableProvider>)
-            }
-            SystemTable::Datatypes => {
-                let datatypes_view = Arc::new(DatatypesView::new());
-                let provider = Arc::new(DatatypesTableProvider::new(datatypes_view));
-                (SystemTable::Datatypes, provider as Arc<dyn TableProvider>)
-            }
-            SystemTable::Tables => {
-                let provider = Arc::new(create_tables_view_provider(Arc::clone(&self.system_tables)));
-                (SystemTable::Tables, provider as Arc<dyn TableProvider>)
-            }
-            SystemTable::Columns => {
-                let provider = Arc::new(create_columns_view_provider(Arc::clone(&self.system_tables)));
-                (SystemTable::Columns, provider as Arc<dyn TableProvider>)
-            }
-            SystemTable::Describe => {
-                let view = Arc::new(DescribeView::new());
-                let provider = Arc::new(ViewTableProvider::new(view));
-                (SystemTable::Describe, provider as Arc<dyn TableProvider>)
-            }
-            SystemTable::Cluster => {
-                // Cluster view needs CommandExecutor - return None if not available
-                let executor = self.view_config.executor.read();
-                let executor = executor.as_ref()?;
-                let provider = Arc::new(create_cluster_provider(Arc::clone(executor)));
-                (SystemTable::Cluster, provider as Arc<dyn TableProvider>)
-            }
-            SystemTable::ClusterGroups => {
-                // Cluster groups view needs CommandExecutor - return None if not available
-                let executor = self.view_config.executor.read();
-                let executor = executor.as_ref()?;
-                let provider = Arc::new(create_cluster_groups_provider(Arc::clone(executor)));
-                (SystemTable::ClusterGroups, provider as Arc<dyn TableProvider>)
-            }
-            _ => return None,
-        };
+        let (table, provider): (SystemTable, Arc<dyn TableProvider>) =
+            match SystemTable::from_name(name).ok()? {
+                SystemTable::Stats => {
+                    // Stats view - create with empty callback, caller will wire it
+                    let stats_view = Arc::new(StatsView::new());
+                    let provider = Arc::new(StatsTableProvider::new(stats_view));
+                    (SystemTable::Stats, provider as Arc<dyn TableProvider>)
+                },
+                SystemTable::Settings => {
+                    let settings_view =
+                        Arc::new(SettingsView::with_config((*self.view_config.config).clone()));
+                    let provider = Arc::new(SettingsTableProvider::new(settings_view));
+                    (SystemTable::Settings, provider as Arc<dyn TableProvider>)
+                },
+                SystemTable::ServerLogs => {
+                    let provider =
+                        Arc::new(create_server_logs_provider(&self.view_config.logs_path));
+                    (SystemTable::ServerLogs, provider as Arc<dyn TableProvider>)
+                },
+                SystemTable::Datatypes => {
+                    let datatypes_view = Arc::new(DatatypesView::new());
+                    let provider = Arc::new(DatatypesTableProvider::new(datatypes_view));
+                    (SystemTable::Datatypes, provider as Arc<dyn TableProvider>)
+                },
+                SystemTable::Tables => {
+                    let provider =
+                        Arc::new(create_tables_view_provider(Arc::clone(&self.system_tables)));
+                    (SystemTable::Tables, provider as Arc<dyn TableProvider>)
+                },
+                SystemTable::Columns => {
+                    let provider =
+                        Arc::new(create_columns_view_provider(Arc::clone(&self.system_tables)));
+                    (SystemTable::Columns, provider as Arc<dyn TableProvider>)
+                },
+                SystemTable::Describe => {
+                    let view = Arc::new(DescribeView::new());
+                    let provider = Arc::new(ViewTableProvider::new(view));
+                    (SystemTable::Describe, provider as Arc<dyn TableProvider>)
+                },
+                SystemTable::Cluster => {
+                    // Cluster view needs CommandExecutor - return None if not available
+                    let executor = self.view_config.executor.read();
+                    let executor = executor.as_ref()?;
+                    let provider = Arc::new(create_cluster_provider(Arc::clone(executor)));
+                    (SystemTable::Cluster, provider as Arc<dyn TableProvider>)
+                },
+                SystemTable::ClusterGroups => {
+                    // Cluster groups view needs CommandExecutor - return None if not available
+                    let executor = self.view_config.executor.read();
+                    let executor = executor.as_ref()?;
+                    let provider = Arc::new(create_cluster_groups_provider(Arc::clone(executor)));
+                    (SystemTable::ClusterGroups, provider as Arc<dyn TableProvider>)
+                },
+                _ => return None,
+            };
 
         // Wrap with security and cache
         let secured: Arc<dyn TableProvider> = secure_provider(provider, table.table_id());
         self.view_cache.insert(name.to_string(), Arc::clone(&secured));
-        
+
         //log::debug!("LazySystemSchemaProvider: Created and cached view '{}'", name);
         Some(secured)
     }
@@ -254,7 +260,7 @@ impl SchemaProvider for LazySystemSchemaProvider {
 
     async fn table(&self, name: &str) -> DataFusionResult<Option<Arc<dyn TableProvider>>> {
         //log::info!("LazySystemSchemaProvider::table() called for '{}'", name);
-        
+
         // Fast path: persisted tables (already created in SystemTablesRegistry)
         if let Some(provider) = self.get_persisted_table(name) {
             //log::info!("LazySystemSchemaProvider: Found persisted table '{}'", name);
@@ -308,13 +314,13 @@ mod tests {
     fn test_table_names_returns_all_known_tables() {
         let provider = create_test_provider();
         let names = provider.table_names();
-        
+
         // Check all persisted tables
         assert!(names.contains(&"users".to_string()));
         assert!(names.contains(&"jobs".to_string()));
         assert!(names.contains(&"namespaces".to_string()));
         assert!(names.contains(&"storages".to_string()));
-        
+
         // Check all virtual views
         assert!(names.contains(&"stats".to_string()));
         assert!(names.contains(&"settings".to_string()));
@@ -326,7 +332,7 @@ mod tests {
     #[test]
     fn test_table_exist_for_known_tables() {
         let provider = create_test_provider();
-        
+
         assert!(provider.table_exist("users"));
         assert!(provider.table_exist("stats"));
         assert!(provider.table_exist("settings"));
@@ -337,11 +343,11 @@ mod tests {
     #[tokio::test]
     async fn test_persisted_table_access() {
         let provider = create_test_provider();
-        
+
         // Persisted tables should be available immediately
         let users = provider.table("users").await.unwrap();
         assert!(users.is_some());
-        
+
         let jobs = provider.table("jobs").await.unwrap();
         assert!(jobs.is_some());
     }
@@ -349,16 +355,16 @@ mod tests {
     #[tokio::test]
     async fn test_lazy_view_access() {
         let provider = create_test_provider();
-        
+
         // Virtual views should be created on first access
         assert!(provider.view_cache.is_empty() || !provider.view_cache.contains_key("settings"));
-        
+
         let settings = provider.table("settings").await.unwrap();
         assert!(settings.is_some());
-        
+
         // Should now be cached
         assert!(provider.view_cache.contains_key("settings"));
-        
+
         // Second access should use cache
         let settings2 = provider.table("settings").await.unwrap();
         assert!(settings2.is_some());
@@ -367,7 +373,7 @@ mod tests {
     #[tokio::test]
     async fn test_datatypes_view_lazy_load() {
         let provider = create_test_provider();
-        
+
         let datatypes = provider.table("datatypes").await.unwrap();
         assert!(datatypes.is_some());
         assert!(provider.view_cache.contains_key("datatypes"));
@@ -376,7 +382,7 @@ mod tests {
     #[tokio::test]
     async fn test_tables_view_lazy_load() {
         let provider = create_test_provider();
-        
+
         let tables = provider.table("tables").await.unwrap();
         assert!(tables.is_some());
         assert!(provider.view_cache.contains_key("tables"));
@@ -385,7 +391,7 @@ mod tests {
     #[tokio::test]
     async fn test_columns_view_lazy_load() {
         let provider = create_test_provider();
-        
+
         let columns = provider.table("columns").await.unwrap();
         assert!(columns.is_some());
         assert!(provider.view_cache.contains_key("columns"));
@@ -394,11 +400,11 @@ mod tests {
     #[tokio::test]
     async fn test_cluster_view_requires_executor() {
         let provider = create_test_provider();
-        
+
         // Without executor, cluster view should return None
         let cluster = provider.table("cluster").await.unwrap();
         assert!(cluster.is_none());
-        
+
         let cluster_groups = provider.table("cluster_groups").await.unwrap();
         assert!(cluster_groups.is_none());
     }
@@ -406,14 +412,14 @@ mod tests {
     #[tokio::test]
     async fn test_table_type_without_loading() {
         let provider = create_test_provider();
-        
+
         // table_type should work without loading the table
         let users_type = provider.table_type("users").await.unwrap();
         assert_eq!(users_type, Some(TableType::Base));
-        
+
         let stats_type = provider.table_type("stats").await.unwrap();
         assert_eq!(stats_type, Some(TableType::View));
-        
+
         let unknown_type = provider.table_type("nonexistent").await.unwrap();
         assert_eq!(unknown_type, None);
     }
@@ -421,7 +427,7 @@ mod tests {
     #[tokio::test]
     async fn test_nonexistent_table_returns_none() {
         let provider = create_test_provider();
-        
+
         let result = provider.table("nonexistent_table").await.unwrap();
         assert!(result.is_none());
     }

@@ -217,7 +217,12 @@ async fn test_scenario_13_mixed_workload_soak() -> anyhow::Result<()> {
             tokio::time::sleep(Duration::from_secs(5)).await;
 
             let _ = flush_client
-                .execute_query(&format!("STORAGE FLUSH TABLE {}.orders", ns_for_flush), None, None, None)
+                .execute_query(
+                    &format!("STORAGE FLUSH TABLE {}.orders", ns_for_flush),
+                    None,
+                    None,
+                    None,
+                )
                 .await;
             flush_count += 1;
             println!("Background flush {} triggered", flush_count);
@@ -359,7 +364,8 @@ async fn test_scenario_13_schema_evolution_under_load() -> anyhow::Result<()> {
     for i in 1..=50 {
         let resp = client
             .execute_query(
-                &format!("INSERT INTO {}.products (id, name) VALUES ({}, 'Product {}')", ns, i, i), None,
+                &format!("INSERT INTO {}.products (id, name) VALUES ({}, 'Product {}')", ns, i, i),
+                None,
                 None,
                 None,
             )
@@ -383,7 +389,8 @@ async fn test_scenario_13_schema_evolution_under_load() -> anyhow::Result<()> {
                     i,
                     i,
                     i as f64 * 9.99
-                ), None,
+                ),
+                None,
                 None,
                 None,
             )
@@ -394,7 +401,8 @@ async fn test_scenario_13_schema_evolution_under_load() -> anyhow::Result<()> {
     // Query all data
     let resp = client
         .execute_query(
-            &format!("SELECT id, name, price FROM {}.products ORDER BY id", ns), None,
+            &format!("SELECT id, name, price FROM {}.products ORDER BY id", ns),
+            None,
             None,
             None,
         )
@@ -459,7 +467,8 @@ async fn test_scenario_13_concurrent_read_write() -> anyhow::Result<()> {
             for i in 1..=10 {
                 let _ = client
                     .execute_query(
-                        &format!("INSERT INTO {}.counters (id, value) VALUES ({}, 0)", ns_clone, i), None,
+                        &format!("INSERT INTO {}.counters (id, value) VALUES ({}, 0)", ns_clone, i),
+                        None,
                         None,
                         None,
                     )
@@ -496,7 +505,8 @@ async fn test_scenario_13_concurrent_read_write() -> anyhow::Result<()> {
             for i in 1..=10 {
                 let _ = client
                     .execute_query(
-                        &format!("INSERT INTO {}.counters (id, value) VALUES ({}, 0)", ns_clone, i), None,
+                        &format!("INSERT INTO {}.counters (id, value) VALUES ({}, 0)", ns_clone, i),
+                        None,
                         None,
                         None,
                     )
@@ -506,7 +516,8 @@ async fn test_scenario_13_concurrent_read_write() -> anyhow::Result<()> {
             for _ in 0..50 {
                 let resp = client
                     .execute_query(
-                        &format!("SELECT SUM(value) as total FROM {}.counters", ns_clone), None,
+                        &format!("SELECT SUM(value) as total FROM {}.counters", ns_clone),
+                        None,
                         None,
                         None,
                     )

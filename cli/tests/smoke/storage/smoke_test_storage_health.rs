@@ -28,7 +28,8 @@ fn smoke_storage_check_local_basic() {
     }
 
     let sql = "STORAGE CHECK local";
-    let result = execute_sql_as_root_via_client_json(sql).expect("STORAGE CHECK local should succeed");
+    let result =
+        execute_sql_as_root_via_client_json(sql).expect("STORAGE CHECK local should succeed");
 
     // Parse the JSON result
     let json: JsonValue = serde_json::from_str(&result)
@@ -40,20 +41,12 @@ fn smoke_storage_check_local_basic() {
     let row = &rows[0];
 
     // Verify storage_id
-    let storage_id = row
-        .get("storage_id")
-        .and_then(arrow_value_as_string);
+    let storage_id = row.get("storage_id").and_then(arrow_value_as_string);
     assert_eq!(storage_id.as_deref(), Some("local"), "storage_id should be 'local'");
 
     // Verify status
-    let status = row
-        .get("status")
-        .and_then(arrow_value_as_string);
-    assert_eq!(
-        status.as_deref(),
-        Some("healthy"),
-        "local storage should be healthy"
-    );
+    let status = row.get("status").and_then(arrow_value_as_string);
+    assert_eq!(status.as_deref(), Some("healthy"), "local storage should be healthy");
 
     // Verify all operation flags are true
     let readable = row
@@ -80,12 +73,8 @@ fn smoke_storage_check_local_basic() {
     // Note: latency_ms might be NULL or 0 in some test environments
     let latency_ms = row
         .get("latency_ms")
-        .and_then(|v| {
-            extract_arrow_value(v)
-                .unwrap_or_else(|| v.clone())
-                .as_i64()
-        });
-    
+        .and_then(|v| extract_arrow_value(v).unwrap_or_else(|| v.clone()).as_i64());
+
     if let Some(latency) = latency_ms {
         assert!(
             latency >= 0 && latency < 5000,
@@ -97,28 +86,24 @@ fn smoke_storage_check_local_basic() {
     }
 
     // Verify error is null
-    let error = row.get("error").and_then(|v| {
-        arrow_value_as_string(v)
-    });
+    let error = row.get("error").and_then(|v| arrow_value_as_string(v));
     assert!(
         error.as_deref().is_none() || error.as_deref() == Some(""),
         "error should be null for healthy storage"
     );
 
     // CRITICAL: Verify timestamp is current (not 1970)
-    let tested_at_str = row
-        .get("tested_at")
-        .and_then(|v| {
-            // Try to extract Arrow value first, then fall back to direct access
-            extract_arrow_value(v)
-                .and_then(|extracted| extracted.as_str().map(|s| s.to_string()))
-                .or_else(|| v.as_str().map(|s| s.to_string()))
-        });
+    let tested_at_str = row.get("tested_at").and_then(|v| {
+        // Try to extract Arrow value first, then fall back to direct access
+        extract_arrow_value(v)
+            .and_then(|extracted| extracted.as_str().map(|s| s.to_string()))
+            .or_else(|| v.as_str().map(|s| s.to_string()))
+    });
 
     if let Some(tested_at_str) = tested_at_str {
-        let tested_at: DateTime<Utc> = tested_at_str
-            .parse()
-            .unwrap_or_else(|err| panic!("Failed to parse tested_at timestamp: {}\n{}", err, tested_at_str));
+        let tested_at: DateTime<Utc> = tested_at_str.parse().unwrap_or_else(|err| {
+            panic!("Failed to parse tested_at timestamp: {}\n{}", err, tested_at_str)
+        });
 
         let now = Utc::now();
         let age_seconds = (now - tested_at).num_seconds().abs();
@@ -142,36 +127,23 @@ fn smoke_storage_check_local_basic() {
     }
 
     // Verify capacity fields are NULL for basic check
-    let total_bytes = row.get("total_bytes").and_then(|v| {
-        extract_arrow_value(v)
-            .unwrap_or_else(|| v.clone())
-            .as_i64()
-    });
-    let used_bytes = row.get("used_bytes").and_then(|v| {
-        extract_arrow_value(v)
-            .unwrap_or_else(|| v.clone())
-            .as_i64()
-    });
+    let total_bytes = row
+        .get("total_bytes")
+        .and_then(|v| extract_arrow_value(v).unwrap_or_else(|| v.clone()).as_i64());
+    let used_bytes = row
+        .get("used_bytes")
+        .and_then(|v| extract_arrow_value(v).unwrap_or_else(|| v.clone()).as_i64());
 
     // For basic check (not EXTENDED), these should be NULL
-    assert!(
-        total_bytes.is_none(),
-        "total_bytes should be NULL for basic check"
-    );
-    assert!(
-        used_bytes.is_none(),
-        "used_bytes should be NULL for basic check"
-    );
+    assert!(total_bytes.is_none(), "total_bytes should be NULL for basic check");
+    assert!(used_bytes.is_none(), "used_bytes should be NULL for basic check");
 }
 
 #[ntest::timeout(60_000)]
 #[test]
 fn smoke_storage_check_extended() {
     if !is_server_running() {
-        println!(
-            "Skipping smoke_storage_check_extended: server not running at {}",
-            server_url()
-        );
+        println!("Skipping smoke_storage_check_extended: server not running at {}", server_url());
         return;
     }
 
@@ -188,30 +160,16 @@ fn smoke_storage_check_extended() {
     let row = &rows[0];
 
     // Verify status is healthy
-    let status = row
-        .get("status")
-        .and_then(arrow_value_as_string);
-    assert_eq!(
-        status.as_deref(),
-        Some("healthy"),
-        "local storage should be healthy"
-    );
+    let status = row.get("status").and_then(arrow_value_as_string);
+    assert_eq!(status.as_deref(), Some("healthy"), "local storage should be healthy");
 
     // For filesystem storage with EXTENDED, capacity should be populated
     let total_bytes = row
         .get("total_bytes")
-        .and_then(|v| {
-            extract_arrow_value(v)
-                .unwrap_or_else(|| v.clone())
-                .as_i64()
-        });
+        .and_then(|v| extract_arrow_value(v).unwrap_or_else(|| v.clone()).as_i64());
     let used_bytes = row
         .get("used_bytes")
-        .and_then(|v| {
-            extract_arrow_value(v)
-                .unwrap_or_else(|| v.clone())
-                .as_i64()
-        });
+        .and_then(|v| extract_arrow_value(v).unwrap_or_else(|| v.clone()).as_i64());
 
     // Capacity info should be present for filesystem storage with EXTENDED
     // Note: Some backends might not support capacity reporting
@@ -224,7 +182,11 @@ fn smoke_storage_check_extended() {
             total_bytes.unwrap() >= used_bytes.unwrap(),
             "total_bytes should be >= used_bytes"
         );
-        println!("✅ Capacity info present: {} total, {} used bytes", total_bytes.unwrap(), used_bytes.unwrap());
+        println!(
+            "✅ Capacity info present: {} total, {} used bytes",
+            total_bytes.unwrap(),
+            used_bytes.unwrap()
+        );
     } else {
         println!("⚠️  WARNING: total_bytes not available (backend limitation or test environment)");
     }
@@ -245,10 +207,7 @@ fn smoke_storage_check_nonexistent() {
     let result = execute_sql_as_root_via_client(sql);
 
     // Should fail with "not found" error
-    assert!(
-        result.is_err(),
-        "STORAGE CHECK on nonexistent storage should fail"
-    );
+    assert!(result.is_err(), "STORAGE CHECK on nonexistent storage should fail");
 
     let err_msg = result.unwrap_err().to_string().to_lowercase();
     assert!(
@@ -292,10 +251,7 @@ fn smoke_storage_check_authorization() {
     let sql = "STORAGE CHECK local";
     let result = execute_sql_via_client_as(&test_user, test_password, sql);
 
-    assert!(
-        result.is_err(),
-        "Regular user should not be able to run STORAGE CHECK"
-    );
+    assert!(result.is_err(), "Regular user should not be able to run STORAGE CHECK");
 
     let err_msg = result.unwrap_err().to_string().to_lowercase();
     assert!(
@@ -336,10 +292,7 @@ fn smoke_storage_check_dba_access() {
     let sql = "STORAGE CHECK local";
     let result = execute_sql_via_client_as(&test_dba, test_password, sql);
 
-    assert!(
-        result.is_ok(),
-        "DBA user should be able to run STORAGE CHECK"
-    );
+    assert!(result.is_ok(), "DBA user should be able to run STORAGE CHECK");
 }
 
 // Helper struct for cleanup on drop

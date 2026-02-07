@@ -67,7 +67,7 @@ async fn test_scenario_02_offline_sync_parallel() -> anyhow::Result<()> {
     // =========================================================
     let user_count = 10;
     let items_per_user = 50; // Reduced from 1200 for faster testing
-    // Use namespace prefix for unique user names to avoid parallel test interference
+                             // Use namespace prefix for unique user names to avoid parallel test interference
     let user_prefix = format!("{}_user", ns);
 
     for user_idx in 0..user_count {
@@ -236,7 +236,8 @@ async fn test_scenario_02_offline_drift_resume() -> anyhow::Result<()> {
     for i in 1..=10 {
         let resp = client
             .execute_query(
-                &format!("INSERT INTO {}.items (id, title) VALUES ({}, 'Initial {}')", ns, i, i), None,
+                &format!("INSERT INTO {}.items (id, title) VALUES ({}, 'Initial {}')", ns, i, i),
+                None,
                 None,
                 None,
             )
@@ -262,7 +263,8 @@ async fn test_scenario_02_offline_drift_resume() -> anyhow::Result<()> {
     for i in 11..=15 {
         let resp = client
             .execute_query(
-                &format!("INSERT INTO {}.items (id, title) VALUES ({}, 'Drift {}')", ns, i, i), None,
+                &format!("INSERT INTO {}.items (id, title) VALUES ({}, 'Drift {}')", ns, i, i),
+                None,
                 None,
                 None,
             )
@@ -273,7 +275,8 @@ async fn test_scenario_02_offline_drift_resume() -> anyhow::Result<()> {
     // Update an existing item
     let resp = client
         .execute_query(
-            &format!("UPDATE {}.items SET title = 'Updated Item 1' WHERE id = 1", ns), None,
+            &format!("UPDATE {}.items SET title = 'Updated Item 1' WHERE id = 1", ns),
+            None,
             None,
             None,
         )
@@ -322,7 +325,8 @@ async fn test_scenario_02_changes_during_snapshot() -> anyhow::Result<()> {
     for i in 1..=20 {
         let resp = client
             .execute_query(
-                &format!("INSERT INTO {}.items (id, title) VALUES ({}, 'Item {}')", ns, i, i), None,
+                &format!("INSERT INTO {}.items (id, title) VALUES ({}, 'Item {}')", ns, i, i),
+                None,
                 None,
                 None,
             )
@@ -344,7 +348,8 @@ async fn test_scenario_02_changes_during_snapshot() -> anyhow::Result<()> {
                     &format!(
                         "INSERT INTO {}.items (id, title) VALUES ({}, 'Concurrent {}')",
                         ns_clone, i, i
-                    ), None,
+                    ),
+                    None,
                     None,
                     None,
                 )

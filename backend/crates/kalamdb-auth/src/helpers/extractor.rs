@@ -230,7 +230,7 @@ impl FromRequest for AuthSessionExtractor {
                             ),
                             took,
                         ));
-                    }
+                    },
                 },
                 None => {
                     let took = start_time.elapsed().as_secs_f64() * 1000.0;
@@ -241,7 +241,7 @@ impl FromRequest for AuthSessionExtractor {
                         ),
                         took,
                     ));
-                }
+                },
             };
 
             // Reject Basic auth (password auth only via login endpoint)
@@ -290,8 +290,9 @@ impl FromRequest for AuthSessionExtractor {
                     };
 
                     // Construct AuthSession with all extracted information
-                    let mut session = kalamdb_session::AuthSession::with_auth_details(
+                    let mut session = kalamdb_session::AuthSession::with_username_and_auth_details(
                         result.user.user_id,
+                        result.user.username,
                         result.user.role,
                         connection_info,
                         auth_method,
@@ -303,11 +304,11 @@ impl FromRequest for AuthSessionExtractor {
                     }
 
                     Ok(AuthSessionExtractor(session))
-                }
+                },
                 Err(e) => {
                     let took = start_time.elapsed().as_secs_f64() * 1000.0;
                     Err(AuthExtractError::new(e, took))
-                }
+                },
             }
         })
     }

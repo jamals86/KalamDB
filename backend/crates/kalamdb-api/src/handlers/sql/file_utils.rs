@@ -29,7 +29,6 @@ pub async fn parse_multipart_request(
     let max_files = config.max_files_per_request;
     const MAX_FILE_PART_SIZE: usize = 100 * 1024 * 1024; // 100MB absolute max
 
-
     let mut sql: Option<String> = None;
     let mut params_json: Option<String> = None;
     let mut namespace_id: Option<NamespaceId> = None;
@@ -44,7 +43,7 @@ pub async fn parse_multipart_request(
                     ErrorCode::InvalidInput,
                     format!("Multipart parse error: {}", e),
                 ));
-            }
+            },
         };
 
         let content_disposition = match field.content_disposition() {
@@ -63,7 +62,7 @@ pub async fn parse_multipart_request(
                             ErrorCode::InvalidInput,
                             format!("Failed to read SQL field: {}", e),
                         ));
-                    }
+                    },
                 }
             }
             sql = Some(String::from_utf8_lossy(&data).to_string());
@@ -118,13 +117,13 @@ pub async fn parse_multipart_request(
                             ));
                         }
                         data.extend_from_slice(&bytes);
-                    }
+                    },
                     Err(e) => {
                         return Err(FileError::new(
                             ErrorCode::InvalidInput,
                             format!("Failed to read file '{}': {}", file_key, e),
                         ));
-                    }
+                    },
                 }
             }
 
@@ -133,7 +132,8 @@ pub async fn parse_multipart_request(
         }
     }
 
-    let sql = sql.ok_or_else(|| FileError::new(ErrorCode::EmptySql, "SQL statement is required"))?;
+    let sql =
+        sql.ok_or_else(|| FileError::new(ErrorCode::EmptySql, "SQL statement is required"))?;
 
     if sql.trim().is_empty() {
         return Err(FileError::new(ErrorCode::EmptySql, "SQL statement is required"));
@@ -175,7 +175,7 @@ pub async fn parse_sql_payload(
                         FileError::new(ErrorCode::InvalidParameter, "Params must be a JSON array")
                     })?;
                     Some(arr.to_vec())
-                }
+                },
                 None => None,
             };
 
@@ -186,7 +186,7 @@ pub async fn parse_sql_payload(
                 files: Some(parsed.files),
                 is_multipart: true,
             })
-        }
+        },
     }
 }
 
@@ -293,10 +293,7 @@ pub async fn stage_and_finalize_files(
     let uid = user_id.unwrap_or(&system_id);
 
     let staging_dir = file_service.create_staging_dir(&request_id, uid).map_err(|e| {
-        FileError::new(
-            ErrorCode::InternalError,
-            format!("Failed to create staging dir: {}", e),
-        )
+        FileError::new(ErrorCode::InternalError, format!("Failed to create staging dir: {}", e))
     })?;
 
     for (placeholder_name, (original_name, data, mime_type)) in files {
@@ -326,10 +323,7 @@ pub async fn stage_and_finalize_files(
             )
             .await
             .map_err(|e| {
-                FileError::new(
-                    ErrorCode::InternalError,
-                    format!("Failed to finalize file: {}", e),
-                )
+                FileError::new(ErrorCode::InternalError, format!("Failed to finalize file: {}", e))
             })?;
 
         file_refs.insert(placeholder_name.clone(), file_ref);

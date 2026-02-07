@@ -13,8 +13,8 @@ use crate::applier::executor::CommandExecutorImpl;
 use kalamdb_commons::models::rows::Row;
 use kalamdb_commons::models::{ConnectionId, LiveQueryId, NodeId, UserId};
 use kalamdb_commons::TableId;
-use kalamdb_system::providers::live_queries::models::LiveQuery;
 use kalamdb_raft::{RaftError, UserDataApplier};
+use kalamdb_system::providers::live_queries::models::LiveQuery;
 
 /// UserDataApplier implementation using Unified Command Executor
 ///
@@ -150,7 +150,11 @@ impl UserDataApplier for ProviderUserDataApplier {
         Ok(())
     }
 
-    async fn delete_live_query(&self, live_id: &LiveQueryId, _deleted_at: i64) -> Result<(), RaftError> {
+    async fn delete_live_query(
+        &self,
+        live_id: &LiveQueryId,
+        _deleted_at: i64,
+    ) -> Result<(), RaftError> {
         log::info!("ProviderUserDataApplier: Deleting live query {}", live_id);
 
         self.executor

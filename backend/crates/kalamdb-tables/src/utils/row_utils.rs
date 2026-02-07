@@ -6,10 +6,10 @@ use datafusion::catalog::Session;
 use datafusion::logical_expr::{Expr, Operator};
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::constants::SystemColumnNames;
+use kalamdb_commons::conversions::arrow_json_conversion::json_rows_to_arrow_batch;
 use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::rows::Row;
 use kalamdb_commons::models::{ReadContext, Role, UserId};
-use kalamdb_commons::conversions::arrow_json_conversion::json_rows_to_arrow_batch;
 use kalamdb_session::{
     extract_full_user_context as extract_full_user_context_session,
     extract_user_context as extract_user_context_session,
@@ -41,7 +41,9 @@ fn invert_comparison_operator(op: Operator) -> Option<Operator> {
     }
 }
 
-fn normalize_seq_comparison(binary: &datafusion::logical_expr::BinaryExpr) -> Option<(Operator, i64)> {
+fn normalize_seq_comparison(
+    binary: &datafusion::logical_expr::BinaryExpr,
+) -> Option<(Operator, i64)> {
     if is_seq_column(&binary.left) {
         let value = extract_i64_literal(&binary.right)?;
         return Some((binary.op, value));
@@ -95,11 +97,19 @@ pub fn extract_seq_bounds_from_filter(expr: &Expr) -> (Option<SeqId>, Option<Seq
                         (Some(SeqId::from(since)), Some(SeqId::from(val)))
                     },
                     Operator::Gt | Operator::GtEq => {
-                        let since = if op == Operator::Gt { val } else { val.saturating_sub(1) };
+                        let since = if op == Operator::Gt {
+                            val
+                        } else {
+                            val.saturating_sub(1)
+                        };
                         (Some(SeqId::from(since)), None)
                     },
                     Operator::Lt | Operator::LtEq => {
-                        let until = if op == Operator::Lt { val.saturating_sub(1) } else { val };
+                        let until = if op == Operator::Lt {
+                            val.saturating_sub(1)
+                        } else {
+                            val
+                        };
                         (None, Some(SeqId::from(until)))
                     },
                     _ => (None, None),
@@ -124,10 +134,7 @@ pub fn resolve_user_scope(scope: Option<&UserId>) -> &UserId {
 /// Extract (user_id, role) from DataFusion SessionState extensions.
 pub fn extract_user_context(state: &dyn Session) -> Result<(&UserId, Role), KalamDbError> {
     extract_user_context_session(state).map_err(|e| {
-        KalamDbError::InvalidOperation(format!(
-            "SessionUserContext not found in extensions: {}",
-            e
-        ))
+        KalamDbError::InvalidOperation(format!("SessionUserContext not found in extensions: {}", e))
     })
 }
 
@@ -138,10 +145,7 @@ pub fn extract_full_user_context(
     state: &dyn Session,
 ) -> Result<(&UserId, Role, ReadContext), KalamDbError> {
     extract_full_user_context_session(state).map_err(|e| {
-        KalamDbError::InvalidOperation(format!(
-            "SessionUserContext not found in extensions: {}",
-            e
-        ))
+        KalamDbError::InvalidOperation(format!("SessionUserContext not found in extensions: {}", e))
     })
 }
 

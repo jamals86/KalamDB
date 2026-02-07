@@ -129,10 +129,7 @@ async fn test_soft_delete_preserves_data() {
     // Query with explicit _deleted column
     let response = server
         .execute_sql_as_user(
-            &format!(
-                "SELECT id, title, _deleted FROM {}.tasks WHERE id = 'task1'",
-                namespace
-            ),
+            &format!("SELECT id, title, _deleted FROM {}.tasks WHERE id = 'task1'", namespace),
             "user1",
         )
         .await;
@@ -170,10 +167,7 @@ async fn test_deleted_field_default_false() {
     // Insert data
     server
         .execute_sql_as_user(
-            &format!(
-                "INSERT INTO {}.tasks (id, title) VALUES ('task1', 'New task')",
-                namespace
-            ),
+            &format!("INSERT INTO {}.tasks (id, title) VALUES ('task1', 'New task')", namespace),
             "user1",
         )
         .await;
@@ -360,10 +354,7 @@ async fn test_count_excludes_deleted_rows() {
 
     // Count before delete
     let response = server
-        .execute_sql_as_user(
-            &format!("SELECT COUNT(*) as count FROM {}.tasks", namespace),
-            "user1",
-        )
+        .execute_sql_as_user(&format!("SELECT COUNT(*) as count FROM {}.tasks", namespace), "user1")
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
@@ -431,9 +422,9 @@ async fn test_count_excludes_deleted_rows() {
 
         let current = match count_val {
             serde_json::Value::Number(n) => n.as_i64().unwrap(),
-            serde_json::Value::String(s) => s
-                .parse::<i64>()
-                .expect("Count string after delete is not a valid i64"),
+            serde_json::Value::String(s) => {
+                s.parse::<i64>().expect("Count string after delete is not a valid i64")
+            },
             _ => panic!("Unexpected count value type after delete: {:?}", count_val),
         };
 

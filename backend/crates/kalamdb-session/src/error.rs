@@ -39,13 +39,13 @@ impl fmt::Display for SessionError {
                     table_name.as_str(),
                     reason
                 )
-            }
+            },
             SessionError::SessionContextNotFound => {
                 write!(f, "SessionUserContext not found in session extensions")
-            }
+            },
             SessionError::InvalidSessionState(msg) => {
                 write!(f, "Invalid session state: {}", msg)
-            }
+            },
         }
     }
 }

@@ -82,9 +82,14 @@ impl DdlExecutor {
         self.app_context
             .schema_registry()
             .register_table(table_def.clone())
-            .map_err(|e| ApplierError::Execution(format!("Failed to register altered table: {}", e)))?;
+            .map_err(|e| {
+                ApplierError::Execution(format!("Failed to register altered table: {}", e))
+            })?;
 
-        log::debug!("CommandExecutorImpl: Updated schema cache and provider for {}", table_id.full_name());
+        log::debug!(
+            "CommandExecutorImpl: Updated schema cache and provider for {}",
+            table_id.full_name()
+        );
 
         // 3. Invalidate cached plans across this node
         self.clear_plan_cache_if_available();

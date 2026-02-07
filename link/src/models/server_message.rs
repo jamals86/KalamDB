@@ -8,6 +8,8 @@ use super::schema_field::SchemaField;
 
 /// WebSocket message types sent from server to client
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerMessage {
     /// Authentication successful response (browser clients only)

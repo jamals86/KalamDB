@@ -32,12 +32,7 @@ async fn count_rows(
         )
         .await?;
     anyhow::ensure!(resp.status == ResponseStatus::Success, "COUNT failed: {:?}", resp.error);
-    let rows = resp
-        .results
-        .first()
-        .and_then(|r| r.rows.as_ref())
-        .map(|r| r.len())
-        .unwrap_or(0);
+    let rows = resp.results.first().and_then(|r| r.rows.as_ref()).map(|r| r.len()).unwrap_or(0);
     Ok(rows as i64)
 }
 
@@ -55,12 +50,7 @@ async fn wait_for_id_absent(
             .execute_sql_with_auth(&format!("SELECT id FROM {ns}.{table} WHERE id = {id}"), auth)
             .await?;
         anyhow::ensure!(resp.status == ResponseStatus::Success, "select failed: {:?}", resp.error);
-        let rows = resp
-            .results
-            .first()
-            .and_then(|r| r.rows.as_ref())
-            .map(|r| r.len())
-            .unwrap_or(0);
+        let rows = resp.results.first().and_then(|r| r.rows.as_ref()).map(|r| r.len()).unwrap_or(0);
         if rows == 0 {
             return Ok(());
         }
@@ -86,11 +76,7 @@ async fn wait_for_row_count(
             return Ok(cnt);
         }
         if Instant::now() >= deadline {
-            return Err(anyhow::anyhow!(
-                "expected {} rows after deletes, got {}",
-                expected,
-                cnt
-            ));
+            return Err(anyhow::anyhow!("expected {} rows after deletes, got {}", expected, cnt));
         }
         sleep(Duration::from_millis(50)).await;
     }
@@ -234,7 +220,8 @@ async fn test_flush_concurrency_and_correctness_over_http() {
 
             flush_table_and_wait(server, &ns, table).await?;
 
-            let _cnt = wait_for_row_count(server, &auth_a, &ns, table, 27, Duration::from_secs(3)).await?;
+            let _cnt =
+                wait_for_row_count(server, &auth_a, &ns, table, 27, Duration::from_secs(3)).await?;
 
             for deleted_id in [5, 15, 25] {
                 let resp = server
@@ -699,7 +686,10 @@ async fn test_flush_concurrency_and_correctness_over_http() {
 
             for id in [5, 15, 25] {
                 let resp = server
-                    .execute_sql_with_auth(&format!("DELETE FROM {ns}.{t2} WHERE id = {id}"), &auth_b)
+                    .execute_sql_with_auth(
+                        &format!("DELETE FROM {ns}.{t2} WHERE id = {id}"),
+                        &auth_b,
+                    )
                     .await?;
                 anyhow::ensure!(
                     resp.status == ResponseStatus::Success,

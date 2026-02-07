@@ -60,14 +60,14 @@ pub async fn manifest_exists(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::registry::StorageCached;
     use kalamdb_commons::models::ids::StorageId;
     use kalamdb_commons::models::TableId;
+    use kalamdb_commons::schemas::TableType;
     use kalamdb_system::providers::storages::models::StorageType;
     use kalamdb_system::Storage;
-    use kalamdb_commons::schemas::TableType;
     use std::env;
     use std::fs;
-    use crate::registry::StorageCached;
 
     fn create_test_storage(temp_dir: &std::path::Path) -> Storage {
         let now = chrono::Utc::now().timestamp_millis();
@@ -158,13 +158,8 @@ mod tests {
         let test_json = r#"{\"version\":1,\"segments\":[]}"#;
 
         // Should create all intermediate directories
-        let result = write_manifest_json(
-            &storage_cached,
-            TableType::Shared,
-            &table_id,
-            None,
-            test_json,
-        );
+        let result =
+            write_manifest_json(&storage_cached, TableType::Shared, &table_id, None, test_json);
         assert!(result.is_ok(), "Should create nested directories");
 
         // Verify can read it back

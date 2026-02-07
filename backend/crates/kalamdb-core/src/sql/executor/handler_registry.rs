@@ -13,12 +13,12 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
-use crate::sql::executor::handler_adapter::{DynamicHandlerAdapter, TypedHandlerAdapter};
 use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
+use crate::sql::executor::handler_adapter::{DynamicHandlerAdapter, TypedHandlerAdapter};
 use dashmap::DashMap;
+use kalamdb_commons::models::TableId;
 use kalamdb_sql::statement_classifier::SqlStatement;
 use std::sync::Arc;
-use kalamdb_commons::models::TableId;
 
 // Import all typed handlers
 use crate::sql::executor::handlers::cluster::{
@@ -27,7 +27,6 @@ use crate::sql::executor::handlers::cluster::{
     ClusterTransferLeaderHandler, ClusterTriggerElectionHandler,
 };
 use crate::sql::executor::handlers::compact::{CompactAllTablesHandler, CompactTableHandler};
-use crate::sql::executor::handlers::dml::{DeleteHandler, InsertHandler, UpdateHandler};
 use crate::sql::executor::handlers::flush::{FlushAllTablesHandler, FlushTableHandler};
 use crate::sql::executor::handlers::jobs::{KillJobHandler, KillLiveQueryHandler};
 use crate::sql::executor::handlers::namespace::{
@@ -35,7 +34,8 @@ use crate::sql::executor::handlers::namespace::{
     UseNamespaceHandler,
 };
 use crate::sql::executor::handlers::storage::{
-    AlterStorageHandler, CheckStorageHandler, CreateStorageHandler, DropStorageHandler, ShowStoragesHandler,
+    AlterStorageHandler, CheckStorageHandler, CreateStorageHandler, DropStorageHandler,
+    ShowStoragesHandler,
 };
 use crate::sql::executor::handlers::subscription::SubscribeHandler;
 use crate::sql::executor::handlers::system::ShowManifestCacheHandler;
@@ -583,11 +583,11 @@ impl HandlerRegistry {
         // ============================================================================
         // TOPIC PUB/SUB HANDLERS
         // ============================================================================
+        use kalamdb_commons::models::PayloadMode;
         use kalamdb_sql::ddl::{
             AckStatement, AddTopicSourceStatement, ClearTopicStatement, ConsumePosition,
             ConsumeStatement, CreateTopicStatement, DropTopicStatement,
         };
-        use kalamdb_commons::models::PayloadMode;
 
         registry.register_typed(
             SqlStatementKind::CreateTopic(CreateTopicStatement {
@@ -664,24 +664,6 @@ impl HandlerRegistry {
                 SqlStatementKind::AckTopic(s) => Some(s.clone()),
                 _ => None,
             },
-        );
-
-        // ============================================================================
-        // DML HANDLERS (TypedStatementHandler pattern - Phase 7)
-        // ============================================================================
-
-        // Use dynamic handlers for DML to access original SQL text (required for parsing columns/values)
-        registry.register_dynamic(
-            SqlStatementKind::Insert(kalamdb_sql::ddl::InsertStatement),
-            InsertHandler::new(app_context.clone()),
-        );
-        registry.register_dynamic(
-            SqlStatementKind::Update(kalamdb_sql::ddl::UpdateStatement),
-            UpdateHandler::new(app_context.clone()),
-        );
-        registry.register_dynamic(
-            SqlStatementKind::Delete(kalamdb_sql::ddl::DeleteStatement),
-            DeleteHandler::new(app_context.clone()),
         );
 
         registry
@@ -882,8 +864,11 @@ mod tests {
 
         let app_ctx = test_app_context_simple();
         let registry = HandlerRegistry::new(app_ctx, false);
-        let user_ctx =
-            ExecutionContext::new(UserId::from("regular_user"), Role::User, create_test_session_simple());
+        let user_ctx = ExecutionContext::new(
+            UserId::from("regular_user"),
+            Role::User,
+            create_test_session_simple(),
+        );
 
         let stmt = SqlStatement::new(
             "CREATE NAMESPACE unauthorized_ns".to_string(),
@@ -900,90 +885,6 @@ mod tests {
         match result {
             Err(KalamDbError::Unauthorized(_)) => {},
             _ => panic!("Expected Unauthorized error"),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_registry_insert_handler() {
-        use kalamdb_sql::statement_classifier::SqlStatementKind;
-
-        let app_ctx = test_app_context_simple();
-        let registry = HandlerRegistry::new(app_ctx, false);
-        let ctx =
-            ExecutionContext::new(UserId::from("test_user"), Role::User, create_test_session_simple());
-
-        let stmt = SqlStatement::new(
-            "INSERT INTO test VALUES (1)".to_string(),
-            SqlStatementKind::Insert(kalamdb_sql::ddl::InsertStatement),
-        );
-
-        // Check handler is registered (T056)
-        assert!(registry.has_handler(&stmt));
-
-        // Execute via registry - should fail with table not found (handler is implemented)
-        let result = registry.handle(stmt, vec![], &ctx).await;
-
-        // Handler is now fully implemented, expect table not found error
-        match result {
-            Err(KalamDbError::InvalidOperation(msg)) if msg.contains("does not exist") => {},
-            Err(e) => panic!("Unexpected error: {:?}", e),
-            Ok(_) => panic!("Expected table not found error"),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_registry_update_handler() {
-        use kalamdb_sql::statement_classifier::SqlStatementKind;
-
-        let app_ctx = test_app_context_simple();
-        let registry = HandlerRegistry::new(app_ctx, false);
-        let ctx =
-            ExecutionContext::new(UserId::from("test_user"), Role::User, create_test_session_simple());
-
-        let stmt = SqlStatement::new(
-            "UPDATE test SET x = 1".to_string(),
-            SqlStatementKind::Update(kalamdb_sql::ddl::UpdateStatement),
-        );
-
-        // Check handler is registered (T057)
-        assert!(registry.has_handler(&stmt));
-
-        // Execute via registry - should fail with table not found (table doesn't exist)
-        let result = registry.handle(stmt, vec![], &ctx).await;
-
-        // Expect table not found error since test table doesn't exist
-        match result {
-            Err(KalamDbError::NotFound(msg)) if msg.contains("Table") => {},
-            Err(e) => panic!("Unexpected error: {:?}", e),
-            Ok(_) => panic!("Expected table not found error"),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_registry_delete_handler() {
-        use kalamdb_sql::statement_classifier::SqlStatementKind;
-
-        let app_ctx = test_app_context_simple();
-        let registry = HandlerRegistry::new(app_ctx, false);
-        let ctx =
-            ExecutionContext::new(UserId::from("test_user"), Role::User, create_test_session_simple());
-
-        let stmt = SqlStatement::new(
-            "DELETE FROM test WHERE id = 1".to_string(),
-            SqlStatementKind::Delete(kalamdb_sql::ddl::DeleteStatement),
-        );
-
-        // Check handler is registered (T058)
-        assert!(registry.has_handler(&stmt));
-
-        // Execute via registry - should fail with table not found (handler is implemented)
-        let result = registry.handle(stmt, vec![], &ctx).await;
-
-        // Handler is now fully implemented, expect table not found error
-        match result {
-            Err(KalamDbError::NotFound(msg)) if msg.contains("not found") => {},
-            Err(e) => panic!("Unexpected error: {:?}", e),
-            Ok(_) => panic!("Expected table not found error"),
         }
     }
 }

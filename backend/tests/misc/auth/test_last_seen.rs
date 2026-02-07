@@ -9,7 +9,10 @@
 
 use super::test_support::TestServer;
 use kalamdb_auth::{authenticate, AuthRequest};
-use kalamdb_commons::{models::{ConnectionInfo, UserId, UserName}, Role};
+use kalamdb_commons::{
+    models::{ConnectionInfo, UserId, UserName},
+    Role,
+};
 
 fn bearer_auth_header(username: &str, user_id: &str, role: Role) -> String {
     let secret = kalamdb_configs::defaults::default_auth_jwt_secret();

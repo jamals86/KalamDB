@@ -8,10 +8,10 @@ use kalamdb_system::providers::storages::models::StorageType;
 use kalamdb_system::Storage;
 use object_store::path::Path as ObjectPath;
 use object_store::ObjectStore;
-use sysinfo::Disks;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
+use sysinfo::Disks;
 
 /// Test file content used for health checks.
 const HEALTH_CHECK_CONTENT: &[u8] = b"KALAMDB_HEALTH\n";
@@ -42,14 +42,12 @@ impl StorageHealthService {
                     format!("Failed to initialize storage: {}", e),
                     start.elapsed().as_millis() as u64,
                 ));
-            }
+            },
         };
 
         // Try to list root to verify connectivity
         match Self::try_list(&store, "").await {
-            Ok(_) => Ok(ConnectivityTestResult::success(
-                start.elapsed().as_millis() as u64,
-            )),
+            Ok(_) => Ok(ConnectivityTestResult::success(start.elapsed().as_millis() as u64)),
             Err(e) => Ok(ConnectivityTestResult::failure(
                 e.to_string(),
                 start.elapsed().as_millis() as u64,
@@ -80,7 +78,7 @@ impl StorageHealthService {
                     format!("Failed to initialize storage: {}", e),
                     start.elapsed().as_millis() as u64,
                 ));
-            }
+            },
         };
 
         // Generate unique test file path
@@ -106,9 +104,10 @@ impl StorageHealthService {
                     listable = true;
                     // Verify our test file is in the list
                     if !files.iter().any(|f| f.contains(&test_filename)) {
-                        errors.push("LIST succeeded but test file not found in results".to_string());
+                        errors
+                            .push("LIST succeeded but test file not found in results".to_string());
                     }
-                }
+                },
                 Err(e) => errors.push(format!("LIST failed: {}", e)),
             }
         }
@@ -126,7 +125,7 @@ impl StorageHealthService {
                             content.len()
                         ));
                     }
-                }
+                },
                 Err(e) => errors.push(format!("GET failed: {}", e)),
             }
         }
@@ -149,10 +148,7 @@ impl StorageHealthService {
         let mut result = if readable && writable && listable && deletable {
             StorageHealthResult::healthy(latency_ms)
         } else if !writable && !readable && !listable {
-            StorageHealthResult::unreachable(
-                errors.join("; "),
-                latency_ms,
-            )
+            StorageHealthResult::unreachable(errors.join("; "), latency_ms)
         } else {
             StorageHealthResult::degraded(
                 readable,
@@ -197,10 +193,7 @@ impl StorageHealthService {
             .get(&object_path)
             .await
             .map_err(|e| FilestoreError::ObjectStore(e.to_string()))?;
-        let bytes = result
-            .bytes()
-            .await
-            .map_err(|e| FilestoreError::ObjectStore(e.to_string()))?;
+        let bytes = result.bytes().await.map_err(|e| FilestoreError::ObjectStore(e.to_string()))?;
         Ok(bytes)
     }
 
@@ -260,9 +253,7 @@ impl StorageHealthService {
         }
 
         let base_path = Path::new(base);
-        let canonical = base_path
-            .canonicalize()
-            .unwrap_or_else(|_| base_path.to_path_buf());
+        let canonical = base_path.canonicalize().unwrap_or_else(|_| base_path.to_path_buf());
 
         let disks = Disks::new_with_refreshed_list();
         let mut best: Option<&sysinfo::Disk> = None;

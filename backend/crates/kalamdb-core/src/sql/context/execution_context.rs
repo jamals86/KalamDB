@@ -1,5 +1,3 @@
-use crate::sql::CurrentUserFunction;
-use datafusion::logical_expr::ScalarUDF;
 use datafusion::prelude::SessionContext;
 use kalamdb_commons::models::ReadContext;
 use kalamdb_commons::{NamespaceId, Role, UserId};
@@ -89,12 +87,7 @@ impl ExecutionContext {
         base_session_context: Arc<SessionContext>,
     ) -> Self {
         Self {
-            auth_session: AuthSession::with_audit_info(
-                user_id,
-                user_role,
-                request_id,
-                ip_address,
-            ),
+            auth_session: AuthSession::with_audit_info(user_id, user_role, request_id, ip_address),
             namespace_id: None,
             base_session_context,
             session_context_cache: Arc::new(OnceCell::new()),
@@ -168,6 +161,21 @@ impl ExecutionContext {
         self
     }
 
+    /// Clone this context with a different effective identity while preserving
+    /// namespace and request metadata.
+    pub fn with_effective_identity(&self, user_id: UserId, role: Role) -> Self {
+        let mut auth_session = self.auth_session.clone();
+        auth_session.user_context.user_id = user_id;
+        auth_session.user_context.role = role;
+
+        Self {
+            auth_session,
+            namespace_id: self.namespace_id.clone(),
+            base_session_context: Arc::clone(&self.base_session_context),
+            session_context_cache: Arc::new(OnceCell::new()),
+        }
+    }
+
     /// Set the read context (client vs internal)
     ///
     /// Use `ReadContext::Internal` for WebSocket subscriptions on followers
@@ -186,15 +194,23 @@ impl ExecutionContext {
         // Inject current user_id, role, and read_context into session config extensions
         // TableProviders will read this during scan() for per-user filtering and leader check
         // Use the read_context from this ExecutionContext (defaults to Client)
-        session_state
-            .config_mut()
-            .options_mut()
-            .extensions
-            .insert(SessionUserContext::new(
-                self.auth_session.user_id().clone(),
-                self.auth_session.role(),
-                self.auth_session.read_context(),
-            ));
+        let session_user_context =
+            if let Some(username) = self.auth_session.user_context().username.clone() {
+                SessionUserContext::with_username(
+                    self.auth_session.user_id().clone(),
+                    username,
+                    self.auth_session.role(),
+                    self.auth_session.read_context(),
+                )
+            } else {
+                SessionUserContext::new(
+                    self.auth_session.user_id().clone(),
+                    self.auth_session.role(),
+                    self.auth_session.read_context(),
+                )
+            };
+
+        session_state.config_mut().options_mut().extensions.insert(session_user_context);
 
         // Override default_schema if namespace_id is set on this context
         if let Some(ref ns) = self.namespace_id {
@@ -205,10 +221,28 @@ impl ExecutionContext {
         // Create SessionContext from the per-user state
         let ctx = SessionContext::new_with_state(session_state);
 
-        // Register CURRENT_USER() function with user context
-        // This overrides the default CURRENT_USER() registered in base session
-        let current_user_fn = CurrentUserFunction::with_user_id(self.user_id());
-        ctx.register_udf(ScalarUDF::from(current_user_fn));
+        ctx
+    }
+
+    fn build_effective_session_context(&self, user_id: UserId, role: Role) -> SessionContext {
+        let mut session_state = self.base_session_context.state().clone();
+
+        session_state
+            .config_mut()
+            .options_mut()
+            .extensions
+            .insert(SessionUserContext::new(
+                user_id.clone(),
+                role,
+                self.auth_session.read_context(),
+            ));
+
+        if let Some(ref ns) = self.namespace_id {
+            session_state.config_mut().options_mut().catalog.default_schema =
+                ns.as_str().to_string();
+        }
+
+        let ctx = SessionContext::new_with_state(session_state);
 
         ctx
     }
@@ -243,11 +277,21 @@ impl ExecutionContext {
     /// # Returns
     /// SessionContext with user_id and role injected, ready for query execution
     pub fn create_session_with_user(&self) -> SessionContext {
-        let session = self
-            .session_context_cache
-            .get_or_init(|| self.build_user_session_context());
+        let session = self.session_context_cache.get_or_init(|| self.build_user_session_context());
 
         session.clone()
+    }
+
+    /// Create a per-request SessionContext using an explicit effective identity.
+    ///
+    /// This bypasses the cached session and is used for impersonation reads where
+    /// user_id/role must differ from the actor's authenticated session.
+    pub fn create_session_with_effective_user(
+        &self,
+        user_id: &UserId,
+        role: Role,
+    ) -> SessionContext {
+        self.build_effective_session_context(user_id.clone(), role)
     }
 
     /// Get the current default namespace (schema) from DataFusion session config

@@ -18,7 +18,9 @@ use std::time::{Duration, Instant};
 #[test]
 fn test_cli_live_query_basic() {
     if cfg!(windows) {
-        eprintln!("⚠️  Skipping on Windows due to intermittent access violations in WebSocket tests.");
+        eprintln!(
+            "⚠️  Skipping on Windows due to intermittent access violations in WebSocket tests."
+        );
         return;
     }
     if !is_server_running() {
@@ -103,7 +105,9 @@ fn test_cli_subscription_commands() {
 #[test]
 fn test_cli_live_query_with_filter() {
     if cfg!(windows) {
-        eprintln!("⚠️  Skipping on Windows due to intermittent access violations in WebSocket tests.");
+        eprintln!(
+            "⚠️  Skipping on Windows due to intermittent access violations in WebSocket tests."
+        );
         return;
     }
     if !is_server_running() {
@@ -256,7 +260,7 @@ fn test_cli_subscription_comprehensive_crud() {
         .arg(root_password())
         .arg("--command")
         .arg(format!("SUBSCRIBE TO SELECT * FROM {} LIMIT 1", table_name))
-        .timeout(std::time::Duration::from_secs(2)); // Short timeout
+        .timeout(std::time::Duration::from_secs(8));
 
     let output = cmd.output().unwrap();
     assert!(
@@ -295,22 +299,19 @@ fn test_cli_subscription_comprehensive_crud() {
 
     // Use wait helper to handle timing issues under load
     let select_sql = format!("SELECT * FROM {} ORDER BY id", table_name);
-    let output_result = wait_for_sql_output_contains(
-        &select_sql,
-        "more_data",
-        std::time::Duration::from_secs(3),
-    );
-    
+    let output_result =
+        wait_for_sql_output_contains(&select_sql, "more_data", std::time::Duration::from_secs(3));
+
     match output_result {
         Ok(stdout) => {
             assert!(
                 stdout.contains("initial_data") && stdout.contains("more_data"),
                 "Both rows should be present"
             );
-        }
+        },
         Err(e) => {
             panic!("Failed to verify both rows: {}", e);
-        }
+        },
     }
 
     // Test 5: Update operation via CLI
@@ -318,16 +319,10 @@ fn test_cli_subscription_comprehensive_crud() {
     let _ = execute_sql_as_root_via_cli(&update_sql);
 
     let select_updated_sql = format!("SELECT * FROM {} WHERE id = 1", table_name);
-    let updated_output = wait_for_sql_output_contains(
-        &select_updated_sql,
-        "updated_data",
-        Duration::from_secs(5),
-    )
-    .expect("Data should be updated");
-    assert!(
-        updated_output.contains("updated_data"),
-        "Data should be updated"
-    );
+    let updated_output =
+        wait_for_sql_output_contains(&select_updated_sql, "updated_data", Duration::from_secs(5))
+            .expect("Data should be updated");
+    assert!(updated_output.contains("updated_data"), "Data should be updated");
 
     // Test 6: Delete operation via CLI
     let delete_sql = format!("DELETE FROM {} WHERE id = 2", table_name);

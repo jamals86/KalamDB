@@ -16,8 +16,8 @@
 //! ```
 
 use kalam_link::auth::AuthProvider;
-use kalam_link::subscription::SubscriptionManager;
 use kalam_link::models::{BatchStatus, ResponseStatus};
+use kalam_link::subscription::SubscriptionManager;
 use kalam_link::{ChangeEvent, KalamLinkClient, QueryResponse, SubscriptionConfig};
 use std::time::Duration;
 use std::time::Instant;
@@ -56,14 +56,9 @@ async fn execute_sql_checked(
 }
 
 /// Wait until a newly created table is visible for queries
-async fn wait_for_table_ready(
-    table: &str,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn wait_for_table_ready(table: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     for _ in 0..20 {
-        if execute_sql_checked(&format!("SELECT 1 FROM {} LIMIT 1", table))
-            .await
-            .is_ok()
-        {
+        if execute_sql_checked(&format!("SELECT 1 FROM {} LIMIT 1", table)).await.is_ok() {
             return Ok(());
         }
         sleep(Duration::from_millis(100)).await;
@@ -114,7 +109,7 @@ async fn setup_user_table() -> Result<String, Box<dyn std::error::Error + Send +
             Ok(_) => {
                 created = true;
                 break;
-            }
+            },
             Err(e) => {
                 if e.to_string().contains("Already exists") {
                     let _ = execute_sql(&format!("DROP TABLE IF EXISTS {}", full_table)).await;
@@ -122,7 +117,7 @@ async fn setup_user_table() -> Result<String, Box<dyn std::error::Error + Send +
                     continue;
                 }
                 return Err(e);
-            }
+            },
         }
     }
 
@@ -161,7 +156,7 @@ async fn insert_row_with_retry(
                 last_err = Some(e);
                 let _ = wait_for_table_ready(table).await;
                 sleep(Duration::from_millis(100)).await;
-            }
+            },
         }
     }
 
@@ -181,15 +176,15 @@ async fn wait_for_subscription_ready(
                 if batch_control.status == BatchStatus::Ready {
                     return Ok(());
                 }
-            }
+            },
             Some(Ok(ChangeEvent::InitialDataBatch { batch_control, .. })) => {
                 if batch_control.status == BatchStatus::Ready {
                     return Ok(());
                 }
-            }
+            },
             Some(Ok(ChangeEvent::Error { code, message, .. })) => {
                 return Err(format!("Subscription error {}: {}", code, message).into());
-            }
+            },
             Some(Ok(_)) => continue,
             Some(Err(e)) => return Err(e.into()),
             None => return Err("Timeout waiting for subscription ready".into()),
@@ -234,10 +229,10 @@ async fn wait_for_insert_with_type(
                 if matches!(event, ChangeEvent::Ack { .. } | ChangeEvent::InitialDataBatch { .. }) {
                     continue;
                 }
-            }
+            },
             Some(Err(e)) => {
                 eprintln!("❌ Subscription error while waiting for insert: {}", e);
-            }
+            },
             None => return None,
         }
     }
@@ -275,10 +270,7 @@ async fn next_with_deadline(
 #[tokio::test]
 async fn test_multiple_filtered_subscriptions() {
     if !common::is_server_running().await {
-        eprintln!(
-            "⚠️  Server not running at {}. Skipping test.",
-            common::server_url()
-        );
+        eprintln!("⚠️  Server not running at {}. Skipping test.", common::server_url());
         return;
     }
 
@@ -362,12 +354,8 @@ async fn test_multiple_filtered_subscriptions() {
         sleep(Duration::from_millis(50)).await;
 
         // Insert a 'typing' row
-        let typing_result = insert_row_with_retry(
-            &table_clone,
-            "typing",
-            "user is typing...",
-        )
-        .await;
+        let typing_result =
+            insert_row_with_retry(&table_clone, "typing", "user is typing...").await;
 
         let typing_id = match typing_result {
             Ok(id) => id,
@@ -381,12 +369,8 @@ async fn test_multiple_filtered_subscriptions() {
         sleep(Duration::from_millis(100)).await;
 
         // Insert a 'thinking' row
-        let thinking_result = insert_row_with_retry(
-            &table_clone,
-            "thinking",
-            "AI is thinking...",
-        )
-        .await;
+        let thinking_result =
+            insert_row_with_retry(&table_clone, "thinking", "AI is thinking...").await;
 
         let thinking_id = match thinking_result {
             Ok(id) => id,

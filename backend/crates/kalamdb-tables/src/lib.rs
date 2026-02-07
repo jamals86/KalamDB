@@ -40,19 +40,19 @@
 //! ```
 
 pub mod common;
-pub mod error_extensions;
 pub mod error;
+pub mod error_extensions;
 pub mod manifest;
-pub mod utils;
 pub mod shared_tables;
 pub mod store_ext;
 pub mod stream_tables;
 pub mod topics;
 pub mod user_tables;
+pub mod utils;
 
 // Re-export commonly used types
-pub use error::{Result, TableError};
 pub use error::KalamDbError;
+pub use error::{Result, TableError};
 
 // Re-export table stores
 pub use kalamdb_commons::models::StreamTableRow;
@@ -76,4 +76,7 @@ pub use user_tables::user_table_store::{
 pub use store_ext::{SharedTableStoreExt, StreamTableStoreExt, UserTableStoreExt};
 
 // Re-export providers for core integration
-pub use utils::{BaseTableProvider, SharedTableProvider, StreamTableProvider, TableProviderCore, UserTableProvider};
+pub use utils::{
+    BaseTableProvider, SharedTableProvider, StreamTableProvider, TableProviderCore,
+    UserTableProvider,
+};

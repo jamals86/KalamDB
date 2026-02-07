@@ -1,78 +1,18 @@
-# KalamDB SQL Syntax Reference
+# KalamDB SQL Reference
 
 **Version**: 0.1.3  
-**SQL Engine**: Apache DataFusion 40.0  
-**Last Updated**: January 2026
+**Last Updated**: February 7, 2026
 
----
+This page documents SQL commands and SQL usage only.
 
-## Overview
-
-KalamDB is a **SQL-first database** built for real-time chat and AI message history storage with a unique **table-per-user architecture**. This document provides comprehensive SQL syntax reference for all operations.
-
-**Key Features**:
-- ✅ Full SQL support via Apache DataFusion
-- ✅ Three table types: USER (per-user isolation), SHARED (global), STREAM (ephemeral)
-- ✅ Real-time WebSocket subscriptions with live queries
-- ✅ Multi-storage backends (local filesystem, S3, Azure Blob, GCS)
-- ✅ Role-based access control (user, service, dba, system)
-- ✅ Schema evolution with backward compatibility
-- ✅ Admin web UI and CLI tools
-- ✅ Built-in clustering/auto-sharding with Raft consensus for high availability
-
----
-
-## Table of Contents
-
-### I. Core Concepts
-1. [Namespace Operations](#namespace-operations) - Logical containers for tables
-2. [Storage Management](#storage-management) - Multi-backend storage configuration
-3. [User Management](#user-management) - Authentication and role-based access control
-4. [Data Types](#data-types) - Supported SQL data types
-5. [System Columns](#system-columns) - Auto-managed metadata columns
-
-### II. Table Operations
-6. [Table Operations](#table-operations) - CREATE, DROP, ALTER TABLE
-7. [Data Manipulation (DML)](#data-manipulation) - INSERT, UPDATE, DELETE, SELECT
-8. [Manual Flushing](#manual-flushing) - Explicit hot-to-cold tier migration
-9. [Live Query Subscriptions](#live-query-subscriptions) - Real-time WebSocket subscriptions
-
-### III. Administration
-10. [Catalog Browsing](#catalog-browsing) - SHOW, DESCRIBE commands
-11. [Cluster Operations](#cluster-operations) - CLUSTER commands and system views
-12. [Custom Functions](#kalamdb-custom-functions) - SNOWFLAKE_ID, UUID_V7, ULID, CURRENT_USER
-
----
-
-## Quick Reference
-
-### Most Common Commands
+## Statement Separator
 
 ```sql
--- Create namespace and tables
-CREATE NAMESPACE app;
-CREATE TABLE app.messages (id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(), content TEXT) WITH (TYPE='USER', FLUSH_POLICY='rows:1000');
-
--- Set default namespace for session
-USE app;
-
--- Insert and query data (unqualified table names now work)
-INSERT INTO messages (content) VALUES ('Hello World');
-SELECT * FROM messages ORDER BY id DESC LIMIT 10;
-
--- Real-time subscriptions (also work with default namespace)
-SUBSCRIBE TO messages WHERE timestamp > NOW() - INTERVAL '1 hour' OPTIONS (last_rows=10);
-
--- User management
-CREATE USER 'alice' WITH PASSWORD 'Secret123!' ROLE 'user';
-ALTER USER 'alice' SET PASSWORD 'NewPassword123!';
+SELECT 1;
+SELECT 2;
 ```
 
----
-
-## Namespace Operations
-
-Namespaces are logical containers for tables (similar to databases/schemas in traditional RDBMS).
+## Namespace Commands
 
 ### CREATE NAMESPACE
 
@@ -81,40 +21,23 @@ CREATE NAMESPACE <namespace_name>;
 CREATE NAMESPACE IF NOT EXISTS <namespace_name>;
 ```
 
-**Examples**:
-```sql
-CREATE NAMESPACE app;
-CREATE NAMESPACE IF NOT EXISTS production;
-CREATE NAMESPACE dev_environment;
-```
-
-**Notes**:
-- Namespace names must be unique
-- Use alphanumeric characters and underscores only
-- Case-sensitive
-
----
-
 ### DROP NAMESPACE
 
 ```sql
 DROP NAMESPACE <namespace_name>;
 DROP NAMESPACE IF EXISTS <namespace_name>;
+DROP NAMESPACE <namespace_name> CASCADE;
+DROP NAMESPACE IF EXISTS <namespace_name> CASCADE;
 ```
 
-**Examples**:
+### ALTER NAMESPACE
+
 ```sql
-DROP NAMESPACE app;
-DROP NAMESPACE IF EXISTS old_namespace;
+ALTER NAMESPACE <namespace_name>
+  SET DESCRIPTION '<description>';
 ```
 
-**Warning**: Drops all tables in the namespace and deletes all data (including Parquet files).
-
----
-
-### USE NAMESPACE
-
-Sets the default namespace for the current session. Unqualified table names in SQL statements will resolve to this namespace.
+### USE / SET NAMESPACE
 
 ```sql
 USE <namespace_name>;
@@ -122,451 +45,115 @@ USE NAMESPACE <namespace_name>;
 SET NAMESPACE <namespace_name>;
 ```
 
-**Examples**:
-```sql
--- Set default namespace for the session
-USE app;
-
--- Alternative syntax
-USE NAMESPACE production;
-SET NAMESPACE dev;
-
--- After USE NAMESPACE, unqualified table names resolve to that namespace
-USE app;
-SELECT * FROM messages;     -- Resolves to app.messages
-INSERT INTO users (name) VALUES ('Alice');  -- Resolves to app.users
-
--- Fully qualified names still work and override the default
-USE app;
-SELECT * FROM production.messages;  -- Uses production namespace
-```
-
-**Integration with DML**:
-
-After setting a namespace, all INSERT, UPDATE, DELETE, and SELECT statements can use unqualified table names:
+### SHOW NAMESPACES
 
 ```sql
--- Set working namespace
-USE myapp;
-
--- All these use myapp namespace
-INSERT INTO messages (content) VALUES ('Hello');
-UPDATE users SET active = true WHERE id = 1;
-DELETE FROM logs WHERE timestamp < NOW() - INTERVAL '30 days';
-SELECT * FROM messages ORDER BY id DESC LIMIT 10;
-
--- SUBSCRIBE also supports unqualified table names
-SUBSCRIBE TO messages;
-SUBSCRIBE TO messages WHERE user_id = CURRENT_USER();
+SHOW NAMESPACES;
 ```
 
-**Notes**:
-- Default namespace is `default` when no USE statement has been executed
-- The namespace setting persists for the duration of the session (HTTP connection or WebSocket session)
-- Each session has its own independent namespace setting
-- Fully qualified table names (`namespace.table`) always override the session default
+## Table DDL
 
----
+KalamDB supports `USER`, `SHARED`, and `STREAM` tables.
 
-## Storage Management
+### CREATE TABLE (Unified)
 
-Storage locations define where table data (Parquet files) are stored. Each table references a storage_id from the `system.storages` table.
-
-### CREATE STORAGE
-
-```sql
-CREATE STORAGE <storage_id>
-TYPE '<filesystem|s3>'
-[NAME '<human_readable_name>']
-[DESCRIPTION '<description>']
-BASE_DIRECTORY '<path_or_bucket_url>'
-[SHARED_TABLES_TEMPLATE '<template>']
-[USER_TABLES_TEMPLATE '<template>']
-[CREDENTIALS '<json_credentials>'];
-```
-
-**Parameters**:
-- `TYPE`: `filesystem` or `s3`. (Azure Blob and GCS are not currently supported).
-- `BASE_DIRECTORY`: Root path (e.g., `/data` or `s3://bucket/prefix`).
-- `SHARED_TABLES_TEMPLATE`: Path template for shared tables (default: `{namespace}/{tableName}/`).
-- `USER_TABLES_TEMPLATE`: Path template for user tables (default: `{namespace}/{tableName}/{userId}/`).
-- `CREDENTIALS`: JSON string containing credentials (e.g., access_key, secret_key, region).
-
-**Examples**:
-
-```sql
--- Local filesystem storage (default)
-CREATE STORAGE local
-TYPE 'filesystem'
-BASE_DIRECTORY './data';
-
--- S3 storage with credentials
-CREATE STORAGE s3_prod
-TYPE 's3'
-NAME 'Production S3'
-BASE_DIRECTORY 's3://my-bucket/kalamdb-data'
-CREDENTIALS '{
-  "access_key_id": "AKIAIOSFODNN7EXAMPLE",
-  "secret_access_key": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
-  "region": "us-west-2"
-}';
-
--- S3-compatible storage (MinIO)
-CREATE STORAGE minio_local
-TYPE 's3'
-BASE_DIRECTORY 's3://kalamdb/data'
-CREDENTIALS '{
-  "access_key_id": "minioadmin",
-  "secret_access_key": "minioadmin",
-  "endpoint": "http://localhost:9000",
-  "region": "us-east-1"
-}';
-```
-
-**Notes**:
-- Storage ID 'local' is pre-configured and always available.
-- Credentials are stored encrypted in `system.storages`.
-- CREATE STORAGE runs a connectivity check and a full CRUD health check (PUT/LIST/GET/DELETE).
-  If any check fails, the storage is not created and an error is returned.
-
----
-
-### ALTER STORAGE
-
-```sql
-ALTER STORAGE <storage_id>
-[SET NAME '<new_name>']
-[SET DESCRIPTION '<new_desc>']
-[SET SHARED_TABLES_TEMPLATE '<new_template>']
-[SET USER_TABLES_TEMPLATE '<new_template>'];
-```
-
-**Examples**:
-```sql
--- Update description
-ALTER STORAGE local
-SET DESCRIPTION 'Primary local storage';
-
--- Update templates
-ALTER STORAGE s3_prod
-SET USER_TABLES_TEMPLATE '{namespace}/users/{userId}/{tableName}/';
-```
-
-**Notes**:
-- ALTER STORAGE re-validates storage connectivity and CRUD health checks using the updated configuration.
-  If any check fails, the update is rejected and no changes are saved.
-
----
-
-### DROP STORAGE
-
-```sql
-DROP STORAGE <storage_id>;
-```
-
-**Examples**:
-```sql
-DROP STORAGE old_s3_storage;
-```
-
-**Restrictions**:
-- Cannot drop 'local' storage (system reserved).
-- Cannot drop storage if tables are using it.
-
----
-
-### SHOW STORAGES
-
-```sql
-SHOW STORAGES;
-```
-
-**Example Output**:
-```
-storage_id   | type       | base_directory                | table_count
--------------|------------|-------------------------------|------------
-local        | filesystem | ./data                        | 5
-s3_prod      | s3         | s3://my-bucket/kalamdb-data  | 12
-```
-
----
-
-### STORAGE CHECK
-
-Validate storage health and return operational status and capacity (when available).
-
-```sql
-STORAGE CHECK <storage_id>;
-STORAGE CHECK <storage_id> EXTENDED;
-```
-
-**Examples**:
-```sql
-STORAGE CHECK local;
-STORAGE CHECK s3_prod EXTENDED;
-```
-
-**Result Columns**:
-- `storage_id`: Storage identifier
-- `status`: `healthy`, `degraded`, or `unreachable`
-- `readable`, `writable`, `listable`, `deletable`: Per-operation checks
-- `latency_ms`: End-to-end health check latency
-- `total_bytes`, `used_bytes`: Capacity information (if available)
-- `error`: Error details when degraded or unreachable
-- `tested_at`: Timestamp (milliseconds since epoch) when the check ran
-
-**Notes**:
-- The command performs a full CRUD health check (PUT/LIST/GET/DELETE).
-- Capacity fields are populated for local filesystem storage when the underlying disk is detectable.
-
----
-
-## User Management
-
-User management commands allow creation, modification, and deletion of user accounts with role-based access control.
-
-### CREATE USER
-
-```sql
-CREATE USER '<username>'
-  WITH <PASSWORD 'password' | OAUTH | INTERNAL>
-  ROLE <user|service|dba|system>
-  [EMAIL '<email>'];
-```
-
-**Authentication Types**:
-- `WITH PASSWORD '...'`: Standard password authentication.
-- `WITH OAUTH`: OAuth authentication (credentials managed externally).
-- `WITH INTERNAL`: Internal system user (no password, localhost only).
-
-**Roles**:
-- `user`: Standard user.
-- `service`: Service account (automation).
-- `dba`: Database administrator.
-- `system`: System internal role.
-
-**Examples**:
-
-```sql
--- Standard user account
-CREATE USER 'alice' WITH PASSWORD 'Secret123!' ROLE user EMAIL 'alice@example.com';
-
--- Service account
-CREATE USER 'etl_service' WITH PASSWORD 'ServiceKey456!' ROLE service;
-
--- OAuth-based user
-CREATE USER 'google_sync' WITH OAUTH ROLE user EMAIL 'sync@example.com';
-
--- Internal system user
-CREATE USER 'compaction_job' WITH INTERNAL ROLE system;
-```
-
-**Authorization**: Only `dba` and `system` roles can execute CREATE USER.
-
----
-
-### ALTER USER
-
-Modify existing user credentials, role, or email.
-
-```sql
-ALTER USER '<username>' SET PASSWORD '<new_password>';
-ALTER USER '<username>' SET ROLE <new_role>;
-ALTER USER '<username>' SET EMAIL '<new_email>';
-```
-
-**Examples**:
-```sql
--- User changes their own password
-ALTER USER 'alice' SET PASSWORD 'NewPassword123!';
-
--- DBA promotes user to service role
-ALTER USER 'integration_bot' SET ROLE service;
-
--- Update user email
-ALTER USER 'alice' SET EMAIL 'alice.new@company.com';
-```
-
----
-
-### DROP USER
-
-Soft delete a user account.
-
-```sql
-DROP USER [IF EXISTS] '<username>';
-```
-
-**Examples**:
-```sql
-DROP USER 'alice';
-DROP USER IF EXISTS 'old_user';
-```
-
-**Behavior**:
-- Sets `deleted_at` to current timestamp.
-- User becomes hidden from default queries.
-- User can be restored by DBA within grace period.
-
----
-
-### Restore Deleted User
-
-Restore a soft-deleted user within the grace period (DBA only).
-
-```sql
-UPDATE system.users
-SET deleted_at = NULL
-WHERE user_id = '<user_id>';
-```
-
----
-
-### Query Users
-
-Standard SQL SELECT on `system.users` table.
-
-```sql
-SELECT user_id, username, email, role, created_at
-FROM system.users
-WHERE deleted_at IS NULL;
-```
-
----
-
-## Table Operations
-
-KalamDB supports three table types: **USER**, **SHARED**, and **STREAM**. All tables are created using the `CREATE TABLE` statement, either with a specific prefix or using the `TYPE` option.
-
-**Important**: All tables **MUST** have a `PRIMARY KEY` defined.
-
-### CREATE TABLE
-
-**Unified Syntax**:
 ```sql
 CREATE [USER|SHARED|STREAM] TABLE [IF NOT EXISTS] [<namespace>.]<table_name> (
   <column_name> <data_type> [NOT NULL|NULL] [DEFAULT <expr>] [PRIMARY KEY],
-  ...
+  ...,
   [CONSTRAINT <name> PRIMARY KEY (<column_name>)]
 )
 [WITH (
   TYPE = '<USER|SHARED|STREAM>',
   STORAGE_ID = '<storage_id>',
   USE_USER_STORAGE = <TRUE|FALSE>,
-  FLUSH_POLICY = '<policy_string>',
+  FLUSH_POLICY = '<rows:N|interval:N|rows:N,interval:N>',
   DELETED_RETENTION_HOURS = <hours>,
   TTL_SECONDS = <seconds>,
   ACCESS_LEVEL = '<PUBLIC|PRIVATE|RESTRICTED>'
 )];
 ```
 
-**Options**:
-- `TYPE`: Table type (`USER`, `SHARED`, `STREAM`). Defaults to `USER` if not specified.
-- `STORAGE_ID`: Storage location reference from `system.storages`.
-- `USE_USER_STORAGE`: (User tables only) Opt-in to per-user storage preferences.
-- `FLUSH_POLICY`: Flush configuration (User/Shared only). Format: `'rows:N'`, `'interval:N'`, or `'rows:N,interval:N'`.
-- `DELETED_RETENTION_HOURS`: Retention period for soft-deleted rows.
-- `TTL_SECONDS`: (Stream tables only) Time-to-live in seconds.
-- `ACCESS_LEVEL`: (Shared tables only) Access control level (`PUBLIC`, `PRIVATE`, `RESTRICTED`).
-
-**Legacy Syntax** (Supported):
-The legacy syntax `CREATE USER TABLE ... FLUSH ...` is normalized to the unified syntax internally.
-
-#### User Tables
-Isolated storage per user.
+Examples:
 
 ```sql
 CREATE TABLE app.messages (
   id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
-  content TEXT,
-  created_at TIMESTAMP DEFAULT NOW()
+  conversation_id BIGINT NOT NULL,
+  sender TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'user',
+  content TEXT NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW()
 ) WITH (
   TYPE = 'USER',
-  STORAGE_ID = 'local',
   FLUSH_POLICY = 'rows:1000,interval:60'
 );
-```
 
-#### Shared Tables
-Global storage accessible to all users.
-
-```sql
-CREATE TABLE app.config (
+CREATE SHARED TABLE app.config (
   key TEXT PRIMARY KEY,
-  value TEXT,
+  value TEXT NOT NULL,
   updated_at TIMESTAMP DEFAULT NOW()
 ) WITH (
-  TYPE = 'SHARED',
-  ACCESS_LEVEL = 'PUBLIC',
-  FLUSH_POLICY = 'rows:100'
+  ACCESS_LEVEL = 'PUBLIC'
+);
+
+CREATE STREAM TABLE app.events (
+  event_id TEXT PRIMARY KEY,
+  payload TEXT,
+  created_at TIMESTAMP DEFAULT NOW()
+) WITH (
+  TTL_SECONDS = 30
 );
 ```
 
-#### Stream Tables
-Ephemeral, memory-only tables with TTL.
+### ALTER TABLE
 
 ```sql
-CREATE TABLE app.events (
-  event_id TEXT PRIMARY KEY,
-  payload TEXT,
-  timestamp TIMESTAMP
-) WITH (
-  TYPE = 'STREAM',
-  TTL_SECONDS = 10
-);
+ALTER TABLE [<namespace>.]<table_name> ADD COLUMN <name> <type> [NOT NULL|NULL] [DEFAULT <value>];
+ALTER TABLE [<namespace>.]<table_name> DROP COLUMN <name>;
+ALTER TABLE [<namespace>.]<table_name> MODIFY COLUMN <name> <type> [NOT NULL|NULL];
+ALTER TABLE [<namespace>.]<table_name> SET TBLPROPERTIES (ACCESS_LEVEL = '<PUBLIC|PRIVATE|RESTRICTED>');
 ```
 
 ### DROP TABLE
 
 ```sql
 DROP TABLE [IF EXISTS] [<namespace>.]<table_name>;
+DROP USER TABLE [IF EXISTS] [<namespace>.]<table_name>;
+DROP SHARED TABLE [IF EXISTS] [<namespace>.]<table_name>;
+DROP STREAM TABLE [IF EXISTS] [<namespace>.]<table_name>;
 ```
 
-### ALTER TABLE
+### CREATE VIEW
 
-Modify table schema or properties.
-
-**Syntax**:
 ```sql
-ALTER TABLE [<namespace>.]<table_name> <operation>;
+CREATE VIEW [<namespace>.]<view_name> AS <select_query>;
+CREATE VIEW [<namespace>.]<view_name> (<column1>, <column2>, ...) AS <select_query>;
 ```
 
-**Operations**:
+### SHOW TABLES
 
-1.  **Add Column**:
-    ```sql
-    ADD COLUMN <name> <type> [NOT NULL|NULL] [DEFAULT <value>]
-    ```
-    *Note: `NOT NULL` columns must have a `DEFAULT` value if table is not empty.*
-
-2.  **Drop Column**:
-    ```sql
-    DROP COLUMN <name>
-    ```
-
-3.  **Modify Column**:
-    ```sql
-    MODIFY COLUMN <name> <type> [NOT NULL|NULL]
-    ```
-
-4.  **Set Access Level** (Shared tables only):
-    ```sql
-    SET TBLPROPERTIES (ACCESS_LEVEL = '<PUBLIC|PRIVATE|RESTRICTED>')
-    -- Legacy syntax also supported:
-    -- SET ACCESS LEVEL <PUBLIC|PRIVATE|RESTRICTED>
-    ```
-
-**Examples**:
 ```sql
-ALTER TABLE app.messages ADD COLUMN status TEXT DEFAULT 'sent';
-ALTER TABLE app.messages DROP COLUMN old_field;
-ALTER TABLE app.messages MODIFY COLUMN content TEXT NOT NULL;
-ALTER TABLE app.config SET TBLPROPERTIES (ACCESS_LEVEL = 'RESTRICTED');
+SHOW TABLES;
+SHOW TABLES IN <namespace>;
+SHOW TABLES IN NAMESPACE <namespace>;
 ```
 
----
+### DESCRIBE TABLE
 
-## Data Manipulation
+```sql
+DESCRIBE TABLE [<namespace>.]<table_name>;
+DESC TABLE [<namespace>.]<table_name>;
+DESCRIBE TABLE [<namespace>.]<table_name> HISTORY;
+```
+
+### SHOW STATS FOR TABLE
+
+```sql
+SHOW STATS FOR TABLE [<namespace>.]<table_name>;
+```
+
+## Data Manipulation (DML)
 
 ### INSERT
 
@@ -574,70 +161,19 @@ ALTER TABLE app.config SET TBLPROPERTIES (ACCESS_LEVEL = 'RESTRICTED');
 INSERT INTO [<namespace>.]<table_name> (<column1>, <column2>, ...)
 VALUES (<value1>, <value2>, ...);
 
--- Batch insert
 INSERT INTO [<namespace>.]<table_name> (<column1>, <column2>, ...)
 VALUES
   (<value1a>, <value2a>, ...),
-  (<value1b>, <value2b>, ...),
-  (<value1c>, <value2c>, ...);
+  (<value1b>, <value2b>, ...);
 ```
-
-**Examples**:
-```sql
--- Single insert
-INSERT INTO app.messages (id, content, author, timestamp)
-VALUES (1, 'Hello World', 'alice', NOW());
-
--- Batch insert
-INSERT INTO app.messages (id, content) VALUES
-  (2, 'Message 1'),
-  (3, 'Message 2'),
-  (4, 'Message 3');
-
--- Stream table insert
-INSERT INTO app.live_events (event_id, event_type, payload, timestamp)
-VALUES ('evt_123', 'user_action', '{"action":"click"}', NOW());
-```
-
-**Notes**:
-- System columns (`_updated`, `_deleted`) are set automatically
-- For user tables: Data written to user's isolated partition
-- For shared tables: Data written to shared partition
-- For stream tables: Data buffered in memory (ephemeral mode = no buffering without subscribers)
-
----
 
 ### UPDATE
 
 ```sql
 UPDATE [<namespace>.]<table_name>
-SET <column1> = <value1>, <column2> = <value2>, ...
+SET <column1> = <value1>, <column2> = <value2>
 WHERE <condition>;
 ```
-
-**Examples**:
-```sql
--- Simple update
-UPDATE app.messages
-SET content = 'Updated message'
-WHERE id = 1;
-
--- Update with multiple columns
-UPDATE app.messages
-SET content = 'New content', author = 'bob'
-WHERE id = 2;
-
--- Conditional update
-UPDATE app.messages
-SET content = 'Read'
-WHERE timestamp < NOW() - INTERVAL '1 day';
-```
-
-**Notes**:
-- `_updated` column set to NOW() automatically
-- Not supported for stream tables (immutable)
-
----
 
 ### DELETE
 
@@ -646,1740 +182,287 @@ DELETE FROM [<namespace>.]<table_name>
 WHERE <condition>;
 ```
 
-**Examples**:
-```sql
--- Delete single row
-DELETE FROM app.messages WHERE id = 1;
-
--- Delete with condition
-DELETE FROM app.messages
-WHERE timestamp < NOW() - INTERVAL '7 days';
-```
-
-**Behavior**:
-- **User/Shared tables**: Soft delete (sets `_deleted = true`)
-- **Stream tables**: Hard delete (row removed immediately)
-
-**Soft Delete Retention**:
-- Default: 7 days (configurable via `default_deleted_retention_hours`)
-- Soft-deleted rows remain in Parquet files for auditing/recovery
-- Excluded from SELECT queries by default (use `WHERE _deleted = true` to query)
-
----
-
 ### SELECT
 
 ```sql
 SELECT <columns>
 FROM [<namespace>.]<table_name>
-WHERE <condition>
-ORDER BY <column>
-LIMIT <n>;
+[WHERE <condition>]
+[GROUP BY <expr>]
+[ORDER BY <expr>]
+[LIMIT <n>];
 ```
 
-**Examples**:
+## Impersonation Execution
+
+Impersonation syntax is wrapper-only.
+
 ```sql
--- Basic query
-SELECT * FROM app.messages LIMIT 10;
-
--- Filtered query
-SELECT id, content, timestamp
-FROM app.messages
-WHERE timestamp > NOW() - INTERVAL '1 hour'
-ORDER BY timestamp DESC
-LIMIT 50;
-
--- Aggregation
-SELECT author, COUNT(*) as message_count
-FROM app.messages
-GROUP BY author;
-
--- Join (across tables in same namespace)
-SELECT m.id, m.content, u.username
-FROM app.messages m
-JOIN app.users u ON m.author = u.user_id;
-
--- Time-range query (uses _updated index)
-SELECT * FROM app.messages
-WHERE _updated >= NOW() - INTERVAL '1 day';
-
--- Include soft-deleted rows
-SELECT * FROM app.messages WHERE _deleted = true;
+EXECUTE AS USER '<username>' (
+  <single_statement>
+);
 ```
 
-**Notes**:
-- Queries read from both hot (RocksDB) and cold (Parquet) storage
-- DataFusion optimizes query execution (projection pushdown, filter pushdown, etc.)
-- For user tables: Automatically filtered by current user's data
+Examples:
 
----
+```sql
+EXECUTE AS USER 'admin' (
+  SELECT * FROM app.messages WHERE conversation_id = 42
+);
 
-## Manual Flushing
+EXECUTE AS USER 'service_bot' (
+  INSERT INTO app.messages (conversation_id, sender, role, content)
+  VALUES (42, 'service_bot', 'assistant', 'Processing complete')
+);
+```
 
-Manual flushing allows you to explicitly trigger the flush of data from RocksDB (hot tier) to Parquet files (cold tier) without waiting for automatic flush policies.
+Rules:
 
-### STORAGE FLUSH TABLE
+1. The wrapper must contain exactly one SQL statement.
+2. Username must be single-quoted.
+3. Legacy inline `... AS USER 'name'` syntax is not supported.
+
+## User Management
+
+### CREATE USER
+
+```sql
+CREATE USER '<username>'
+  WITH <PASSWORD '<password>' | OAUTH | INTERNAL>
+  ROLE <user|service|dba|system>
+  [EMAIL '<email>'];
+```
+
+### ALTER USER
+
+```sql
+ALTER USER '<username>' SET PASSWORD '<new_password>';
+ALTER USER '<username>' SET ROLE <user|service|dba|system>;
+ALTER USER '<username>' SET EMAIL '<new_email>';
+```
+
+### DROP USER
+
+```sql
+DROP USER '<username>';
+DROP USER IF EXISTS '<username>';
+```
+
+## Storage Commands
+
+### CREATE STORAGE
+
+```sql
+CREATE STORAGE <storage_id>
+  TYPE '<filesystem|s3|gcs|azure>'
+  [NAME '<storage_name>']
+  [DESCRIPTION '<description>']
+  [PATH '<path>']
+  [BUCKET '<bucket_or_s3_url>']
+  [REGION '<region>']
+  [BASE_DIRECTORY '<path_or_url>']
+  [SHARED_TABLES_TEMPLATE '<template>']
+  [USER_TABLES_TEMPLATE '<template>']
+  [CREDENTIALS '<json_credentials>']
+  [CONFIG '<json_config>'];
+```
+
+Examples:
+
+```sql
+CREATE STORAGE local
+  TYPE 'filesystem'
+  PATH './data';
+
+CREATE STORAGE s3_prod
+  TYPE 's3'
+  BUCKET 'my-bucket'
+  REGION 'us-west-2'
+  CREDENTIALS '{"access_key_id":"...","secret_access_key":"..."}';
+```
+
+### ALTER STORAGE
+
+```sql
+ALTER STORAGE <storage_id>
+  [SET NAME '<new_name>']
+  [SET DESCRIPTION '<new_description>']
+  [SET SHARED_TABLES_TEMPLATE '<new_template>']
+  [SET USER_TABLES_TEMPLATE '<new_template>']
+  [SET CONFIG '<json_config>'];
+```
+
+### DROP STORAGE
+
+```sql
+DROP STORAGE <storage_id>;
+DROP STORAGE IF EXISTS <storage_id>;
+```
+
+### SHOW STORAGES
+
+```sql
+SHOW STORAGES;
+```
+
+### STORAGE CHECK
+
+```sql
+STORAGE CHECK <storage_id>;
+STORAGE CHECK <storage_id> EXTENDED;
+```
+
+### STORAGE FLUSH
 
 ```sql
 STORAGE FLUSH TABLE <namespace>.<table_name>;
-```
-
-**Behavior**:
-- Triggers asynchronous flush job (returns immediately with job_id).
-- Flush executes in background via JobManager.
-- Only works for USER and SHARED tables (not STREAM tables).
-- Prevents concurrent flushes on the same table.
-- **Namespace is required**.
-
-**Examples**:
-```sql
--- Flush a user table
-STORAGE FLUSH TABLE app.messages;
-
--- Flush a shared table
-STORAGE FLUSH TABLE app.config;
-```
-
-**Response**:
-```json
-{
-  "status": "success",
-  "message": "Storage flush started for table 'app.messages'. Job ID: flush-messages-1761332099970-f14aa44d"
-}
-```
-
-**Job Tracking**:
-```sql
--- Check job status
-SELECT job_id, status, result, created_at, completed_at
-FROM system.jobs
-WHERE job_id = 'flush-messages-1761332099970-f14aa44d';
-
--- View all flush jobs
-SELECT * FROM system.jobs
-WHERE job_id LIKE 'flush-%'
-ORDER BY created_at DESC;
-```
-
----
-
-### STORAGE FLUSH ALL
-
-```sql
-STORAGE FLUSH ALL [IN [NAMESPACE] <namespace>];
-```
-
-**Behavior**:
-- Triggers flush for all USER and SHARED tables in namespace.
-- Each table gets its own async flush job.
-- Returns array of job_ids (one per table).
-- When the `IN` clause is omitted, the command uses the current session namespace (defaults to `default`).
-
-**Examples**:
-```sql
--- Storage flush all tables in app namespace
-STORAGE FLUSH ALL IN app;
-STORAGE FLUSH ALL IN NAMESPACE app;
-
--- Use current session namespace
+STORAGE FLUSH ALL IN <namespace>;
+STORAGE FLUSH ALL IN NAMESPACE <namespace>;
 STORAGE FLUSH ALL;
 ```
 
-**Response**:
-```json
-{
-  "status": "success",
-  "message": "Storage flush started for 3 table(s) in namespace 'app'. Job IDs: [flush-messages-..., flush-config-..., flush-logs-...]"
-}
-```
+### STORAGE COMPACT
 
----
-
-### STORAGE FLUSH Restrictions
-
-**Stream Tables**:
 ```sql
-STORAGE FLUSH TABLE app.live_events;
--- ERROR: Cannot flush stream table 'app.live_events'. Only user and shared tables support flushing.
+STORAGE COMPACT TABLE <namespace>.<table_name>;
+STORAGE COMPACT ALL IN <namespace>;
+STORAGE COMPACT ALL IN NAMESPACE <namespace>;
+STORAGE COMPACT ALL;
 ```
 
-**Concurrent Flush Detection**:
+### SHOW MANIFEST
+
 ```sql
--- First flush
-STORAGE FLUSH TABLE app.messages;
--- Returns: job_id_1
-
--- Immediate second flush (before first completes)
-STORAGE FLUSH TABLE app.messages;
--- ERROR: Flush job already running for table 'app.messages'
--- Or returns different job_id if first flush completed
+SHOW MANIFEST;
 ```
 
-**Non-Existent Table**:
-```sql
-STORAGE FLUSH TABLE app.nonexistent;
--- ERROR: Table 'app.nonexistent' does not exist
-```
-
----
+## Job Commands
 
 ### KILL JOB
-
-Cancel a running flush job:
 
 ```sql
 KILL JOB '<job_id>';
 ```
 
-**Examples**:
-```sql
--- Cancel a specific flush job
-KILL JOB 'flush-messages-1761332099970-f14aa44d';
-
--- Response
--- "Job 'flush-messages-...' has been cancelled"
-```
-
-**Notes**:
-- Only works for jobs in 'pending' or 'running' state
-- Completed/failed jobs cannot be killed
-- Job status updated to 'cancelled' in system.jobs
-
----
-
-## Live Query Subscriptions
-
-KalamDB supports real-time live queries through WebSocket subscriptions using the `SUBSCRIBE TO` SQL command. When data changes in a subscribed table, clients receive instant notifications over the WebSocket connection.
+## Live Query Commands
 
 ### SUBSCRIBE TO
-
-The `SUBSCRIBE TO` command initiates a live query subscription, establishing a WebSocket connection for real-time change notifications.
 
 ```sql
 SUBSCRIBE TO <namespace>.<table_name>
 [WHERE <condition>]
-[OPTIONS (last_rows=<n>)];
+[OPTIONS (last_rows=<n>, batch_size=<n>, from_seq_id=<n>)];
 ```
 
-**Parameters**:
-- `<namespace>.<table_name>`: **Required** - Fully qualified table name (namespace must be specified)
-- `WHERE <condition>`: **Optional** - Filter condition for the subscription (only matching changes are sent)
-- `OPTIONS (last_rows=<n>)`: **Optional** - Number of most recent rows to send as initial data
-
-**Returns**: Subscription metadata with WebSocket connection details:
-```json
-{
-  "status": "subscription_required",
-  "ws_url": "ws://localhost:8080/v1/ws",
-  "subscription": {
-    "id": "sub-7f8e9d2a",
-    "sql": "SELECT * FROM chat.messages WHERE user_id = 'user123'",
-    "options": {"last_rows": 10}
-  },
-  "message": "WebSocket connection required for live query subscription"
-}
-```
-
-**Examples**:
+### KILL LIVE QUERY
 
 ```sql
--- Basic subscription (all rows, all changes)
-SUBSCRIBE TO chat.messages;
-
--- Subscription with filter (only messages from specific user)
-SUBSCRIBE TO chat.messages WHERE user_id = 'user123';
-
--- Subscription with initial data (last 10 rows)
-SUBSCRIBE TO chat.messages WHERE room_id = 'general' OPTIONS (last_rows=10);
-
--- Subscription with complex filter
-SUBSCRIBE TO app.events 
-WHERE event_type IN ('error', 'warning') 
-  AND timestamp > NOW() - INTERVAL '1 hour';
-
--- Stream table subscription (ephemeral data)
-SUBSCRIBE TO live.sensor_data WHERE sensor_id = 'temp-01';
+KILL LIVE QUERY '<subscription_id>';
 ```
 
-### WebSocket Protocol
+## Topic / Consume Commands
 
-After receiving the subscription metadata from `SUBSCRIBE TO`, clients must:
-
-1. **Connect to WebSocket** using the provided `ws_url`
-2. **Authenticate** by sending an `authenticate` message (basic or jwt)
-3. **Send a subscribe message** with the subscription details
-4. **Process batched initial data** (if any) via `initial_data_batch` + `next_batch`
-5. **Receive change notifications** for insert/update/delete
-
-Note: WebSocket messages may arrive as JSON text frames or as gzip-compressed binary frames for larger payloads. See [WebSocket Protocol Documentation](../api/websocket-protocol.md) for details.
-
-**WebSocket Connection Flow**:
-
-```
-1. Execute SUBSCRIBE TO via HTTP POST /v1/api/sql
-   ↓
-2. Receive subscription metadata (ws_url + subscription)
-   ↓
-3. Connect WebSocket to ws_url
-   ↓
-4. Send authenticate message (jwt/basic)
-   ↓
-5. Send subscribe message
-   ↓
-6. Receive subscription_ack + one or more initial_data_batch
-   ↓
-7. Send next_batch while batch_control.has_more == true
-   ↓
-8. Receive change notifications
-```
-
-**Authenticate** (Client → Server):
-```json
-{"type":"authenticate","method":"jwt","token":"<JWT_TOKEN>"}
-```
-
-**Subscribe** (Client → Server):
-```json
-{
-  "type": "subscribe",
-  "subscription": {
-    "id": "messages-subscription",
-    "sql": "SELECT * FROM chat.messages WHERE user_id = 'user123'",
-    "options": {"last_rows": 10}
-  }
-}
-```
-
-**SubscriptionAck** (Server → Client):
-```json
-{
-  "type": "subscription_ack",
-  "subscription_id": "messages-subscription",
-  "total_rows": 0,
-  "batch_control": {
-    "batch_num": 0,
-    "has_more": true,
-    "status": "loading",
-    "last_seq_id": null,
-    "snapshot_end_seq": null
-  }
-}
-```
-
-**InitialDataBatch** (Server → Client):
-```json
-{
-  "type": "initial_data_batch",
-  "subscription_id": "messages-subscription",
-  "rows": [
-    {"id": 1, "content": "Hello", "user_id": "user123", "timestamp": "2025-10-20T10:00:00Z"},
-    {"id": 2, "content": "World", "user_id": "user123", "timestamp": "2025-10-20T10:01:00Z"}
-  ],
-  "batch_control": {
-    "batch_num": 0,
-    "has_more": true,
-    "status": "loading",
-    "last_seq_id": 2,
-    "snapshot_end_seq": 123456
-  }
-}
-```
-
-**NextBatch** (Client → Server):
-```json
-{"type":"next_batch","subscription_id":"messages-subscription","last_seq_id":2}
-```
-
-**Change Notification** (Server → Client):
-```json
-{
-  "type": "change",
-  "subscription_id": "messages-subscription",
-  "change_type": "insert",
-  "rows": [
-    {"id": 3, "content": "New message", "user_id": "user123", "timestamp": "2025-10-20T10:05:00Z"}
-  ]
-}
-```
-
-**UPDATE Notification** (includes old values):
-```json
-{
-  "type": "change",
-  "subscription_id": "messages-subscription",
-  "change_type": "update",
-  "rows": [
-    {"id": 2, "content": "Updated message", "user_id": "user123", "timestamp": "2025-10-20T10:06:00Z"}
-  ],
-  "old_values": [
-    {"id": 2, "content": "World", "user_id": "user123", "timestamp": "2025-10-20T10:01:00Z"}
-  ]
-}
-```
-### Supported Table Types
-
-- ✅ **User Tables**: Subscriptions are automatically filtered by authenticated user's data
-- ✅ **Shared Tables**: Subscriptions receive changes from all users
-- ✅ **Stream Tables**: Subscriptions receive ephemeral real-time events
-
-### Subscription Lifecycle
-
-**Active Subscription**:
-- Registered in `system.live_queries` table
-- Monitored by live query manager
-- Sends notifications for all matching changes
-
-**Automatic Cleanup**:
-- When WebSocket connection closes
-- When client explicitly unsubscribes
-- After connection timeout (default: 10 seconds without heartbeat)
-
-**Subscription Limits**:
-- Max subscriptions per user: Configurable via `rate_limit.max_subscriptions_per_user` (default: 10)
-- Max WebSocket messages/sec per connection: Configurable via `rate_limit.max_messages_per_sec` (default: 50)
-- Max WebSocket message size: Configurable via `security.max_ws_message_size` (default: 1MB)
-
-### Query System.live_queries
-
-View active subscriptions in the system table:
+### CREATE TOPIC
 
 ```sql
-SELECT subscription_id, sql, user_id, created_at
-FROM system.live_queries
-WHERE user_id = 'user123';
+CREATE TOPIC <topic_name>;
+CREATE TOPIC <topic_name> PARTITIONS <count>;
 ```
 
-### Client Libraries
-
-**JavaScript/TypeScript Example**:
-```javascript
-// 1. Execute SUBSCRIBE TO via REST API
-const response = await fetch('http://localhost:8080/v1/api/sql', {
-  method: 'POST',
-  headers: {
-    'Authorization': `Bearer ${token}`,
-    'Content-Type': 'application/json'
-  },
-  body: JSON.stringify({
-    sql: 'SUBSCRIBE TO chat.messages WHERE user_id = \'user123\' OPTIONS (last_rows=10)'
-  })
-});
-
-const {ws_url, subscription} = await response.json();
-
-// 2. Connect to WebSocket
-const ws = new WebSocket(ws_url);
-
-// 3. Authenticate + subscribe
-ws.onopen = () => {
-  ws.send(JSON.stringify({
-    type: 'authenticate',
-    method: 'jwt',
-    token
-  }));
-
-  ws.send(JSON.stringify({
-    type: 'subscribe',
-    subscription
-  }));
-};
-
-// 4. Receive notifications
-ws.onmessage = (event) => {
-  const notification = JSON.parse(event.data);
-  console.log('WS message:', notification);
-};
-```
-
-**Rust Example** (using `tokio-tungstenite`):
-```rust
-use tokio_tungstenite::{connect_async, tungstenite::Message};
-use serde_json::json;
-
-// Execute SUBSCRIBE TO via HTTP client first...
-let (ws_url, subscription) = /* ... */;
-
-// Connect to WebSocket
-let (mut ws_stream, _) = connect_async(ws_url).await?;
-
-// Authenticate
-let auth = json!({
-  "type": "authenticate",
-  "method": "jwt",
-  "token": "<JWT_TOKEN>"
-});
-ws_stream.send(Message::Text(auth.to_string())).await?;
-
-// Send subscription message
-let msg = json!({
-  "type": "subscribe",
-  "subscription": subscription
-});
-ws_stream.send(Message::Text(msg.to_string())).await?;
-
-// Receive notifications
-while let Some(msg) = ws_stream.next().await {
-  let msg = msg?;
-  let text = match msg {
-    Message::Text(s) => s,
-    Message::Binary(_) => continue, // binary frames may be gzip-compressed JSON
-    _ => continue,
-  };
-  let notification: serde_json::Value = serde_json::from_str(&text)?;
-  println!("Message: {}", notification);
-}
-```
-
-### Error Handling
-
-**Missing Namespace**:
-```sql
-SUBSCRIBE TO messages;  -- ERROR: Namespace must be specified
-```
-
-**Invalid Syntax**:
-```sql
-SUBSCRIBE messages;  -- ERROR: Expected 'TO' after 'SUBSCRIBE'
-```
-
-**Invalid Options**:
-```sql
-SUBSCRIBE TO chat.messages OPTIONS (last_rows=abc);  
--- ERROR: Invalid option value: last_rows must be a positive integer
-```
-
-**Table Not Found**:
-```sql
-SUBSCRIBE TO chat.nonexistent;
--- ERROR: Table 'chat.nonexistent' does not exist
-```
-
-### Performance Considerations
-
-**Filter Efficiency**:
-- Use indexed columns in WHERE clauses when possible (`_updated` has bloom filter)
-- Complex filters are evaluated in-memory for each change
-- Consider table design for optimal subscription performance
-
-**Initial Data**:
-- `last_rows` option queries Parquet files and RocksDB
-- Large `last_rows` values may impact initial connection time
-- Default: No initial data sent (only real-time changes)
-
-**Notification Delivery**:
-- Notifications are batched for high-frequency changes
-- WebSocket backpressure handling prevents client overwhelm
-- Failed deliveries trigger automatic subscription cleanup
-
-### Best Practices
-
-1. **Specify Filters**: Use WHERE clauses to reduce notification volume
-```sql
--- Good: Filtered subscription
-SUBSCRIBE TO chat.messages WHERE room_id = 'general';
-
--- Bad: Unfiltered (all changes)
-SUBSCRIBE TO chat.messages;
-```
-
-2. **Use Initial Data Sparingly**: Only request last_rows when needed
-```sql
--- Good: Load initial context
-SUBSCRIBE TO chat.messages WHERE room_id = 'general' OPTIONS (last_rows=10);
-
--- Avoid: Large initial data loads
-SUBSCRIBE TO chat.messages OPTIONS (last_rows=100000);  -- Too much!
-```
-
-3. **Handle Connection Failures**: Implement reconnection logic with exponential backoff
-```javascript
-let reconnectAttempts = 0;
-ws.onclose = () => {
-  const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
-  setTimeout(reconnect, delay);
-  reconnectAttempts++;
-};
-```
-
-4. **Clean Up Subscriptions**: Always close WebSocket connections when done
-```javascript
-// Clean up on component unmount / page unload
-window.addEventListener('beforeunload', () => ws.close());
-```
-
-5. **Monitor Subscription Count**: Track active subscriptions to avoid hitting limits
-```sql
-SELECT COUNT(*) FROM system.live_queries WHERE user_id = 'user123';
-```
-
-### See Also
-
-- [WebSocket Protocol Documentation](../api/websocket-protocol.md) - Detailed protocol specification
-- [REST API Reference](../api/api-reference.md) - HTTP endpoint for SUBSCRIBE TO
-- [Live Query Design Notes](../architecture/decisions/adr-017-websocket-subscription-memory.md)
-
----
-
-## Catalog Browsing
-
-### SHOW TABLES
+### DROP TOPIC
 
 ```sql
-SHOW TABLES;
-SHOW TABLES IN <namespace>;
+DROP TOPIC <topic_name>;
 ```
 
-**Examples**:
-```sql
-SHOW TABLES;
-SHOW TABLES IN app;
-```
-
-**Output**: List of tables with `table_name` and `table_type` (User/Shared/Stream).
-
----
-
-### DESCRIBE TABLE
+### CLEAR TOPIC
 
 ```sql
-DESCRIBE TABLE [<namespace>.]<table_name>;
+CLEAR TOPIC <topic_name>;
 ```
 
-**Examples**:
-```sql
-DESCRIBE TABLE app.messages;
-DESCRIBE TABLE production.analytics;
-```
-
-**Output**:
-- Namespace
-- Table name
-- Table type (User/Shared/Stream)
-- Current schema version
-- Storage location
-- Flush policy (type, row_limit, time_interval)
-- Schema (columns, data types, nullable, system columns)
-- Retention hours (for stream tables)
-
----
-
-### SHOW STATS FOR TABLE
+### ALTER TOPIC ADD SOURCE
 
 ```sql
-SHOW STATS FOR TABLE [<namespace>.]<table_name>;
+ALTER TOPIC <topic_name>
+ADD SOURCE <table_name_or_namespace.table_name>
+ON <INSERT|UPDATE|DELETE>
+[WHERE <filter_expression>]
+[WITH (payload = '<key|full|diff>')];
 ```
 
-**Examples**:
-```sql
-SHOW STATS FOR TABLE app.messages;
-```
-
-**Output**:
-- Table name
-- Hot rows (RocksDB buffer)
-- Cold rows (Parquet files)
-- Total rows
-- Storage bytes
-- Last flushed timestamp
-
----
-
-## Cluster Operations
-
-Cluster commands control Raft groups, snapshots, and leadership. Most commands require **DBA** or **System** role.
-
-**Availability**:
-- Requires **cluster mode** (Raft executor).
-- `CLUSTER LIST` / `CLUSTER STATUS` are read‑only (allowed for all users).
-
-### CLUSTER SNAPSHOT
-
-Force all Raft groups to produce snapshots.
+### CONSUME FROM
 
 ```sql
-CLUSTER SNAPSHOT;
+CONSUME FROM <topic_name>
+[GROUP '<group_id>']
+[FROM <LATEST|EARLIEST|offset>]
+[LIMIT <count>];
 ```
 
-**Notes**:
-- Requires DBA/System role.
-- Returns a summary of groups that successfully created snapshots.
-
----
-
-### CLUSTER PURGE
-
-Purge Raft logs up to a log index (inclusive) across all groups.
+Examples:
 
 ```sql
-CLUSTER PURGE --UPTO <index>;
-CLUSTER PURGE <index>;
+CONSUME FROM app.new_messages;
+CONSUME FROM app.new_messages GROUP 'worker-1' FROM EARLIEST LIMIT 100;
+CONSUME FROM app.new_messages GROUP 'worker-1' FROM 250;
 ```
 
-**Examples**:
-```sql
-CLUSTER PURGE --UPTO 123456;
-CLUSTER PURGE 123456;
-```
-
-**Notes**:
-- Requires DBA/System role.
-- Use with care; only purge indices that are safely snapshotted.
-
----
-
-### CLUSTER TRIGGER ELECTION
-
-Trigger a leader election on all Raft groups.
+### ACK
 
 ```sql
-CLUSTER TRIGGER ELECTION;
-CLUSTER TRIGGER-ELECTION;
+ACK <topic_name>
+GROUP '<group_id>'
+[PARTITION <partition_id>]
+UPTO OFFSET <offset>;
 ```
 
-**Notes**:
-- Requires DBA/System role.
-
----
-
-### CLUSTER TRANSFER-LEADER
-
-Request leadership transfer for all groups to a target node.
-
-```sql
-CLUSTER TRANSFER LEADER <node_id>;
-CLUSTER TRANSFER-LEADER <node_id>;
-```
-
-**Examples**:
-```sql
-CLUSTER TRANSFER-LEADER 2;
-```
-
-**Notes**:
-- Requires DBA/System role.
-
----
-
-### CLUSTER STEPDOWN
-
-Ask current leaders to step down across all groups.
-
-```sql
-CLUSTER STEPDOWN;
-CLUSTER STEP-DOWN;
-```
-
-**Notes**:
-- Requires DBA/System role.
-
----
-
-### CLUSTER CLEAR
-
-Clear old snapshot files based on the server’s `max_snapshots_to_keep` setting.
-
-```sql
-CLUSTER CLEAR;
-```
-
-**Notes**:
-- Requires DBA/System role.
-
----
-
-### CLUSTER LIST / CLUSTER STATUS
-
-Show cluster overview and node/group status.
+## Cluster Commands
 
 ```sql
 CLUSTER LIST;
 CLUSTER STATUS;
+CLUSTER SNAPSHOT;
+CLUSTER PURGE --UPTO <index>;
+CLUSTER PURGE <index>;
+CLUSTER TRIGGER ELECTION;
+CLUSTER TRIGGER-ELECTION;
+CLUSTER TRANSFER LEADER <node_id>;
+CLUSTER TRANSFER-LEADER <node_id>;
+CLUSTER STEPDOWN;
+CLUSTER STEP-DOWN;
+CLUSTER CLEAR;
 ```
 
-**Notes**:
-- Read‑only (no admin role required).
-- Returns a formatted text overview.
+## Backup / Restore Commands
 
----
-
-### CLUSTER JOIN / CLUSTER LEAVE
-
-Join or leave a cluster.
+### BACKUP DATABASE
 
 ```sql
-CLUSTER JOIN <node_address>;
-CLUSTER LEAVE;
+BACKUP DATABASE <namespace> TO '<backup_path>';
+BACKUP DATABASE IF EXISTS <namespace> TO '<backup_path>';
 ```
 
-**Notes**:
-- Requires DBA/System role.
-- **Not yet implemented** — returns a warning.
-- Configure cluster membership in `server.toml` and restart nodes.
-
----
-
-### Cluster System Views
-
-For structured results, query the system views instead of `CLUSTER LIST`:
+### RESTORE DATABASE
 
 ```sql
--- Cluster nodes and health
-SELECT cluster_id, node_id, role, status, is_leader, api_addr, rpc_addr
-FROM system.cluster
-ORDER BY is_leader DESC, node_id ASC;
-
--- Per‑group Raft metrics
-SELECT group_id, group_type, current_term, state, current_leader, last_log_index, last_applied
-FROM system.cluster_groups
-ORDER BY group_id ASC;
+RESTORE DATABASE <namespace> FROM '<backup_path>';
+RESTORE DATABASE IF NOT EXISTS <namespace> FROM '<backup_path>';
 ```
 
-**Notes**:
-- `system.cluster` and `system.cluster_groups` are read‑only virtual views.
-- Available only in cluster mode.
-
----
-
-## Data Types
-
-KalamDB supports all DataFusion data types:
-
-| Type | Description | Example |
-|------|-------------|---------|
-| `BOOLEAN` | True/false | `true`, `false` |
-| `INT` / `INTEGER` | 32-bit signed integer | `42`, `-100` |
-| `BIGINT` | 64-bit signed integer | `9223372036854775807` |
-| `SMALLINT` | 16-bit signed integer | `-32768` to `32767` |
-| `FLOAT` | 32-bit floating point | `3.14` |
-| `DOUBLE` | 64-bit floating point | `2.718281828` |
-| `DECIMAL(p, s)` | Fixed-precision decimal | `DECIMAL(10, 2)` for money |
-| `TEXT` / `VARCHAR` | Variable-length string | `'Hello World'` |
-| `UUID` | 128-bit universally unique identifier | `'550e8400-e29b-41d4-a716-446655440000'` |
-| `TIMESTAMP` | Date and time | `'2025-10-20T15:30:00Z'`, `NOW()` |
-| `DATE` | Date only | `'2025-10-20'` |
-| `TIME` | Time only | `'15:30:00'` |
-| `INTERVAL` | Time duration | `INTERVAL '1 hour'`, `INTERVAL '7 days'` |
-| `BINARY` / `BYTES` | Binary data | `X'DEADBEEF'` |
-| `JSON` | JSON data (stored as TEXT) | `'{"key": "value"}'` |
-| `EMBEDDING(dimension)` | Fixed-size vector for AI/ML | `EMBEDDING(384)`, `EMBEDDING(768)` |
-| `FILE` | File reference (stored as JSON string) | `FILE("avatar")` |
-
-**Notes**:
-- `TEXT` and `VARCHAR` are equivalent
-- `TIMESTAMP` supports time zones (stored in UTC)
-- `JSON` is stored as TEXT (parse/validate in application)
-- `DECIMAL(precision, scale)` - precision: 1-38 digits, scale ≤ precision
-- `UUID` stored as 16-byte FixedSizeBinary in Arrow/Parquet
-- `EMBEDDING(dimension)` - dimension: 1-8192 (common: 384, 768, 1536, 3072)
-- `FILE` columns store a `FileRef` JSON string (see [FILE Datatype](#file-datatype))
-
-### FILE Datatype
-
-**Description**: `FILE` stores a reference to an uploaded file. The column value is a JSON string representing a `FileRef`:
-
-```json
-{
-  "id": "<file_id>",
-  "sub": "f0001",
-  "name": "original_filename.txt",
-  "size": 12345,
-  "mime": "text/plain",
-  "sha256": "...",
-  "shard": 0
-}
-```
-
-**Create a table with FILE**:
-```sql
-CREATE TABLE app.documents (
-  id TEXT PRIMARY KEY,
-  name TEXT,
-  attachment FILE
-) WITH (TYPE = 'USER');
-```
-
-**Insert with FILE placeholder** (requires multipart):
-```sql
-INSERT INTO app.documents (id, name, attachment)
-VALUES ('doc1', 'My Document', FILE("myfile.txt"));
-```
-
-**How multipart mapping works**:
-- Use `/v1/api/sql` with `Content-Type: multipart/form-data`.
-- Include a `sql` field with the SQL statement.
-- Attach file parts named `file:<placeholder>` (e.g., `file:myfile.txt`).
-- Only **one** SQL statement is allowed in a multipart upload.
-
-**Selecting FILE**:
-```sql
-SELECT attachment FROM app.documents WHERE id = 'doc1';
-```
-The `attachment` value is a JSON string (the `FileRef`). Use it to build the download URL.
-
-**Download URL**:
-```
-GET /v1/files/{namespace}/{table_name}/{subfolder}/{stored_filename}
-```
-Where:
-- `subfolder` = `FileRef.sub`
-- `stored_filename` = server-stored filename derived from `FileRef` (see API reference for download details)
-
-**Notes**:
-- File uploads require leader node in cluster mode.
-- Stream/System tables do not support `FILE`.
-
-### Modern Data Types (Added in v0.2.0)
-
-#### UUID - Universally Unique Identifiers
-
-**Description**: 128-bit identifier following RFC 4122 standard.
-
-**Storage**: 16 bytes (FixedSizeBinary(16) in Arrow/Parquet)
-
-**Usage**:
-```sql
-CREATE TABLE app.users (
-  user_id UUID PRIMARY KEY DEFAULT UUID_V7(),
-  email TEXT NOT NULL,
-  created_at TIMESTAMP DEFAULT NOW()
-) WITH (TYPE = 'USER');
-
--- Insert with explicit UUID
-INSERT INTO app.users (user_id, email) VALUES 
-  ('550e8400-e29b-41d4-a716-446655440000', 'alice@example.com');
-
--- UUID functions
-SELECT user_id FROM app.users WHERE user_id = UUID_V7();
-```
-
-#### DECIMAL - Fixed-Precision Numbers
-
-**Description**: Exact numeric type for financial calculations.
-
-**Format**: `DECIMAL(precision, scale)`
-- **precision**: Total digits (1-38)
-- **scale**: Decimal places (≤ precision)
-
-**Storage**: 16 bytes (Decimal128 in Arrow/Parquet)
-
-**Usage**:
-```sql
-CREATE TABLE app.products (
-  product_id BIGINT PRIMARY KEY,
-  price DECIMAL(10, 2),  -- Up to $99,999,999.99
-  tax_rate DECIMAL(5, 4), -- Up to 9.9999 (e.g., 0.0825 = 8.25%)
-  quantity INT
-) WITH (TYPE = 'SHARED');
-
-INSERT INTO app.products (product_id, price, tax_rate, quantity) VALUES
-  (1, 1234.56, 0.0825, 100);
-
--- Exact arithmetic (no floating-point errors)
-SELECT product_id, price * (1 + tax_rate) AS total_price
-FROM app.products;
-```
-
-**Common Precision/Scale Combinations**:
-- `DECIMAL(10, 2)` - Money (up to $99,999,999.99)
-- `DECIMAL(19, 4)` - High-precision money
-- `DECIMAL(5, 4)` - Percentages/rates (0.0000 to 9.9999)
-
-#### SMALLINT - Space-Efficient Small Integers
-
-**Description**: 16-bit signed integer for small numeric values.
-
-**Range**: -32,768 to 32,767
-
-**Storage**: 2 bytes (Int16 in Arrow/Parquet)
-
-**Usage**:
-```sql
-CREATE TABLE app.tasks (
-  task_id BIGINT PRIMARY KEY,
-  priority SMALLINT,  -- -32768 to 32767
-  status_code SMALLINT,  -- e.g., 200, 404, 500
-  retry_count SMALLINT,
-  description TEXT
-) WITH (TYPE = 'USER');
-
-INSERT INTO app.tasks (task_id, priority, status_code, retry_count, description) VALUES
-  (1, 5, 200, 0, 'High priority task');
-
--- Efficient storage for enums/status codes
-SELECT * FROM app.tasks WHERE status_code = 200 AND priority > 3;
-```
-
-#### EMBEDDING - Vector Storage for AI/ML
-
-**Description**: Fixed-size float32 vector for semantic search, embeddings, and ML applications.
-
-**Format**: `EMBEDDING(dimension)`
-- **dimension**: Vector size (1-8192)
-- Common dimensions: 384 (MiniLM), 768 (BERT), 1536 (OpenAI text-embedding-3-small), 3072 (OpenAI text-embedding-3-large)
-
-**Storage**: `dimension * 4` bytes (FixedSizeList<Float32> in Arrow/Parquet)
-
-**Usage**:
-```sql
--- Create table with embeddings
-CREATE TABLE app.documents (
-  doc_id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
-  content TEXT NOT NULL,
-  embedding EMBEDDING(384),  -- MiniLM sentence embeddings
-  created_at TIMESTAMP DEFAULT NOW()
-) WITH (TYPE = 'USER');
-
--- Insert document with embedding (from application)
-INSERT INTO app.documents (content, embedding) VALUES
-  ('KalamDB is a real-time database', ARRAY[0.123, -0.456, 0.789, ...]); -- 384 floats
-
--- Query embeddings (typically for vector search in application layer)
-SELECT doc_id, content, embedding FROM app.documents WHERE doc_id = 123;
-```
-
-**Common Embedding Dimensions**:
-
-| Model | Dimension | Use Case |
-|-------|-----------|----------|
-| `all-MiniLM-L6-v2` | 384 | Fast semantic search |
-| `BERT-base` | 768 | General NLP tasks |
-| `OpenAI text-embedding-3-small` | 1536 | Production embeddings |
-| `OpenAI text-embedding-3-large` | 3072 | High-quality embeddings |
-| `Llama-2-7B` | 4096 | Large language models |
-
-**Performance Characteristics**:
-- **Storage**: EMBEDDING(384) = 1,536 bytes per row
-- **Parquet Compression**: ~30-50% reduction with SNAPPY
-- **Insert Performance**: Same as other column types (included in batch writes)
-- **Query Performance**: Full scan (vector search requires external index)
-
-**Integration with Vector Search**:
-
-KalamDB stores embeddings efficiently but does NOT provide built-in vector similarity search (cosine distance, dot product, etc.). For semantic search:
-
-1. **Store embeddings** in KalamDB EMBEDDING columns
-2. **Retrieve embeddings** via standard SQL queries
-3. **Perform similarity search** in application layer or external vector index (FAISS, Pinecone, Weaviate)
-
-**Example Workflow**:
-
-1. Store embeddings in KalamDB:
-
-```json
-POST /v1/api/sql
-{
-  "sql": "INSERT INTO app.documents (content, embedding) VALUES ($1, $2)",
-  "params": ["KalamDB is a real-time database", [0.12, 0.98, 0.44]]
-}
-```
-
-2. Retrieve embeddings for search:
-
-```json
-POST /v1/api/sql
-{
-  "sql": "SELECT doc_id, embedding FROM app.documents"
-}
-```
-
-3. Compute similarity in your application layer (KalamDB does not provide built-in vector similarity search).
-
-**Future Enhancements** (Roadmap):
-- Native vector similarity functions: `COSINE_DISTANCE(emb1, emb2)`
-- HNSW index support for approximate nearest neighbor (ANN) search
-- Quantization (int8, binary) for memory efficiency
-- GPU-accelerated similarity computations
-
-**Best Practices**:
-1. **Normalize embeddings** to unit length before storage (enables dot product = cosine similarity)
-2. **Use appropriate dimension** for your model (don't over-provision)
-3. **Batch inserts** for multiple embeddings (use INSERT with multiple VALUES)
-4. **Separate table** for embeddings if not querying with document content
-5. **Compress Parquet files** with SNAPPY or ZSTD (30-50% size reduction)
-
-**Validation**:
-- **Dimension range**: 1 ≤ dimension ≤ 8192
-- **Array length**: Must match declared dimension exactly
-- **Value type**: Float32 (-3.4e38 to 3.4e38)
-
-**Errors**:
-```sql
--- ❌ Invalid dimension (too large)
-CREATE TABLE app.docs (embedding EMBEDDING(10000)) WITH (TYPE = 'USER');
--- Error: EMBEDDING dimension must be between 1 and 8192
-
--- ❌ Array length mismatch
-INSERT INTO app.docs (embedding) VALUES (ARRAY[0.1, 0.2]);  -- Expected 384 elements
--- Error: Expected 384 floats, got 2
-```
-
-### DATETIME and TIMESTAMP Timezone Behavior
-
-**Important**: KalamDB normalizes all `DATETIME` and `TIMESTAMP` values to UTC for storage. **Original timezone offsets are NOT preserved.**
-
-**Behavior**:
-- Input with timezone offset → **Converted to UTC** → Stored without offset
-- Input without timezone → Treated as **local time** → Stored as-is
-- On retrieval → Returned as UTC timestamp (no timezone info)
-
-**Examples**:
+### SHOW BACKUP
 
 ```sql
--- Input: '2025-01-01T12:00:00+02:00' (Berlin time, noon)
--- Stored: '2025-01-01T10:00:00Z' (UTC, 10:00 AM)
--- Retrieved: '2025-01-01T10:00:00' (no +00:00 suffix)
-
--- Input: '2025-01-01T12:00:00' (no timezone specified)
--- Stored: '2025-01-01T12:00:00' (assumed UTC or local time)
--- Retrieved: '2025-01-01T12:00:00'
+SHOW BACKUP FOR DATABASE <namespace>;
+SHOW BACKUPS FOR DATABASE <namespace>;
 ```
 
-**Best Practices**:
-1. **Always specify timezone offsets** in DATETIME literals: `'2025-01-01T12:00:00+02:00'`
-2. **Store all times in UTC** at the application layer if timezone preservation is needed
-3. **Use a separate column** to store original timezone if required: `user_timezone TEXT`
-
-**Example with Timezone Handling**:
+## Built-in Functions (Common)
 
 ```sql
-CREATE TABLE app.events (
-  id BIGINT DEFAULT SNOWFLAKE_ID(),
-  event_time DATETIME NOT NULL,        -- Stored in UTC
-  user_timezone TEXT,                   -- Store original timezone separately
-  description TEXT
-) WITH (TYPE = 'USER');
-
--- Insert with explicit timezone (Berlin)
-INSERT INTO app.events (event_time, user_timezone, description) VALUES
-  ('2025-01-01T14:00:00+01:00', 'Europe/Berlin', 'Meeting scheduled');
-
--- Query: event_time is now '2025-01-01T13:00:00' (UTC)
--- Use user_timezone column to convert back to local time in application
+SELECT SNOWFLAKE_ID();
+SELECT UUID_V7();
+SELECT ULID();
+SELECT CURRENT_USER();
+SELECT NOW();
 ```
-
-**Testing Timezone Behavior**:
-
-See `backend/tests/test_datetime_timezone_storage.rs` for comprehensive timezone handling tests demonstrating UTC normalization.
-
----
-
-## System Columns
-
-### User Tables and Shared Tables
-
-| Column | Type | Description | Indexed | Mutable |
-|--------|------|-------------|---------|---------|
-| `_updated` | `TIMESTAMP` | Last update timestamp | Yes (bloom filter) | No (auto-managed) |
-| `_deleted` | `BOOLEAN` | Soft delete flag | No | No (auto-managed) |
-
-**Usage**:
-```sql
--- Query recently updated rows
-SELECT * FROM app.messages
-WHERE _updated >= NOW() - INTERVAL '1 hour';
-
--- Query soft-deleted rows
-SELECT * FROM app.messages WHERE _deleted = true;
-
--- Exclude soft-deleted rows (default behavior)
-SELECT * FROM app.messages WHERE _deleted = false;
-```
-
-**Notes**:
-- `_updated` is set to NOW() on INSERT and UPDATE
-- `_deleted` is set to true on DELETE (soft delete)
-- Cannot be altered via ALTER TABLE
-- Cannot be specified in INSERT/UPDATE statements
-
----
-
-### Stream Tables
-
-**No system columns**: Stream tables do NOT have `_updated` or `_deleted` columns (ephemeral data only).
-
----
-
-## SQL Functions
-
-KalamDB supports all DataFusion SQL functions. Common ones:
-
-### Date/Time Functions
-- `NOW()`: Current timestamp
-- `DATE_TRUNC('day', timestamp)`: Truncate to day
-- `EXTRACT(YEAR FROM timestamp)`: Extract year
-
-### String Functions
-- `UPPER(text)`, `LOWER(text)`: Case conversion
-- `LENGTH(text)`: String length
-- `SUBSTRING(text, start, length)`: Extract substring
-- `CONCAT(text1, text2)`: Concatenate strings
-
-### Aggregation Functions
-- `COUNT(*)`, `COUNT(column)`: Row count
-- `SUM(column)`, `AVG(column)`: Numeric aggregation
-- `MIN(column)`, `MAX(column)`: Min/max values
-- `ARRAY_AGG(column)`: Aggregate into array
-
-### Window Functions
-- `ROW_NUMBER() OVER (ORDER BY ...)`: Row numbering
-- `RANK() OVER (PARTITION BY ... ORDER BY ...)`: Ranking
-- `LAG(column) OVER (ORDER BY ...)`: Previous value
-
-See [DataFusion SQL Reference](https://arrow.apache.org/datafusion/user-guide/sql/index.html) for complete list.
-
----
-
-## KalamDB Custom Functions
-
-KalamDB provides custom SQL functions for ID generation and session context. These functions can be used in DEFAULT clauses, SELECT statements, and WHERE conditions.
-
-### ID Generation Functions
-
-#### SNOWFLAKE_ID()
-
-Generates a 64-bit distributed unique identifier with time-ordering properties.
-
-**Signature**: `SNOWFLAKE_ID() -> BIGINT`
-
-**Structure** (64 bits total):
-- **41 bits**: Timestamp in milliseconds since Unix epoch (supports ~69 years)
-- **10 bits**: Node ID (0-1023 for distributed deployments)
-- **12 bits**: Sequence number (4096 IDs per millisecond per node)
-
-**Properties**:
-- **Time-ordered**: IDs increase monotonically with time
-- **Distributed**: No coordination needed across nodes (configure `node_id` in config.toml)
-- **High throughput**: 4 million IDs per second per node
-- **Sortable**: Numeric sorting equals chronological sorting
-- **Compact**: 8 bytes storage
-
-**Configuration**:
-```toml
-# config.toml
-[flush]
-node_id = 0  # Range: 0-1023
-```
-
-**Examples**:
-
-```sql
--- CREATE: Table with auto-generated primary key
-CREATE TABLE app.orders (
-  order_id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
-  customer_id TEXT NOT NULL,
-  total_amount DOUBLE,
-  created_at TIMESTAMP DEFAULT NOW()
-) WITH (TYPE = 'USER', FLUSH_POLICY = 'rows:1000');
-
--- INSERT: Omit order_id, it will be auto-generated
-INSERT INTO app.orders (customer_id, total_amount)
-VALUES ('customer_123', 99.99);
-
--- INSERT: Multiple rows with auto-generated IDs
-INSERT INTO app.orders (customer_id, total_amount) VALUES
-  ('customer_456', 149.50),
-  ('customer_789', 75.25),
-  ('customer_101', 250.00);
-
--- SELECT: Query with SNOWFLAKE_ID() in WHERE clause
-SELECT * FROM app.orders 
-WHERE order_id > SNOWFLAKE_ID()  -- Orders created after this moment
-ORDER BY order_id DESC;
-
--- SELECT: Generate IDs in query result
-SELECT 
-  SNOWFLAKE_ID() as new_id,
-  customer_id,
-  total_amount
-FROM app.orders;
-
--- UPDATE: Use SNOWFLAKE_ID() for versioning
-UPDATE app.orders 
-SET version_id = SNOWFLAKE_ID()
-WHERE order_id = 12345;
-```
-
-**Use Cases**:
-- Primary keys for high-volume tables
-- Event IDs in distributed systems
-- Correlation IDs for tracing
-- Timestamp-based sharding keys
-
----
-
-#### UUID_V7()
-
-Generates RFC 9562 compliant UUIDv7 identifiers with time-ordering.
-
-**Signature**: `UUID_V7() -> TEXT`
-
-**Structure** (128 bits, 36 characters with hyphens):
-- **48 bits**: Unix timestamp in milliseconds
-- **12 bits**: Version (7) and variant bits
-- **62 bits**: Random data
-
-**Format**: `018b6e8a-07d1-7000-8000-0123456789ab` (8-4-4-4-12 pattern)
-
-**Properties**:
-- **RFC 9562 compliant**: Standard UUID format
-- **Time-ordered**: Lexicographically sortable by creation time
-- **Globally unique**: 128-bit randomness ensures no collisions
-- **Interoperable**: Works with UUID libraries in all languages
-- **URL-safe**: Can be used in URLs without encoding
-
-**Examples**:
-
-```sql
--- CREATE: Table with UUID primary key
-CREATE TABLE app.sessions (
-  session_id TEXT PRIMARY KEY DEFAULT UUID_V7(),
-  user_id TEXT NOT NULL,
-  ip_address TEXT,
-  created_at TIMESTAMP DEFAULT NOW(),
-  expires_at TIMESTAMP
-) WITH (TYPE = 'USER', FLUSH_POLICY = 'rows:500');
-
--- INSERT: Auto-generate session IDs
-INSERT INTO app.sessions (user_id, ip_address, expires_at)
-VALUES ('user_alice', '192.168.1.100', NOW() + INTERVAL '1 hour');
-
--- INSERT: Multiple sessions with UUIDs
-INSERT INTO app.sessions (user_id, ip_address, expires_at) VALUES
-  ('user_bob', '192.168.1.101', NOW() + INTERVAL '2 hours'),
-  ('user_charlie', '192.168.1.102', NOW() + INTERVAL '30 minutes');
-
--- SELECT: Query sessions created in last hour
-SELECT session_id, user_id, created_at
-FROM app.sessions
-WHERE created_at > NOW() - INTERVAL '1 hour'
-ORDER BY session_id;  -- Time-ordered due to UUID_V7
-
--- SELECT: Generate new UUIDs in query
-SELECT 
-  UUID_V7() as correlation_id,
-  session_id,
-  user_id
-FROM app.sessions
-WHERE expires_at > NOW();
-
--- UPDATE: Add correlation ID
-UPDATE app.sessions
-SET correlation_id = UUID_V7()
-WHERE session_id = '018b6e8a-07d1-7000-8000-0123456789ab';
-```
-
-**Use Cases**:
-- Session identifiers
-- API request/response tracking
-- Distributed transaction IDs
-- External-facing identifiers (customer-visible)
-- Multi-system integration keys
-
----
-
-#### ULID()
-
-Generates Universally Unique Lexicographically Sortable Identifiers.
-
-**Signature**: `ULID() -> TEXT`
-
-**Structure** (128 bits, 26 characters):
-- **48 bits**: Unix timestamp in milliseconds
-- **80 bits**: Random data
-- **Encoding**: Crockford Base32 (0-9, A-Z excluding I, L, O, U)
-
-**Format**: `01HGW4VJKQZ7Y8X9P6T5R4N3M2` (26 characters, no hyphens)
-
-**Properties**:
-- **Time-ordered**: Lexicographically sortable
-- **URL-safe**: No special characters or hyphens
-- **Case-insensitive**: Can be stored uppercase or lowercase
-- **Compact**: 26 characters vs 36 for UUID
-- **Copy-paste friendly**: No hyphens to break selection
-- **Collision-resistant**: 1.21e+24 possible values per millisecond
-
-**Examples**:
-
-```sql
--- CREATE: Table with ULID primary key
-CREATE TABLE app.events (
-  event_id TEXT PRIMARY KEY DEFAULT ULID(),
-  event_type TEXT NOT NULL,
-  user_id TEXT,
-  payload TEXT,
-  created_at TIMESTAMP DEFAULT NOW()
-) WITH (TYPE = 'USER', FLUSH_POLICY = 'rows:2000');
-
--- INSERT: Auto-generate event IDs
-INSERT INTO app.events (event_type, user_id, payload)
-VALUES ('user_login', 'user_alice', '{"ip": "192.168.1.100"}');
-
--- INSERT: Bulk events with ULIDs
-INSERT INTO app.events (event_type, user_id, payload) VALUES
-  ('page_view', 'user_bob', '{"page": "/dashboard"}'),
-  ('button_click', 'user_charlie', '{"button": "submit"}'),
-  ('api_call', 'user_alice', '{"endpoint": "/api/users"}');
-
--- SELECT: Query recent events (time-ordered by ULID)
-SELECT event_id, event_type, user_id, created_at
-FROM app.events
-ORDER BY event_id DESC  -- Most recent first
-LIMIT 100;
-
--- SELECT: Generate correlation ULIDs
-SELECT 
-  ULID() as trace_id,
-  event_id,
-  event_type,
-  user_id
-FROM app.events
-WHERE event_type = 'api_call';
-
--- UPDATE: Add trace ID for distributed tracing
-UPDATE app.events
-SET trace_id = ULID()
-WHERE event_type IN ('api_call', 'database_query');
-```
-
-**Use Cases**:
-- Event tracking and logging
-- Distributed tracing IDs
-- Short URLs and slugs
-- Mobile app offline ID generation
-- QR code identifiers
-
----
-
-#### CURRENT_USER()
-
-Returns the user ID from the current session context.
-
-**Signature**: `CURRENT_USER() -> TEXT`
-
-**Properties**:
-- **Session-scoped**: Returns authenticated user's ID
-- **Stable**: Constant within a transaction/request
-- **Automatic**: No configuration needed
-
-**Examples**:
-
-```sql
--- CREATE: Table tracking who created records
-CREATE TABLE app.documents (
-  doc_id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
-  title TEXT NOT NULL,
-  content TEXT,
-  created_by TEXT DEFAULT CURRENT_USER(),
-  created_at TIMESTAMP DEFAULT NOW(),
-  modified_by TEXT,
-  modified_at TIMESTAMP
-) WITH (TYPE = 'USER', FLUSH_POLICY = 'rows:1000');
-
--- INSERT: created_by automatically set to current user
-INSERT INTO app.documents (title, content)
-VALUES ('Quarterly Report', 'Sales increased by 25%...');
-
--- INSERT: Multiple documents
-INSERT INTO app.documents (title, content) VALUES
-  ('Meeting Notes', 'Attendees: Alice, Bob, Charlie...'),
-  ('Project Plan', 'Phase 1: Requirements gathering...');
-
--- SELECT: Query documents created by current user
-SELECT doc_id, title, created_at
-FROM app.documents
-WHERE created_by = CURRENT_USER()
-ORDER BY created_at DESC;
-
--- UPDATE: Track who modified the document
-UPDATE app.documents
-SET 
-  content = 'Updated content...',
-  modified_by = CURRENT_USER(),
-  modified_at = NOW()
-WHERE doc_id = 12345;
-
--- SELECT: Audit trail
-SELECT 
-  doc_id,
-  title,
-  created_by,
-  created_at,
-  modified_by,
-  modified_at,
-  CURRENT_USER() as current_session_user
-FROM app.documents
-WHERE modified_by IS NOT NULL;
-```
-
-**Use Cases**:
-- Audit trails and tracking
-- Row-level security
-- User-specific data filtering
-- Change history logging
-
----
-
-### ID Generation Function Comparison
-
-| Feature | SNOWFLAKE_ID() | UUID_V7() | ULID() |
-|---------|----------------|-----------|--------|
-| **Type** | BIGINT (64-bit) | TEXT (36 chars) | TEXT (26 chars) |
-| **Size** | 8 bytes | 36 bytes | 26 bytes |
-| **Format** | Numeric | 8-4-4-4-12 hyphenated | Crockford Base32 |
-| **Time-ordered** | ✅ Yes | ✅ Yes | ✅ Yes |
-| **Distributed** | ✅ Yes (node_id) | ✅ Yes | ✅ Yes |
-| **Throughput** | 4M/sec/node | Unlimited | Unlimited |
-| **Collision Risk** | None (with node_id) | Negligible | Negligible |
-| **URL-safe** | ✅ Yes | ⚠️ Requires encoding | ✅ Yes |
-| **Human-readable** | ❌ No | ⚠️ Partially | ⚠️ Partially |
-| **Database Index** | ✅ Excellent | ✅ Good | ✅ Good |
-| **RFC Standard** | ❌ No | ✅ RFC 9562 | ❌ No (spec exists) |
-| **Best For** | High-volume tables | External APIs | Logs/events |
-
-**Choosing the Right Function**:
-
-- **Use SNOWFLAKE_ID()** when:
-  - You need maximum performance (numeric indexing)
-  - Working with high-volume tables (millions of rows)
-  - Building distributed systems with multiple nodes
-  - Storage efficiency is critical
-
-- **Use UUID_V7()** when:
-  - You need RFC-standard UUIDs
-  - Integrating with external systems
-  - Customer-facing identifiers
-  - Cross-platform compatibility required
-
-- **Use ULID()** when:
-  - You need URL-friendly IDs
-  - Building APIs with short, readable IDs
-  - Copy-paste friendliness matters
-  - You want compact text IDs
-
----
-
-### Complete Example: E-commerce System
-
-```sql
--- 1. Create namespace
-CREATE NAMESPACE shop;
-
--- 2. Users table with SNOWFLAKE_ID
-CREATE TABLE shop.users (
-  user_id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
-  username TEXT NOT NULL,
-  email TEXT NOT NULL,
-  created_at TIMESTAMP DEFAULT NOW(),
-  created_by TEXT DEFAULT CURRENT_USER()
-) WITH (TYPE = 'USER', FLUSH_POLICY = 'rows:1000');
-
--- 3. Orders table with UUID_V7 (external-facing)
-CREATE TABLE shop.orders (
-  order_id TEXT PRIMARY KEY DEFAULT UUID_V7(),
-  user_id BIGINT NOT NULL,
-  total_amount DOUBLE NOT NULL,
-  status TEXT DEFAULT 'pending',
-  created_at TIMESTAMP DEFAULT NOW(),
-  updated_at TIMESTAMP DEFAULT NOW()
-) WITH (TYPE = 'USER', FLUSH_POLICY = 'rows:500');
-
--- 4. Events table with ULID (logging)
-CREATE TABLE shop.events (
-  event_id TEXT PRIMARY KEY DEFAULT ULID(),
-  event_type TEXT NOT NULL,
-  user_id BIGINT,
-  order_id TEXT,
-  payload TEXT,
-  created_at TIMESTAMP DEFAULT NOW()
-) WITH (TYPE = 'SHARED', FLUSH_POLICY = 'interval:60,rows:5000');
-
--- 5. Insert users (IDs auto-generated)
-INSERT INTO shop.users (username, email) VALUES
-  ('alice', 'alice@example.com'),
-  ('bob', 'bob@example.com'),
-  ('charlie', 'charlie@example.com');
-
--- 6. Insert orders (IDs auto-generated)
-INSERT INTO shop.orders (user_id, total_amount) VALUES
-  (1, 99.99),
-  (2, 149.50),
-  (1, 75.25);
-
--- 7. Log events (IDs auto-generated)
-INSERT INTO shop.events (event_type, user_id, order_id, payload) VALUES
-  ('order_created', 1, '018b6e8a-07d1-7000-8000-0123456789ab', '{"items": 3}'),
-  ('payment_processed', 1, '018b6e8a-07d1-7000-8000-0123456789ab', '{"method": "card"}'),
-  ('order_shipped', 1, '018b6e8a-07d1-7000-8000-0123456789ab', '{"carrier": "ups"}');
-
--- 8. Query recent orders for current user
-SELECT 
-  order_id,
-  total_amount,
-  status,
-  created_at
-FROM shop.orders
-WHERE user_id IN (
-  SELECT user_id FROM shop.users WHERE created_by = CURRENT_USER()
-)
-ORDER BY created_at DESC
-LIMIT 10;
-
--- 9. Query order timeline (events sorted by ULID)
-SELECT 
-  event_id,
-  event_type,
-  payload,
-  created_at
-FROM shop.events
-WHERE order_id = '018b6e8a-07d1-7000-8000-0123456789ab'
-ORDER BY event_id;  -- Time-ordered by ULID
-
--- 10. Update order status with audit trail
-UPDATE shop.orders
-SET 
-  status = 'shipped',
-  updated_at = NOW()
-WHERE order_id = '018b6e8a-07d1-7000-8000-0123456789ab';
-
--- Log the status change
-INSERT INTO shop.events (event_type, user_id, order_id, payload)
-VALUES (
-  'status_changed',
-  (SELECT user_id FROM shop.orders WHERE order_id = '018b6e8a-07d1-7000-8000-0123456789ab'),
-  '018b6e8a-07d1-7000-8000-0123456789ab',
-  '{"old": "pending", "new": "shipped", "by": "' || CURRENT_USER() || '"}'
-);
-```
-
----
-
-#### Architecture-Specific Features
-
-1. **Table Types**: KalamDB has USER, SHARED, and STREAM tables (PostgreSQL/MySQL have standard tables)
-2. **FLUSH POLICY**: Required for KalamDB tables (no equivalent in PostgreSQL/MySQL)
-3. **System Columns**: `_updated` and `_deleted` are auto-managed (not user-specified)
-4. **Namespace Operations**: KalamDB uses `CREATE NAMESPACE` (PostgreSQL uses `CREATE SCHEMA`, MySQL uses `CREATE DATABASE`)
-
-#### Not Yet Supported
-
-1. **Transactions**: No BEGIN/COMMIT/ROLLBACK (planned for future)
-2. **Foreign Keys**: No FK constraints (planned for future)
-3. **Triggers**: No CREATE TRIGGER support
-4. **Stored Procedures**: No procedural SQL (PL/pgSQL, MySQL procedures)
-5. **Views**: No CREATE VIEW support (planned for future)
-6. **Indexes**: No explicit index creation (automatic bloom filters only)
-
-#### SQL Parser Implementation
-
-KalamDB uses **sqlparser-rs** (https://github.com/sqlparser-rs/sqlparser-rs) for standard SQL parsing with custom extensions for KalamDB-specific commands:
-
-- **Standard SQL**: Parsed by sqlparser-rs (SELECT, INSERT, UPDATE, DELETE)
-- **Custom Extensions**: Custom parsers for CREATE NAMESPACE, FLUSH POLICY, CREATE STORAGE, etc.
-- **Dialect**: Extends PostgreSQL dialect with KalamDB-specific keywords
-
----
-
-## Examples
-
-### Complete Workflow
-
-```sql
--- 1. Create namespace
-CREATE NAMESPACE app;
-
--- 2. Create storage (optional, 'local' is default)
-CREATE STORAGE s3_prod
-TYPE s3
-PATH 's3://my-bucket/kalamdb-data'
-CREDENTIALS '{
-  "access_key_id": "AKIAIOSFODNN7EXAMPLE",
-  "secret_access_key": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
-  "region": "us-west-2"
-}';
-
--- 3. Create user table with DEFAULT functions
-CREATE USER TABLE app.messages (
-  id BIGINT DEFAULT SNOWFLAKE_ID(),
-  content TEXT,
-  author TEXT,
-  created_at TIMESTAMP DEFAULT NOW()
-) STORAGE local FLUSH INTERVAL 300s ROW_THRESHOLD 10;
-
--- 4. Create shared table
-CREATE SHARED TABLE app.config (
-  config_key TEXT NOT NULL,
-  config_value TEXT,
-  updated_at TIMESTAMP DEFAULT NOW()
-) STORAGE local FLUSH ROW_THRESHOLD 100;
-
--- 5. Create stream table
-CREATE STREAM TABLE app.events (
-  event_id TEXT NOT NULL,
-  event_type TEXT,
-  payload TEXT,
-  timestamp TIMESTAMP DEFAULT NOW()
-) TTL 10;
-
--- 6. Insert data (using DEFAULT functions)
-INSERT INTO app.messages (content, author) VALUES ('Hello World', 'alice');
-
-INSERT INTO app.config (config_key, config_value)
-VALUES ('app_name', 'KalamDB');
-
-INSERT INTO app.events (event_id, event_type, payload)
-VALUES ('evt_123', 'user_action', '{"action":"click"}');
-
--- 7. Query data
-SELECT * FROM app.messages
-WHERE created_at > NOW() - INTERVAL '1 hour'
-ORDER BY created_at DESC;
-
-SELECT * FROM app.config WHERE config_key = 'app_name';
-
-SELECT * FROM app.events LIMIT 10;
-
--- 8. Update data
-UPDATE app.messages SET content = 'Updated' WHERE id = 1;
-
--- 9. Schema evolution
-ALTER TABLE app.messages ADD COLUMN reaction TEXT;
-
-STORAGE FLUSH TABLE app.messages;
-
--- Check flush job status
-SELECT job_id, status, result 
-FROM system.jobs 
-WHERE job_id LIKE 'flush-messages-%' 
-ORDER BY created_at DESC 
-LIMIT 1;
-
--- 11. Subscribe to live changes (WebSocket)
-SUBSCRIBE TO app.messages 
-WHERE author = 'alice' 
-OPTIONS (last_rows=10);
-
--- 12. Backup
-BACKUP DATABASE app TO '/backups/app-snapshot';
-
--- 13. Catalog browsing
-SHOW STORAGES;
-SHOW TABLES IN app;
-DESCRIBE TABLE app.messages;
-SHOW STATS FOR TABLE app.messages;
-
--- 14. Cleanup
-DROP TABLE app.events;
-DROP TABLE app.messages;
-DROP TABLE app.config;
-DROP STORAGE s3_prod;
-DROP NAMESPACE app;
-```
-
----
-
-## See Also
-
-- [REST API Reference](../api/api-reference.md) - HTTP endpoint documentation
-- [WebSocket Protocol](../api/websocket-protocol.md) - Real-time subscriptions
-- [Quick Start Guide](../getting-started/quick-start.md) - Getting started tutorial
-- [DataFusion SQL Reference](https://arrow.apache.org/datafusion/user-guide/sql/index.html) - Complete SQL function list

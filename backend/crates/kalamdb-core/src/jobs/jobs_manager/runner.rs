@@ -3,12 +3,12 @@ use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use crate::jobs::executors::JobDecision;
 use crate::jobs::{HealthMonitor, StreamEvictionScheduler};
-use kalamdb_system::JobNode;
-use kalamdb_system::providers::jobs::models::{Job, JobFilter};
 use kalamdb_commons::{JobId, NodeId};
-use kalamdb_system::JobStatus;
 use kalamdb_raft::commands::MetaCommand;
 use kalamdb_raft::GroupId;
+use kalamdb_system::providers::jobs::models::{Job, JobFilter};
+use kalamdb_system::JobNode;
+use kalamdb_system::JobStatus;
 use log::Level;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -52,11 +52,9 @@ impl JobsManager {
             claimed_at: chrono::Utc::now(),
         };
 
-        app_ctx
-            .executor()
-            .execute_meta(cmd)
-            .await
-            .map_err(|e| KalamDbError::Other(format!("Failed to claim job_node via Raft: {}", e)))?;
+        app_ctx.executor().execute_meta(cmd).await.map_err(|e| {
+            KalamDbError::Other(format!("Failed to claim job_node via Raft: {}", e))
+        })?;
         Ok(())
     }
 
@@ -76,11 +74,9 @@ impl JobsManager {
             updated_at: chrono::Utc::now(),
         };
 
-        app_ctx
-            .executor()
-            .execute_meta(cmd)
-            .await
-            .map_err(|e| KalamDbError::Other(format!("Failed to update job_node via Raft: {}", e)))?;
+        app_ctx.executor().execute_meta(cmd).await.map_err(|e| {
+            KalamDbError::Other(format!("Failed to update job_node via Raft: {}", e))
+        })?;
         Ok(())
     }
 
@@ -103,8 +99,7 @@ impl JobsManager {
             .await
             .map_err(|e| KalamDbError::Other(format!("Failed to complete job via Raft: {}", e)))?;
 
-        self.finalize_job_nodes(job_id, JobStatus::Completed, None)
-            .await?;
+        self.finalize_job_nodes(job_id, JobStatus::Completed, None).await?;
         Ok(())
     }
 
@@ -123,8 +118,7 @@ impl JobsManager {
         app_ctx.executor().execute_meta(cmd).await.map_err(|e| {
             KalamDbError::Other(format!("Failed to mark job as failed via Raft: {}", e))
         })?;
-        self.finalize_job_nodes(job_id, JobStatus::Failed, Some(error_message))
-            .await?;
+        self.finalize_job_nodes(job_id, JobStatus::Failed, Some(error_message)).await?;
         Ok(())
     }
 
@@ -137,7 +131,9 @@ impl JobsManager {
         let app_ctx = self.get_attached_app_context();
         let cmd = MetaCommand::CompleteJob {
             job_id: job_id.clone(),
-            result: Some(serde_json::json!({ "message": skip_message, "skipped": true }).to_string()),
+            result: Some(
+                serde_json::json!({ "message": skip_message, "skipped": true }).to_string(),
+            ),
             completed_at: chrono::Utc::now(),
         };
         app_ctx.executor().execute_meta(cmd).await.map_err(|e| {
@@ -154,8 +150,7 @@ impl JobsManager {
             KalamDbError::Other(format!("Failed to update job status to Skipped via Raft: {}", e))
         })?;
 
-        self.finalize_job_nodes(job_id, JobStatus::Skipped, Some(skip_message))
-            .await?;
+        self.finalize_job_nodes(job_id, JobStatus::Skipped, Some(skip_message)).await?;
         Ok(())
     }
 
@@ -349,8 +344,13 @@ impl JobsManager {
 
             match job_result {
                 Ok(Some((job, job_node))) => {
-                    log::info!("[{}] Job fetched for execution: type={:?}, status={:?}, is_leader={}", 
-                        job.job_id, job.job_type, job.status, is_leader);
+                    log::info!(
+                        "[{}] Job fetched for execution: type={:?}, status={:?}, is_leader={}",
+                        job.job_id,
+                        job.job_type,
+                        job.status,
+                        is_leader
+                    );
                     if idle_poll_ms != idle_poll_min_ms {
                         idle_poll_ms = idle_poll_min_ms;
                         poll_interval = tokio::time::interval_at(
@@ -405,7 +405,10 @@ impl JobsManager {
     /// Fetch an awakened job by ID for execution.
     ///
     /// Called when a job_id arrives via the awake channel.
-    async fn fetch_awakened_job(&self, job_id: &JobId) -> Result<Option<(Job, JobNode)>, KalamDbError> {
+    async fn fetch_awakened_job(
+        &self,
+        job_id: &JobId,
+    ) -> Result<Option<(Job, JobNode)>, KalamDbError> {
         // Fetch the job_node for this node
         let job_node_opt = self
             .job_nodes_provider
@@ -419,8 +422,19 @@ impl JobsManager {
         };
 
         // Skip if already processed
-        if matches!(job_node.status, JobStatus::Running | JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled | JobStatus::Skipped) {
-            log::info!("[{}] Skipping job_node already processed: status={:?}", job_id.as_str(), job_node.status);
+        if matches!(
+            job_node.status,
+            JobStatus::Running
+                | JobStatus::Completed
+                | JobStatus::Failed
+                | JobStatus::Cancelled
+                | JobStatus::Skipped
+        ) {
+            log::info!(
+                "[{}] Skipping job_node already processed: status={:?}",
+                job_id.as_str(),
+                job_node.status
+            );
             return Ok(None);
         }
 
@@ -436,8 +450,15 @@ impl JobsManager {
         };
 
         // Skip if job already terminal
-        if matches!(job.status, JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled | JobStatus::Skipped) {
-            log::info!("[{}] Skipping job already terminal: status={:?}", job_id.as_str(), job.status);
+        if matches!(
+            job.status,
+            JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled | JobStatus::Skipped
+        ) {
+            log::info!(
+                "[{}] Skipping job already terminal: status={:?}",
+                job_id.as_str(),
+                job.status
+            );
             self.update_job_node_status(job_id, job.status, None).await?;
             return Ok(None);
         }
@@ -489,9 +510,11 @@ impl JobsManager {
             return Ok(None);
         };
 
-        if matches!(job.status, JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled | JobStatus::Skipped) {
-            self.update_job_node_status(&job_node.job_id, job.status, None)
-                .await?;
+        if matches!(
+            job.status,
+            JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled | JobStatus::Skipped
+        ) {
+            self.update_job_node_status(&job_node.job_id, job.status, None).await?;
             return Ok(None);
         }
 
@@ -522,8 +545,13 @@ impl JobsManager {
         let job_id = job.job_id.clone();
         let job_type = job.job_type;
 
-        log::info!("[{}] execute_job started: type={:?}, has_local_work={}, has_leader_actions={}", 
-            job_id, job_type, job_type.has_local_work(), job_type.has_leader_actions());
+        log::info!(
+            "[{}] execute_job started: type={:?}, has_local_work={}, has_leader_actions={}",
+            job_id,
+            job_type,
+            job_type.has_local_work(),
+            job_type.has_leader_actions()
+        );
 
         // Mark job as Running if still Queued/New (leader coordination)
         // Only leader should be executing jobs at this point due to creation constraints
@@ -543,8 +571,12 @@ impl JobsManager {
                 Ok(d) => d,
                 Err(e) => {
                     let error_msg = format!("Local executor error: {}", e);
-                    self.update_job_node_status(&job_id, JobStatus::Failed, Some(error_msg.clone()))
-                        .await?;
+                    self.update_job_node_status(
+                        &job_id,
+                        JobStatus::Failed,
+                        Some(error_msg.clone()),
+                    )
+                    .await?;
                     if is_leader {
                         if let Err(err) = self.mark_job_failed(&job_id, error_msg.clone()).await {
                             log::error!(
@@ -571,8 +603,7 @@ impl JobsManager {
         // Handle local phase result
         match &local_decision {
             JobDecision::Completed { message } => {
-                self.update_job_node_status(&job_id, JobStatus::Completed, None)
-                    .await?;
+                self.update_job_node_status(&job_id, JobStatus::Completed, None).await?;
                 self.log_job_event(
                     &job_id,
                     &Level::Debug,
@@ -584,19 +615,18 @@ impl JobsManager {
                     .await?;
                 if is_leader {
                     if let Err(err) = self.mark_job_failed(&job_id, message.clone()).await {
-                        log::error!(
-                            "[{}] Failed to mark job as failed via Raft: {}",
-                            job_id,
-                            err
-                        );
+                        log::error!("[{}] Failed to mark job as failed via Raft: {}", job_id, err);
                     }
                 }
-                self.log_job_event(&job_id, &Level::Error, &format!("Job failed in local phase: {}", message));
+                self.log_job_event(
+                    &job_id,
+                    &Level::Error,
+                    &format!("Job failed in local phase: {}", message),
+                );
                 return Ok(());
             },
             JobDecision::Skipped { message } => {
-                self.update_job_node_status(&job_id, JobStatus::Completed, None)
-                    .await?;
+                self.update_job_node_status(&job_id, JobStatus::Completed, None).await?;
                 self.log_job_event(
                     &job_id,
                     &Level::Debug,
@@ -604,10 +634,20 @@ impl JobsManager {
                 );
                 // Continue to leader phase if applicable
             },
-            JobDecision::Retry { message, exception_trace, backoff_ms } => {
+            JobDecision::Retry {
+                message,
+                exception_trace,
+                backoff_ms,
+            } => {
                 // Handle retry for local phase
                 return self
-                    .handle_job_retry(&job, message, exception_trace.clone(), *backoff_ms, is_leader)
+                    .handle_job_retry(
+                        &job,
+                        message,
+                        exception_trace.clone(),
+                        *backoff_ms,
+                        is_leader,
+                    )
                     .await;
             },
         }
@@ -629,11 +669,7 @@ impl JobsManager {
                 JobNodeQuorumResult::Failed { failed_nodes } => {
                     let reason = format!(
                         "Local phase failed on nodes: {}",
-                        failed_nodes
-                            .iter()
-                            .map(|id| id.to_string())
-                            .collect::<Vec<_>>()
-                            .join(", ")
+                        failed_nodes.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(", ")
                     );
                     self.mark_job_failed(&job_id, reason).await?;
                     return Ok(());
@@ -666,7 +702,11 @@ impl JobsManager {
                     Err(e) => {
                         let error_msg = format!("Leader executor error: {}", e);
                         if let Err(err) = self.mark_job_failed(&job_id, error_msg.clone()).await {
-                            log::error!("[{}] Failed to mark job as failed via Raft: {}", job_id, err);
+                            log::error!(
+                                "[{}] Failed to mark job as failed via Raft: {}",
+                                job_id,
+                                err
+                            );
                         }
                         self.log_job_event(
                             &job_id,
@@ -680,7 +720,11 @@ impl JobsManager {
                 match leader_decision {
                     JobDecision::Completed { message } => {
                         if let Err(e) = self.mark_job_completed(&job_id, message.clone()).await {
-                            log::error!("[{}] Failed to mark job as completed via Raft: {}", job_id, e);
+                            log::error!(
+                                "[{}] Failed to mark job as completed via Raft: {}",
+                                job_id,
+                                e
+                            );
                             return Err(KalamDbError::Other(format!(
                                 "Failed to update job status to Completed: {}",
                                 e
@@ -689,12 +733,19 @@ impl JobsManager {
                         self.log_job_event(
                             &job_id,
                             &Level::Debug,
-                            &format!("Job completed (leader phase): {}", message.unwrap_or_default()),
+                            &format!(
+                                "Job completed (leader phase): {}",
+                                message.unwrap_or_default()
+                            ),
                         );
                     },
                     JobDecision::Skipped { message } => {
                         if let Err(e) = self.mark_job_skipped(&job_id, message.clone()).await {
-                            log::error!("[{}] Failed to mark job as skipped via Raft: {}", job_id, e);
+                            log::error!(
+                                "[{}] Failed to mark job as skipped via Raft: {}",
+                                job_id,
+                                e
+                            );
                             return Err(KalamDbError::Other(format!(
                                 "Failed to update job status to Skipped: {}",
                                 e
@@ -708,13 +759,31 @@ impl JobsManager {
                     },
                     JobDecision::Failed { message, .. } => {
                         if let Err(err) = self.mark_job_failed(&job_id, message.clone()).await {
-                            log::error!("[{}] Failed to mark job as failed via Raft: {}", job_id, err);
+                            log::error!(
+                                "[{}] Failed to mark job as failed via Raft: {}",
+                                job_id,
+                                err
+                            );
                         }
-                        self.log_job_event(&job_id, &Level::Error, &format!("Job failed in leader phase: {}", message));
+                        self.log_job_event(
+                            &job_id,
+                            &Level::Error,
+                            &format!("Job failed in leader phase: {}", message),
+                        );
                     },
-                    JobDecision::Retry { message, exception_trace, backoff_ms } => {
+                    JobDecision::Retry {
+                        message,
+                        exception_trace,
+                        backoff_ms,
+                    } => {
                         return self
-                            .handle_job_retry(&job, &message, exception_trace, backoff_ms, is_leader)
+                            .handle_job_retry(
+                                &job,
+                                &message,
+                                exception_trace,
+                                backoff_ms,
+                                is_leader,
+                            )
                             .await;
                     },
                 }
@@ -761,12 +830,8 @@ impl JobsManager {
                     .into_kalamdb_error("Failed to retry job")?;
             }
 
-            self.update_job_node_status(
-                job_id,
-                JobStatus::Retrying,
-                Some(message.to_string()),
-            )
-            .await?;
+            self.update_job_node_status(job_id, JobStatus::Retrying, Some(message.to_string()))
+                .await?;
 
             self.log_job_event(
                 job_id,
@@ -906,11 +971,7 @@ impl JobsManager {
             JobNodeQuorumResult::Failed { failed_nodes } => {
                 let reason = format!(
                     "Local phase failed on nodes: {}",
-                    failed_nodes
-                        .iter()
-                        .map(|id| id.to_string())
-                        .collect::<Vec<_>>()
-                        .join(", ")
+                    failed_nodes.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(", ")
                 );
                 self.mark_job_failed(&job_id, reason).await?;
                 return Ok(());
@@ -918,7 +979,11 @@ impl JobsManager {
             JobNodeQuorumResult::TimedOut { completed, total } => {
                 // If completed=0, job was never started on workers (failover of queued job)
                 // Use debug level to reduce noise, otherwise warn
-                let level = if completed == 0 { Level::Debug } else { Level::Warn };
+                let level = if completed == 0 {
+                    Level::Debug
+                } else {
+                    Level::Warn
+                };
                 self.log_job_event(
                     &job_id,
                     &level,
@@ -951,7 +1016,11 @@ impl JobsManager {
                 JobDecision::Skipped { message } => {
                     self.mark_job_skipped(&job_id, message).await?;
                 },
-                JobDecision::Retry { message, exception_trace, backoff_ms } => {
+                JobDecision::Retry {
+                    message,
+                    exception_trace,
+                    backoff_ms,
+                } => {
                     return self
                         .handle_job_retry(&job, &message, exception_trace, backoff_ms, true)
                         .await;

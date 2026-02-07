@@ -5,8 +5,8 @@
 
 use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::rows::StoredScalarValue;
-use kalamdb_system::{Manifest, SegmentMetadata};
 use kalamdb_commons::{NamespaceId, TableId, TableName, UserId};
+use kalamdb_system::{Manifest, SegmentMetadata};
 use std::collections::HashMap;
 
 #[test]

@@ -231,8 +231,7 @@ fn smoke_test_manifest_updated_on_second_flush() {
     } else {
         Duration::from_secs(120)
     };
-    verify_job_completed(&job1_id, job_timeout)
-        .expect("First flush job did not complete");
+    verify_job_completed(&job1_id, job_timeout).expect("First flush job did not complete");
 
     println!("✅ First flush completed");
 
@@ -263,8 +262,7 @@ fn smoke_test_manifest_updated_on_second_flush() {
             .expect("Failed to flush table (second)");
     let job2_id =
         parse_job_id_from_flush_output(&flush2_output).expect("Failed to parse job ID (second)");
-    verify_job_completed(&job2_id, job_timeout)
-        .expect("Second flush job did not complete");
+    verify_job_completed(&job2_id, job_timeout).expect("Second flush job did not complete");
 
     println!("✅ Second flush completed");
 

@@ -73,8 +73,8 @@ use crate::repository::user_repo::UserRepository;
 use crate::security::password;
 use crate::services::login_tracker::LoginTracker;
 use kalamdb_commons::models::ConnectionInfo;
-use kalamdb_commons::{AuthType, Role};
 use kalamdb_commons::models::UserName;
+use kalamdb_commons::{AuthType, Role};
 use log::debug;
 use once_cell::sync::Lazy;
 use std::sync::Arc;
@@ -215,7 +215,8 @@ async fn authenticate_header(
 ) -> AuthResult<AuthenticationResult> {
     if auth_header.starts_with("Basic ") {
         Err(AuthError::InvalidCredentials(
-            "Basic authentication is not supported. Use Bearer token or login endpoint.".to_string(),
+            "Basic authentication is not supported. Use Bearer token or login endpoint."
+                .to_string(),
         ))
     } else if auth_header.starts_with("Bearer") {
         // Handle both "Bearer " and malformed "Bearer" without space
@@ -326,9 +327,7 @@ async fn authenticate_username_password(
             // Localhost system users: require valid password (no more empty password bypass)
             let password_ok = !password.is_empty()
                 && !user.password_hash.is_empty()
-                && password::verify_password(password, &user.password_hash)
-                    .await
-                    .unwrap_or(false);
+                && password::verify_password(password, &user.password_hash).await.unwrap_or(false);
 
             if password_ok {
                 auth_success = true;

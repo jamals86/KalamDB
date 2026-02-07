@@ -19,22 +19,20 @@ async fn execute_query_with_retry(
                     return Ok(response);
                 }
                 let err_msg = response_error_message(&response);
-                if is_retryable_cluster_error_for_sql(sql, &err_msg) && attempt + 1 < max_attempts
-                {
+                if is_retryable_cluster_error_for_sql(sql, &err_msg) && attempt + 1 < max_attempts {
                     tokio::time::sleep(Duration::from_millis(300 + attempt as u64 * 200)).await;
                     continue;
                 }
                 return Err(err_msg);
-            }
+            },
             Err(e) => {
                 let err_msg = e.to_string();
-                if is_retryable_cluster_error_for_sql(sql, &err_msg) && attempt + 1 < max_attempts
-                {
+                if is_retryable_cluster_error_for_sql(sql, &err_msg) && attempt + 1 < max_attempts {
                     tokio::time::sleep(Duration::from_millis(300 + attempt as u64 * 200)).await;
                     continue;
                 }
                 return Err(err_msg);
-            }
+            },
         }
     }
     Err("Query failed after retries".to_string())
@@ -78,10 +76,7 @@ fn test_snapshot_creation() {
             .expect("create namespace");
         execute_query_with_retry(
             &client,
-            &format!(
-                "CREATE TABLE {}.{} (id INT, value TEXT, PRIMARY KEY (id))",
-                namespace, table
-            ),
+            &format!("CREATE TABLE {}.{} (id INT, value TEXT, PRIMARY KEY (id))", namespace, table),
         )
         .await
         .expect("create table");
@@ -122,9 +117,8 @@ fn test_snapshot_creation() {
         println!("{:?}", result);
 
         // Cleanup
-        let _ =
-            execute_query_with_retry(&client, &format!("DROP NAMESPACE {} CASCADE", namespace))
-                .await;
+        let _ = execute_query_with_retry(&client, &format!("DROP NAMESPACE {} CASCADE", namespace))
+            .await;
     });
 }
 

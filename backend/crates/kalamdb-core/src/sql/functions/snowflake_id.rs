@@ -104,7 +104,7 @@ impl ScalarUDFImpl for SnowflakeIdFunction {
     }
 
     fn name(&self) -> &str {
-        "SNOWFLAKE_ID"
+        "snowflake_id"
     }
 
     fn signature(&self) -> &Signature {
@@ -121,8 +121,11 @@ impl ScalarUDFImpl for SnowflakeIdFunction {
         if !args.args.is_empty() {
             return Err(DataFusionError::Plan("SNOWFLAKE_ID() takes no arguments".to_string()));
         }
-        let id = self.generate_id();
-        let array = Int64Array::from(vec![id]);
+        let mut ids = Vec::with_capacity(args.number_rows);
+        for _ in 0..args.number_rows {
+            ids.push(self.generate_id());
+        }
+        let array = Int64Array::from(ids);
         Ok(ColumnarValue::Array(Arc::new(array) as ArrayRef))
     }
 }
@@ -137,7 +140,7 @@ mod tests {
     fn test_snowflake_id_function_creation() {
         let func_impl = SnowflakeIdFunction::new();
         let func = ScalarUDF::new_from_impl(func_impl);
-        assert_eq!(func.name(), "SNOWFLAKE_ID");
+        assert_eq!(func.name(), "snowflake_id");
     }
 
     #[test]

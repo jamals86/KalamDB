@@ -107,10 +107,7 @@ pub trait UserDataApplier: Send + Sync {
     ) -> Result<usize, RaftError>;
 
     /// Clean up all subscriptions from a failed node
-    async fn cleanup_node_subscriptions(
-        &self,
-        failed_node_id: NodeId,
-    ) -> Result<usize, RaftError>;
+    async fn cleanup_node_subscriptions(&self, failed_node_id: NodeId) -> Result<usize, RaftError>;
 }
 
 /// No-op applier for testing or standalone scenarios
@@ -262,11 +259,7 @@ mod tests {
             Ok(())
         }
 
-        async fn delete_live_query(
-            &self,
-            _: &LiveQueryId,
-            _: i64,
-        ) -> Result<(), RaftError> {
+        async fn delete_live_query(&self, _: &LiveQueryId, _: i64) -> Result<(), RaftError> {
             Ok(())
         }
 
@@ -278,10 +271,7 @@ mod tests {
             Ok(0)
         }
 
-        async fn cleanup_node_subscriptions(
-            &self,
-            _: NodeId,
-        ) -> Result<usize, RaftError> {
+        async fn cleanup_node_subscriptions(&self, _: NodeId) -> Result<usize, RaftError> {
             Ok(0)
         }
     }

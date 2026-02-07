@@ -107,7 +107,10 @@ impl JobExecutor for CleanupExecutor {
         })
     }
 
-    async fn execute_leader(&self, ctx: &JobContext<Self::Params>) -> Result<JobDecision, KalamDbError> {
+    async fn execute_leader(
+        &self,
+        ctx: &JobContext<Self::Params>,
+    ) -> Result<JobDecision, KalamDbError> {
         ctx.log_debug("Starting cleanup operation (leader phase)");
 
         // Parameters already validated in JobContext - type-safe access

@@ -46,10 +46,8 @@ fn verify_data_identical_with_retry(
                 let data_set: HashSet<_> = data.iter().collect();
                 let missing: Vec<_> = ref_set.difference(&data_set).collect();
                 let extra: Vec<_> = data_set.difference(&ref_set).collect();
-                mismatch = Some(format!(
-                    "Node {} differs. Missing: {:?}, Extra: {:?}",
-                    i, missing, extra
-                ));
+                mismatch =
+                    Some(format!("Node {} differs. Missing: {:?}, Extra: {:?}", i, missing, extra));
                 break;
             }
         }
@@ -182,7 +180,6 @@ fn cluster_test_table_identity_updates() {
         )
         .expect("Failed to insert");
     }
-
 
     // Update first 5 rows using individual PK-based updates (KalamDB doesn't support predicate-based updates on SHARED tables)
     for i in 0..5 {
@@ -558,7 +555,6 @@ fn cluster_test_table_identity_user_tables() {
         )
         .expect(&format!("Failed to create user {}", user));
     }
-
 
     // Insert data as root for each user
     for (user_idx, user) in users.iter().enumerate() {

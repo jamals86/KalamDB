@@ -65,10 +65,7 @@ impl<'de> Deserialize<'de> for AutoOffsetReset {
                     if key.to_lowercase() == "offset" {
                         return Ok(AutoOffsetReset::Offset(value));
                     }
-                    return Err(serde::de::Error::custom(format!(
-                        "Invalid offset key: {}",
-                        key
-                    )));
+                    return Err(serde::de::Error::custom(format!("Invalid offset key: {}", key)));
                 }
                 Err(serde::de::Error::custom("Expected offset map"))
             }

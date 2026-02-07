@@ -3,13 +3,13 @@
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::jobs::executors::compact::CompactParams;
-use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
+use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use kalamdb_commons::models::TableId;
 use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::JobId;
-use kalamdb_system::JobType;
 use kalamdb_sql::ddl::CompactTableStatement;
+use kalamdb_system::JobType;
 use std::sync::Arc;
 
 /// Handler for STORAGE COMPACT TABLE
@@ -33,15 +33,13 @@ impl TypedStatementHandler<CompactTableStatement> for CompactTableHandler {
     ) -> Result<ExecutionResult, KalamDbError> {
         let registry = self.app_context.schema_registry();
         let table_id = TableId::new(statement.namespace.clone(), statement.table_name.clone());
-        let table_def = registry
-            .get_table_if_exists(&table_id)?
-            .ok_or_else(|| {
-                KalamDbError::NotFound(format!(
-                    "Table {}.{} not found",
-                    statement.namespace.as_str(),
-                    statement.table_name.as_str()
-                ))
-            })?;
+        let table_def = registry.get_table_if_exists(&table_id)?.ok_or_else(|| {
+            KalamDbError::NotFound(format!(
+                "Table {}.{} not found",
+                statement.namespace.as_str(),
+                statement.table_name.as_str()
+            ))
+        })?;
 
         match table_def.table_type {
             TableType::Stream => {

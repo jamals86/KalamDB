@@ -93,7 +93,6 @@ fn cluster_test_data_digest_consistency() {
             matched = true;
             break;
         }
-
     }
 
     if !matched {

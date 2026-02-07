@@ -14,11 +14,11 @@ pub mod shared_table_provider;
 pub mod shared_table_store;
 
 pub use pk_index::{create_shared_table_pk_index, SharedTablePkIndex};
+pub use shared_table_provider::SharedTableProvider;
 pub use shared_table_store::{
     new_indexed_shared_table_store, new_shared_table_store, SharedTableIndexedStore,
     SharedTableRow, SharedTableStore,
 };
-pub use shared_table_provider::SharedTableProvider;
 
 // Re-export SharedTableRowId from commons for convenience
 pub use kalamdb_commons::ids::SharedTableRowId;

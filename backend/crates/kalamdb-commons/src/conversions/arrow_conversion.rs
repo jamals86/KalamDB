@@ -81,7 +81,7 @@ impl ToArrowType for KalamDataType {
                 ArrowDataType::FixedSizeList(std::sync::Arc::new(field), *dim as i32)
             },
             KalamDataType::Uuid => {
-                // UUID → FixedSizeBinary(16)
+                // UUID stored as 16-byte binary (RFC 4122 format)
                 ArrowDataType::FixedSizeBinary(16)
             },
             KalamDataType::Decimal { precision, scale } => {

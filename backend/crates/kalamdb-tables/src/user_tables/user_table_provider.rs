@@ -11,38 +11,39 @@
 //! - SessionState extraction for scan_rows()
 //! - PK Index for efficient row lookup (Phase 14)
 
-use crate::utils::base::{self, BaseTableProvider, TableProviderCore};
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
-use kalamdb_commons::conversions::arrow_json_conversion::coerce_rows;
-use crate::utils::row_utils::{extract_full_user_context, extract_user_context};
 use crate::manifest::manifest_helpers::{ensure_manifest_ready, load_row_from_parquet_by_seq};
-use kalamdb_commons::schemas::TableType;
+use crate::user_tables::{UserTableIndexedStore, UserTablePkIndex, UserTableRow};
+use crate::utils::base::{self, BaseTableProvider, TableProviderCore};
+use crate::utils::row_utils::{extract_full_user_context, extract_user_context};
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::catalog::Session;
 use datafusion::datasource::TableProvider;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
+use datafusion::logical_expr::dml::InsertOp;
 use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
 use datafusion::physical_plan::{ExecutionPlan, Statistics};
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::constants::SystemColumnNames;
-use kalamdb_commons::ids::UserTableRowId;
+use kalamdb_commons::conversions::arrow_json_conversion::coerce_rows;
+use kalamdb_commons::ids::{SeqId, UserTableRowId};
 use kalamdb_commons::models::UserId;
+use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::{StorageKey, TableId};
-use kalamdb_system::SchemaRegistry as SchemaRegistryTrait;
-use kalamdb_session::{can_read_all_users, check_user_table_access};
+use kalamdb_session::{can_read_all_users, check_user_table_access, check_user_table_write_access};
 use kalamdb_store::EntityStore;
-use crate::user_tables::{UserTableIndexedStore, UserTablePkIndex, UserTableRow};
+use kalamdb_system::SchemaRegistry as SchemaRegistryTrait;
 use std::any::Any;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 // Arrow <-> JSON helpers
-use kalamdb_commons::websocket::ChangeNotification;
 use crate::utils::version_resolution::{merge_versioned_rows, parquet_batch_to_rows};
 use kalamdb_commons::models::rows::Row;
+use kalamdb_commons::websocket::ChangeNotification;
 
 /// User table provider with RLS
 ///
@@ -67,6 +68,9 @@ pub struct UserTableProvider {
 
     /// Cached Arrow schema (prevents panics if table is dropped while provider is in use)
     schema: SchemaRef,
+
+    /// DataFusion column defaults used by INSERT planning.
+    column_defaults: HashMap<String, Expr>,
 }
 
 impl UserTableProvider {
@@ -81,7 +85,17 @@ impl UserTableProvider {
         store: Arc<UserTableIndexedStore>,
         primary_key_field_name: String,
     ) -> Self {
-        Self::try_new(core, store, primary_key_field_name)
+        Self::try_new_with_defaults(core, store, primary_key_field_name, HashMap::new())
+            .expect("Failed to get Arrow schema from registry during provider creation")
+    }
+
+    pub fn new_with_defaults(
+        core: Arc<TableProviderCore>,
+        store: Arc<UserTableIndexedStore>,
+        primary_key_field_name: String,
+        column_defaults: HashMap<String, Expr>,
+    ) -> Self {
+        Self::try_new_with_defaults(core, store, primary_key_field_name, column_defaults)
             .expect("Failed to get Arrow schema from registry during provider creation")
     }
 
@@ -90,6 +104,15 @@ impl UserTableProvider {
         core: Arc<TableProviderCore>,
         store: Arc<UserTableIndexedStore>,
         primary_key_field_name: String,
+    ) -> Result<Self, KalamDbError> {
+        Self::try_new_with_defaults(core, store, primary_key_field_name, HashMap::new())
+    }
+
+    pub fn try_new_with_defaults(
+        core: Arc<TableProviderCore>,
+        store: Arc<UserTableIndexedStore>,
+        primary_key_field_name: String,
+        column_defaults: HashMap<String, Expr>,
     ) -> Result<Self, KalamDbError> {
         // Cache schema at creation time to avoid "Table not found" panics if table is dropped
         // while provider is still in use by a query plan
@@ -112,6 +135,7 @@ impl UserTableProvider {
             pk_index,
             primary_key_field_name,
             schema,
+            column_defaults,
         })
     }
 
@@ -202,7 +226,8 @@ impl UserTableProvider {
             Some(user_id),
             self.schema_ref(),
             filter,
-        ).await
+        )
+        .await
     }
 
     /// Async version of scan_all_users_with_version_resolution to avoid blocking the async runtime.
@@ -214,7 +239,7 @@ impl UserTableProvider {
         fallback_user_id: Option<&UserId>,
     ) -> Result<Vec<(UserTableRowId, UserTableRow)>, KalamDbError> {
         use kalamdb_store::EntityStoreAsync;
-        
+
         let table_id = self.core.table_id();
         base::warn_if_unfiltered_scan(table_id, filter, limit, self.core.table_type());
 
@@ -265,6 +290,32 @@ impl UserTableProvider {
         base::apply_limit(&mut result, limit);
 
         Ok(result)
+    }
+
+    async fn collect_matching_rows_for_subject(
+        &self,
+        state: &dyn Session,
+        filters: &[Expr],
+    ) -> DataFusionResult<Vec<Row>> {
+        let (user_id, _role) =
+            extract_user_context(state).map_err(|e| DataFusionError::Execution(e.to_string()))?;
+
+        let kvs = self
+            .scan_with_version_resolution_to_kvs_async(user_id, None, None, None, false)
+            .await
+            .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+
+        let schema = self.schema_ref();
+        let mut matched = Vec::new();
+        for (_row_key, row) in kvs {
+            let fields = Self::build_notification_row(&row);
+            if crate::utils::datafusion_dml::row_matches_filters(state, &schema, &fields, filters)?
+            {
+                matched.push(fields);
+            }
+        }
+
+        Ok(matched)
     }
 }
 
@@ -364,21 +415,24 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             pk_name,
             pk_column_id,
             id_value,
-        ).await?;
+        )
+        .await?;
 
         if exists_in_cold {
             log::trace!("[UserTableProvider] PK {} exists in cold storage", id_value);
-            // For cold storage, we just check existence - return a dummy key
-            // The actual row_id is not needed for PK uniqueness check
-            return Ok(None); // Return None to indicate "exists but can't get key"
-            // Note: This is acceptable because for INSERT we just need to know it exists
-            // For UPDATE/DELETE we should use async methods
+            // Return a sentinel key to signal existence in cold storage.
+            // Callers that only check `is_some()` (PK uniqueness guards) will reject duplicates.
+            return Ok(Some(UserTableRowId::new(user_id.clone(), SeqId::new(0))));
         }
 
         Ok(None)
     }
 
-    async fn insert(&self, user_id: &UserId, row_data: Row) -> Result<UserTableRowId, KalamDbError> {
+    async fn insert(
+        &self,
+        user_id: &UserId,
+        row_data: Row,
+    ) -> Result<UserTableRowId, KalamDbError> {
         ensure_manifest_ready(
             &self.core,
             self.core.table_type(),
@@ -391,9 +445,9 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
 
         // Generate new SeqId via SystemColumnsService
         let sys_cols = self.core.system_columns.clone();
-        let seq_id = sys_cols
-            .generate_seq_id()
-            .map_err(|e| KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e)))?;
+        let seq_id = sys_cols.generate_seq_id().map_err(|e| {
+            KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e))
+        })?;
 
         // Create UserTableRow directly
         let entity = UserTableRow {
@@ -406,7 +460,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         // Create composite key
         let row_key = UserTableRowId::new(user_id.clone(), seq_id);
 
-        // log::info!("🔍 [AS_USER_DEBUG] Inserting row for user_id='{}' _seq={}", 
+        // log::info!("🔍 [AS_USER_DEBUG] Inserting row for user_id='{}' _seq={}",
         //            user_id.as_str(), seq_id);
 
         // Store the entity in RocksDB (hot storage) with PK index maintenance
@@ -522,9 +576,9 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
 
         // Generate all SeqIds in single mutex acquisition
         let sys_cols = self.core.system_columns.clone();
-        let seq_ids = sys_cols
-            .generate_seq_ids(row_count)
-            .map_err(|e| KalamDbError::InvalidOperation(format!("SeqId batch generation failed: {}", e)))?;
+        let seq_ids = sys_cols.generate_seq_ids(row_count).map_err(|e| {
+            KalamDbError::InvalidOperation(format!("SeqId batch generation failed: {}", e))
+        })?;
 
         // Build all entities and keys
         let mut entries: Vec<(UserTableRowId, UserTableRow)> = Vec::with_capacity(row_count);
@@ -581,7 +635,11 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
                 // Build complete row including system columns (_seq, _deleted)
                 let row = Self::build_notification_row(entity);
                 let notification = ChangeNotification::insert(table_id.clone(), row);
-                notification_service.notify_table_change(Some(user_id.clone()), table_id.clone(), notification);
+                notification_service.notify_table_change(
+                    Some(user_id.clone()),
+                    table_id.clone(),
+                    notification,
+                );
             }
         }
 
@@ -596,8 +654,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
     ) -> Result<UserTableRowId, KalamDbError> {
         // Load referenced version to extract PK
         // Try RocksDB first, then Parquet
-        let prior_opt = self.store.get(key)
-            .into_kalamdb_error("Failed to load prior version")?;
+        let prior_opt = self.store.get(key).into_kalamdb_error("Failed to load prior version")?;
 
         let prior = if let Some(p) = prior_opt {
             p
@@ -614,7 +671,8 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
                     _deleted: row_data.deleted,
                     fields: row_data.fields,
                 },
-            ).await?
+            )
+            .await?
             .ok_or_else(|| KalamDbError::NotFound("Row not found for update".to_string()))?
         };
 
@@ -628,19 +686,20 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
 
         // Find latest resolved row for this PK under same user
         // First try hot storage (O(1) via PK index), then fall back to cold storage (Parquet scan)
-        let (_latest_key, latest_row) =
-            if let Some(result) = self.find_by_pk(user_id, &pk_value_scalar)? {
-                result
-            } else {
-                // Not in hot storage, check cold storage
-                let pk_value_str = pk_value_scalar.to_string();
-                base::find_row_by_pk(self, Some(user_id), &pk_value_str).await?.ok_or_else(|| {
-                    KalamDbError::NotFound(format!(
-                        "Row with {}={} not found",
-                        pk_name, pk_value_scalar
-                    ))
-                })?
-            };
+        let (_latest_key, latest_row) = if let Some(result) =
+            self.find_by_pk(user_id, &pk_value_scalar)?
+        {
+            result
+        } else {
+            // Not in hot storage, check cold storage
+            let pk_value_str = pk_value_scalar.to_string();
+            base::find_row_by_pk(self, Some(user_id), &pk_value_str).await?.ok_or_else(|| {
+                KalamDbError::NotFound(format!(
+                    "Row with {}={} not found",
+                    pk_name, pk_value_scalar
+                ))
+            })?
+        };
 
         // Merge updates onto latest
         let mut merged = latest_row.fields.values.clone();
@@ -650,9 +709,9 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
 
         let new_fields = Row::new(merged);
         let sys_cols = self.core.system_columns.clone();
-        let seq_id = sys_cols
-            .generate_seq_id()
-            .map_err(|e| KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e)))?;
+        let seq_id = sys_cols.generate_seq_id().map_err(|e| {
+            KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e))
+        })?;
         let entity = UserTableRow {
             user_id: user_id.clone(),
             _seq: seq_id,
@@ -705,19 +764,44 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         updates: Row,
     ) -> Result<UserTableRowId, KalamDbError> {
         let pk_name = self.primary_key_field_name().to_string();
-        let pk_value_scalar = ScalarValue::Utf8(Some(pk_value.to_string()));
+
+        // Get PK column data type from schema for proper type coercion
+        let schema = self.schema();
+        let pk_field = schema.field_with_name(&pk_name).map_err(|e| {
+            KalamDbError::InvalidOperation(format!(
+                "PK column '{}' not found in schema: {}",
+                pk_name, e
+            ))
+        })?;
+        let pk_column_type = pk_field.data_type();
+
+        // Convert string PK value to proper ScalarValue based on column type
+        // This ensures Parquet queries work correctly with typed columns
+        use kalamdb_commons::conversions::parse_string_as_scalar;
+        let pk_value_scalar = parse_string_as_scalar(pk_value, pk_column_type)
+            .map_err(|e| KalamDbError::InvalidOperation(e))?;
 
         // Find latest resolved row for this PK under same user
         // First try hot storage (O(1) via PK index), then fall back to cold storage (Parquet scan)
-        let (_latest_key, latest_row) =
-            if let Some(result) = self.find_by_pk(user_id, &pk_value_scalar)? {
-                result
-            } else {
-                // Not in hot storage, check cold storage
-                base::find_row_by_pk(self, Some(user_id), pk_value).await?.ok_or_else(|| {
-                    KalamDbError::NotFound(format!("Row with {}={} not found", pk_name, pk_value))
-                })?
-            };
+        let (_latest_key, latest_row) = if let Some(result) =
+            self.find_by_pk(user_id, &pk_value_scalar)?
+        {
+            result
+        } else {
+            // Not in hot storage, check cold storage
+            log::debug!(
+                "[UPDATE] PK {} not found in hot storage, querying cold storage for user={}, pk={}",
+                pk_name,
+                user_id.as_str(),
+                pk_value
+            );
+            base::find_row_by_pk(self, Some(user_id), pk_value).await?.ok_or_else(|| {
+                KalamDbError::NotFound(format!(
+                    "Row with {}={} not found (checked both hot and cold storage)",
+                    pk_name, pk_value
+                ))
+            })?
+        };
 
         // Merge updates onto latest
         let mut merged = latest_row.fields.values.clone();
@@ -727,9 +811,9 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
 
         let new_fields = Row::new(merged);
         let sys_cols = self.core.system_columns.clone();
-        let seq_id = sys_cols
-            .generate_seq_id()
-            .map_err(|e| KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e)))?;
+        let seq_id = sys_cols.generate_seq_id().map_err(|e| {
+            KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e))
+        })?;
         let entity = UserTableRow {
             user_id: user_id.clone(),
             _seq: seq_id,
@@ -778,8 +862,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
     async fn delete(&self, user_id: &UserId, key: &UserTableRowId) -> Result<(), KalamDbError> {
         // Load referenced version to extract PK (for validation; we append tombstone regardless)
         // Try RocksDB first, then Parquet
-        let prior_opt = self.store.get(key)
-            .into_kalamdb_error("Failed to load prior version")?;
+        let prior_opt = self.store.get(key).into_kalamdb_error("Failed to load prior version")?;
 
         let prior = if let Some(p) = prior_opt {
             p
@@ -796,14 +879,15 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
                     _deleted: row_data.deleted,
                     fields: row_data.fields,
                 },
-            ).await?
+            )
+            .await?
             .ok_or_else(|| KalamDbError::NotFound("Row not found for delete".to_string()))?
         };
 
         let sys_cols = self.core.system_columns.clone();
-        let seq_id = sys_cols
-            .generate_seq_id()
-            .map_err(|e| KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e)))?;
+        let seq_id = sys_cols.generate_seq_id().map_err(|e| {
+            KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e))
+        })?;
 
         // Preserve ALL fields in the tombstone so they can be queried if _deleted=true
         // This allows "undo" functionality and auditing of deleted records
@@ -850,9 +934,23 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         Ok(())
     }
 
-    async fn delete_by_pk_value(&self, user_id: &UserId, pk_value: &str) -> Result<bool, KalamDbError> {
+    async fn delete_by_pk_value(
+        &self,
+        user_id: &UserId,
+        pk_value: &str,
+    ) -> Result<bool, KalamDbError> {
         let pk_name = self.primary_key_field_name().to_string();
-        let pk_value_scalar = ScalarValue::Utf8(Some(pk_value.to_string()));
+        let schema = self.schema();
+        let pk_field = schema.field_with_name(&pk_name).map_err(|e| {
+            KalamDbError::InvalidOperation(format!(
+                "PK column '{}' not found in schema: {}",
+                pk_name, e
+            ))
+        })?;
+        let pk_column_type = pk_field.data_type();
+        let pk_value_scalar =
+            kalamdb_commons::conversions::parse_string_as_scalar(pk_value, pk_column_type)
+                .map_err(KalamDbError::InvalidOperation)?;
 
         // Find latest resolved row for this PK under same user
         // First try hot storage (O(1) via PK index), then fall back to cold storage (Parquet scan)
@@ -869,14 +967,14 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
                         pk_value
                     );
                     return Ok(false);
-                }
+                },
             }
         };
 
         let sys_cols = self.core.system_columns.clone();
-        let seq_id = sys_cols
-            .generate_seq_id()
-            .map_err(|e| KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e)))?;
+        let seq_id = sys_cols.generate_seq_id().map_err(|e| {
+            KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e))
+        })?;
 
         // Preserve ALL fields in the tombstone so they can be queried if _deleted=true
         // This allows "undo" functionality and auditing of deleted records
@@ -935,7 +1033,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         let (user_id, role) = extract_user_context(state)?;
         let allow_all_users = can_read_all_users(role);
 
-        // log::info!("🔍 [AS_USER_DEBUG] scan_rows: user_id='{}' role={:?} allow_all={}", 
+        // log::info!("🔍 [AS_USER_DEBUG] scan_rows: user_id='{}' role={:?} allow_all={}",
         //            user_id.as_str(), role, allow_all_users);
 
         // Extract sequence bounds from filter to optimize RocksDB scan
@@ -950,7 +1048,13 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         let keep_deleted = filter.map(base::filter_uses_deleted_column).unwrap_or(false);
 
         let kvs = if allow_all_users {
-            self.scan_all_users_with_version_resolution_async(filter, limit, keep_deleted, Some(user_id)).await?
+            self.scan_all_users_with_version_resolution_async(
+                filter,
+                limit,
+                keep_deleted,
+                Some(user_id),
+            )
+            .await?
         } else {
             self.scan_with_version_resolution_to_kvs_async(
                 user_id,
@@ -958,7 +1062,8 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
                 since_seq,
                 limit,
                 keep_deleted,
-            ).await?
+            )
+            .await?
         };
 
         let table_id = self.core.table_id();
@@ -984,7 +1089,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         keep_deleted: bool,
     ) -> Result<Vec<(UserTableRowId, UserTableRow)>, KalamDbError> {
         use kalamdb_store::EntityStoreAsync;
-        
+
         let table_id = self.core.table_id();
 
         // Warn if no filter or limit - potential performance issue
@@ -1010,11 +1115,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         // Using async version to avoid blocking the runtime
         let hot_rows = self
             .store
-            .scan_with_raw_prefix_async(
-                &user_prefix,
-                start_key_bytes.as_deref(),
-                scan_limit,
-            )
+            .scan_with_raw_prefix_async(&user_prefix, start_key_bytes.as_deref(), scan_limit)
             .await
             .map_err(|e| {
                 KalamDbError::InvalidOperation(format!(
@@ -1107,6 +1208,10 @@ impl TableProvider for UserTableProvider {
         datafusion::logical_expr::TableType::Base
     }
 
+    fn get_column_default(&self, column: &str) -> Option<&Expr> {
+        self.column_defaults.get(column)
+    }
+
     fn supports_filters_pushdown(
         &self,
         filters: &[&Expr],
@@ -1129,8 +1234,9 @@ impl TableProvider for UserTableProvider {
         check_user_table_access(state, self.core.table_id()).map_err(DataFusionError::from)?;
 
         // Extract user context including read_context for leader check
-        let (user_id, _role, read_context) = extract_full_user_context(state)
-            .map_err(|e| DataFusionError::Execution(format!("Failed to extract user context: {}", e)))?;
+        let (user_id, _role, read_context) = extract_full_user_context(state).map_err(|e| {
+            DataFusionError::Execution(format!("Failed to extract user context: {}", e))
+        })?;
 
         // Check if this is a client read that requires leader
         // Skip check for internal reads (jobs, live query notifications, etc.)
@@ -1147,5 +1253,117 @@ impl TableProvider for UserTableProvider {
         }
 
         self.base_scan(state, projection, filters, limit).await
+    }
+
+    async fn insert_into(
+        &self,
+        state: &dyn Session,
+        input: Arc<dyn ExecutionPlan>,
+        insert_op: InsertOp,
+    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        check_user_table_write_access(state, self.core.table_id())
+            .map_err(DataFusionError::from)?;
+
+        if insert_op != InsertOp::Append {
+            return Err(DataFusionError::Plan(format!(
+                "{} is not supported for user tables",
+                insert_op
+            )));
+        }
+
+        let (user_id, _role) =
+            extract_user_context(state).map_err(|e| DataFusionError::Execution(e.to_string()))?;
+        let rows = crate::utils::datafusion_dml::collect_input_rows(state, input).await?;
+        let inserted = self
+            .insert_batch(user_id, rows)
+            .await
+            .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+
+        crate::utils::datafusion_dml::rows_affected_plan(state, inserted.len() as u64).await
+    }
+
+    async fn delete_from(
+        &self,
+        state: &dyn Session,
+        filters: Vec<Expr>,
+    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        check_user_table_write_access(state, self.core.table_id())
+            .map_err(DataFusionError::from)?;
+        crate::utils::datafusion_dml::validate_where_clause(&filters, "DELETE")?;
+
+        let rows = self.collect_matching_rows_for_subject(state, &filters).await?;
+        if rows.is_empty() {
+            return crate::utils::datafusion_dml::rows_affected_plan(state, 0).await;
+        }
+
+        let pk_column = self.primary_key_field_name().to_string();
+        let (user_id, _role) =
+            extract_user_context(state).map_err(|e| DataFusionError::Execution(e.to_string()))?;
+        let mut seen = HashSet::new();
+        let mut deleted: u64 = 0;
+
+        for row in rows {
+            let pk_value = crate::utils::datafusion_dml::extract_pk_value(&row, &pk_column)?;
+            if !seen.insert(pk_value.clone()) {
+                continue;
+            }
+
+            if self
+                .delete_by_pk_value(user_id, &pk_value)
+                .await
+                .map_err(|e| DataFusionError::Execution(e.to_string()))?
+            {
+                deleted += 1;
+            }
+        }
+
+        crate::utils::datafusion_dml::rows_affected_plan(state, deleted).await
+    }
+
+    async fn update(
+        &self,
+        state: &dyn Session,
+        assignments: Vec<(String, Expr)>,
+        filters: Vec<Expr>,
+    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        check_user_table_write_access(state, self.core.table_id())
+            .map_err(DataFusionError::from)?;
+        crate::utils::datafusion_dml::validate_where_clause(&filters, "UPDATE")?;
+
+        let pk_column = self.primary_key_field_name().to_string();
+        crate::utils::datafusion_dml::validate_update_assignments(&assignments, &pk_column)?;
+
+        let rows = self.collect_matching_rows_for_subject(state, &filters).await?;
+        if rows.is_empty() {
+            return crate::utils::datafusion_dml::rows_affected_plan(state, 0).await;
+        }
+
+        let schema = self.schema_ref();
+        let (user_id, _role) =
+            extract_user_context(state).map_err(|e| DataFusionError::Execution(e.to_string()))?;
+        let mut seen = HashSet::new();
+        let mut updated: u64 = 0;
+
+        for row in rows {
+            let pk_value = crate::utils::datafusion_dml::extract_pk_value(&row, &pk_column)?;
+            if !seen.insert(pk_value.clone()) {
+                continue;
+            }
+
+            let mut values = BTreeMap::new();
+            for (column, expr) in &assignments {
+                let value = crate::utils::datafusion_dml::evaluate_assignment_expr(
+                    state, &schema, &row, expr,
+                )?;
+                values.insert(column.clone(), value);
+            }
+
+            self.update_by_pk_value(user_id, &pk_value, Row::new(values))
+                .await
+                .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+            updated += 1;
+        }
+
+        crate::utils::datafusion_dml::rows_affected_plan(state, updated).await
     }
 }

@@ -336,7 +336,7 @@ pub struct RemoteStorageTimeouts {
     /// Applies to read, write, list, and delete operations
     #[serde(default = "default_remote_request_timeout")]
     pub request_timeout_secs: u64,
-    
+
     /// Connect timeout in seconds for establishing connections (default: 10s)
     /// Lower than request timeout to fail fast on connection issues
     #[serde(default = "default_remote_connect_timeout")]
@@ -612,6 +612,14 @@ pub struct ExecutionSettings {
     /// Maximum size of a single parameter in bytes (default: 524288 = 512KB)
     #[serde(default = "default_max_parameter_size_bytes")]
     pub max_parameter_size_bytes: usize,
+
+    /// Maximum number of cached SQL logical plans (default: 1000)
+    #[serde(default = "default_sql_plan_cache_max_entries")]
+    pub sql_plan_cache_max_entries: u64,
+
+    /// Time-to-idle TTL in seconds for cached SQL plans (default: 900 = 15m)
+    #[serde(default = "default_sql_plan_cache_ttl_seconds")]
+    pub sql_plan_cache_ttl_seconds: u64,
 }
 
 /// Shutdown settings
@@ -901,6 +909,8 @@ impl Default for ExecutionSettings {
             handler_timeout_seconds: default_handler_timeout_seconds(),
             max_parameters: default_max_parameters(),
             max_parameter_size_bytes: default_max_parameter_size_bytes(),
+            sql_plan_cache_max_entries: default_sql_plan_cache_max_entries(),
+            sql_plan_cache_ttl_seconds: default_sql_plan_cache_ttl_seconds(),
         }
     }
 }

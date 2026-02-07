@@ -1,7 +1,6 @@
 //! Authentication handlers for Admin UI and API
 //!
-//! Provides login, logout, refresh, current user, and server-setup endpoints
-//! that use HttpOnly cookies for JWT token storage.
+//! Provides login, logout, refresh, current user, and server-setup endpoints.
 //!
 //! ## Endpoints
 //! - POST /v1/api/auth/login - Authenticate user and get JWT tokens
@@ -25,8 +24,9 @@ pub use me::me_handler;
 pub use refresh::refresh_handler;
 pub use setup::{server_setup_handler, setup_status_handler};
 
+use actix_web::HttpRequest;
 use actix_web::HttpResponse;
-use kalamdb_auth::AuthError;
+use kalamdb_auth::{extract_auth_token, AuthError};
 use models::AuthErrorResponse;
 
 /// Map authentication errors to HTTP responses
@@ -67,4 +67,37 @@ pub(crate) fn map_auth_error_to_response(err: AuthError) -> HttpResponse {
                 .json(AuthErrorResponse::new("internal_error", "Authentication failed"))
         },
     }
+}
+
+/// Extract auth token from `Authorization: Bearer ...` or fallback to auth cookie.
+///
+/// Header token is preferred so API calls can stay in sync with the same JWT used by
+/// `kalam-link` in the admin UI.
+pub(crate) fn extract_bearer_or_cookie_token(req: &HttpRequest) -> Result<String, AuthError> {
+    if let Some(raw_header) = req.headers().get(actix_web::http::header::AUTHORIZATION) {
+        let auth_header = raw_header.to_str().map_err(|_| {
+            AuthError::MalformedAuthorization(
+                "Authorization header contains invalid characters".to_string(),
+            )
+        })?;
+
+        let mut parts = auth_header.splitn(2, ' ');
+        let scheme = parts.next().unwrap_or_default().trim();
+        let token = parts.next().unwrap_or_default().trim();
+
+        if !scheme.eq_ignore_ascii_case("Bearer") {
+            return Err(AuthError::MalformedAuthorization(
+                "Authorization header must use Bearer token".to_string(),
+            ));
+        }
+
+        if token.is_empty() {
+            return Err(AuthError::MalformedAuthorization("Bearer token missing".to_string()));
+        }
+
+        return Ok(token.to_string());
+    }
+
+    extract_auth_token(req.cookies().ok().iter().flat_map(|c| c.iter().cloned()))
+        .ok_or_else(|| AuthError::MissingAuthorization("No auth token found".to_string()))
 }

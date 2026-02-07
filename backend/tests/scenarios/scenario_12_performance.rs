@@ -146,7 +146,8 @@ async fn test_scenario_12_query_time_growth() -> anyhow::Result<()> {
                         id_counter,
                         id_counter % 10,
                         id_counter as f64 * 0.5
-                    ), None,
+                    ),
+                    None,
                     None,
                     None,
                 )
@@ -325,7 +326,8 @@ async fn test_scenario_12_memory_baseline() -> anyhow::Result<()> {
                 &format!(
                     "INSERT INTO {}.large_data (id, payload) VALUES ({}, '{}')",
                     ns, i, payload
-                ), None,
+                ),
+                None,
                 None,
                 None,
             )

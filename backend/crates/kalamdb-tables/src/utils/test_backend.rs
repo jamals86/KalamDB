@@ -62,7 +62,11 @@ impl StorageBackend for RecordingBackend {
         self.inner.put(partition, key, value)
     }
 
-    fn delete(&self, partition: &Partition, key: &[u8]) -> kalamdb_store::storage_trait::Result<()> {
+    fn delete(
+        &self,
+        partition: &Partition,
+        key: &[u8],
+    ) -> kalamdb_store::storage_trait::Result<()> {
         self.inner.delete(partition, key)
     }
 

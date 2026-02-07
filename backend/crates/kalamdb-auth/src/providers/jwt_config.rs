@@ -29,7 +29,9 @@ pub fn init_jwt_config(secret: &str, trusted_issuers: &str) {
 pub fn get_jwt_config() -> &'static JwtConfig {
     JWT_CONFIG.get_or_init(|| JwtConfig {
         secret: kalamdb_configs::defaults::default_auth_jwt_secret(),
-        trusted_issuers: parse_trusted_issuers(&kalamdb_configs::defaults::default_auth_jwt_trusted_issuers()),
+        trusted_issuers: parse_trusted_issuers(
+            &kalamdb_configs::defaults::default_auth_jwt_trusted_issuers(),
+        ),
     })
 }
 

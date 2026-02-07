@@ -208,60 +208,63 @@ impl VirtualView for TablesView {
             table_types.append_value(def.table_type.as_str());
             storage_ids.append_null(); // System tables don't have storage_id
             versions.append_value(def.schema_version as i64);
-            
+
             // Serialize options as JSON
             match serde_json::to_string(&def.table_options) {
                 Ok(json) => options_json.append_value(json),
                 Err(_) => options_json.append_null(),
             }
-            
+
             if let Some(comment) = &def.table_comment {
                 comments.append_value(comment);
             } else {
                 comments.append_null();
             }
-            
+
             // Convert milliseconds to microseconds for Arrow Timestamp(Microsecond)
             updated_ats.append_value(def.updated_at.timestamp_millis() * 1000);
             created_ats.append_value(def.created_at.timestamp_millis() * 1000);
         }
 
         // Add user tables from system.schemas
-        let user_tables = self.system_registry.tables().list_tables()
+        let user_tables = self
+            .system_registry
+            .tables()
+            .list_tables()
             .map_err(|e| RegistryError::Other(format!("Failed to list user tables: {}", e)))?;
-        
+
         for def in user_tables {
             namespace_ids.append_value(def.namespace_id.as_str());
             table_names.append_value(def.table_name.as_str());
             table_types.append_value(def.table_type.as_str());
-            
+
             // Extract storage_id from table_options if available
             let storage_id_opt = match &def.table_options {
                 TableOptions::User(opts) => Some(opts.storage_id.as_str()),
                 TableOptions::Shared(opts) => Some(opts.storage_id.as_str()),
                 TableOptions::Stream(_) | TableOptions::System(_) => None,
             };
-            
+
             if let Some(storage_id) = storage_id_opt {
                 storage_ids.append_value(storage_id);
             } else {
                 storage_ids.append_null();
             }
-            
+
             versions.append_value(def.schema_version as i64);
-            
+
             // Serialize options as JSON
             match serde_json::to_string(&def.table_options) {
                 Ok(json) => options_json.append_value(json),
                 Err(_) => options_json.append_null(),
             }
-            
+
             if let Some(comment) = &def.table_comment {
                 comments.append_value(comment);
             } else {
                 comments.append_null();
             }
-            
+
             // Convert milliseconds to microseconds for Arrow Timestamp(Microsecond)
             updated_ats.append_value(def.updated_at.timestamp_millis() * 1000);
             created_ats.append_value(def.created_at.timestamp_millis() * 1000);

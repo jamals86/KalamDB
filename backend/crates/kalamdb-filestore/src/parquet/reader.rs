@@ -5,12 +5,12 @@
 
 use crate::core::runtime::run_blocking;
 use crate::error::{FilestoreError, Result};
+use crate::registry::StorageCached;
 use arrow::datatypes::SchemaRef;
 use arrow::record_batch::RecordBatch;
 use datafusion::parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use kalamdb_commons::models::{TableId, UserId};
 use kalamdb_commons::schemas::TableType;
-use crate::registry::StorageCached;
 
 /// Read all RecordBatches from a Parquet file using StorageCached.
 ///
@@ -22,10 +22,7 @@ pub async fn read_parquet_batches(
     user_id: Option<&UserId>,
     parquet_filename: &str,
 ) -> Result<Vec<RecordBatch>> {
-    let bytes = storage_cached
-        .get(table_type, table_id, user_id, parquet_filename)
-        .await?
-        .data;
+    let bytes = storage_cached.get(table_type, table_id, user_id, parquet_filename).await?.data;
 
     // Parse Parquet from bytes (Bytes implements ChunkReader directly)
     let builder = ParquetRecordBatchReaderBuilder::try_new(bytes)
@@ -75,10 +72,7 @@ pub async fn read_parquet_schema(
     user_id: Option<&UserId>,
     parquet_filename: &str,
 ) -> Result<SchemaRef> {
-    let bytes = storage_cached
-        .get(table_type, table_id, user_id, parquet_filename)
-        .await?
-        .data;
+    let bytes = storage_cached.get(table_type, table_id, user_id, parquet_filename).await?.data;
 
     // Parse schema from bytes (Bytes implements ChunkReader directly)
     let builder = ParquetRecordBatchReaderBuilder::try_new(bytes)
@@ -157,12 +151,12 @@ mod tests {
     };
     use kalamdb_commons::models::ids::StorageId;
     use kalamdb_commons::models::TableId;
+    use kalamdb_commons::schemas::TableType;
     use kalamdb_system::providers::storages::models::StorageType;
     use kalamdb_system::Storage;
-    use kalamdb_commons::schemas::TableType;
-    use std::sync::Arc;
     use std::env;
     use std::fs;
+    use std::sync::Arc;
 
     fn create_test_storage(temp_dir: &std::path::Path) -> Storage {
         let now = chrono::Utc::now().timestamp_millis();
@@ -231,9 +225,14 @@ mod tests {
             .unwrap();
 
         // Read it back
-        let read_batches =
-            read_parquet_batches_sync(&storage_cached, TableType::Shared, &table_id, None, file_path)
-                .unwrap();
+        let read_batches = read_parquet_batches_sync(
+            &storage_cached,
+            TableType::Shared,
+            &table_id,
+            None,
+            file_path,
+        )
+        .unwrap();
 
         assert_eq!(read_batches.len(), 1);
         assert_eq!(read_batches[0].num_rows(), 100);
@@ -270,9 +269,14 @@ mod tests {
             .unwrap();
 
         // Read schema back (without reading data)
-        let read_schema =
-            read_parquet_schema_sync(&storage_cached, TableType::Shared, &table_id, None, file_path)
-                .unwrap();
+        let read_schema = read_parquet_schema_sync(
+            &storage_cached,
+            TableType::Shared,
+            &table_id,
+            None,
+            file_path,
+        )
+        .unwrap();
 
         assert_eq!(read_schema.fields().len(), 3);
         assert_eq!(read_schema.field(0).name(), "id");
@@ -293,10 +297,7 @@ mod tests {
         let table_id = TableId::from_strings("test", "empty");
 
         // Create empty batch (0 rows)
-        let schema = schema(vec![
-            field_int64("id", false),
-            field_utf8("value", true),
-        ]);
+        let schema = schema(vec![field_int64("id", false), field_utf8("value", true)]);
 
         let empty_batch = RecordBatch::try_new(
             Arc::clone(&schema),
@@ -321,9 +322,14 @@ mod tests {
             .unwrap();
 
         // Read it back - empty files may return 0 batches or 1 batch with 0 rows
-        let read_batches =
-            read_parquet_batches_sync(&storage_cached, TableType::Shared, &table_id, None, file_path)
-                .unwrap();
+        let read_batches = read_parquet_batches_sync(
+            &storage_cached,
+            TableType::Shared,
+            &table_id,
+            None,
+            file_path,
+        )
+        .unwrap();
 
         // Either no batches or one empty batch is acceptable
         if !read_batches.is_empty() {
@@ -366,9 +372,14 @@ mod tests {
             .unwrap();
 
         // Read back
-        let read_batches =
-            read_parquet_batches_sync(&storage_cached, TableType::Shared, &table_id, None, file_path)
-                .unwrap();
+        let read_batches = read_parquet_batches_sync(
+            &storage_cached,
+            TableType::Shared,
+            &table_id,
+            None,
+            file_path,
+        )
+        .unwrap();
 
         // Should be combined into batches based on row group size
         assert!(!read_batches.is_empty());
@@ -422,9 +433,14 @@ mod tests {
             .unwrap();
 
         // Read back
-        let read_batches =
-            read_parquet_batches_sync(&storage_cached, TableType::Shared, &table_id, None, file_path)
-                .unwrap();
+        let read_batches = read_parquet_batches_sync(
+            &storage_cached,
+            TableType::Shared,
+            &table_id,
+            None,
+            file_path,
+        )
+        .unwrap();
 
         assert_eq!(read_batches.len(), 1);
         assert_eq!(read_batches[0].num_columns(), 4);
@@ -466,10 +482,7 @@ mod tests {
         let storage_cached = StorageCached::with_default_timeouts(storage);
         let table_id = TableId::from_strings("test", "nulls");
 
-        let schema = schema(vec![
-            field_int64("id", false),
-            field_utf8("nullable_str", true),
-        ]);
+        let schema = schema(vec![field_int64("id", false), field_utf8("nullable_str", true)]);
 
         // Batch with null values
         let batch = RecordBatch::try_new(
@@ -495,9 +508,14 @@ mod tests {
             .unwrap();
 
         // Read back
-        let read_batches =
-            read_parquet_batches_sync(&storage_cached, TableType::Shared, &table_id, None, file_path)
-                .unwrap();
+        let read_batches = read_parquet_batches_sync(
+            &storage_cached,
+            TableType::Shared,
+            &table_id,
+            None,
+            file_path,
+        )
+        .unwrap();
 
         assert_eq!(read_batches.len(), 1);
         assert_eq!(read_batches[0].num_rows(), 4);
@@ -539,9 +557,14 @@ mod tests {
             .unwrap();
 
         // Read back
-        let read_batches =
-            read_parquet_batches_sync(&storage_cached, TableType::Shared, &table_id, None, file_path)
-                .unwrap();
+        let read_batches = read_parquet_batches_sync(
+            &storage_cached,
+            TableType::Shared,
+            &table_id,
+            None,
+            file_path,
+        )
+        .unwrap();
 
         let total_rows: usize = read_batches.iter().map(|b| b.num_rows()).sum();
         assert_eq!(total_rows, 10_000);

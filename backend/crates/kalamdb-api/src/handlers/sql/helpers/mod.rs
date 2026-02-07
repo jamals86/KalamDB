@@ -6,11 +6,11 @@
 //! - Result conversion from Arrow to JSON
 //! - Sensitive data masking
 
-mod params;
-mod files;
-mod executor;
 mod converter;
+mod executor;
+mod files;
+mod params;
 
-pub use params::parse_scalar_params;
-pub use files::cleanup_files;
 pub use executor::execute_single_statement;
+pub use files::cleanup_files;
+pub use params::parse_scalar_params;

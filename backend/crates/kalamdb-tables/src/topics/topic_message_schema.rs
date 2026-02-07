@@ -65,7 +65,7 @@ mod tests {
     fn test_schema_singleton() {
         let schema1 = topic_message_schema();
         let schema2 = topic_message_schema();
-        
+
         // Verify both calls return Arc pointers to same underlying schema
         assert!(Arc::ptr_eq(&schema1, &schema2));
     }

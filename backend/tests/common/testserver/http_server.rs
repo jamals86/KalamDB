@@ -11,8 +11,8 @@ use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::mpsc;
+use std::sync::Arc;
 use std::thread;
 use tokio::sync::Mutex;
 use tokio::sync::OnceCell;
@@ -410,9 +410,7 @@ impl HttpTestServer {
         let user = users
             .get_user_by_username(username)
             .expect("Failed to load user by username")
-            .unwrap_or_else(|| {
-                panic!("User '{}' not found for link_client_with_id", username)
-            });
+            .unwrap_or_else(|| panic!("User '{}' not found for link_client_with_id", username));
         let token = self.create_jwt_token_with_id(&user.user_id, &user.username, &user.role);
 
         KalamLinkClient::builder()
@@ -509,7 +507,7 @@ impl HttpTestServer {
                     }
 
                     return Err(err);
-                }
+                },
             }
         };
 
@@ -519,9 +517,12 @@ impl HttpTestServer {
             if let Some(error) = resp.error.as_ref() {
                 let msg = error.message.to_lowercase();
                 let sql_lower = sql.trim_start().to_lowercase();
-                let is_strict = sql_lower.contains("/* strict */") || sql_lower.contains("/*strict*/");
-                let is_pk_violation = msg.contains("primary key violation") || msg.contains("duplicate");
-                let is_alter_missing = sql_lower.starts_with("alter table") && msg.contains("does not exist");
+                let is_strict =
+                    sql_lower.contains("/* strict */") || sql_lower.contains("/*strict*/");
+                let is_pk_violation =
+                    msg.contains("primary key violation") || msg.contains("duplicate");
+                let is_alter_missing =
+                    sql_lower.starts_with("alter table") && msg.contains("does not exist");
                 let is_idempotent_create = msg.contains("already exists") && !is_pk_violation;
 
                 if !is_strict {
@@ -583,7 +584,8 @@ impl HttpTestServer {
 
         let resp = match client
             .execute_query(
-                sql, None,
+                sql,
+                None,
                 if params.is_empty() {
                     None
                 } else {
@@ -840,9 +842,7 @@ impl Drop for HttpTestServer {
 
         let (tx, rx) = mpsc::sync_channel(1);
         thread::spawn(move || {
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build();
+            let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build();
 
             if let Ok(runtime) = runtime {
                 runtime.block_on(async {

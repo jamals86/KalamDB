@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "./lib/auth";
+import { SqlPreviewProvider } from "./components/sql-preview";
 import Login from "./pages/Login";
 import SetupWizard from "./pages/SetupWizard";
 import Dashboard from "./pages/Dashboard";
@@ -17,6 +18,7 @@ function App() {
   return (
     <BrowserRouter basename="/ui">
       <AuthProvider>
+        <SqlPreviewProvider>
         <SetupGuard>
           <Routes>
             <Route path="/setup" element={<SetupWizard />} />
@@ -42,6 +44,7 @@ function App() {
             </Route>
           </Routes>
         </SetupGuard>
+        </SqlPreviewProvider>
       </AuthProvider>
     </BrowserRouter>
   );

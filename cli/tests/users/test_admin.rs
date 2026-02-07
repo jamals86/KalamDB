@@ -42,7 +42,6 @@ fn test_cli_list_tables() {
         return;
     }
 
-
     // Query system tables
     let query_sql = "SELECT table_name FROM system.schemas WHERE namespace_id = 'test_cli'";
     let result = execute_sql_as_root_via_cli(query_sql);

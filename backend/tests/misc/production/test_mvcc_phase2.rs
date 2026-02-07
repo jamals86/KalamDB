@@ -325,10 +325,7 @@ async fn test_user_table_row_structure() {
     // Query with all columns including system columns
     let response = server
         .execute_sql_as_user(
-            &format!(
-                "SELECT record_id, title, priority, _seq, _deleted FROM {}.user_records",
-                ns
-            ),
+            &format!("SELECT record_id, title, priority, _seq, _deleted FROM {}.user_records", ns),
             "user1",
         )
         .await;
@@ -410,10 +407,7 @@ async fn test_shared_table_row_structure() {
     // Query with all columns including system columns (as system user)
     let response = server
         .execute_sql_as_user(
-            &format!(
-                "SELECT config_key, value, enabled, _seq, _deleted FROM {}.shared_config",
-                ns
-            ),
+            &format!("SELECT config_key, value, enabled, _seq, _deleted FROM {}.shared_config", ns),
             "system",
         )
         .await;
@@ -598,30 +592,21 @@ async fn test_incremental_sync_seq_threshold() {
     // Insert 3 records
     server
         .execute_sql_as_user(
-            &format!(
-                r#"INSERT INTO {}.sync_records (id, version) VALUES ('rec1', 1)"#,
-                ns
-            ),
+            &format!(r#"INSERT INTO {}.sync_records (id, version) VALUES ('rec1', 1)"#, ns),
             "user1",
         )
         .await;
 
     server
         .execute_sql_as_user(
-            &format!(
-                r#"INSERT INTO {}.sync_records (id, version) VALUES ('rec2', 2)"#,
-                ns
-            ),
+            &format!(r#"INSERT INTO {}.sync_records (id, version) VALUES ('rec2', 2)"#, ns),
             "user1",
         )
         .await;
 
     server
         .execute_sql_as_user(
-            &format!(
-                r#"INSERT INTO {}.sync_records (id, version) VALUES ('rec3', 3)"#,
-                ns
-            ),
+            &format!(r#"INSERT INTO {}.sync_records (id, version) VALUES ('rec3', 3)"#, ns),
             "user1",
         )
         .await;
@@ -649,8 +634,7 @@ async fn test_incremental_sync_seq_threshold() {
         .execute_sql_as_user(
             &format!(
                 "SELECT id, version, _seq FROM {}.sync_records WHERE _seq > {} ORDER BY id",
-                ns,
-                threshold_seq
+                ns, threshold_seq
             ),
             "user1",
         )
@@ -789,10 +773,7 @@ async fn test_rocksdb_range_scan_efficiency() {
     // Insert initial version
     server
         .execute_sql_as_user(
-            &format!(
-                r#"INSERT INTO {}.versioned_data (id, value) VALUES ('rec1', 1)"#,
-                ns
-            ),
+            &format!(r#"INSERT INTO {}.versioned_data (id, value) VALUES ('rec1', 1)"#, ns),
             "user1",
         )
         .await;
@@ -812,10 +793,7 @@ async fn test_rocksdb_range_scan_efficiency() {
     // Update record (creates new version)
     server
         .execute_sql_as_user(
-            &format!(
-                r#"UPDATE {}.versioned_data SET value = 2 WHERE id = 'rec1'"#,
-                ns
-            ),
+            &format!(r#"UPDATE {}.versioned_data SET value = 2 WHERE id = 'rec1'"#, ns),
             "user1",
         )
         .await;
@@ -823,10 +801,7 @@ async fn test_rocksdb_range_scan_efficiency() {
     // Update again
     server
         .execute_sql_as_user(
-            &format!(
-                r#"UPDATE {}.versioned_data SET value = 3 WHERE id = 'rec1'"#,
-                ns
-            ),
+            &format!(r#"UPDATE {}.versioned_data SET value = 3 WHERE id = 'rec1'"#, ns),
             "user1",
         )
         .await;
@@ -836,8 +811,7 @@ async fn test_rocksdb_range_scan_efficiency() {
         .execute_sql_as_user(
             &format!(
                 "SELECT id, value, _seq FROM {}.versioned_data WHERE _seq > {}",
-                ns,
-                initial_seq
+                ns, initial_seq
             ),
             "user1",
         )

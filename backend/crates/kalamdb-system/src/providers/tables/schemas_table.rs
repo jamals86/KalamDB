@@ -230,7 +230,9 @@ impl SchemasTableSchema {
 
     /// Get the column family name in RocksDB
     pub fn column_family_name() -> &'static str {
-        SystemTable::Schemas.column_family_name().expect("Schemas is a table, not a view")
+        SystemTable::Schemas
+            .column_family_name()
+            .expect("Schemas is a table, not a view")
     }
 
     /// Get the partition key for storage
@@ -271,7 +273,9 @@ mod tests {
         assert_eq!(SchemasTableSchema::table_name(), "schemas");
         assert_eq!(
             SchemasTableSchema::column_family_name(),
-            SystemTable::Schemas.column_family_name().expect("Schemas is a table, not a view")
+            SystemTable::Schemas
+                .column_family_name()
+                .expect("Schemas is a table, not a view")
         );
     }
 

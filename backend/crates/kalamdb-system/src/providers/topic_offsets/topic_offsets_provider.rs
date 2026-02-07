@@ -77,9 +77,7 @@ impl TopicOffsetsTableProvider {
     /// * `offset` - TopicOffset entity to upsert
     pub fn upsert_offset(&self, offset: TopicOffset) -> Result<(), SystemError> {
         let key = Self::make_key(&offset.topic_id, &offset.group_id, offset.partition_id);
-        self.store
-            .insert(&key, &offset)
-            .into_system_error("insert topic offset error")
+        self.store.insert(&key, &offset).into_system_error("insert topic offset error")
     }
 
     /// Async version of `upsert_offset()`.
@@ -110,10 +108,7 @@ impl TopicOffsetsTableProvider {
         partition_id: u32,
     ) -> Result<Option<TopicOffset>, SystemError> {
         let key = Self::make_key(topic_id, group_id, partition_id);
-        self.store
-            .get_async(key)
-            .await
-            .into_system_error("get_async error")
+        self.store.get_async(key).await.into_system_error("get_async error")
     }
 
     /// Get all offsets for a topic and consumer group across all partitions
@@ -163,18 +158,21 @@ impl TopicOffsetsTableProvider {
         let key = Self::make_key(topic_id, group_id, partition_id);
 
         // Get existing offset or create new one
-        let mut topic_offset = self
-            .store
-            .get(&key)?
-            .unwrap_or_else(|| TopicOffset::new(topic_id.clone(), group_id.clone(), partition_id, 0, chrono::Utc::now().timestamp_millis()));
+        let mut topic_offset = self.store.get(&key)?.unwrap_or_else(|| {
+            TopicOffset::new(
+                topic_id.clone(),
+                group_id.clone(),
+                partition_id,
+                0,
+                chrono::Utc::now().timestamp_millis(),
+            )
+        });
 
         // Update offset
         topic_offset.ack(offset, chrono::Utc::now().timestamp_millis());
 
         // Save back
-        self.store
-            .insert(&key, &topic_offset)
-            .into_system_error("update offset error")
+        self.store.insert(&key, &topic_offset).into_system_error("update offset error")
     }
 
     /// Async version of `ack_offset()`.
@@ -193,7 +191,15 @@ impl TopicOffsetsTableProvider {
             .get_async(key.clone())
             .await
             .into_system_error("get_async error")?
-            .unwrap_or_else(|| TopicOffset::new(topic_id.clone(), group_id.clone(), partition_id, 0, chrono::Utc::now().timestamp_millis()));
+            .unwrap_or_else(|| {
+                TopicOffset::new(
+                    topic_id.clone(),
+                    group_id.clone(),
+                    partition_id,
+                    0,
+                    chrono::Utc::now().timestamp_millis(),
+                )
+            });
 
         // Update offset
         topic_offset.ack(offset, chrono::Utc::now().timestamp_millis());
@@ -249,7 +255,7 @@ impl TopicOffsetsTableProvider {
     /// Load all topic offsets as a single RecordBatch for DataFusion
     fn load_batch_internal(&self) -> Result<RecordBatch, SystemError> {
         let offsets = self.list_offsets()?;
-        
+
         let mut topic_ids = Vec::with_capacity(offsets.len());
         let mut group_ids = Vec::with_capacity(offsets.len());
         let mut partition_ids = Vec::with_capacity(offsets.len());
@@ -320,11 +326,14 @@ impl TableProvider for TopicOffsetsTableProvider {
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         use datafusion::datasource::MemTable;
-        
+
         let batch = self.load_batch_internal().map_err(|e| {
-            datafusion::error::DataFusionError::Execution(format!("Failed to load topic offsets: {}", e))
+            datafusion::error::DataFusionError::Execution(format!(
+                "Failed to load topic offsets: {}",
+                e
+            ))
         })?;
-        
+
         let table = MemTable::try_new(self.schema(), vec![vec![batch]])?;
         table.scan(_state, projection, filters, limit).await
     }
@@ -351,8 +360,8 @@ mod tests {
             TopicId::new("topic_123"),
             ConsumerGroupId::new("group_1"),
             0,
-            0,  // last_acked_offset
-            chrono::Utc::now().timestamp_millis(),  // updated_at
+            0,                                     // last_acked_offset
+            chrono::Utc::now().timestamp_millis(), // updated_at
         );
 
         // Upsert offset

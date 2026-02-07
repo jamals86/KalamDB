@@ -58,7 +58,8 @@ async fn test_scenario_09_ddl_while_active() -> anyhow::Result<()> {
                     i,
                     i,
                     i * 10
-                ), None,
+                ),
+                None,
                 None,
                 None,
             )
@@ -108,7 +109,8 @@ async fn test_scenario_09_ddl_while_active() -> anyhow::Result<()> {
             // Verify old rows still readable
             let resp = client
                 .execute_query(
-                    &format!("SELECT id, name, value FROM {}.data WHERE id <= 10 ORDER BY id", ns), None,
+                    &format!("SELECT id, name, value FROM {}.data WHERE id <= 10 ORDER BY id", ns),
+                    None,
                     None,
                     None,
                 )
@@ -118,7 +120,12 @@ async fn test_scenario_09_ddl_while_active() -> anyhow::Result<()> {
 
             // Verify new row readable
             let resp = client
-                .execute_query(&format!("SELECT * FROM {}.data WHERE id = 100", ns), None, None, None)
+                .execute_query(
+                    &format!("SELECT * FROM {}.data WHERE id = 100", ns),
+                    None,
+                    None,
+                    None,
+                )
                 .await?;
             assert!(resp.success(), "New row should be readable");
             assert_eq!(resp.rows().len(), 1, "Should have 1 new row");
@@ -237,7 +244,8 @@ async fn test_scenario_09_drop_column() -> anyhow::Result<()> {
         // Verify remaining columns work
         let resp = client
             .execute_query(
-                &format!("SELECT id, name, value FROM {}.data ORDER BY id", ns), None,
+                &format!("SELECT id, name, value FROM {}.data ORDER BY id", ns),
+                None,
                 None,
                 None,
             )
@@ -296,7 +304,8 @@ async fn test_scenario_09_concurrent_reads_during_ddl() -> anyhow::Result<()> {
     for i in 1..=20 {
         let resp = client
             .execute_query(
-                &format!("INSERT INTO {}.data (id, name) VALUES ({}, 'item_{}')", ns, i, i), None,
+                &format!("INSERT INTO {}.data (id, name) VALUES ({}, 'item_{}')", ns, i, i),
+                None,
                 None,
                 None,
             )
@@ -319,7 +328,8 @@ async fn test_scenario_09_concurrent_reads_during_ddl() -> anyhow::Result<()> {
         for _ in 0..10 {
             let resp = client
                 .execute_query(
-                    &format!("SELECT * FROM {}.data ORDER BY id LIMIT 10", ns_clone), None,
+                    &format!("SELECT * FROM {}.data ORDER BY id LIMIT 10", ns_clone),
+                    None,
                     None,
                     None,
                 )

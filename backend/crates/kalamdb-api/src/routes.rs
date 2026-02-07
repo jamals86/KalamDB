@@ -65,7 +65,7 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
                 .service(handlers::download_file)
                 .service(handlers::websocket_handler),
         );
-    }
+}
 
 /// Configure embedded UI routes (recommended - UI is compiled into binary)
 ///

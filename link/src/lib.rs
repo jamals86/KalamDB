@@ -115,9 +115,9 @@ pub mod credentials;
 #[cfg(feature = "tokio-runtime")]
 pub mod auth;
 #[cfg(feature = "tokio-runtime")]
-pub mod consumer;
-#[cfg(feature = "tokio-runtime")]
 pub mod client;
+#[cfg(feature = "tokio-runtime")]
+pub mod consumer;
 #[cfg(feature = "tokio-runtime")]
 pub mod query;
 #[cfg(feature = "tokio-runtime")]
@@ -143,10 +143,11 @@ pub use credentials::{CredentialStore, Credentials, MemoryCredentialStore};
 pub use error::{KalamLinkError, Result};
 pub use live::LiveConnection;
 pub use models::{
-    parse_i64, ChangeEvent, ConnectionOptions, ErrorDetail, HealthCheckResponse, HttpVersion,
-    KalamDataType, LoginRequest, LoginResponse, LoginUserInfo, QueryRequest, QueryResponse,
-    QueryResult, SchemaField, ServerSetupRequest, ServerSetupResponse, SetupStatusResponse,
-    SetupUserInfo, SubscriptionConfig, SubscriptionOptions, UploadProgress,
+    parse_i64, AckResponse, ChangeEvent, ConnectionOptions, ConsumeMessage, ConsumeRequest,
+    ConsumeResponse, ErrorDetail, HealthCheckResponse, HttpVersion, KalamDataType, LoginRequest,
+    LoginResponse, LoginUserInfo, QueryRequest, QueryResponse, QueryResult, SchemaField,
+    ServerSetupRequest, ServerSetupResponse, SetupStatusResponse, SetupUserInfo,
+    SubscriptionConfig, SubscriptionOptions, UploadProgress,
 };
 pub use seq_id::SeqId;
 pub use timeouts::{KalamLinkTimeouts, KalamLinkTimeoutsBuilder};

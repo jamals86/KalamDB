@@ -10,9 +10,9 @@ use web_sys::{ErrorEvent, MessageEvent, WebSocket};
 use crate::models::{ClientMessage, ServerMessage, SubscriptionRequest};
 
 use super::auth::WasmAuthProvider;
+use super::console_log;
 use super::helpers::create_promise;
 use super::state::SubscriptionState;
-use super::console_log;
 
 /// Internal reconnection logic with auth provider support
 pub(crate) async fn reconnect_internal_with_auth(

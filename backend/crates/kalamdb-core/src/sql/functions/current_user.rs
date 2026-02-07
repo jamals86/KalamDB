@@ -1,6 +1,6 @@
-//! CURRENT_USER() function implementation
+//! KDB_CURRENT_USER() function implementation
 //!
-//! This module provides a user-defined function for DataFusion that returns the current user ID
+//! This module provides a user-defined function for DataFusion that returns the current username
 //! from the session context.
 
 use datafusion::arrow::array::{ArrayRef, StringArray};
@@ -9,29 +9,30 @@ use datafusion::logical_expr::{
     ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility,
 };
 use kalamdb_commons::arrow_utils::{arrow_utf8, ArrowDataType};
-use kalamdb_commons::UserId;
+use kalamdb_commons::UserName;
+use kalamdb_session::SessionUserContext;
 use std::any::Any;
 use std::sync::Arc;
 
-/// CURRENT_USER() scalar function implementation
+/// KDB_CURRENT_USER() scalar function implementation
 ///
-/// Returns the user ID of the current session user.
+/// Returns the username of the current session user.
 /// This function takes no arguments and returns a String (Utf8).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CurrentUserFunction {
-    user_id: Option<UserId>,
+    username: Option<UserName>,
 }
 
 impl CurrentUserFunction {
-    /// Create a new CURRENT_USER function with no user bound
+    /// Create a new KDB_CURRENT_USER function with no user bound
     pub fn new() -> Self {
-        Self { user_id: None }
+        Self { username: None }
     }
 
-    /// Create a CURRENT_USER function bound to a specific user id
-    pub fn with_user_id(user_id: &UserId) -> Self {
+    /// Create a KDB_CURRENT_USER function bound to a specific username
+    pub fn with_username(username: &UserName) -> Self {
         Self {
-            user_id: Some(user_id.clone()),
+            username: Some(username.clone()),
         }
     }
 }
@@ -48,7 +49,7 @@ impl ScalarUDFImpl for CurrentUserFunction {
     }
 
     fn name(&self) -> &str {
-        "CURRENT_USER"
+        "kdb_current_user"
     }
 
     fn signature(&self) -> &Signature {
@@ -63,16 +64,27 @@ impl ScalarUDFImpl for CurrentUserFunction {
 
     fn invoke_with_args(&self, args: ScalarFunctionArgs) -> DataFusionResult<ColumnarValue> {
         if !args.args.is_empty() {
-            return Err(DataFusionError::Plan("CURRENT_USER() takes no arguments".to_string()));
+            return Err(DataFusionError::Plan("KDB_CURRENT_USER() takes no arguments".to_string()));
         }
 
-        let user_id = self.user_id.as_ref().ok_or_else(|| {
-            DataFusionError::Execution(
-                "CURRENT_USER() failed: User ID must not be null or empty".to_string(),
-            )
-        })?;
+        let current_user = if let Some(username) = &self.username {
+            username.as_str().to_string()
+        } else if let Some(session_ctx) = args.config_options.extensions.get::<SessionUserContext>()
+        {
+            if let Some(username) = &session_ctx.username {
+                username.as_str().to_string()
+            } else {
+                return Err(DataFusionError::Execution(
+                    "KDB_CURRENT_USER() failed: username not set in session context".to_string(),
+                ));
+            }
+        } else {
+            return Err(DataFusionError::Execution(
+                "KDB_CURRENT_USER() failed: session user context not found".to_string(),
+            ));
+        };
 
-        let array = StringArray::from(vec![user_id.as_str()]);
+        let array = StringArray::from(vec![current_user.as_str()]);
         Ok(ColumnarValue::Array(Arc::new(array) as ArrayRef))
     }
 }
@@ -87,18 +99,18 @@ mod tests {
     fn test_current_user_function_creation() {
         let func_impl = CurrentUserFunction::new();
         let func = ScalarUDF::new_from_impl(func_impl);
-        assert_eq!(func.name(), "CURRENT_USER");
+        assert_eq!(func.name(), "kdb_current_user");
     }
 
     #[test]
     fn test_current_user_with_user_id() {
-        let user_id = UserId::new("test_user");
-        let func_impl = CurrentUserFunction::with_user_id(&user_id);
+        let username = UserName::new("test_user");
+        let func_impl = CurrentUserFunction::with_username(&username);
         let func = ScalarUDF::new_from_impl(func_impl.clone());
-        assert_eq!(func.name(), "CURRENT_USER");
+        assert_eq!(func.name(), "kdb_current_user");
 
-        // Verify configured user_id
-        assert_eq!(func_impl.user_id, Some(user_id));
+        // Verify configured username
+        assert_eq!(func_impl.username, Some(username));
     }
 
     // Test removed - testing internal DataFusion behavior that changed in newer versions

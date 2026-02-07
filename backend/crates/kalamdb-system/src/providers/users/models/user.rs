@@ -2,12 +2,12 @@
 //!
 //! Represents a database user with authentication and authorization information.
 
+use crate::providers::storages::models::StorageMode;
 use bincode::{Decode, Encode};
 use kalamdb_commons::datatypes::KalamDataType;
 use kalamdb_commons::models::{ids::UserId, AuthType, Role, StorageId};
-use crate::providers::storages::models::StorageMode;
-use kalamdb_commons::UserName;
 use kalamdb_commons::KSerializable;
+use kalamdb_commons::UserName;
 use kalamdb_macros::table;
 use serde::{Deserialize, Serialize};
 

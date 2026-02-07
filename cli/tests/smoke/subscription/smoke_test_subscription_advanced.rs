@@ -71,7 +71,7 @@ impl SubscriptionListenerAdvanced {
                         Ok(c) => {
                             client = Some(c);
                             break;
-                        }
+                        },
                         Err(e) => {
                             let message = e.to_string();
                             if attempt < 4 && is_ephemeral_port_error(&message) {
@@ -82,7 +82,7 @@ impl SubscriptionListenerAdvanced {
                             let _ = event_tx
                                 .send(format!("ERROR: Failed to create client: {}", message));
                             return;
-                        }
+                        },
                     }
                 }
                 let client = match client {
@@ -90,7 +90,7 @@ impl SubscriptionListenerAdvanced {
                     None => {
                         let _ = event_tx.send("ERROR: Failed to create client".to_string());
                         return;
-                    }
+                    },
                 };
 
                 // Generate unique subscription ID
@@ -112,7 +112,7 @@ impl SubscriptionListenerAdvanced {
                         Ok(s) => {
                             subscription = Some(s);
                             break;
-                        }
+                        },
                         Err(e) => {
                             let message = e.to_string();
                             if attempt < 4 && is_ephemeral_port_error(&message) {
@@ -120,10 +120,10 @@ impl SubscriptionListenerAdvanced {
                                     .await;
                                 continue;
                             }
-                            let _ = event_tx
-                                .send(format!("ERROR: Failed to subscribe: {}", message));
+                            let _ =
+                                event_tx.send(format!("ERROR: Failed to subscribe: {}", message));
                             return;
-                        }
+                        },
                     }
                 }
                 let mut subscription = match subscription {
@@ -131,7 +131,7 @@ impl SubscriptionListenerAdvanced {
                     None => {
                         let _ = event_tx.send("ERROR: Failed to subscribe".to_string());
                         return;
-                    }
+                    },
                 };
 
                 let mut stop_rx = stop_rx;
@@ -361,7 +361,6 @@ fn smoke_subscription_resume_from_seq_id() {
         execute_sql_as_root_via_client(&insert_sql).expect("insert should succeed");
     }
 
-
     // First subscription - get initial data and first change
     let query = format!("SELECT * FROM {}", full);
     let mut listener1 = SubscriptionListener::start(&query).expect("subscription should start");
@@ -419,7 +418,6 @@ fn smoke_subscription_resume_from_seq_id() {
         full, change3_value
     ))
     .expect("insert should succeed");
-
 
     // Second subscription - resuming from seq_id should skip initial data
     // and only receive changes after that seq_id
@@ -504,7 +502,6 @@ fn smoke_subscription_high_volume_changes() {
         full
     );
     execute_sql_as_root_via_client(&create_sql).expect("create user table should succeed");
-
 
     // Start subscription BEFORE making changes
     let query = format!("SELECT * FROM {}", full);
@@ -663,14 +660,12 @@ fn smoke_subscription_delete_events() {
         execute_sql_as_root_via_client(&insert_sql).expect("insert should succeed");
     }
 
-
     // Start subscription
     let query = format!("SELECT * FROM {}", full);
     let mut listener = SubscriptionListener::start(&query).expect("subscription should start");
 
     // Wait for initial data
     let _ = listener.collect_events_until_ready(Duration::from_secs(6));
-
 
     // Delete rows
     let delete_ids = vec![2, 4];
@@ -892,7 +887,6 @@ fn smoke_subscription_column_projection() {
             &initial_str[..std::cmp::min(500, initial_str.len())]
         );
     }
-
 
     // Now perform an UPDATE and verify the change event also respects projection
     let updated_username = format!("updated_{}", std::process::id());

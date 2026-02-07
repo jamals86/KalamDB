@@ -6,8 +6,8 @@
 
 use arrow::datatypes::{DataType, IntervalUnit, TimeUnit};
 use kalamdb_commons::models::datatypes::{FromArrowType, KalamDataType};
-use sqlparser::ast::{DataType as SQLDataType, ObjectName};
 use sqlparser::ast::DataType::*;
+use sqlparser::ast::{DataType as SQLDataType, ObjectName};
 use std::string::String;
 
 /// Map a parsed `sqlparser` data type into an Arrow data type while accounting
@@ -117,8 +117,7 @@ pub fn map_sql_type_to_kalam(sql_type: &SQLDataType) -> Result<KalamDataType, St
                 sqlparser::ast::ExactNumberInfo::Precision(p) => (*p as u8, 0),
                 sqlparser::ast::ExactNumberInfo::None => (38, 10),
             };
-            KalamDataType::validate_decimal_params(precision, scale)
-                .map_err(|e| e.to_string())?;
+            KalamDataType::validate_decimal_params(precision, scale).map_err(|e| e.to_string())?;
             Ok(KalamDataType::Decimal { precision, scale })
         },
         SQLDataType::Date => Ok(KalamDataType::Date),

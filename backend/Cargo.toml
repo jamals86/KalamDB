@@ -70,6 +70,8 @@ num_cpus = { workspace = true }
 [features]
 default = []
 jemalloc = ["tikv-jemallocator"]
+# End-to-end tests that require a full test server instance
+e2e-tests = []
 
 [lib]
 name = "kalamdb_server"
@@ -82,10 +84,12 @@ path = "src/main.rs"
 [[test]]
 name = "test_testserver"
 path = "tests/testserver/test_testserver.rs"
+required-features = ["e2e-tests"]
 
 [[test]]
 name = "test_scenarios"
 path = "tests/scenarios/test_scenarios.rs"
+required-features = ["e2e-tests"]
 
 
 # [[test]]

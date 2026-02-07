@@ -116,7 +116,8 @@ async fn test_scenario_04_iot_telemetry_5k_rows() -> anyhow::Result<()> {
     // Device filter
     let resp = client
         .execute_query(
-            &format!("SELECT COUNT(*) as cnt FROM {}.telemetry WHERE device_id = 'device_001'", ns), None,
+            &format!("SELECT COUNT(*) as cnt FROM {}.telemetry WHERE device_id = 'device_001'", ns),
+            None,
             None,
             None,
         )
@@ -127,7 +128,8 @@ async fn test_scenario_04_iot_telemetry_5k_rows() -> anyhow::Result<()> {
     // Threshold filter (temperature > 40)
     let resp = client
         .execute_query(
-            &format!("SELECT COUNT(*) as cnt FROM {}.telemetry WHERE temp > 40", ns), None,
+            &format!("SELECT COUNT(*) as cnt FROM {}.telemetry WHERE temp > 40", ns),
+            None,
             None,
             None,
         )
@@ -138,7 +140,8 @@ async fn test_scenario_04_iot_telemetry_5k_rows() -> anyhow::Result<()> {
     // Battery threshold filter
     let resp = client
         .execute_query(
-            &format!("SELECT COUNT(*) as cnt FROM {}.telemetry WHERE battery < 20", ns), None,
+            &format!("SELECT COUNT(*) as cnt FROM {}.telemetry WHERE battery < 20", ns),
+            None,
             None,
             None,
         )
@@ -177,7 +180,8 @@ async fn test_scenario_04_iot_telemetry_5k_rows() -> anyhow::Result<()> {
     // Device filter should still work
     let resp = client
         .execute_query(
-            &format!("SELECT COUNT(*) as cnt FROM {}.telemetry WHERE device_id = 'device_001'", ns), None,
+            &format!("SELECT COUNT(*) as cnt FROM {}.telemetry WHERE device_id = 'device_001'", ns),
+            None,
             None,
             None,
         )
@@ -330,7 +334,12 @@ async fn test_scenario_04_wide_column_scan() -> anyhow::Result<()> {
     // Full scan
     let start = std::time::Instant::now();
     let resp = client
-        .execute_query(&format!("SELECT * FROM {}.telemetry ORDER BY id LIMIT 100", ns), None, None, None)
+        .execute_query(
+            &format!("SELECT * FROM {}.telemetry ORDER BY id LIMIT 100", ns),
+            None,
+            None,
+            None,
+        )
         .await?;
     let scan_time = start.elapsed();
 
@@ -342,7 +351,8 @@ async fn test_scenario_04_wide_column_scan() -> anyhow::Result<()> {
     let start = std::time::Instant::now();
     let resp = client
         .execute_query(
-            &format!("SELECT device_id, temp, battery FROM {}.telemetry ORDER BY id LIMIT 100", ns), None,
+            &format!("SELECT device_id, temp, battery FROM {}.telemetry ORDER BY id LIMIT 100", ns),
+            None,
             None,
             None,
         )

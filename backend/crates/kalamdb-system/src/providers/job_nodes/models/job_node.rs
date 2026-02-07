@@ -1,17 +1,14 @@
 //! Job-node execution state for system.job_nodes table.
 
+use crate::JobStatus;
 use bincode::{Decode, Encode};
 use kalamdb_commons::datatypes::KalamDataType;
 use kalamdb_commons::models::ids::{JobId, JobNodeId, NodeId};
-use crate::JobStatus;
 use kalamdb_commons::KSerializable;
 use kalamdb_macros::table;
 use serde::{Deserialize, Serialize};
 
-#[table(
-    name = "job_nodes",
-    comment = "Per-node job execution state"
-)]
+#[table(name = "job_nodes", comment = "Per-node job execution state")]
 #[derive(Serialize, Deserialize, Encode, Decode, Clone, Debug, PartialEq)]
 pub struct JobNode {
     #[column(

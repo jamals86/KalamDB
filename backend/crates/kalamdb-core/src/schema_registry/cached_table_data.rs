@@ -174,9 +174,7 @@ impl CachedTableData {
     pub fn arrow_schema(&self) -> Result<Arc<datafusion::arrow::datatypes::Schema>, KalamDbError> {
         // Fast path: Check if already computed (concurrent reads allowed)
         {
-            let read_guard = self
-                .arrow_schema
-                .read();
+            let read_guard = self.arrow_schema.read();
             if let Some(schema) = read_guard.as_ref() {
                 return Ok(Arc::clone(schema)); // 1.5μs cached access
             }
@@ -184,9 +182,7 @@ impl CachedTableData {
 
         // Slow path: Compute and cache (exclusive write)
         {
-            let mut write_guard = self
-                .arrow_schema
-                .write();
+            let mut write_guard = self.arrow_schema.write();
 
             // Double-check: Another thread may have computed while we waited for write lock
             if let Some(schema) = write_guard.as_ref() {
@@ -219,7 +215,10 @@ impl CachedTableData {
     ///
     /// # Errors
     /// Returns error if storage not found
-    pub fn storage_cached(&self, storage_registry: &Arc<kalamdb_filestore::StorageRegistry>) -> Result<Arc<StorageCached>, KalamDbError> {
+    pub fn storage_cached(
+        &self,
+        storage_registry: &Arc<kalamdb_filestore::StorageRegistry>,
+    ) -> Result<Arc<StorageCached>, KalamDbError> {
         storage_registry
             .get_cached(&self.storage_id)
             .map_err(|e| KalamDbError::Other(format!("Filestore error: {}", e)))?

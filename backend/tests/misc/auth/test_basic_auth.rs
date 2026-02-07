@@ -10,8 +10,11 @@
 //! flow that is used by both HTTP and WebSocket handlers.
 
 use super::test_support::{auth_helper, TestServer};
-use kalamdb_commons::{models::{ConnectionInfo, UserName}, Role};
 use base64::Engine as _;
+use kalamdb_commons::{
+    models::{ConnectionInfo, UserName},
+    Role,
+};
 use std::sync::Arc;
 
 /// Test successful Bearer auth with valid token

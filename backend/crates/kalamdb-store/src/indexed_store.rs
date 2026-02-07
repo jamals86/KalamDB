@@ -664,7 +664,7 @@ where
                     Ok(Some(entity)) => {
                         remaining -= 1;
                         return Some(Ok((primary_key, entity)));
-                    }
+                    },
                     Ok(None) => continue,
                     Err(e) => return Some(Err(e)),
                 }
@@ -720,10 +720,10 @@ where
             .ok_or_else(|| StorageError::Other(format!("Index {} not found", index_idx)))?
             .clone();
         // Only fetch 1 result - we just need to know if anything exists
-        let iter = self.backend.scan(&index_partition, Some(prefix), None, Some(1))?;
+        let mut iter = self.backend.scan(&index_partition, Some(prefix), None, Some(1))?;
 
         // If we got any result, the prefix exists
-        Ok(iter.into_iter().next().is_some())
+        Ok(iter.next().is_some())
     }
 
     /// Batch check for existence of multiple prefixes in an index.
@@ -757,15 +757,27 @@ where
             .ok_or_else(|| StorageError::Other(format!("Index {} not found", index_idx)))?
             .clone();
 
-        // Scan all entries with the common prefix (e.g., all PKs for this user)
+        // With no common prefix, a shared scan would walk the entire index.
+        // Use point prefix checks instead.
+        if common_prefix.is_empty() {
+            let mut found: HashSet<Vec<u8>> = HashSet::new();
+            let unique_prefixes: HashSet<Vec<u8>> = prefixes.iter().cloned().collect();
+            for prefix in unique_prefixes {
+                let mut iter = self.backend.scan(&index_partition, Some(&prefix), None, Some(1))?;
+                if iter.next().is_some() {
+                    found.insert(prefix);
+                }
+            }
+            return Ok(found);
+        }
+
+        // For scoped prefixes (e.g., all PKs for one user), a single contiguous scan
+        // is typically faster than N individual seeks.
         let iter = self.backend.scan(&index_partition, Some(common_prefix), None, None)?;
 
         let mut prefixes_by_len: HashMap<usize, HashSet<&[u8]>> = HashMap::new();
         for prefix in prefixes {
-            prefixes_by_len
-                .entry(prefix.len())
-                .or_default()
-                .insert(prefix.as_slice());
+            prefixes_by_len.entry(prefix.len()).or_default().insert(prefix.as_slice());
         }
         let mut lengths: Vec<usize> = prefixes_by_len.keys().copied().collect();
         lengths.sort_unstable();
@@ -775,10 +787,7 @@ where
             return Ok(HashSet::new());
         }
 
-        // Check which of the requested prefixes exist without collecting all keys
-        // We need to store owned Vec<u8> since keys are temporary
         let mut found: HashSet<Vec<u8>> = HashSet::with_capacity(remaining);
-
         'outer: for (key, _value) in iter {
             for len in &lengths {
                 if key.len() < *len {
@@ -791,7 +800,6 @@ where
                         let prefix_owned = prefix_slice.to_vec();
                         if found.insert(prefix_owned) {
                             remaining -= 1;
-
                             if remaining == 0 {
                                 break 'outer;
                             }
@@ -1073,8 +1081,8 @@ pub fn extract_i64_equality(filter: &Expr) -> Option<(&str, i64)> {
 mod tests {
     use super::*;
     use crate::test_utils::InMemoryBackend;
-    use kalamdb_system::providers::jobs::models::Job;
     use kalamdb_commons::{JobId, NodeId};
+    use kalamdb_system::providers::jobs::models::Job;
     use kalamdb_system::{JobStatus, JobType};
 
     // Test index: Jobs by status

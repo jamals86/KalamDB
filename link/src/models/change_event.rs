@@ -81,12 +81,24 @@ impl ChangeEvent {
     /// Returns the subscription ID for this event, if any
     pub fn subscription_id(&self) -> Option<&str> {
         match self {
-            Self::Ack { subscription_id, .. }
-            | Self::InitialDataBatch { subscription_id, .. }
-            | Self::Insert { subscription_id, .. }
-            | Self::Update { subscription_id, .. }
-            | Self::Delete { subscription_id, .. }
-            | Self::Error { subscription_id, .. } => Some(subscription_id.as_str()),
+            Self::Ack {
+                subscription_id, ..
+            }
+            | Self::InitialDataBatch {
+                subscription_id, ..
+            }
+            | Self::Insert {
+                subscription_id, ..
+            }
+            | Self::Update {
+                subscription_id, ..
+            }
+            | Self::Delete {
+                subscription_id, ..
+            }
+            | Self::Error {
+                subscription_id, ..
+            } => Some(subscription_id.as_str()),
             Self::Unknown { .. } => None,
         }
     }

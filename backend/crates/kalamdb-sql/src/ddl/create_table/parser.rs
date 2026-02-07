@@ -9,9 +9,7 @@ use kalamdb_commons::schemas::policy::FlushPolicy;
 use kalamdb_commons::schemas::{ColumnDefault, TableType};
 use once_cell::sync::Lazy;
 use regex::Regex;
-use sqlparser::ast::{
-    ColumnOption, CreateTable, ObjectNamePart, Statement, TableConstraint,
-};
+use sqlparser::ast::{ColumnOption, CreateTable, ObjectNamePart, Statement, TableConstraint};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -37,8 +35,8 @@ impl CreateTableStatement {
         // Use PostgreSqlDialect because GenericDialect has issues with TEXT/STRING PRIMARY KEY
         // in sqlparser 0.59.0. PostgreSqlDialect properly handles TEXT as a data type.
         let dialect = sqlparser::dialect::PostgreSqlDialect {};
-        let mut statements = parse_sql_statements(&normalized_sql, &dialect)
-            .map_err(|e| e.to_string())?;
+        let mut statements =
+            parse_sql_statements(&normalized_sql, &dialect).map_err(|e| e.to_string())?;
         if statements.len() != 1 {
             return Err("Expected exactly one statement".to_string());
         }
@@ -470,8 +468,6 @@ fn expr_to_column_default(expr: &sqlparser::ast::Expr) -> ColumnDefault {
         },
     }
 }
-
-
 
 #[cfg(test)]
 mod tests {

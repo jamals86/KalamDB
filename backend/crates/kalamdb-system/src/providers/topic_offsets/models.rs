@@ -15,8 +15,7 @@ use serde::{Deserialize, Serialize};
     name = "topic_offsets",
     comment = "Consumer group offset tracking for topics"
 )]
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[derive(bincode::Encode, bincode::Decode)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, bincode::Encode, bincode::Decode)]
 pub struct TopicOffset {
     /// Topic identifier
     #[column(
@@ -29,7 +28,7 @@ pub struct TopicOffset {
         comment = "Topic identifier"
     )]
     pub topic_id: TopicId,
-    
+
     /// Consumer group identifier
     #[column(
         id = 2,
@@ -41,7 +40,7 @@ pub struct TopicOffset {
         comment = "Consumer group identifier"
     )]
     pub group_id: ConsumerGroupId,
-    
+
     /// Partition ID (0-based)
     #[column(
         id = 3,
@@ -53,7 +52,7 @@ pub struct TopicOffset {
         comment = "Partition ID (0-based)"
     )]
     pub partition_id: u32,
-    
+
     /// Last acknowledged offset (successfully processed)
     #[column(
         id = 4,
@@ -65,7 +64,7 @@ pub struct TopicOffset {
         comment = "Last acknowledged offset"
     )]
     pub last_acked_offset: u64,
-    
+
     /// Timestamp of last update (milliseconds since epoch)
     #[column(
         id = 5,
@@ -124,7 +123,7 @@ mod tests {
             10,
             1706745600000,
         );
-        
+
         assert_eq!(offset.topic_id, TopicId::from("test_topic"));
         assert_eq!(offset.group_id, ConsumerGroupId::from("group1"));
         assert_eq!(offset.partition_id, 0);
@@ -134,13 +133,8 @@ mod tests {
 
     #[test]
     fn test_offset_ack_logic() {
-        let mut offset = TopicOffset::new(
-            TopicId::from("test"),
-            ConsumerGroupId::from("group1"),
-            0,
-            0,
-            1000,
-        );
+        let mut offset =
+            TopicOffset::new(TopicId::from("test"), ConsumerGroupId::from("group1"), 0, 0, 1000);
 
         // Ack offset 5
         offset.ack(5, 2000);

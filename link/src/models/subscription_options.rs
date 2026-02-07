@@ -26,6 +26,8 @@ use crate::seq_id::SeqId;
 ///     .with_from_seq_id(some_seq_id);
 /// ```
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct SubscriptionOptions {
     /// Hint for server-side batch sizing during initial data load
     /// Default: server-configured (typically 1000 rows per batch)

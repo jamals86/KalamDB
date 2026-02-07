@@ -40,9 +40,7 @@ pub struct TopicCleanupParams {
 impl JobParams for TopicCleanupParams {
     fn validate(&self) -> Result<(), KalamDbError> {
         if self.topic_name.is_empty() {
-            return Err(KalamDbError::InvalidOperation(
-                "topic_name cannot be empty".to_string(),
-            ));
+            return Err(KalamDbError::InvalidOperation("topic_name cannot be empty".to_string()));
         }
         Ok(())
     }
@@ -79,7 +77,10 @@ impl JobExecutor for TopicCleanupExecutor {
         })
     }
 
-    async fn execute_leader(&self, ctx: &JobContext<Self::Params>) -> Result<JobDecision, KalamDbError> {
+    async fn execute_leader(
+        &self,
+        ctx: &JobContext<Self::Params>,
+    ) -> Result<JobDecision, KalamDbError> {
         ctx.log_info("Starting topic cleanup operation (leader)");
 
         // Parameters already validated in JobContext
@@ -87,10 +88,7 @@ impl JobExecutor for TopicCleanupExecutor {
         let topic_id = &params.topic_id;
         let topic_name = &params.topic_name;
 
-        ctx.log_info(&format!(
-            "Cleaning up topic '{}' ({})",
-            topic_name, topic_id
-        ));
+        ctx.log_info(&format!("Cleaning up topic '{}' ({})", topic_name, topic_id));
 
         // Get topic publisher service from AppContext
         let topic_publisher = ctx.app_ctx.topic_publisher();
@@ -104,35 +102,32 @@ impl JobExecutor for TopicCleanupExecutor {
                     count, topic_name
                 ));
                 count
-            }
+            },
             Err(e) => {
                 ctx.log_warn(&format!(
                     "Failed to delete consumer offsets for topic '{}': {}",
                     topic_name, e
                 ));
                 0
-            }
+            },
         };
 
         // Step 2: Clean up topic messages from message store
         let message_store = topic_publisher.message_store();
         let (messages_deleted, bytes_freed) = match message_store.delete_topic_messages(topic_id) {
             Ok(count) => {
-                ctx.log_info(&format!(
-                    "Deleted {} messages from topic '{}'",
-                    count, topic_name
-                ));
+                ctx.log_info(&format!("Deleted {} messages from topic '{}'", count, topic_name));
                 // Estimate bytes freed (rough approximation)
                 let estimated_bytes = count * 512; // Average message size estimate
                 (count, estimated_bytes)
-            }
+            },
             Err(e) => {
                 ctx.log_warn(&format!(
                     "Failed to delete messages for topic '{}': {}",
                     topic_name, e
                 ));
                 (0, 0)
-            }
+            },
         };
 
         // NOTE: The topic should already be removed from system.topics

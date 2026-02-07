@@ -7,11 +7,11 @@ use crate::applier::UnifiedApplier;
 use crate::error_extensions::KalamDbResultExt;
 use crate::jobs::executors::{
     BackupExecutor, CleanupExecutor, CompactExecutor, FlushExecutor, JobCleanupExecutor,
-    JobRegistry, RestoreExecutor, RetentionExecutor, StreamEvictionExecutor,
-    TopicCleanupExecutor, TopicRetentionExecutor, UserCleanupExecutor,
+    JobRegistry, RestoreExecutor, RetentionExecutor, StreamEvictionExecutor, TopicCleanupExecutor,
+    TopicRetentionExecutor, UserCleanupExecutor,
 };
-use crate::live::ConnectionsManager;
 use crate::live::notification::NotificationService;
+use crate::live::ConnectionsManager;
 use crate::live::TopicPublisherService;
 use crate::live_query::LiveQueryManager;
 use crate::schema_registry::SchemaRegistry;
@@ -262,7 +262,10 @@ impl AppContext {
             // Register the lazy system schema provider with the catalog
             // Views are created on first access, not eagerly at startup
             catalog
-                .register_schema("system", Arc::clone(&lazy_system_schema) as Arc<dyn SchemaProvider>)
+                .register_schema(
+                    "system",
+                    Arc::clone(&lazy_system_schema) as Arc<dyn SchemaProvider>,
+                )
                 .expect("Failed to register system schema");
 
             // Register existing namespaces as DataFusion schemas
@@ -316,12 +319,8 @@ impl AppContext {
                 Duration::from_secs(config.websocket.auth_timeout_secs.unwrap_or(10));
             let heartbeat_interval =
                 Duration::from_secs(config.websocket.heartbeat_interval_secs.unwrap_or(5));
-            let connection_registry = ConnectionsManager::new(
-                *node_id,
-                client_timeout,
-                auth_timeout,
-                heartbeat_interval,
-            );
+            let connection_registry =
+                ConnectionsManager::new(*node_id, client_timeout, auth_timeout, heartbeat_interval);
 
             // Create slow query logger (Phase 11)
             let slow_log_path = format!("{}/slow.log", config.logging.logs_path);
@@ -432,8 +431,28 @@ impl AppContext {
             schema_registry.set_app_context(app_ctx.clone());
 
             // Wire topic publisher into notification service for CDC → topic routing
-            notification_service.set_topic_publisher(topic_publisher);
-            
+            notification_service.set_topic_publisher(Arc::clone(&topic_publisher));
+
+            // ── Restore topic cache from persisted topics ───────────────────────
+            // On restart the TopicPublisherService starts with empty caches.
+            // Load all persisted topics so CDC routes and offset counters are
+            // available immediately for the notification worker.
+            match app_ctx.system_tables().topics().list_topics() {
+                Ok(topics) => {
+                    let count = topics.len();
+                    topic_publisher.refresh_topics_cache(topics);
+                    topic_publisher.restore_offset_counters();
+                    log::info!(
+                        "Restored {} topics into TopicPublisherService cache (routes={}, offsets ready)",
+                        count,
+                        topic_publisher.cache_stats().total_routes,
+                    );
+                },
+                Err(e) => {
+                    log::warn!("Failed to restore topic cache on startup: {}", e);
+                },
+            }
+
             // Wire AppContext into notification service for Raft leadership checks
             // This ensures only the leader fires notifications, preventing duplicates
             notification_service.set_app_context(Arc::downgrade(&app_ctx));
@@ -466,8 +485,7 @@ impl AppContext {
 
             // Wire up StatsTableProvider metrics callback now that AppContext exists
             let app_ctx_for_stats = Arc::clone(&app_ctx);
-            stats_view
-                .set_metrics_callback(Arc::new(move || app_ctx_for_stats.compute_metrics()));
+            stats_view.set_metrics_callback(Arc::new(move || app_ctx_for_stats.compute_metrics()));
 
             // Wire up ManifestTableProvider in_memory_checker callback
             // This allows system.manifest to show if a cache entry is in hot memory
@@ -713,7 +731,7 @@ impl AppContext {
 
         // Wire topic publisher into notification service for tests
         notification_service.set_topic_publisher(topic_publisher);
-        
+
         // Wire AppContext into notification service for leadership checks (tests)
         notification_service.set_app_context(Arc::downgrade(&app_ctx));
 
@@ -1005,10 +1023,7 @@ impl AppContext {
     /// Insert a job into the jobs table
     ///
     /// Convenience wrapper for system_tables().jobs().create_job()
-    pub fn insert_job(
-        &self,
-        job: &Job,
-    ) -> Result<(), crate::error::KalamDbError> {
+    pub fn insert_job(&self, job: &Job) -> Result<(), crate::error::KalamDbError> {
         self.system_tables
             .jobs()
             .create_job(job.clone())
@@ -1019,9 +1034,7 @@ impl AppContext {
     /// Scan all jobs from the jobs table
     ///
     /// Convenience wrapper for system_tables().jobs().list_jobs()
-    pub fn scan_all_jobs(
-        &self,
-    ) -> Result<Vec<Job>, crate::error::KalamDbError> {
+    pub fn scan_all_jobs(&self) -> Result<Vec<Job>, crate::error::KalamDbError> {
         self.system_tables.jobs().list_jobs().into_kalamdb_error("Failed to scan jobs")
     }
 

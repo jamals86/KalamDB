@@ -3,10 +3,10 @@
 //! Uses sqlparser-rs for safe SQL parsing to prevent SQL injection attacks
 //! and ensure proper handling of edge cases.
 
+use crate::parser::utils::parse_sql_statements;
 use sqlparser::ast::{
     Expr, Query, Select, SelectItem, SetExpr, Statement, TableFactor, TableWithJoins,
 };
-use crate::parser::utils::parse_sql_statements;
 use sqlparser::dialect::GenericDialect;
 
 /// Error type for query parsing
@@ -46,9 +46,8 @@ impl QueryParser {
     /// SQL injection attacks in live query subscriptions.
     pub fn extract_table_name(query: &str) -> Result<String, QueryParseError> {
         let dialect = GenericDialect {};
-        let statements = parse_sql_statements(query, &dialect).map_err(|e| {
-            QueryParseError::ParseError(format!("Failed to parse SQL: {}", e))
-        })?;
+        let statements = parse_sql_statements(query, &dialect)
+            .map_err(|e| QueryParseError::ParseError(format!("Failed to parse SQL: {}", e)))?;
 
         if statements.is_empty() {
             return Err(QueryParseError::InvalidSql("Empty SQL statement".to_string()));
@@ -76,9 +75,7 @@ impl QueryParser {
     /// Extract table name from a SELECT statement
     fn extract_table_from_select(select: &Select) -> Result<String, QueryParseError> {
         if select.from.is_empty() {
-            return Err(QueryParseError::InvalidSql(
-                "No FROM clause in SELECT".to_string(),
-            ));
+            return Err(QueryParseError::InvalidSql("No FROM clause in SELECT".to_string()));
         }
 
         let table_with_joins = &select.from[0];
@@ -116,9 +113,8 @@ impl QueryParser {
     /// Uses sqlparser-rs to safely parse and extract the clause.
     pub fn extract_where_clause(query: &str) -> Result<Option<String>, QueryParseError> {
         let dialect = GenericDialect {};
-        let statements = parse_sql_statements(query, &dialect).map_err(|e| {
-            QueryParseError::ParseError(format!("Failed to parse SQL: {}", e))
-        })?;
+        let statements = parse_sql_statements(query, &dialect)
+            .map_err(|e| QueryParseError::ParseError(format!("Failed to parse SQL: {}", e)))?;
 
         if statements.is_empty() {
             return Err(QueryParseError::InvalidSql("Empty SQL statement".to_string()));
@@ -127,16 +123,16 @@ impl QueryParser {
         let statement = &statements[0];
         match statement {
             Statement::Query(query) => Self::extract_where_from_query(query),
-            _ => Err(QueryParseError::InvalidSql(
-                "Only SELECT queries are supported".to_string(),
-            )),
+            _ => Err(QueryParseError::InvalidSql("Only SELECT queries are supported".to_string())),
         }
     }
 
     /// Extract WHERE clause from a parsed Query AST
     fn extract_where_from_query(query: &Query) -> Result<Option<String>, QueryParseError> {
         match query.body.as_ref() {
-            SetExpr::Select(select) => Ok(select.selection.as_ref().map(|expr| format!("{}", expr))),
+            SetExpr::Select(select) => {
+                Ok(select.selection.as_ref().map(|expr| format!("{}", expr)))
+            },
             _ => Ok(None),
         }
     }
@@ -147,9 +143,8 @@ impl QueryParser {
     /// Returns None for SELECT * queries.
     pub fn extract_projections(query: &str) -> Result<Option<Vec<String>>, QueryParseError> {
         let dialect = GenericDialect {};
-        let statements = parse_sql_statements(query, &dialect).map_err(|e| {
-            QueryParseError::ParseError(format!("Failed to parse SQL: {}", e))
-        })?;
+        let statements = parse_sql_statements(query, &dialect)
+            .map_err(|e| QueryParseError::ParseError(format!("Failed to parse SQL: {}", e)))?;
 
         if statements.is_empty() {
             return Err(QueryParseError::InvalidSql("Empty SQL statement".to_string()));
@@ -158,19 +153,22 @@ impl QueryParser {
         let statement = &statements[0];
         match statement {
             Statement::Query(query) => Self::extract_projections_from_query(query),
-            _ => Err(QueryParseError::InvalidSql(
-                "Only SELECT queries are supported".to_string(),
-            )),
+            _ => Err(QueryParseError::InvalidSql("Only SELECT queries are supported".to_string())),
         }
     }
 
     /// Resolve placeholders like CURRENT_USER() in WHERE clause
-    pub fn resolve_where_clause_placeholders(where_clause: &str, user_id: &kalamdb_commons::models::UserId) -> String {
+    pub fn resolve_where_clause_placeholders(
+        where_clause: &str,
+        user_id: &kalamdb_commons::models::UserId,
+    ) -> String {
         where_clause.replace("CURRENT_USER()", &format!("'{}'", user_id))
     }
 
     /// Extract projection columns from a parsed Query AST
-    fn extract_projections_from_query(query: &Query) -> Result<Option<Vec<String>>, QueryParseError> {
+    fn extract_projections_from_query(
+        query: &Query,
+    ) -> Result<Option<Vec<String>>, QueryParseError> {
         match query.body.as_ref() {
             SetExpr::Select(select) => Self::extract_projections_from_select(select),
             _ => Ok(None),
@@ -237,9 +235,7 @@ impl QueryParser {
         })?;
 
         if statements.is_empty() {
-            return Err(QueryParseError::InvalidSql(
-                "Failed to parse expression".to_string(),
-            ));
+            return Err(QueryParseError::InvalidSql("Failed to parse expression".to_string()));
         }
 
         // Extract parameters ($1, $2, etc.)
@@ -294,8 +290,7 @@ mod tests {
 
     #[test]
     fn test_extract_projections_specific() {
-        let result =
-            QueryParser::extract_projections("SELECT id, name, email FROM users").unwrap();
+        let result = QueryParser::extract_projections("SELECT id, name, email FROM users").unwrap();
         assert!(result.is_some());
         let cols = result.unwrap();
         assert_eq!(cols, vec!["id", "name", "email"]);

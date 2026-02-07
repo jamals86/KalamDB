@@ -22,8 +22,8 @@ use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::{ConnectionId, LiveQueryId, TableId, UserId};
 use kalamdb_commons::websocket::SubscriptionRequest;
 use kalamdb_commons::NodeId;
-use kalamdb_system::providers::live_queries::models::{LiveQuery, LiveQueryStatus};
 use kalamdb_raft::UserDataCommand;
+use kalamdb_system::providers::live_queries::models::{LiveQuery, LiveQueryStatus};
 use log::debug;
 use std::sync::Arc;
 

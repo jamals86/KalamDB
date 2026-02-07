@@ -11,9 +11,9 @@ use datafusion::arrow::record_batch::RecordBatch;
 use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::UserId;
 use kalamdb_commons::schemas::TableType;
-use kalamdb_system::Manifest;
 use kalamdb_commons::TableId;
 use kalamdb_filestore::StorageCached;
+use kalamdb_system::Manifest;
 use kalamdb_system::SchemaRegistry as SchemaRegistryTrait;
 use std::sync::Arc;
 
@@ -251,18 +251,20 @@ impl ManifestAccessPlanner {
                     projected_columns.push(old_column);
                 } else {
                     // Type changed - attempt cast
-                    let casted = cast(&old_column, current_field.data_type()).into_arrow_error_ctx(&format!(
-                        "Failed to cast column '{}' from {:?} to {:?}",
-                        current_field.name(),
-                        old_field.data_type(),
-                        current_field.data_type()
-                    ))?;
+                    let casted = cast(&old_column, current_field.data_type())
+                        .into_arrow_error_ctx(&format!(
+                            "Failed to cast column '{}' from {:?} to {:?}",
+                            current_field.name(),
+                            old_field.data_type(),
+                            current_field.data_type()
+                        ))?;
                     projected_columns.push(casted);
                 }
             } else {
                 // Column didn't exist in old schema - create NULL array
                 use datafusion::arrow::array::{new_null_array, ArrayRef};
-                let null_array: ArrayRef = new_null_array(current_field.data_type(), batch.num_rows());
+                let null_array: ArrayRef =
+                    new_null_array(current_field.data_type(), batch.num_rows());
                 projected_columns.push(null_array);
 
                 log::trace!(

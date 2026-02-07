@@ -1,6 +1,9 @@
 // Authenticated user context for request handling
 
-use kalamdb_commons::{models::{ConnectionInfo, UserId, UserName}, Role};
+use kalamdb_commons::{
+    models::{ConnectionInfo, UserId, UserName},
+    Role,
+};
 
 /// Authenticated user context for a request.
 ///

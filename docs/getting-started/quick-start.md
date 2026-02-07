@@ -77,6 +77,40 @@ JSON
 
 ## 7. Next steps
 
+### Optional: Execute as another user (impersonation)
+
+Use wrapper syntax only:
+
+```bash
+curl -u root: -X POST http://127.0.0.1:8080/v1/api/sql \
+  -H 'Content-Type: application/json' \
+  -d @- <<'JSON'
+{"sql":"EXECUTE AS USER 'root' (SELECT * FROM app.messages LIMIT 1);"}
+JSON
+```
+
+### Optional: Topic/consume and storage maintenance
+
+```bash
+curl -u root: -X POST http://127.0.0.1:8080/v1/api/sql \
+  -H 'Content-Type: application/json' \
+  -d @- <<'JSON'
+{"sql":"CREATE TOPIC app.new_messages PARTITIONS 2;"}
+JSON
+
+curl -u root: -X POST http://127.0.0.1:8080/v1/api/sql \
+  -H 'Content-Type: application/json' \
+  -d @- <<'JSON'
+{"sql":"CONSUME FROM app.new_messages GROUP 'quickstart-worker' FROM LATEST LIMIT 10;"}
+JSON
+
+curl -u root: -X POST http://127.0.0.1:8080/v1/api/sql \
+  -H 'Content-Type: application/json' \
+  -d @- <<'JSON'
+{"sql":"STORAGE FLUSH ALL IN app;"}
+JSON
+```
+
 - `../reference/sql.md` – more SQL examples
 - `../api/api-reference.md` – HTTP API reference
 - `../api/websocket-protocol.md` – WebSocket subscriptions

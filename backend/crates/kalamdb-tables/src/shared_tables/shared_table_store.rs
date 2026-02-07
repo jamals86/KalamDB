@@ -148,9 +148,9 @@ pub fn new_indexed_shared_table_store(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::utils::test_backend::RecordingBackend;
     use datafusion::scalar::ScalarValue;
     use kalamdb_commons::models::{NamespaceId, TableId, TableName};
-    use crate::utils::test_backend::RecordingBackend;
     use kalamdb_commons::StorageKey;
     use std::collections::BTreeMap;
 

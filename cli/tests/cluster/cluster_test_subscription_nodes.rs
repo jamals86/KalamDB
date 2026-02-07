@@ -87,7 +87,9 @@ async fn execute_query_with_leader_retry(
                     if let Some(leader) = leader_url() {
                         if leader != base_url {
                             let leader_client = create_ws_client(&leader);
-                            return leader_client.execute_query(query, None, None, None).await
+                            return leader_client
+                                .execute_query(query, None, None, None)
+                                .await
                                 .map_err(|e| e.to_string());
                         }
                     }
@@ -156,7 +158,7 @@ async fn execute_query_with_retry(
                 } else {
                     return Err(err_msg);
                 }
-            }
+            },
             Err(e) => {
                 let err_msg = e.to_string();
                 if is_retryable_cluster_error_for_sql(sql, &err_msg) {
@@ -164,7 +166,7 @@ async fn execute_query_with_retry(
                 } else {
                     return Err(err_msg);
                 }
-            }
+            },
         }
 
         tokio::time::sleep(Duration::from_millis(300 + (attempt as u64 * 200))).await;
@@ -501,7 +503,8 @@ fn cluster_test_subscription_initial_data_consistency() {
     // Wait for data replication - check on leader only (Spec 021: leader-only reads)
     let mut data_replicated = false;
     for attempt in 1..=5 {
-        let count = query_count_on_url(&leader_url, &format!("SELECT count(*) as count FROM {}", full));
+        let count =
+            query_count_on_url(&leader_url, &format!("SELECT count(*) as count FROM {}", full));
         if count == 20 {
             data_replicated = true;
             break;
@@ -522,7 +525,8 @@ fn cluster_test_subscription_initial_data_consistency() {
 
         for (idx, url) in urls.iter().enumerate() {
             // Query initial data with leader retry (leader-only reads per Spec 021)
-            let response = execute_query_with_leader_retry(url, &query).await.expect("Failed to query");
+            let response =
+                execute_query_with_leader_retry(url, &query).await.expect("Failed to query");
 
             let mut ids: Vec<i64> = Vec::new();
             if let Some(result) = response.results.first() {

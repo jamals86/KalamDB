@@ -48,7 +48,9 @@ impl TopicsTableSchema {
         SCHEMA
             .get_or_init(|| {
                 let table_def = Self::definition();
-                table_def.to_arrow_schema().expect("Failed to convert topics TableDefinition to Arrow schema")
+                table_def
+                    .to_arrow_schema()
+                    .expect("Failed to convert topics TableDefinition to Arrow schema")
             })
             .clone()
     }

@@ -134,10 +134,7 @@ impl SystemColumnsService {
             is_primary_key: false, // User-defined PK required separately
             is_partition_key: false,
             default_value: ColumnDefault::None,
-            column_comment: Some(
-                "Version ID (MVCC) with embedded timestamp"
-                    .to_string(),
-            ),
+            column_comment: Some("Version ID (MVCC) with embedded timestamp".to_string()),
         });
         table_def.next_column_id += 1;
 

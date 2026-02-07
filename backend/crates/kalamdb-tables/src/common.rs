@@ -1,6 +1,6 @@
+use kalamdb_commons::KSerializable;
 use kalamdb_commons::StorageKey;
 use kalamdb_commons::TableId;
-use kalamdb_commons::KSerializable;
 use kalamdb_store::{IndexDefinition, IndexedEntityStore, Partition, StorageBackend};
 use std::sync::Arc;
 

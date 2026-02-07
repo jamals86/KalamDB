@@ -11,8 +11,8 @@ use datafusion::arrow::record_batch::RecordBatch;
 use kalamdb_commons::arrow_utils::compute_min_max;
 use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::ids::SeqId;
-use kalamdb_system::{ColumnStats, Manifest, SegmentMetadata};
 use kalamdb_commons::{TableId, UserId};
+use kalamdb_system::{ColumnStats, Manifest, SegmentMetadata};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -199,10 +199,8 @@ impl FlushManifestHelper {
         );
 
         // Update manifest (Hot Store update)
-        let updated_manifest = self
-            .manifest_service
-            .update_manifest(table_id, user_id, segment)
-            .map_err(|e| {
+        let updated_manifest =
+            self.manifest_service.update_manifest(table_id, user_id, segment).map_err(|e| {
                 KalamDbError::Other(format!(
                     "Failed to update manifest for {} (user_id={:?}): {}",
                     table_id,

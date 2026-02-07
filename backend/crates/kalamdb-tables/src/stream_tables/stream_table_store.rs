@@ -199,7 +199,7 @@ impl StreamTableStore {
 
         // Filter by start_seq, apply TTL, and collect with early termination
         let mut result = Vec::with_capacity(limit.min(1024));
-        
+
         // Sort by key for deterministic ordering
         let mut sorted: Vec<_> = rows.into_iter().collect();
         sorted.sort_by(|(a, _), (b, _)| a.cmp(b));
@@ -376,8 +376,10 @@ mod tests {
                     UserId::new(format!("user{}", user_i)),
                     SeqId::new((user_i * 1000 + seq_i) as i64),
                 );
-                let row =
-                    create_test_row(&UserId::new(&format!("user{}", user_i)), (user_i * 1000 + seq_i) as i64);
+                let row = create_test_row(
+                    &UserId::new(&format!("user{}", user_i)),
+                    (user_i * 1000 + seq_i) as i64,
+                );
                 store.put(&key, &row).unwrap();
             }
         }
@@ -399,9 +401,7 @@ mod tests {
         }
 
         let start_seq = SeqId::new(105);
-        let results = store
-            .scan_user_streaming(&user_id, Some(start_seq), 3, None, 0)
-            .unwrap();
+        let results = store.scan_user_streaming(&user_id, Some(start_seq), 3, None, 0).unwrap();
 
         assert_eq!(results.len(), 3);
         assert!(results.iter().all(|(key, _)| key.seq() >= start_seq));

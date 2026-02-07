@@ -5,6 +5,7 @@
 
 use super::{new_audit_logs_store, AuditLogsStore, AuditLogsTableSchema};
 use crate::error::{SystemError, SystemResultExt};
+use crate::providers::audit_logs::models::AuditLogEntry;
 use crate::providers::base::SimpleSystemTableScan;
 use crate::system_table_trait::SystemTableProviderExt;
 use async_trait::async_trait;
@@ -15,7 +16,6 @@ use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::models::AuditLogId;
-use crate::providers::audit_logs::models::AuditLogEntry;
 use kalamdb_commons::RecordBatchBuilder;
 use kalamdb_store::entity_store::{EntityStore, EntityStoreAsync};
 use kalamdb_store::StorageBackend;

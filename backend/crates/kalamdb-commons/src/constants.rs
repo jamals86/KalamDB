@@ -81,7 +81,6 @@ impl AuthConstants {
 /// Global instance of authentication constants.
 pub const AUTH: AuthConstants = AuthConstants;
 
-
 /// Reserved namespace names that cannot be used by users.
 ///
 /// These names are reserved for system use and will be rejected during

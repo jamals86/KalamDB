@@ -3,8 +3,8 @@
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
-use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
+use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use datafusion::arrow::array::{ArrayRef, RecordBatch, StringArray, UInt64Array};
 use kalamdb_commons::arrow_utils::{field_uint64, field_utf8, schema};
 use kalamdb_commons::models::{NamespaceId, TableId};
@@ -37,15 +37,13 @@ impl TypedStatementHandler<ShowTableStatsStatement> for ShowStatsHandler {
         // TableDefinition gives us metadata only; stats system not yet implemented.
         // Provide placeholder zero metrics plus schema version.
         let registry = self.app_context.schema_registry();
-        let def = registry.get_table_if_exists(&table_id)?.ok_or_else(
-            || {
-                KalamDbError::NotFound(format!(
-                    "Table '{}' not found in namespace '{}'",
-                    statement.table_name.as_str(),
-                    ns.as_str()
-                ))
-            },
-        )?;
+        let def = registry.get_table_if_exists(&table_id)?.ok_or_else(|| {
+            KalamDbError::NotFound(format!(
+                "Table '{}' not found in namespace '{}'",
+                statement.table_name.as_str(),
+                ns.as_str()
+            ))
+        })?;
 
         let logical_rows = 0u64; // TODO: integrate row count tracking
         let flushed_segments = 0u64; // TODO: integrate flush segment counters

@@ -47,7 +47,7 @@ pub fn get_count_value(response: &QueryResponse, default: i64) -> i64 {
             return value;
         }
     }
-    
+
     // Try from first row as map
     if let Some(row) = response.first_row_as_map() {
         for (_, v) in row {
@@ -56,7 +56,7 @@ pub fn get_count_value(response: &QueryResponse, default: i64) -> i64 {
             }
         }
     }
-    
+
     default
 }
 
@@ -155,24 +155,14 @@ pub fn assert_query_has_results(response: &QueryResponse, context: &str) {
 pub fn assert_row_count(response: &QueryResponse, expected: usize, context: &str) {
     assert_query_success(response, context);
     let actual = response.row_count();
-    assert_eq!(
-        actual, expected,
-        "{}: Expected {} rows, got {}",
-        context, expected, actual
-    );
+    assert_eq!(actual, expected, "{}: Expected {} rows, got {}", context, expected, actual);
 }
 
 /// Assert that a SQL query response has at least the minimum row count.
 pub fn assert_min_row_count(resp: &QueryResponse, min: usize, context: &str) {
     assert_success(resp, context);
     let actual = resp.row_count();
-    assert!(
-        actual >= min,
-        "{}: expected at least {} rows, got {}",
-        context,
-        min,
-        actual
-    );
+    assert!(actual >= min, "{}: expected at least {} rows, got {}", context, min, actual);
 }
 
 /// Assert that a SQL response failed with an expected error message substring.
@@ -220,14 +210,10 @@ pub async fn ensure_user_exists(
     password: &str,
     role: &Role,
 ) -> Result<String> {
-    let lookup_sql = format!(
-        "SELECT user_id FROM system.users WHERE username = '{}' LIMIT 1",
-        username
-    );
-    let create_sql = format!(
-        "CREATE USER '{}' WITH PASSWORD '{}' ROLE '{}'",
-        username, password, role
-    );
+    let lookup_sql =
+        format!("SELECT user_id FROM system.users WHERE username = '{}' LIMIT 1", username);
+    let create_sql =
+        format!("CREATE USER '{}' WITH PASSWORD '{}' ROLE '{}'", username, password, role);
 
     for attempt in 0..10 {
         if let Ok(resp) = server.execute_sql(&lookup_sql).await {
@@ -237,10 +223,7 @@ pub async fn ensure_user_exists(
                         let user_id_str = match user_id_val {
                             JsonValue::String(s) => s.clone(),
                             JsonValue::Object(map) if map.contains_key("Utf8") => {
-                                map.get("Utf8")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("")
-                                    .to_string()
+                                map.get("Utf8").and_then(|v| v.as_str()).unwrap_or("").to_string()
                             },
                             _ => user_id_val.as_str().unwrap_or("").to_string(),
                         };
@@ -278,10 +261,7 @@ pub async fn ensure_user_exists(
 }
 
 /// Create multiple test users at once.
-pub async fn create_test_users(
-    server: &HttpTestServer,
-    users: &[(&str, &Role)],
-) -> Result<()> {
+pub async fn create_test_users(server: &HttpTestServer, users: &[(&str, &Role)]) -> Result<()> {
     for (username, role) in users {
         ensure_user_exists(server, username, "test123", role).await?;
     }

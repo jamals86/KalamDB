@@ -2,8 +2,8 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
-use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
+use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use kalamdb_commons::models::TopicId;
 use kalamdb_sql::ddl::DropTopicStatement;
 use std::sync::Arc;
@@ -59,8 +59,9 @@ impl TypedStatementHandler<DropTopicStatement> for DropTopicHandler {
             topic_name: topic_name.clone(),
         };
 
-        let params_json = serde_json::to_value(&cleanup_params)
-            .map_err(|e| KalamDbError::SerializationError(format!("Failed to serialize job params: {}", e)))?;
+        let params_json = serde_json::to_value(&cleanup_params).map_err(|e| {
+            KalamDbError::SerializationError(format!("Failed to serialize job params: {}", e))
+        })?;
 
         // Create cleanup job
         let job_manager = self.app_context.job_manager();
@@ -73,14 +74,13 @@ impl TypedStatementHandler<DropTopicStatement> for DropTopicHandler {
             )
             .await?;
 
-        log::info!(
-            "Dropped topic '{}' and scheduled cleanup job [{}]",
-            topic_name,
-            job_id
-        );
+        log::info!("Dropped topic '{}' and scheduled cleanup job [{}]", topic_name, job_id);
 
         Ok(ExecutionResult::Success {
-            message: format!("Dropped topic '{}' and scheduled cleanup job [{}]", topic_name, job_id),
+            message: format!(
+                "Dropped topic '{}' and scheduled cleanup job [{}]",
+                topic_name, job_id
+            ),
         })
     }
 

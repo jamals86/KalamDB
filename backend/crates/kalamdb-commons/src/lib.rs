@@ -60,13 +60,8 @@ extern crate self as kalamdb_commons;
 // Re-export commonly used types at crate root
 pub use constants::{MAX_SQL_QUERY_LENGTH, RESERVED_NAMESPACE_NAMES};
 pub use conversions::{
-    as_f64,
-    encode_pk_value,
-    estimate_scalar_value_size,
-    scalar_to_f64,
-    scalar_to_i64,
-    scalar_to_pk_string,
-    scalar_value_to_bytes,
+    as_f64, encode_pk_value, estimate_scalar_value_size, scalar_to_f64, scalar_to_i64,
+    scalar_to_pk_string, scalar_value_to_bytes,
 };
 pub use errors::{CommonError, Result};
 pub use helpers::arrow_utils;
@@ -90,10 +85,13 @@ pub use models::{
     TableId,
     UserId,
     UserName,
+    Username,
 };
 pub use schemas::{TableAccess, TableName, TableType};
 pub use serialization::KSerializable;
 pub use storage_key::{decode_key, encode_key, encode_prefix, next_storage_key_bytes, StorageKey};
 pub use string_interner::{intern, stats as interner_stats, SystemColumns, SYSTEM_COLUMNS};
 pub use system_tables::{StoragePartition, SystemTable};
-pub use websocket::{ChangeNotification, ChangeType as WsChangeType, Notification, WebSocketMessage};
+pub use websocket::{
+    ChangeNotification, ChangeType as WsChangeType, Notification, WebSocketMessage,
+};

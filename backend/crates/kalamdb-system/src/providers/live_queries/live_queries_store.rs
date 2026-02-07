@@ -12,8 +12,8 @@
 //!    - Enables: Broadcasting changes to subscribers of a table
 
 use super::live_queries_indexes::create_live_queries_indexes;
-use crate::SystemTable;
 use crate::providers::live_queries::models::LiveQuery;
+use crate::SystemTable;
 use kalamdb_commons::LiveQueryId;
 use kalamdb_store::{IndexedEntityStore, StorageBackend};
 use std::sync::Arc;
@@ -57,11 +57,8 @@ mod tests {
         subscription_id: &str,
         table_name: &str,
     ) -> LiveQuery {
-        let live_id = LiveQueryId::new(
-            user_id.clone(),
-            ConnectionId::new(connection_id),
-            subscription_id,
-        );
+        let live_id =
+            LiveQueryId::new(user_id.clone(), ConnectionId::new(connection_id), subscription_id);
         LiveQuery {
             live_id: live_id.clone(),
             connection_id: connection_id.to_string(),

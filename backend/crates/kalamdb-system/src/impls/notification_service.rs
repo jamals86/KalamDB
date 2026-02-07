@@ -20,7 +20,7 @@ pub trait NotificationService: Send + Sync {
     fn has_subscribers(&self, user_id: Option<&UserId>, table_id: &TableId) -> bool;
 
     /// Notify subscribers about a data change (fire-and-forget async).
-    /// 
+    ///
     /// Unified notification method that handles both:
     /// - Live query notifications (if `user_id` is provided)
     /// - Topic/CDC notifications (if topics are configured for this table)

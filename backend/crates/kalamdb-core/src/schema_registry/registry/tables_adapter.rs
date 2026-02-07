@@ -1,8 +1,8 @@
 use crate::error::KalamDbError;
 use crate::schema_registry::SchemaRegistry;
 use datafusion::arrow::datatypes::SchemaRef;
-use kalamdb_commons::{StorageId, TableId};
 use kalamdb_commons::models::schemas::TableDefinition as CommonsTableDefinition;
+use kalamdb_commons::{StorageId, TableId};
 use kalamdb_system::SchemaRegistry as SchemaRegistryTrait;
 use kalamdb_tables::TableError;
 use std::sync::Arc;

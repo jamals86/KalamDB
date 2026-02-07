@@ -116,13 +116,13 @@ pub fn new_indexed_user_table_store(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::utils::test_backend::RecordingBackend;
     use datafusion::scalar::ScalarValue;
     use kalamdb_commons::{
         ids::SeqId,
         models::{rows::Row, NamespaceId, TableId, TableName},
-        UserId, StorageKey,
+        StorageKey, UserId,
     };
-    use crate::utils::test_backend::RecordingBackend;
     use std::collections::BTreeMap;
 
     fn create_test_store() -> UserTableStore {
@@ -186,8 +186,10 @@ mod tests {
                     UserId::new(format!("user{}", user_i)),
                     SeqId::new((user_i * 1000 + row_i) as i64),
                 );
-                let row =
-                    create_test_row(&UserId::new(&format!("user{}", user_i)), (user_i * 1000 + row_i) as i64);
+                let row = create_test_row(
+                    &UserId::new(&format!("user{}", user_i)),
+                    (user_i * 1000 + row_i) as i64,
+                );
                 store.put(&key, &row).unwrap();
             }
         }
@@ -207,9 +209,7 @@ mod tests {
         let start_key = UserTableRowId::new(user_id.clone(), SeqId::new(10));
         let prefix = UserTableRowId::user_prefix(&user_id);
 
-        let _ = store
-            .scan_with_raw_prefix(&prefix, Some(&start_key.storage_key()), 10)
-            .unwrap();
+        let _ = store.scan_with_raw_prefix(&prefix, Some(&start_key.storage_key()), 10).unwrap();
 
         let last = backend.last_scan().expect("missing scan");
         assert_eq!(last.prefix, Some(prefix));

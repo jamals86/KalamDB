@@ -22,6 +22,7 @@ use super::JobsTableSchema;
 use crate::error::{SystemError, SystemResultExt};
 use crate::providers::base::SystemTableScan;
 use crate::system_table_trait::SystemTableProviderExt;
+use crate::JobStatus;
 use async_trait::async_trait;
 use datafusion::arrow::array::RecordBatch;
 use datafusion::arrow::datatypes::SchemaRef;
@@ -30,10 +31,9 @@ use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::Expr;
 use datafusion::logical_expr::TableProviderFilterPushDown;
 use datafusion::physical_plan::ExecutionPlan;
-use kalamdb_commons::RecordBatchBuilder;
 use kalamdb_commons::JobId;
+use kalamdb_commons::RecordBatchBuilder;
 use kalamdb_commons::SystemTable;
-use crate::JobStatus;
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_store::{IndexedEntityStore, StorageBackend};
 use std::any::Any;
@@ -588,8 +588,10 @@ fn validate_job_update(job: &Job) -> Result<(), SystemError> {
         )));
     }
 
-    if matches!(status, JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled | JobStatus::Skipped)
-        && job.finished_at.is_none()
+    if matches!(
+        status,
+        JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled | JobStatus::Skipped
+    ) && job.finished_at.is_none()
     {
         return Err(SystemError::Other(format!(
             "Job {}: finished_at must be set before marking status {}",
@@ -670,7 +672,10 @@ impl SystemTableScan<JobId, Job> for JobsTableProvider {
         Some(JobId::new(value))
     }
 
-    fn create_batch_from_pairs(&self, pairs: Vec<(JobId, Job)>) -> Result<RecordBatch, SystemError> {
+    fn create_batch_from_pairs(
+        &self,
+        pairs: Vec<(JobId, Job)>,
+    ) -> Result<RecordBatch, SystemError> {
         self.create_batch(pairs)
     }
 }

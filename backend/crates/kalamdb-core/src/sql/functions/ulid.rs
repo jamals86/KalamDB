@@ -63,7 +63,7 @@ impl ScalarUDFImpl for UlidFunction {
     }
 
     fn name(&self) -> &str {
-        "ULID"
+        "ulid"
     }
 
     fn signature(&self) -> &Signature {
@@ -80,8 +80,11 @@ impl ScalarUDFImpl for UlidFunction {
         if !args.args.is_empty() {
             return Err(DataFusionError::Plan("ULID() takes no arguments".to_string()));
         }
-        let ulid_str = self.generate_ulid();
-        let array = StringArray::from(vec![ulid_str.as_str()]);
+        let mut ulids = Vec::with_capacity(args.number_rows);
+        for _ in 0..args.number_rows {
+            ulids.push(self.generate_ulid());
+        }
+        let array = StringArray::from(ulids);
         Ok(ColumnarValue::Array(Arc::new(array) as ArrayRef))
     }
 }
@@ -96,7 +99,7 @@ mod tests {
     fn test_ulid_function_creation() {
         let func_impl = UlidFunction::new();
         let func = ScalarUDF::new_from_impl(func_impl);
-        assert_eq!(func.name(), "ULID");
+        assert_eq!(func.name(), "ulid");
     }
 
     #[test]

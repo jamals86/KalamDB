@@ -75,19 +75,14 @@ impl ConsumerConfig {
 }
 
 fn get_str(map: &HashMap<String, String>, key: &str, alias: &str) -> Option<String> {
-    map.get(key)
-        .cloned()
-        .or_else(|| map.get(alias).cloned())
+    map.get(key).cloned().or_else(|| map.get(alias).cloned())
 }
 
 fn parse_bool(value: &str) -> Result<bool> {
     match value.to_lowercase().as_str() {
         "true" | "1" | "yes" | "y" => Ok(true),
         "false" | "0" | "no" | "n" => Ok(false),
-        _ => Err(KalamLinkError::ConfigurationError(format!(
-            "Invalid boolean value: {}",
-            value
-        ))),
+        _ => Err(KalamLinkError::ConfigurationError(format!("Invalid boolean value: {}", value))),
     }
 }
 
@@ -99,10 +94,7 @@ fn parse_u32(value: &str, field: &str) -> Result<u32> {
 
 fn parse_duration_ms(value: &str) -> Result<Duration> {
     let millis = value.parse::<u64>().map_err(|_| {
-        KalamLinkError::ConfigurationError(format!(
-            "Invalid duration (ms) value: {}",
-            value
-        ))
+        KalamLinkError::ConfigurationError(format!("Invalid duration (ms) value: {}", value))
     })?;
     Ok(Duration::from_millis(millis))
 }
@@ -142,10 +134,7 @@ mod tests {
     use super::*;
 
     fn make_map(pairs: &[(&str, &str)]) -> HashMap<String, String> {
-        pairs
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect()
+        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
     }
 
     #[test]
@@ -319,10 +308,7 @@ mod tests {
         let config = ConsumerConfig::from_map(&map).unwrap();
         assert_eq!(config.client_id, Some("my-client".to_string()));
 
-        let map_without = make_map(&[
-            ("group_id", "test-group"),
-            ("topic", "test-topic"),
-        ]);
+        let map_without = make_map(&[("group_id", "test-group"), ("topic", "test-topic")]);
         let config_without = ConsumerConfig::from_map(&map_without).unwrap();
         assert!(config_without.client_id.is_none());
     }

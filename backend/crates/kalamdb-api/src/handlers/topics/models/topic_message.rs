@@ -18,4 +18,7 @@ pub struct TopicMessage {
     pub key: Option<String>,
     /// Timestamp in milliseconds since epoch
     pub timestamp_ms: i64,
+    /// Username of the user who produced this message
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
 }

@@ -1,10 +1,10 @@
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::models::datatypes::KalamDataType;
 use kalamdb_commons::models::rows::Row;
-use kalamdb_system::FileRef;
 use kalamdb_commons::models::UserId;
 use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::TableId;
+use kalamdb_system::FileRef;
 
 use crate::app_context::AppContext;
 
@@ -24,15 +24,11 @@ pub fn collect_file_refs_from_row(
                 err
             );
             return Vec::new();
-        }
+        },
     };
 
     let mut refs = Vec::new();
-    for column in table_def
-        .columns
-        .iter()
-        .filter(|c| c.data_type == KalamDataType::File)
-    {
+    for column in table_def.columns.iter().filter(|c| c.data_type == KalamDataType::File) {
         if let Some(value) = row.values.get(&column.column_name) {
             let json_opt = match value {
                 ScalarValue::Utf8(Some(s)) | ScalarValue::LargeUtf8(Some(s)) => Some(s),
@@ -73,15 +69,11 @@ pub fn collect_replaced_file_refs_for_update(
                 err
             );
             return Vec::new();
-        }
+        },
     };
 
     let mut refs = Vec::new();
-    for column in table_def
-        .columns
-        .iter()
-        .filter(|c| c.data_type == KalamDataType::File)
-    {
+    for column in table_def.columns.iter().filter(|c| c.data_type == KalamDataType::File) {
         let update_value = match updates.values.get(&column.column_name) {
             Some(value) => value,
             None => continue,
@@ -109,7 +101,7 @@ pub fn collect_replaced_file_refs_for_update(
                         err
                     );
                     None
-                }
+                },
             },
             None => None,
         };
@@ -125,7 +117,7 @@ pub fn collect_replaced_file_refs_for_update(
                         err
                     );
                     None
-                }
+                },
             },
             None => None,
         };
@@ -166,20 +158,17 @@ pub async fn delete_file_refs_best_effort(
                 err
             );
             return;
-        }
+        },
     };
 
     let file_service = app_context.file_storage_service();
-    let results = file_service.delete_files(file_refs, &storage_id, table_type, table_id, user_id).await;
+    let results = file_service
+        .delete_files(file_refs, &storage_id, table_type, table_id, user_id)
+        .await;
 
     for (file_ref, result) in file_refs.iter().zip(results.into_iter()) {
         if let Err(err) = result {
-            log::warn!(
-                "Failed to delete file {} for {}: {}",
-                file_ref.id,
-                table_id,
-                err
-            );
+            log::warn!("Failed to delete file {} for {}: {}", file_ref.id, table_id, err);
         }
     }
 }

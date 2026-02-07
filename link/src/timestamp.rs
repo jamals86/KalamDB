@@ -13,6 +13,8 @@ use std::fmt;
 /// Controls how timestamps are displayed in query results and subscriptions.
 /// Default format is ISO 8601 with milliseconds (`2024-12-14T15:30:45.123Z`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 #[serde(rename_all = "lowercase")]
 #[derive(Default)]
 pub enum TimestampFormat {

@@ -194,8 +194,8 @@ pub mod helpers {
     use datafusion::arrow::record_batch::RecordBatch;
     use datafusion::scalar::ScalarValue;
     use kalamdb_commons::constants::SystemColumnNames;
-    use kalamdb_commons::next_storage_key_bytes;
     use kalamdb_commons::models::rows::Row;
+    use kalamdb_commons::next_storage_key_bytes;
 
     /// Extract primary key field name from Arrow schema
     ///
@@ -232,7 +232,8 @@ pub mod helpers {
         rows: &[(Vec<u8>, Row)],
     ) -> Result<RecordBatch, KalamDbError> {
         let arrow_rows: Vec<Row> = rows.iter().map(|(_, row)| row.clone()).collect();
-        json_rows_to_arrow_batch(schema, arrow_rows).into_kalamdb_error("Failed to build RecordBatch")
+        json_rows_to_arrow_batch(schema, arrow_rows)
+            .into_kalamdb_error("Failed to build RecordBatch")
     }
 
     /// Get schema version from cached table data
@@ -258,14 +259,10 @@ pub mod helpers {
 
     /// Add system columns (_seq, _deleted) to a Row
     pub fn add_system_columns(mut row: Row, seq: i64, deleted: bool) -> Row {
-        row.values.insert(
-            SystemColumnNames::SEQ.to_string(),
-            ScalarValue::Int64(Some(seq)),
-        );
-        row.values.insert(
-            SystemColumnNames::DELETED.to_string(),
-            ScalarValue::Boolean(Some(deleted)),
-        );
+        row.values
+            .insert(SystemColumnNames::SEQ.to_string(), ScalarValue::Int64(Some(seq)));
+        row.values
+            .insert(SystemColumnNames::DELETED.to_string(), ScalarValue::Boolean(Some(deleted)));
         row
     }
 }

@@ -137,7 +137,6 @@ fn test_cli_authenticate_and_check_info() {
         return;
     }
 
-
     // Authenticate with the new user and run \info command
     let result = execute_sql_via_cli_as(&test_username, "testpass123", "\\info");
 

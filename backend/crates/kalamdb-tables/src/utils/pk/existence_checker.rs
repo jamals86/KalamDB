@@ -6,8 +6,8 @@ use kalamdb_commons::models::schemas::ColumnDefault;
 use kalamdb_commons::models::schemas::TableDefinition;
 use kalamdb_commons::models::TableId;
 use kalamdb_commons::schemas::TableType;
-use kalamdb_system::Manifest;
 use kalamdb_commons::UserId;
+use kalamdb_system::Manifest;
 use std::sync::Arc;
 
 use crate::error::KalamDbError;
@@ -162,14 +162,9 @@ impl PkExistenceChecker {
         })?;
 
         // Step 3-6: Use the optimized cold storage check
-        let exists_in_cold = self.check_cold_storage(
-            table_id,
-            table_type,
-            user_id,
-            pk_column,
-            pk_column_id,
-            pk_value,
-        ).await?;
+        let exists_in_cold = self
+            .check_cold_storage(table_id, table_type, user_id, pk_column, pk_column_id, pk_value)
+            .await?;
 
         if let Some(segment_path) = exists_in_cold {
             return Ok(PkCheckResult::FoundInCold { segment_path });
@@ -230,18 +225,19 @@ impl PkExistenceChecker {
         };
 
         // 3. List parquet files using async method
-        let all_parquet_files = match storage_cached.list_parquet_files(table_type, table_id, user_id).await {
-            Ok(files) => files,
-            Err(_) => {
-                log::trace!(
-                    "[PkExistenceChecker] No storage dir for {}.{} {}",
-                    namespace.as_str(),
-                    table.as_str(),
-                    scope_label
-                );
-                return Ok(None);
-            },
-        };
+        let all_parquet_files =
+            match storage_cached.list_parquet_files(table_type, table_id, user_id).await {
+                Ok(files) => files,
+                Err(_) => {
+                    log::trace!(
+                        "[PkExistenceChecker] No storage dir for {}.{} {}",
+                        namespace.as_str(),
+                        table.as_str(),
+                        scope_label
+                    );
+                    return Ok(None);
+                },
+            };
 
         if all_parquet_files.is_empty() {
             log::trace!(
@@ -254,7 +250,8 @@ impl PkExistenceChecker {
         }
 
         // 4. Load manifest from cache (L1 → L2 → storage)
-        let manifest: Option<Manifest> = match self.manifest_service.get_or_load(table_id, user_id) {
+        let manifest: Option<Manifest> = match self.manifest_service.get_or_load(table_id, user_id)
+        {
             Ok(Some(entry)) => {
                 log::trace!(
                     "[PkExistenceChecker] Manifest loaded from cache for {}.{} {}",
@@ -272,7 +269,13 @@ impl PkExistenceChecker {
                     scope_label
                 );
                 // Try to load from storage (manifest.json file)
-                self.load_manifest_from_storage_async(&storage_cached, table_type, table_id, user_id).await?
+                self.load_manifest_from_storage_async(
+                    &storage_cached,
+                    table_type,
+                    table_id,
+                    user_id,
+                )
+                .await?
             },
             Err(e) => {
                 log::warn!(
@@ -292,24 +295,25 @@ impl PkExistenceChecker {
             let pruned_paths = planner.plan_by_pk_value(m, pk_column_id, pk_value);
             if pruned_paths.is_empty() {
                 log::trace!(
-                    "[PkExistenceChecker] Manifest pruning: PK {} not in any segment range for {}.{} {}",
+                    "[PkExistenceChecker] Manifest pruning returned no candidate segments for PK {} on {}.{} {} - falling back to full parquet scan",
                     pk_value,
                     namespace.as_str(),
                     table.as_str(),
                     scope_label
                 );
-                return Ok(None); // Fast path: PK definitely not in cold storage
+                all_parquet_files
+            } else {
+                log::trace!(
+                    "[PkExistenceChecker] Manifest pruning: {} of {} segments may contain PK {} for {}.{} {}",
+                    pruned_paths.len(),
+                    m.segments.len(),
+                    pk_value,
+                    namespace.as_str(),
+                    table.as_str(),
+                    scope_label
+                );
+                pruned_paths
             }
-            log::trace!(
-                "[PkExistenceChecker] Manifest pruning: {} of {} segments may contain PK {} for {}.{} {}",
-                pruned_paths.len(),
-                m.segments.len(),
-                pk_value,
-                namespace.as_str(),
-                table.as_str(),
-                scope_label
-            );
-            pruned_paths
         } else {
             // No manifest - check all Parquet files
             all_parquet_files
@@ -321,15 +325,18 @@ impl PkExistenceChecker {
 
         // 6. Scan pruned Parquet files for the PK
         for file_name in files_to_scan {
-            if self.pk_exists_in_parquet_async(
-                &storage_cached,
-                table_type,
-                table_id,
-                user_id,
-                &file_name,
-                pk_column,
-                pk_value,
-            ).await? {
+            if self
+                .pk_exists_in_parquet_async(
+                    &storage_cached,
+                    table_type,
+                    table_id,
+                    user_id,
+                    &file_name,
+                    pk_column,
+                    pk_value,
+                )
+                .await?
+            {
                 log::trace!(
                     "[PkExistenceChecker] Found PK {} in {} for {}.{} {}",
                     pk_value,

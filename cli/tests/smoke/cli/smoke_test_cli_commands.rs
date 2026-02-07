@@ -426,14 +426,42 @@ fn smoke_cli_namespace_management() {
     .expect("Failed to query namespace");
     assert!(result.contains(&namespace), "Namespace should exist: {}", result);
 
+    // Test CREATE NAMESPACE again (should error because it already exists)
+    let result = execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace));
+    assert!(
+        result.is_err(),
+        "CREATE NAMESPACE should fail when namespace already exists"
+    );
+
     // Test CREATE NAMESPACE IF NOT EXISTS (should not error)
     let result =
         execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
     assert!(result.is_ok(), "CREATE NAMESPACE IF NOT EXISTS should succeed: {:?}", result);
 
+    // Create a table, then drop namespace without CASCADE.
+    let table = generate_unique_table("ns_drop_table");
+    let full_table = format!("{}.{}", namespace, table);
+    execute_sql_as_root_via_client(&format!(
+        "CREATE TABLE {} (id BIGINT PRIMARY KEY, value STRING) WITH (TYPE='SHARED')",
+        full_table
+    ))
+    .expect("CREATE TABLE should succeed");
+
     // Test DROP NAMESPACE
     let result = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
     assert!(result.is_ok(), "DROP NAMESPACE should succeed: {:?}", result);
+
+    // Namespace drop should remove tables too.
+    let table_check = execute_sql_as_root_via_client(&format!(
+        "SELECT table_name FROM system.schemas WHERE namespace_id = '{}' AND table_name = '{}'",
+        namespace, table
+    ))
+    .expect("Failed to query system.schemas");
+    assert!(
+        !table_check.contains(&table),
+        "Dropped namespace should remove table metadata, got: {}",
+        table_check
+    );
 
     println!("✅ smoke_cli_namespace_management passed!");
 }
@@ -468,26 +496,42 @@ fn smoke_cli_alter_table() {
     assert!(result.is_ok(), "ALTER TABLE ADD COLUMN should succeed: {:?}", result);
 
     // Verify column added
-    let info_schema_result = wait_for_sql_output_contains(
+    wait_for_sql_output_contains(
         &format!(
             "SELECT column_name FROM information_schema.columns WHERE table_schema = '{}' AND table_name = '{}'",
             namespace, table
         ),
         "email",
-        Duration::from_secs(6),
-    );
-    if info_schema_result.is_err() {
-        eprintln!(
-            "⚠️  email column not visible in information_schema yet; continuing with insert validation"
-        );
-    }
+        Duration::from_secs(20),
+    )
+    .expect("email column should be visible in information_schema after ALTER TABLE");
 
-    // Insert with new column
-    let result = execute_sql_as_root_via_client(&format!(
+    // Insert with new column; schema propagation can lag briefly after ALTER in cluster mode.
+    let insert_sql = format!(
         "INSERT INTO {} (id, name, email) VALUES (1, 'Test', 'test@example.com')",
         full_table
-    ));
-    assert!(result.is_ok(), "INSERT with new column should succeed: {:?}", result);
+    );
+    let start = std::time::Instant::now();
+    let mut last_error: Option<String> = None;
+    loop {
+        match execute_sql_as_root_via_client(&insert_sql) {
+            Ok(_) => break,
+            Err(err) => {
+                let message = err.to_string();
+                if message.contains("No field named email")
+                    && start.elapsed() < Duration::from_secs(20)
+                {
+                    last_error = Some(message);
+                    std::thread::sleep(Duration::from_millis(150));
+                    continue;
+                }
+                panic!("INSERT with new column should succeed: {}", message);
+            },
+        }
+    }
+    if let Some(err) = last_error {
+        eprintln!("ℹ️  ALTER propagation retry succeeded after transient error: {}", err);
+    }
 
     // Verify data
     let _ = wait_for_sql_output_contains(

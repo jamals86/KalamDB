@@ -1,7 +1,10 @@
-// API client with cookie-based authentication
-// All requests include credentials to send/receive HttpOnly cookies
+import { getCurrentToken } from "./kalam-client";
+
+// HTTP API client for auth/setup endpoints.
+// SQL calls should go through kalam-link in `kalam-client.ts`.
 
 const API_BASE = "/v1/api";
+const NO_AUTH_ENDPOINTS = new Set(["/auth/login", "/auth/setup", "/auth/status"]);
 
 export interface ApiError {
   error: string;
@@ -21,13 +24,20 @@ export class ApiClient {
     options: RequestInit = {}
   ): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`;
+    const headers = new Headers(options.headers);
+    if (!headers.has("Content-Type")) {
+      headers.set("Content-Type", "application/json");
+    }
+
+    const token = getCurrentToken();
+    if (token && !NO_AUTH_ENDPOINTS.has(endpoint) && !headers.has("Authorization")) {
+      headers.set("Authorization", `Bearer ${token}`);
+    }
+
     const response = await fetch(url, {
       ...options,
-      credentials: "include", // Important: Send cookies with every request
-      headers: {
-        "Content-Type": "application/json",
-        ...options.headers,
-      },
+      credentials: "include",
+      headers,
     });
 
     if (!response.ok) {
@@ -110,6 +120,7 @@ export interface QueryResult {
   row_count: number;
   truncated: boolean;
   execution_time_ms: number;
+  as_user?: string;
 }
 
 export interface SqlResponse {
@@ -118,6 +129,7 @@ export interface SqlResponse {
   row_count: number;
   truncated: boolean;
   execution_time_ms: number;
+  as_user?: string;
 }
 
 export async function executeSql(sql: string, namespace?: string): Promise<SqlResponse> {
@@ -143,6 +155,8 @@ export interface LoginResponse {
   user: UserInfo;
   expires_at: string;
   access_token: string;
+  refresh_token: string;
+  refresh_expires_at: string;
 }
 
 export const authApi = {

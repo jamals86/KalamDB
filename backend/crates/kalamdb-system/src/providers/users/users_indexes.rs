@@ -2,9 +2,9 @@
 //!
 //! This module defines secondary indexes for the system.users table.
 
+use crate::providers::users::models::User;
 use crate::StoragePartition;
 use kalamdb_commons::storage::Partition;
-use crate::providers::users::models::User;
 use kalamdb_commons::UserId;
 use kalamdb_store::IndexDefinition;
 use std::sync::Arc;
@@ -165,13 +165,7 @@ mod tests {
     fn test_create_users_indexes() {
         let indexes = create_users_indexes();
         assert_eq!(indexes.len(), 2);
-        assert_eq!(
-            indexes[0].partition(),
-            StoragePartition::SystemUsersUsernameIdx.name().into()
-        );
-        assert_eq!(
-            indexes[1].partition(),
-            StoragePartition::SystemUsersRoleIdx.name().into()
-        );
+        assert_eq!(indexes[0].partition(), StoragePartition::SystemUsersUsernameIdx.name().into());
+        assert_eq!(indexes[1].partition(), StoragePartition::SystemUsersRoleIdx.name().into());
     }
 }

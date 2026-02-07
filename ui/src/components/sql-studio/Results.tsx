@@ -14,6 +14,7 @@ import { QueryResult } from '../../lib/api';
 import { formatTimestamp } from '../../lib/formatters';
 import { isTimestampType, getDataTypeColor, MAX_DISPLAY_ROWS } from '../../lib/config';
 import { useDataTypes } from '../../hooks/useDataTypes';
+import { FileRef } from 'kalam-link';
 
 interface ResultsProps {
   result: QueryResult | null;
@@ -61,60 +62,29 @@ export function Results({ result, isLoading }: ResultsProps) {
             return <span className={value ? 'text-green-600' : 'text-red-600'}>{String(value)}</span>;
           }
           if (typeof value === 'object') {
-            // Check if this is a FILE datatype by looking for FileRef structure
-            if (value && 
-                typeof value === 'object' &&
-                'id' in value && 
-                'sub' in value && 
-                'name' in value && 
-                'mime' in value &&
-                'size' in value &&
-                'sha256' in value) {
-              const fileRef = value as { 
-                id: string; 
-                sub: string; 
-                name: string; 
-                mime: string; 
-                size: number;
-                sha256: string;
-                shard?: number;
-              };
-              
-              // Format file size
-              const formatSize = (bytes: number): string => {
-                if (bytes < 1024) return `${bytes} B`;
-                if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-                if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-                return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-              };
-              
-              // Display file info with icon based on mime type
-              const getFileIcon = (mime: string): string => {
-                if (mime.startsWith('image/')) return '🖼️';
-                if (mime.startsWith('video/')) return '🎥';
-                if (mime.startsWith('audio/')) return '🎵';
-                if (mime.includes('pdf')) return '📕';
-                if (mime.includes('zip') || mime.includes('compressed')) return '📦';
-                if (mime.includes('text')) return '📝';
-                return '📄';
-              };
-              
+            // Try parsing as FileRef first (handles both JSON strings and objects)
+            const fileRef = FileRef.from(value);
+            if (fileRef) {
+              // Display file with type icon and metadata
               return (
                 <div className="flex flex-col gap-1 py-1">
                   <div className="flex items-center gap-2">
-                    <span>{getFileIcon(fileRef.mime)}</span>
+                    <span>{fileRef.isImage() ? '🖼️' : fileRef.isVideo() ? '🎥' : fileRef.isAudio() ? '🎵' : fileRef.isPdf() ? '📕' : '📄'}</span>
                     <span className="font-medium text-blue-600">{fileRef.name}</span>
                   </div>
                   <div className="text-xs text-gray-500 flex gap-3">
-                    <span title={fileRef.mime}>{fileRef.mime.split('/')[1]?.toUpperCase() || 'FILE'}</span>
+                    <span title={fileRef.mime}>{fileRef.getTypeDescription()}</span>
                     <span>•</span>
-                    <span>{formatSize(fileRef.size)}</span>
+                    <span>{fileRef.formatSize()}</span>
                     <span>•</span>
-                    <span title={`Subfolder: ${fileRef.sub}\nFile ID: ${fileRef.id}`}>ID: {fileRef.id.slice(0, 8)}...</span>
+                    <span title={`Subfolder: ${fileRef.sub}\nFile ID: ${fileRef.id}\nSHA-256: ${fileRef.sha256}`}>
+                      ID: {fileRef.id.slice(0, 8)}...
+                    </span>
                   </div>
                 </div>
               );
             }
+
             // Format JSON with syntax highlighting
             const jsonStr = JSON.stringify(value, null, 2);
             return (

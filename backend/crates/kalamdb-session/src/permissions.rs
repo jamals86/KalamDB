@@ -34,7 +34,9 @@ pub fn can_access_system_table(role: Role) -> bool {
 pub fn can_access_table_type(role: Role, table_type: TableType) -> bool {
     match role {
         Role::System | Role::Dba => true,
-        Role::Service => matches!(table_type, TableType::Shared | TableType::Stream | TableType::User),
+        Role::Service => {
+            matches!(table_type, TableType::Shared | TableType::Stream | TableType::User)
+        },
         Role::User => matches!(table_type, TableType::User | TableType::Stream),
         Role::Anonymous => false,
     }
@@ -46,7 +48,9 @@ pub fn can_create_table(role: Role, table_type: TableType) -> bool {
     match role {
         Role::System => true,
         Role::Dba => matches!(table_type, TableType::User | TableType::Shared | TableType::Stream),
-        Role::Service => matches!(table_type, TableType::User | TableType::Shared | TableType::Stream),
+        Role::Service => {
+            matches!(table_type, TableType::User | TableType::Shared | TableType::Stream)
+        },
         Role::User => matches!(table_type, TableType::User | TableType::Stream),
         Role::Anonymous => false,
     }
@@ -72,7 +76,9 @@ pub fn can_delete_table(role: Role, table_type: TableType, _is_owner: bool) -> b
 pub fn can_alter_table(role: Role, table_type: TableType, _is_owner: bool) -> bool {
     match role {
         Role::System | Role::Dba => true,
-        Role::Service => matches!(table_type, TableType::Shared | TableType::User | TableType::Stream),
+        Role::Service => {
+            matches!(table_type, TableType::Shared | TableType::User | TableType::Stream)
+        },
         Role::User => matches!(table_type, TableType::User | TableType::Stream),
         Role::Anonymous => false,
     }
@@ -117,9 +123,7 @@ pub fn extract_session_context(session: &dyn Session) -> Result<&SessionUserCont
     session
         .as_any()
         .downcast_ref::<SessionState>()
-        .ok_or(SessionError::InvalidSessionState(
-            "Expected SessionState".to_string(),
-        ))?
+        .ok_or(SessionError::InvalidSessionState("Expected SessionState".to_string()))?
         .config()
         .options()
         .extensions
@@ -132,9 +136,7 @@ pub fn extract_session_context(session: &dyn Session) -> Result<&SessionUserCont
 /// Falls back to Role::User (least privileged) if context is not found.
 /// This is the fail-closed behavior for security.
 pub fn extract_user_role(session: &dyn Session) -> Role {
-    extract_session_context(session)
-        .map(|ctx| ctx.role)
-        .unwrap_or(Role::User) // Fail closed: default to least privileged
+    extract_session_context(session).map(|ctx| ctx.role).unwrap_or(Role::User) // Fail closed: default to least privileged
 }
 
 /// Extract user ID from DataFusion session.
@@ -217,7 +219,7 @@ pub fn check_user_table_access(
             table_name: table_id.table_name().clone(),
             role,
             reason: "User tables require user/service or admin role".to_string(),
-         })
+        })
     }
 }
 
@@ -296,10 +298,27 @@ pub fn check_stream_table_write_access_level(
     check_user_table_write_access_level(role, namespace_id, table_name)
 }
 
-/// Check if a role can impersonate another user (AS USER).
+/// Check if a role can impersonate another user (EXECUTE AS USER).
 #[inline]
 pub fn can_impersonate_user(role: Role) -> bool {
     matches!(role, Role::Service | Role::Dba | Role::System)
+}
+
+/// Check whether `actor_role` is allowed to impersonate `target_role`.
+///
+/// Policy:
+/// - System can impersonate any role.
+/// - Dba can impersonate Service/User/Anonymous.
+/// - Service can impersonate User/Anonymous.
+/// - User/Anonymous cannot impersonate.
+#[inline]
+pub fn can_impersonate_role(actor_role: Role, target_role: Role) -> bool {
+    match actor_role {
+        Role::System => true,
+        Role::Dba => matches!(target_role, Role::Service | Role::User | Role::Anonymous),
+        Role::Service => matches!(target_role, Role::User | Role::Anonymous),
+        Role::User | Role::Anonymous => false,
+    }
 }
 
 /// Determine the access level for a shared table definition.
@@ -320,8 +339,8 @@ pub fn can_access_shared_table(access_level: TableAccess, role: Role) -> bool {
     }
 
     match access_level {
-        TableAccess::Public => true,     // All authenticated users can read public tables
-        TableAccess::Private => false,   // Only privileged roles (checked above)
+        TableAccess::Public => true, // All authenticated users can read public tables
+        TableAccess::Private => false, // Only privileged roles (checked above)
         TableAccess::Restricted => false, // TODO: Only owner (future grants) or privileged roles
     }
 }
@@ -335,8 +354,8 @@ pub fn can_write_shared_table(access_level: TableAccess, role: Role) -> bool {
     }
 
     match access_level {
-        TableAccess::Public => false,     // Regular users cannot write public shared tables
-        TableAccess::Private => false,    // Only privileged roles (checked above)
+        TableAccess::Public => false, // Regular users cannot write public shared tables
+        TableAccess::Private => false, // Only privileged roles (checked above)
         TableAccess::Restricted => false, // TODO: Only owner (future grants) or privileged roles
     }
 }
@@ -359,10 +378,7 @@ pub fn check_shared_table_access(
             namespace_id: table_def.namespace_id.clone(),
             table_name: table_def.table_name.clone(),
             role,
-            reason: format!(
-                "Shared table access denied (access_level={:?})",
-                access_level
-            ),
+            reason: format!("Shared table access denied (access_level={:?})", access_level),
         })
     }
 }
@@ -384,10 +400,7 @@ pub fn check_shared_table_write_access(
             namespace_id: table_def.namespace_id.clone(),
             table_name: table_def.table_name.clone(),
             role,
-            reason: format!(
-                "Shared table write denied (access_level={:?})",
-                access_level
-            ),
+            reason: format!("Shared table write denied (access_level={:?})", access_level),
         })
     }
 }
@@ -406,10 +419,7 @@ pub fn check_shared_table_write_access_level(
             namespace_id: namespace_id.clone(),
             table_name: table_name.clone(),
             role,
-            reason: format!(
-                "Shared table write denied (access_level={:?})",
-                access_level
-            ),
+            reason: format!("Shared table write denied (access_level={:?})", access_level),
         })
     }
 }
@@ -507,6 +517,27 @@ mod tests {
         // Non-admins cannot access
         assert!(!can_access_system_table(Role::Service));
         assert!(!can_access_system_table(Role::User));
+    }
+
+    #[test]
+    fn test_can_impersonate_role() {
+        assert!(can_impersonate_role(Role::System, Role::System));
+        assert!(can_impersonate_role(Role::System, Role::Dba));
+        assert!(can_impersonate_role(Role::System, Role::Service));
+        assert!(can_impersonate_role(Role::System, Role::User));
+
+        assert!(!can_impersonate_role(Role::Dba, Role::System));
+        assert!(!can_impersonate_role(Role::Dba, Role::Dba));
+        assert!(can_impersonate_role(Role::Dba, Role::Service));
+        assert!(can_impersonate_role(Role::Dba, Role::User));
+
+        assert!(!can_impersonate_role(Role::Service, Role::System));
+        assert!(!can_impersonate_role(Role::Service, Role::Dba));
+        assert!(!can_impersonate_role(Role::Service, Role::Service));
+        assert!(can_impersonate_role(Role::Service, Role::User));
+
+        assert!(!can_impersonate_role(Role::User, Role::User));
+        assert!(!can_impersonate_role(Role::Anonymous, Role::User));
     }
 
     #[test]

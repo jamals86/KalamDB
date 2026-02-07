@@ -17,9 +17,9 @@
 //! - With configurable `max_subscriptions_per_user` (default: 10-100), prefix scan is O(1)
 //! - No extra write overhead from maintaining a secondary index
 
+use crate::providers::live_queries::models::LiveQuery;
 use crate::StoragePartition;
 use kalamdb_commons::storage::Partition;
-use crate::providers::live_queries::models::LiveQuery;
 use kalamdb_commons::{LiveQueryId, TableId};
 use kalamdb_store::IndexDefinition;
 use std::sync::Arc;

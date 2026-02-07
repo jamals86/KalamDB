@@ -102,11 +102,11 @@ fn test_minio_storage_end_to_end() {
             if !output.trim().is_empty() {
                 println!("   Output: {}", output.trim());
             }
-        }
+        },
         Err(error) => {
             eprintln!("❌ Failed to create storage: {}", error);
             panic!("Storage creation failed");
-        }
+        },
     }
 
     println!("\n🩺 Step 2: Running STORAGE CHECK before table operations...");
@@ -202,12 +202,8 @@ fn test_minio_storage_end_to_end() {
     }
     println!("✅ Connected to MinIO");
 
-    let user_table_dir = resolve_template(
-        &storage_meta.user_template,
-        &namespace,
-        &user_table,
-        Some(&root_user_id),
-    );
+    let user_table_dir =
+        resolve_template(&storage_meta.user_template, &namespace, &user_table, Some(&root_user_id));
     let shared_table_dir =
         resolve_template(&storage_meta.shared_template, &namespace, &shared_table, None);
 
@@ -287,105 +283,59 @@ fn test_minio_storage_check() {
         .unwrap_or_else(|err| panic!("STORAGE CHECK failed: {}", err));
 
     println!("\n🔍 Step 2: Running STORAGE CHECK (basic)...");
-    let basic_output = execute_sql_as_root_via_cli_json(&format!(
-        "STORAGE CHECK {}",
-        storage_id
-    ))
-    .expect("storage check basic");
+    let basic_output = execute_sql_as_root_via_cli_json(&format!("STORAGE CHECK {}", storage_id))
+        .expect("storage check basic");
     let basic_json = parse_cli_json_output(&basic_output).expect("basic check json");
     let basic_rows = get_rows_as_hashmaps(&basic_json).unwrap_or_default();
     assert_eq!(basic_rows.len(), 1, "expected one row from STORAGE CHECK");
     let basic_row = basic_rows.first().expect("basic row");
 
-    let status = extract_typed_value(
-        basic_row
-            .get("status")
-            .expect("status column missing"),
-    );
+    let status = extract_typed_value(basic_row.get("status").expect("status column missing"));
     let status_str = status.as_str().unwrap_or("unknown");
     if status_str != "healthy" {
-        let error_value = extract_typed_value(
-            basic_row
-                .get("error")
-                .expect("error column missing"),
-        );
+        let error_value =
+            extract_typed_value(basic_row.get("error").expect("error column missing"));
         let error_str = error_value.as_str().unwrap_or("<no error>");
         panic!("STORAGE CHECK should be healthy; got {} ({})", status_str, error_str);
     }
 
-    let readable = extract_typed_value(
-        basic_row
-            .get("readable")
-            .expect("readable column missing"),
-    );
-    let writable = extract_typed_value(
-        basic_row
-            .get("writable")
-            .expect("writable column missing"),
-    );
-    let listable = extract_typed_value(
-        basic_row
-            .get("listable")
-            .expect("listable column missing"),
-    );
-    let deletable = extract_typed_value(
-        basic_row
-            .get("deletable")
-            .expect("deletable column missing"),
-    );
+    let readable = extract_typed_value(basic_row.get("readable").expect("readable column missing"));
+    let writable = extract_typed_value(basic_row.get("writable").expect("writable column missing"));
+    let listable = extract_typed_value(basic_row.get("listable").expect("listable column missing"));
+    let deletable =
+        extract_typed_value(basic_row.get("deletable").expect("deletable column missing"));
 
     assert_eq!(readable.as_bool(), Some(true));
     assert_eq!(writable.as_bool(), Some(true));
     assert_eq!(listable.as_bool(), Some(true));
     assert_eq!(deletable.as_bool(), Some(true));
 
-    let total_bytes = extract_typed_value(
-        basic_row
-            .get("total_bytes")
-            .expect("total_bytes column missing"),
-    );
-    let used_bytes = extract_typed_value(
-        basic_row
-            .get("used_bytes")
-            .expect("used_bytes column missing"),
-    );
+    let total_bytes =
+        extract_typed_value(basic_row.get("total_bytes").expect("total_bytes column missing"));
+    let used_bytes =
+        extract_typed_value(basic_row.get("used_bytes").expect("used_bytes column missing"));
     assert!(total_bytes.is_null(), "basic check should not include total_bytes");
     assert!(used_bytes.is_null(), "basic check should not include used_bytes");
 
     println!("✅ STORAGE CHECK basic passed");
 
     println!("\n🔍 Step 3: Running STORAGE CHECK EXTENDED...");
-    let extended_output = execute_sql_as_root_via_cli_json(&format!(
-        "STORAGE CHECK {} EXTENDED",
-        storage_id
-    ))
-    .expect("storage check extended");
+    let extended_output =
+        execute_sql_as_root_via_cli_json(&format!("STORAGE CHECK {} EXTENDED", storage_id))
+            .expect("storage check extended");
     let extended_json = parse_cli_json_output(&extended_output).expect("extended check json");
     let extended_rows = get_rows_as_hashmaps(&extended_json).unwrap_or_default();
     assert_eq!(extended_rows.len(), 1, "expected one row from STORAGE CHECK EXTENDED");
     let extended_row = extended_rows.first().expect("extended row");
 
-    let extended_status = extract_typed_value(
-        extended_row
-            .get("status")
-            .expect("status column missing"),
-    );
-    assert_eq!(
-        extended_status.as_str(),
-        Some("healthy"),
-        "extended status should be healthy"
-    );
+    let extended_status =
+        extract_typed_value(extended_row.get("status").expect("status column missing"));
+    assert_eq!(extended_status.as_str(), Some("healthy"), "extended status should be healthy");
 
-    let extended_total = extract_typed_value(
-        extended_row
-            .get("total_bytes")
-            .expect("total_bytes column missing"),
-    );
-    let extended_used = extract_typed_value(
-        extended_row
-            .get("used_bytes")
-            .expect("used_bytes column missing"),
-    );
+    let extended_total =
+        extract_typed_value(extended_row.get("total_bytes").expect("total_bytes column missing"));
+    let extended_used =
+        extract_typed_value(extended_row.get("used_bytes").expect("used_bytes column missing"));
     assert!(extended_total.is_null(), "minio does not report total_bytes");
     assert!(extended_used.is_null(), "minio does not report used_bytes");
 
@@ -397,11 +347,9 @@ fn test_minio_storage_check() {
 
 fn flush_table_and_wait(full_table_name: &str) {
     println!("   Issuing flush command...");
-    let flush_output = execute_sql_as_root_via_cli(&format!(
-        "STORAGE FLUSH TABLE {}",
-        full_table_name
-    ))
-    .expect("storage flush table");
+    let flush_output =
+        execute_sql_as_root_via_cli(&format!("STORAGE FLUSH TABLE {}", full_table_name))
+            .expect("storage flush table");
 
     if let Ok(job_id) = parse_job_id_from_flush_output(&flush_output) {
         println!("   Flush job created: {}", job_id);
@@ -505,10 +453,7 @@ fn fetch_root_user_id() -> String {
     get_row_string(row, "user_id")
 }
 
-fn get_row_string(
-    row: &std::collections::HashMap<String, JsonValue>,
-    key: &str,
-) -> String {
+fn get_row_string(row: &std::collections::HashMap<String, JsonValue>, key: &str) -> String {
     let value = row.get(key).unwrap_or_else(|| panic!("missing column {}", key));
     let extracted = extract_typed_value(value);
     extracted
@@ -524,9 +469,8 @@ fn resolve_template(
     user_id: Option<&str>,
 ) -> String {
     let normalized = normalize_template(template);
-    let mut resolved = normalized
-        .replace("{namespace}", namespace)
-        .replace("{tableName}", table_name);
+    let mut resolved =
+        normalized.replace("{namespace}", namespace).replace("{tableName}", table_name);
     if let Some(uid) = user_id {
         resolved = resolved.replace("{userId}", uid);
     }
@@ -577,8 +521,7 @@ fn build_minio_store(base_directory: &str) -> Arc<dyn ObjectStore> {
     if prefix.is_empty() {
         Arc::new(store) as Arc<dyn ObjectStore>
     } else {
-        let prefix_path = ObjectPath::parse(prefix.trim_matches('/'))
-            .expect("minio prefix path");
+        let prefix_path = ObjectPath::parse(prefix.trim_matches('/')).expect("minio prefix path");
         Arc::new(PrefixStore::new(store, prefix_path)) as Arc<dyn ObjectStore>
     }
 }
@@ -612,31 +555,24 @@ fn wait_for_storage_check_healthy(storage_id: &str, timeout: Duration) -> Result
     let mut last_error = String::new();
 
     while start.elapsed() < timeout {
-        let output = execute_sql_as_root_via_cli_json(&format!(
-            "STORAGE CHECK {}",
-            storage_id
-        ))
-        .map_err(|e| e.to_string())?;
+        let output = execute_sql_as_root_via_cli_json(&format!("STORAGE CHECK {}", storage_id))
+            .map_err(|e| e.to_string())?;
         let json = parse_cli_json_output(&output).map_err(|e| e.to_string())?;
         let rows = get_rows_as_hashmaps(&json).unwrap_or_default();
         if let Some(row) = rows.first() {
-            let status_value = extract_typed_value(
-                row.get("status").ok_or("status column missing")?,
-            );
+            let status_value =
+                extract_typed_value(row.get("status").ok_or("status column missing")?);
             let status = status_value.as_str().unwrap_or("unknown");
             if status == "healthy" {
                 return Ok(());
             }
 
-            let error_value = extract_typed_value(
-                row.get("error").ok_or("error column missing")?,
-            );
+            let error_value = extract_typed_value(row.get("error").ok_or("error column missing")?);
             let error = error_value.as_str().unwrap_or("<no error>");
             last_error = format!("status={}, error={}", status, error);
         } else {
             last_error = "no rows returned".to_string();
         }
-
     }
 
     Err(format!(
@@ -708,7 +644,6 @@ fn assert_minio_files(
     assert!(
         parquet_found,
         "{}: expected at least one Parquet file in MinIO under {}",
-        context,
-        table_dir
+        context, table_dir
     );
 }

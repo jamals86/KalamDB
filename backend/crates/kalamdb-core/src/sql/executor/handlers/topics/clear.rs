@@ -2,8 +2,8 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
-use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
+use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use kalamdb_sql::ddl::ClearTopicStatement;
 use std::sync::Arc;
 
@@ -60,8 +60,9 @@ impl TypedStatementHandler<ClearTopicStatement> for ClearTopicHandler {
             topic_name: topic_name.clone(),
         };
 
-        let params_json = serde_json::to_value(&cleanup_params)
-            .map_err(|e| KalamDbError::SerializationError(format!("Failed to serialize job params: {}", e)))?;
+        let params_json = serde_json::to_value(&cleanup_params).map_err(|e| {
+            KalamDbError::SerializationError(format!("Failed to serialize job params: {}", e))
+        })?;
 
         // Create cleanup job
         let job_manager = self.app_context.job_manager();
@@ -82,10 +83,7 @@ impl TypedStatementHandler<ClearTopicStatement> for ClearTopicHandler {
         );
 
         Ok(ExecutionResult::Success {
-            message: format!(
-                "Scheduled cleanup job [{}] for topic '{}'",
-                job_id, topic_name
-            ),
+            message: format!("Scheduled cleanup job [{}] for topic '{}'", job_id, topic_name),
         })
     }
 

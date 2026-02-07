@@ -2,9 +2,9 @@
 //!
 //! This module provides a SystemTableStore<NamespaceId, Namespace> wrapper for the system.namespaces table.
 
+use crate::providers::namespaces::models::Namespace;
 use crate::system_table_store::SystemTableStore;
 use crate::SystemTable;
-use crate::providers::namespaces::models::Namespace;
 use kalamdb_commons::NamespaceId;
 use kalamdb_store::StorageBackend;
 use std::sync::Arc;
@@ -98,7 +98,10 @@ mod tests {
         // Insert multiple namespaces
         for i in 1..=3 {
             let namespace_id = NamespaceId::new(format!("ns{}", i));
-            let namespace = create_test_namespace(&NamespaceId::new(&format!("ns{}", i)), &format!("namespace{}", i));
+            let namespace = create_test_namespace(
+                &NamespaceId::new(&format!("ns{}", i)),
+                &format!("namespace{}", i),
+            );
             store.put(&namespace_id, &namespace).unwrap();
         }
 

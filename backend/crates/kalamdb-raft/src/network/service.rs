@@ -395,7 +395,7 @@ pub async fn start_rpc_server(
                 crate::RaftError::Internal(format!("Invalid bind address '{}': {}", bind_addr, e))
             })?;
             (addr, bind_addr)
-        }
+        },
     };
 
     // Try to bind the TCP listener first to detect port conflicts early
@@ -433,7 +433,11 @@ pub async fn start_rpc_server(
     // Wait for startup confirmation (with timeout)
     match tokio::time::timeout(tokio::time::Duration::from_secs(5), rx).await {
         Ok(Ok(Ok(()))) => {
-            log::info!("✓ Raft RPC server started on {} (advertising as {})", bind_addr, advertise_addr);
+            log::info!(
+                "✓ Raft RPC server started on {} (advertising as {})",
+                bind_addr,
+                advertise_addr
+            );
             Ok(())
         },
         Ok(Ok(Err(e))) => {

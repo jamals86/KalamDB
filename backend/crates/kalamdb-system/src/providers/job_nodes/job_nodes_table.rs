@@ -1,9 +1,9 @@
 //! System.job_nodes table schema (system_job_nodes in RocksDB)
 
+use crate::providers::job_nodes::models::JobNode;
 use datafusion::arrow::datatypes::SchemaRef;
 use kalamdb_commons::schemas::TableDefinition;
 use kalamdb_commons::SystemTable;
-use crate::providers::job_nodes::models::JobNode;
 use std::sync::OnceLock;
 
 #[derive(Debug, Clone, Copy)]

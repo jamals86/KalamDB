@@ -8,7 +8,6 @@
 //! - Partition tolerance
 //! - All Raft groups coverage (meta + user shards + shared)
 
-
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -23,20 +22,19 @@ use tokio::time::sleep;
 use async_trait::async_trait;
 use kalamdb_commons::models::schemas::TableType;
 use kalamdb_commons::models::{JobId, NamespaceId, NodeId, StorageId, TableName, UserId};
-use kalamdb_system::JobNode;
-use kalamdb_system::providers::jobs::models::Job;
-use kalamdb_system::{JobStatus, JobType};
 use kalamdb_commons::TableId;
-use kalamdb_system::providers::live_queries::models::{LiveQuery, LiveQueryStatus};
 use kalamdb_raft::{
     commands::{MetaCommand, SharedDataCommand, UserDataCommand},
     manager::{PeerNode, RaftManager, RaftManagerConfig},
     GroupId,
 };
-use kalamdb_sharding::ShardRouter;
 use kalamdb_raft::{
     ApplyResult, KalamRaftStorage, KalamStateMachine, RaftError, StateMachineSnapshot,
 };
+use kalamdb_sharding::ShardRouter;
+use kalamdb_system::providers::jobs::models::Job;
+use kalamdb_system::providers::live_queries::models::{LiveQuery, LiveQueryStatus};
+use kalamdb_system::{JobStatus, JobType};
 use openraft::{Entry, EntryPayload, LogId, RaftSnapshotBuilder, RaftStorage};
 
 // =============================================================================
@@ -717,7 +715,8 @@ async fn test_meta_group_operations() {
         TableType::User,
         vec![],
         None,
-    ).expect("Failed to create table definition");
+    )
+    .expect("Failed to create table definition");
     let cmd = MetaCommand::CreateTable {
         table_id,
         table_type: TableType::User,

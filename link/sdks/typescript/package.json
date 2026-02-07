@@ -13,14 +13,14 @@
   "bugs": {
     "url": "https://github.com/jamals86/KalamDB/issues"
   },
-  "main": "dist/index.js",
-  "module": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "main": "dist/src/index.js",
+  "module": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "default": "./dist/index.js"
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js",
+      "default": "./dist/src/index.js"
     },
     "./wasm": {
       "types": "./dist/wasm/kalam_link.d.ts",
@@ -32,12 +32,12 @@
   ],
   "sideEffects": false,
   "scripts": {
-    "clean": "node -e \"const fs=require('fs');const rm=p=>{try{fs.rmSync(p,{recursive:true,force:true})}catch{}};rm('dist');rm('.wasm-out');rm('src/wasm')\"",
+    "clean": "node -e \"const fs=require('fs');const p=require('path');const rm=d=>{try{fs.rmSync(d,{recursive:true,force:true})}catch{}};rm('dist');rm('.wasm-out')\"",
     "build:wasm": "node -e \"const {execSync}=require('child_process');process.chdir('../..');const env={...process.env,CARGO_ENCODED_RUSTFLAGS:'',RUSTFLAGS:'',CARGO_TARGET_DIR:'sdks/typescript/.wasm-target',CARGO_HOME:'sdks/typescript/.wasm-cargo-home'};execSync('wasm-pack build --target web --out-dir sdks/typescript/.wasm-out --features wasm --no-default-features',{stdio:'inherit',env})\"",
-    "build:copy-wasm": "node -e \"const fs=require('fs');const p=require('path');['src/wasm','dist/wasm'].forEach(d=>fs.mkdirSync(d,{recursive:true}));fs.readdirSync('.wasm-out').filter(f=>!f.includes('package.json')&&!f.includes('.gitignore')).forEach(f=>{fs.copyFileSync(p.join('.wasm-out',f),p.join('src/wasm',f));fs.copyFileSync(p.join('.wasm-out',f),p.join('dist/wasm',f))})\"",
+    "build:fix-types": "node -e \"const fs=require('fs');const p=require('path');const dts=p.join('.wasm-out','kalam_link.d.ts');let c=fs.readFileSync(dts,'utf8');if(!c.includes('type JsonValue')){c='type JsonValue=null|boolean|number|string|JsonValue[]|{[key:string]:JsonValue};\\n'+c;fs.writeFileSync(dts,c)}\"",
     "build:ts": "tsc",
-    "build:cleanup": "node -e \"require('fs').rmSync('src/wasm',{recursive:true,force:true})\"",
-    "build": "npm run clean && npm run build:wasm && npm run build:copy-wasm && npm run build:ts && npm run build:cleanup",
+    "build:copy-wasm": "node -e \"const fs=require('fs');const p=require('path');['dist/wasm','dist/.wasm-out'].forEach(d=>fs.mkdirSync(d,{recursive:true}));fs.readdirSync('.wasm-out').filter(f=>!f.includes('package.json')&&!f.includes('.gitignore')).forEach(f=>{fs.copyFileSync(p.join('.wasm-out',f),p.join('dist/wasm',f));fs.copyFileSync(p.join('.wasm-out',f),p.join('dist/.wasm-out',f))})\"",
+    "build": "npm run clean && npm run build:wasm && npm run build:fix-types && npm run build:ts && npm run build:copy-wasm",
     "prepublishOnly": "npm run build"
   },
   "devDependencies": {

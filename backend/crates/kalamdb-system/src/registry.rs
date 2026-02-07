@@ -10,7 +10,7 @@ use super::providers::{
     AuditLogsTableProvider, AuditLogsTableSchema, JobNodesTableProvider, JobNodesTableSchema,
     JobsTableProvider, JobsTableSchema, LiveQueriesTableProvider, LiveQueriesTableSchema,
     ManifestTableProvider, ManifestTableSchema, NamespacesTableProvider, NamespacesTableSchema,
-    StoragesTableProvider, StoragesTableSchema, SchemasTableProvider, SchemasTableSchema,
+    SchemasTableProvider, SchemasTableSchema, StoragesTableProvider, StoragesTableSchema,
     TopicOffsetsTableProvider, TopicOffsetsTableSchema, TopicsTableProvider, TopicsTableSchema,
     UsersTableProvider, UsersTableSchema,
 };
@@ -340,10 +340,7 @@ impl SystemTablesRegistry {
             ),
             (
                 SystemTable::LiveQueries,
-                wrap(
-                    SystemTable::LiveQueries,
-                    self.live_queries.clone() as Arc<dyn TableProvider>,
-                ),
+                wrap(SystemTable::LiveQueries, self.live_queries.clone() as Arc<dyn TableProvider>),
             ),
             (
                 SystemTable::Schemas,
@@ -363,7 +360,10 @@ impl SystemTablesRegistry {
             ),
             (
                 SystemTable::TopicOffsets,
-                wrap(SystemTable::TopicOffsets, self.topic_offsets.clone() as Arc<dyn TableProvider>),
+                wrap(
+                    SystemTable::TopicOffsets,
+                    self.topic_offsets.clone() as Arc<dyn TableProvider>,
+                ),
             ),
         ];
 

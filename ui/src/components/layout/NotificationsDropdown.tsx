@@ -78,7 +78,7 @@ function formatTimestamp(timestamp: string | number | null): string {
 
 export function NotificationsDropdown() {
   const navigate = useNavigate();
-  const { notifications, isLoading, refresh, lastFetchTime } = useNotifications(3000);
+  const { notifications, isLoading, refresh, lastFetchTime } = useNotifications();
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   const [selectedAuditLog, setSelectedAuditLog] = useState<AuditLog | null>(null);
   const [isOpen, setIsOpen] = useState(false);

@@ -92,14 +92,9 @@ fn cluster_test_leader_visibility() {
             visible = true;
             break;
         }
-
     }
 
-    assert!(
-        visible,
-        "Leader visibility mismatch across nodes: {:?}",
-        leader_ids
-    );
+    assert!(visible, "Leader visibility mismatch across nodes: {:?}", leader_ids);
 
     println!("\n  ✅ All nodes can identify the cluster leader\n");
 }

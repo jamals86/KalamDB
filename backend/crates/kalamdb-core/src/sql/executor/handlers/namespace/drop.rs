@@ -5,9 +5,9 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
+use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::helpers::guards::require_admin;
-use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
 use kalamdb_commons::models::{NamespaceId, TableId};
 use kalamdb_sql::ddl::DropNamespaceStatement;
 use std::sync::Arc;
@@ -69,43 +69,28 @@ impl TypedStatementHandler<DropNamespaceStatement> for DropNamespaceHandler {
             },
         };
 
-        // Check if namespace has tables
-        if !namespace.can_delete() {
-            if statement.cascade {
-                // CASCADE: Drop all tables in the namespace first
-                let tables_provider = self.app_context.system_tables().tables();
-                let tables_in_namespace =
-                    tables_provider.list_tables_in_namespace(&namespace_id)?;
+        // Always drop all tables in this namespace first.
+        // This makes DROP NAMESPACE deterministic even when namespace.table_count metadata is stale.
+        let tables_provider = self.app_context.system_tables().tables();
+        let tables_in_namespace = tables_provider.list_tables_in_namespace(&namespace_id)?;
 
-                for table in tables_in_namespace {
-                    // Construct TableId from namespace and table name
-                    let table_id =
-                        TableId::new(table.namespace_id.clone(), table.table_name.clone());
+        for table in tables_in_namespace {
+            let table_id = TableId::new(table.namespace_id.clone(), table.table_name.clone());
 
-                    // Delegate to unified applier
-                    self.app_context.applier().drop_table(table_id.clone()).await.map_err(|e| {
-                        KalamDbError::ExecutionError(format!("DROP TABLE failed: {}", e))
-                    })?;
+            self.app_context.applier().drop_table(table_id.clone()).await.map_err(|e| {
+                KalamDbError::ExecutionError(format!("DROP TABLE failed: {}", e))
+            })?;
 
-                    // Log table drop as part of cascade
-                    use crate::sql::executor::helpers::audit;
-                    let audit_entry = audit::log_ddl_operation(
-                        context,
-                        "DROP",
-                        "TABLE",
-                        &table_id.full_name(),
-                        Some("CASCADE from DROP NAMESPACE".to_string()),
-                        None,
-                    );
-                    audit::persist_audit_entry(&self.app_context, &audit_entry).await?;
-                }
-            } else {
-                return Err(KalamDbError::InvalidOperation(format!(
-                    "Cannot drop namespace '{}': namespace contains {} table(s). Drop all tables first or use CASCADE.",
-                        namespace.name,
-                    namespace.table_count
-                )));
-            }
+            use crate::sql::executor::helpers::audit;
+            let audit_entry = audit::log_ddl_operation(
+                context,
+                "DROP",
+                "TABLE",
+                &table_id.full_name(),
+                Some("CASCADE from DROP NAMESPACE".to_string()),
+                None,
+            );
+            audit::persist_audit_entry(&self.app_context, &audit_entry).await?;
         }
 
         // Delegate to unified applier (handles standalone vs cluster internally)
@@ -194,7 +179,8 @@ mod tests {
         };
 
         // Test with non-admin user
-        let ctx = ExecutionContext::new(UserId::new("user"), Role::User, create_test_session_simple());
+        let ctx =
+            ExecutionContext::new(UserId::new("user"), Role::User, create_test_session_simple());
         let result = handler.check_authorization(&stmt, &ctx).await;
 
         assert!(result.is_err());

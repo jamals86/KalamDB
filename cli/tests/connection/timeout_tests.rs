@@ -26,8 +26,8 @@ async fn test_connection_timeout_unreachable_server() {
         .connection_timeout_secs(2) // 2 second connection timeout
         .build();
 
-    let client = client_for_url_no_auth(unreachable_url, timeouts)
-        .expect("Client build should succeed");
+    let client =
+        client_for_url_no_auth(unreachable_url, timeouts).expect("Client build should succeed");
 
     let start = Instant::now();
 
@@ -56,8 +56,8 @@ async fn test_fast_timeout_preset() {
     // Use the fast preset (optimized for local development)
     let timeouts = KalamLinkTimeouts::fast();
 
-    let client = client_for_url_no_auth(unreachable_url, timeouts)
-        .expect("Client build should succeed");
+    let client =
+        client_for_url_no_auth(unreachable_url, timeouts).expect("Client build should succeed");
 
     let start = Instant::now();
     let result = client.execute_query("SELECT 1", None, None, None).await;

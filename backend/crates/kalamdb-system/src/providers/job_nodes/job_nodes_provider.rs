@@ -3,6 +3,8 @@
 use super::JobNodesTableSchema;
 use crate::error::{SystemError, SystemResultExt};
 use crate::providers::base::SystemTableScan;
+use crate::providers::job_nodes::models::JobNode;
+use crate::JobStatus;
 use async_trait::async_trait;
 use chrono::Utc;
 use datafusion::arrow::array::RecordBatch;
@@ -12,8 +14,6 @@ use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::Expr;
 use datafusion::logical_expr::TableProviderFilterPushDown;
 use datafusion::physical_plan::ExecutionPlan;
-use crate::providers::job_nodes::models::JobNode;
-use crate::JobStatus;
 use kalamdb_commons::models::JobNodeId;
 use kalamdb_commons::RecordBatchBuilder;
 use kalamdb_commons::{JobId, NodeId, SystemTable};
@@ -48,9 +48,7 @@ impl JobNodesTableProvider {
 
     pub fn create_job_node(&self, job_node: JobNode) -> Result<String, SystemError> {
         let key = job_node.id();
-        self.store
-            .insert(&key, &job_node)
-            .into_system_error("insert job_node error")?;
+        self.store.insert(&key, &job_node).into_system_error("insert job_node error")?;
         Ok(format!("Job node {} created", key))
     }
 
@@ -62,7 +60,11 @@ impl JobNodesTableProvider {
             .into_system_error("insert_async job_node error")
     }
 
-    pub fn get_job_node(&self, job_id: &kalamdb_commons::JobId, node_id: &NodeId) -> Result<Option<JobNode>, SystemError> {
+    pub fn get_job_node(
+        &self,
+        job_id: &kalamdb_commons::JobId,
+        node_id: &NodeId,
+    ) -> Result<Option<JobNode>, SystemError> {
         let key = JobNodeId::new(job_id, node_id);
         Ok(self.store.get(&key)?)
     }
@@ -73,10 +75,7 @@ impl JobNodesTableProvider {
         node_id: &NodeId,
     ) -> Result<Option<JobNode>, SystemError> {
         let key = JobNodeId::new(job_id, node_id);
-        self.store
-            .get_async(key)
-            .await
-            .into_system_error("get_async job_node error")
+        self.store.get_async(key).await.into_system_error("get_async job_node error")
     }
 
     pub async fn update_job_node_async(&self, job_node: JobNode) -> Result<(), SystemError> {
@@ -94,7 +93,11 @@ impl JobNodesTableProvider {
         limit: usize,
     ) -> Result<Vec<JobNode>, SystemError> {
         let prefix = JobNodeId::prefix_for_node(node_id);
-        let scan_limit = if limit == 0 { 10_000 } else { limit.saturating_mul(10) };
+        let scan_limit = if limit == 0 {
+            10_000
+        } else {
+            limit.saturating_mul(10)
+        };
         let rows = self
             .store
             .scan_with_raw_prefix(&prefix, None, scan_limit)
@@ -120,7 +123,11 @@ impl JobNodesTableProvider {
         limit: usize,
     ) -> Result<Vec<JobNode>, SystemError> {
         let prefix = JobNodeId::prefix_for_node(node_id);
-        let scan_limit = if limit == 0 { 10_000 } else { limit.saturating_mul(10) };
+        let scan_limit = if limit == 0 {
+            10_000
+        } else {
+            limit.saturating_mul(10)
+        };
         let rows = {
             let store = self.store.clone();
             tokio::task::spawn_blocking(move || {
@@ -144,21 +151,15 @@ impl JobNodesTableProvider {
         Ok(filtered)
     }
 
-    pub async fn list_for_job_id_async(
-        &self,
-        job_id: &JobId,
-    ) -> Result<Vec<JobNode>, SystemError> {
+    pub async fn list_for_job_id_async(&self, job_id: &JobId) -> Result<Vec<JobNode>, SystemError> {
         let rows = self
             .store
             .scan_all_async(None, None, None)
             .await
             .into_system_error("scan_async job_nodes error")?;
 
-        let filtered: Vec<JobNode> = rows
-            .into_iter()
-            .map(|(_, v)| v)
-            .filter(|node| &node.job_id == job_id)
-            .collect();
+        let filtered: Vec<JobNode> =
+            rows.into_iter().map(|(_, v)| v).filter(|node| &node.job_id == job_id).collect();
 
         Ok(filtered)
     }
@@ -223,20 +224,18 @@ impl JobNodesTableProvider {
         for (_key, node) in rows {
             if !matches!(
                 node.status,
-                JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled | JobStatus::Skipped
+                JobStatus::Completed
+                    | JobStatus::Failed
+                    | JobStatus::Cancelled
+                    | JobStatus::Skipped
             ) {
                 continue;
             }
 
-            let reference_time = node
-                .finished_at
-                .or(node.started_at)
-                .unwrap_or(node.updated_at);
+            let reference_time = node.finished_at.or(node.started_at).unwrap_or(node.updated_at);
 
             if reference_time < cutoff_time {
-                self.store
-                    .delete(&node.id())
-                    .into_system_error("delete job_node error")?;
+                self.store.delete(&node.id()).into_system_error("delete job_node error")?;
                 deleted += 1;
             }
         }
@@ -266,7 +265,10 @@ impl SystemTableScan<JobNodeId, JobNode> for JobNodesTableProvider {
         JobNodeId::from_string(value).ok()
     }
 
-    fn create_batch_from_pairs(&self, pairs: Vec<(JobNodeId, JobNode)>) -> Result<RecordBatch, SystemError> {
+    fn create_batch_from_pairs(
+        &self,
+        pairs: Vec<(JobNodeId, JobNode)>,
+    ) -> Result<RecordBatch, SystemError> {
         self.create_batch(pairs)
     }
 }

@@ -104,10 +104,7 @@ async fn test_schema_cache_basic_operations() {
     let size = cache.stats();
     assert!(size >= 1, "Cache should have at least 1 entry");
 
-    println!(
-        "✅ Cache basic operations: {} size, was_preloaded={}",
-        size, was_preloaded
-    );
+    println!("✅ Cache basic operations: {} size, was_preloaded={}", size, was_preloaded);
 }
 
 #[tokio::test]

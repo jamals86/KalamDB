@@ -45,7 +45,9 @@ impl TopicOffsetsTableSchema {
         SCHEMA
             .get_or_init(|| {
                 let table_def = Self::definition();
-                table_def.to_arrow_schema().expect("Failed to convert topic_offsets TableDefinition to Arrow schema")
+                table_def
+                    .to_arrow_schema()
+                    .expect("Failed to convert topic_offsets TableDefinition to Arrow schema")
             })
             .clone()
     }

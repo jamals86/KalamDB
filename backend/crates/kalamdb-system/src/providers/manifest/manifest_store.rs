@@ -3,9 +3,9 @@
 //! Provides typed storage for manifest cache entries using SystemTableStore.
 //! This is a read-only view of the manifest cache managed by ManifestService.
 
+use crate::providers::manifest::ManifestCacheEntry;
 use crate::system_table_store::SystemTableStore;
 use crate::SystemTable;
-use crate::providers::manifest::ManifestCacheEntry;
 use kalamdb_commons::ManifestId;
 use kalamdb_store::StorageBackend;
 use std::sync::Arc;
@@ -40,12 +40,7 @@ mod tests {
     fn create_test_entry() -> ManifestCacheEntry {
         let table_id = TableId::new(NamespaceId::new("test"), TableName::new("table"));
         let manifest = Manifest::new(table_id, None);
-        ManifestCacheEntry::new(
-            manifest,
-            Some("etag123".to_string()),
-            1000,
-            SyncState::InSync,
-        )
+        ManifestCacheEntry::new(manifest, Some("etag123".to_string()), 1000, SyncState::InSync)
     }
 
     #[test]

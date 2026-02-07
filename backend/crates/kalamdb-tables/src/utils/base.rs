@@ -56,9 +56,7 @@
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use crate::manifest::ManifestAccessPlanner;
-use kalamdb_commons::conversions::arrow_json_conversion::coerce_rows;
 use crate::utils::unified_dml;
-use kalamdb_commons::schemas::TableType;
 use async_trait::async_trait;
 use datafusion::arrow::array::{
     Array, BooleanArray, Int16Array, Int32Array, Int64Array, StringArray, UInt32Array, UInt64Array,
@@ -73,22 +71,25 @@ use datafusion::logical_expr::{utils::expr_to_columns, Expr, TableProviderFilter
 use datafusion::physical_plan::{ExecutionPlan, Statistics};
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::constants::SystemColumnNames;
+use kalamdb_commons::conversions::arrow_json_conversion::coerce_rows;
 use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::rows::Row;
 use kalamdb_commons::models::{NamespaceId, TableName, UserId};
-use kalamdb_system::Manifest;
+use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::{StorageKey, TableId};
+use kalamdb_filestore::registry::ListResult;
 use kalamdb_system::ClusterCoordinator as ClusterCoordinatorTrait;
+use kalamdb_system::Manifest;
 use kalamdb_system::SchemaRegistry as SchemaRegistryTrait;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 // Re-export types moved to submodules
 pub use crate::utils::core::TableProviderCore;
+pub(crate) use crate::utils::parquet::scan_parquet_files_as_batch_async;
 pub use crate::utils::row_utils::{
     extract_full_user_context, extract_seq_bounds_from_filter, resolve_user_scope, system_user_id,
 };
-pub(crate) use crate::utils::parquet::scan_parquet_files_as_batch_async;
 pub use crate::utils::row_utils::{inject_system_columns, rows_to_arrow_batch, ScanRow};
 
 /// Unified trait for all table providers with generic storage abstraction
@@ -334,12 +335,20 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     ///
     /// # Returns
     /// `Ok(true)` if row was deleted, `Ok(false)` if row was not found
-    async fn delete_by_pk_value(&self, user_id: &UserId, pk_value: &str) -> Result<bool, KalamDbError>;
+    async fn delete_by_pk_value(
+        &self,
+        user_id: &UserId,
+        pk_value: &str,
+    ) -> Result<bool, KalamDbError>;
 
     /// Delete a row by searching for matching ID field value.
     ///
     /// Returns `true` if a row was deleted, `false` if the row did not exist.
-    async fn delete_by_id_field(&self, user_id: &UserId, id_value: &str) -> Result<bool, KalamDbError> {
+    async fn delete_by_id_field(
+        &self,
+        user_id: &UserId,
+        id_value: &str,
+    ) -> Result<bool, KalamDbError> {
         // Directly delete by PK value - handles both hot and cold storage
         self.delete_by_pk_value(user_id, id_value).await
     }
@@ -426,13 +435,13 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
                     let leader_addr = coordinator.leader_addr_for_user(user_id).await;
                     return Err(KalamDbError::NotLeader { leader_addr });
                 }
-            }
+            },
             TableType::Shared => {
                 if !coordinator.is_leader_for_shared().await {
                     return Err(KalamDbError::NotLeader { leader_addr: None });
                 }
-            }
-            TableType::System => {}
+            },
+            TableType::System => {},
         }
 
         Ok(())
@@ -545,46 +554,41 @@ where
 {
     use crate::utils::version_resolution::{parquet_batch_to_rows, ParquetRowData};
     use datafusion::prelude::{col, lit};
-    
+
     let pk_name = provider.primary_key_field_name();
     let user_scope = resolve_user_scope(scope);
-    
+
     // Build filter for the specific PK value
     let filter: Expr = col(pk_name).eq(lit(pk_value));
-    
+
     // Get core from provider (we need schema, table_id, table_type, and storage access)
     let core = provider.core();
     let table_id = provider.table_id();
     let table_type = provider.provider_table_type();
     let schema = provider.schema_ref();
-    
+
     // Scan cold storage for this PK value using async I/O
-    let batch = scan_parquet_files_as_batch_async(
-        core,
-        table_id,
-        table_type,
-        scope,
-        schema,
-        Some(&filter),
-    ).await?;
-    
+    let batch =
+        scan_parquet_files_as_batch_async(core, table_id, table_type, scope, schema, Some(&filter))
+            .await?;
+
     if batch.num_rows() == 0 {
         return Ok(None);
     }
-    
+
     // Parse rows from Parquet batch
     let rows_data: Vec<ParquetRowData> = parquet_batch_to_rows(&batch)?;
-    
+
     // Find the latest non-deleted version with matching PK
     // Rows should already be filtered by PK, but we need version resolution
     let mut latest: Option<ParquetRowData> = None;
-    
+
     for row_data in rows_data {
         // Skip deleted rows
         if row_data.deleted {
             continue;
         }
-        
+
         // Check if this row matches the PK value
         if let Some(row_pk) = row_data.fields.values.get(pk_name) {
             let row_pk_str = match row_pk {
@@ -597,24 +601,24 @@ where
                 ScalarValue::Boolean(Some(b)) => b.to_string(),
                 _ => continue,
             };
-            
+
             if row_pk_str != pk_value {
                 continue;
             }
-            
+
             // Keep the row with highest _seq (latest version)
             if latest.as_ref().map(|l| row_data.seq_id > l.seq_id).unwrap_or(true) {
                 latest = Some(row_data);
             }
         }
     }
-    
+
     // Convert ParquetRowData to the provider's (K, V) types
     if let Some(row_data) = latest {
         let result = provider.construct_row_from_parquet_data(user_scope, &row_data)?;
         return Ok(result);
     }
-    
+
     Ok(None)
 }
 
@@ -673,34 +677,9 @@ pub async fn pk_exists_in_cold(
     let storage_registry = core.storage_registry.as_ref().ok_or_else(|| {
         KalamDbError::InvalidOperation("Storage registry not configured".to_string())
     })?;
-    let storage_cached = storage_registry
-        .get_cached(&storage_id)?
-        .ok_or_else(|| {
-            KalamDbError::InvalidOperation(format!("Storage '{}' not found", storage_id.as_str()))
-        })?;
-
-    let list_result = match storage_cached.list(table_type, table_id, user_id).await {
-        Ok(result) => result,
-        Err(_) => {
-            log::trace!(
-                "[pk_exists_in_cold] No storage dir for {}.{} {} - PK not in cold",
-                namespace.as_str(),
-                table.as_str(),
-                scope_label
-            );
-            return Ok(false);
-        },
-    };
-
-    if list_result.is_empty() {
-        log::trace!(
-            "[pk_exists_in_cold] No files in storage for {}.{} {} - PK not in cold",
-            namespace.as_str(),
-            table.as_str(),
-            scope_label
-        );
-        return Ok(false);
-    }
+    let storage_cached = storage_registry.get_cached(&storage_id)?.ok_or_else(|| {
+        KalamDbError::InvalidOperation(format!("Storage '{}' not found", storage_id.as_str()))
+    })?;
 
     // 4. Load manifest from cache
     let manifest_service = core.manifest_service.clone();
@@ -729,45 +708,90 @@ pub async fn pk_exists_in_cold(
         },
     };
 
+    // Fast path: manifest loaded and has no cold segments.
+    // Avoid storage listing on hot-only write paths.
+    if let Some(ref m) = manifest {
+        if m.segments.is_empty() {
+            log::trace!(
+                "[pk_exists_in_cold] Manifest has no segments for {}.{} {} - PK not in cold",
+                namespace.as_str(),
+                table.as_str(),
+                scope_label
+            );
+            return Ok(false);
+        }
+    }
+
     // 5. Use manifest to prune segments or list all Parquet files
     let planner = ManifestAccessPlanner::new();
     let files_to_scan: Vec<String> = if let Some(ref m) = manifest {
         let pruned_paths = planner.plan_by_pk_value(m, pk_column_id, pk_value);
         if pruned_paths.is_empty() {
+            let list_result = match storage_cached.list(table_type, table_id, user_id).await {
+                Ok(result) => result,
+                Err(_) => {
+                    log::trace!(
+                        "[pk_exists_in_cold] No storage dir for {}.{} {} - PK not in cold",
+                        namespace.as_str(),
+                        table.as_str(),
+                        scope_label
+                    );
+                    return Ok(false);
+                },
+            };
+            if list_result.is_empty() {
+                log::trace!(
+                    "[pk_exists_in_cold] No files in storage for {}.{} {} - PK not in cold",
+                    namespace.as_str(),
+                    table.as_str(),
+                    scope_label
+                );
+                return Ok(false);
+            }
             log::trace!(
-                "[pk_exists_in_cold] Manifest pruning: PK {} not in any segment range for {}.{} {}",
+                "[pk_exists_in_cold] Manifest pruning returned no candidate segments for PK {} on {}.{} {} - falling back to full parquet scan",
                 pk_value,
                 namespace.as_str(),
                 table.as_str(),
                 scope_label
             );
-            return Ok(false); // PK definitely not in cold storage
+            collect_parquet_files_from_list(&list_result)
+        } else {
+            log::trace!(
+                "[pk_exists_in_cold] Manifest pruning: {} of {} segments may contain PK {} for {}.{} {}",
+                pruned_paths.len(),
+                m.segments.len(),
+                pk_value,
+                namespace.as_str(),
+                table.as_str(),
+                scope_label
+            );
+            pruned_paths
         }
-        log::trace!(
-            "[pk_exists_in_cold] Manifest pruning: {} of {} segments may contain PK {} for {}.{} {}",
-            pruned_paths.len(),
-            m.segments.len(),
-            pk_value,
-            namespace.as_str(),
-            table.as_str(),
-            scope_label
-        );
-        pruned_paths
     } else {
         // No manifest - use all Parquet files from listing
-        let prefix = list_result.prefix.trim_end_matches('/');
-        list_result
-            .paths
-            .into_iter()
-            .filter_map(|path| {
-                let stripped = strip_list_prefix(&path, prefix).unwrap_or(&path);
-                if stripped.ends_with(".parquet") {
-                    Some(stripped.to_string())
-                } else {
-                    None
-                }
-            })
-            .collect()
+        let list_result = match storage_cached.list(table_type, table_id, user_id).await {
+            Ok(result) => result,
+            Err(_) => {
+                log::trace!(
+                    "[pk_exists_in_cold] No storage dir for {}.{} {} - PK not in cold",
+                    namespace.as_str(),
+                    table.as_str(),
+                    scope_label
+                );
+                return Ok(false);
+            },
+        };
+        if list_result.is_empty() {
+            log::trace!(
+                "[pk_exists_in_cold] No files in storage for {}.{} {} - PK not in cold",
+                namespace.as_str(),
+                table.as_str(),
+                scope_label
+            );
+            return Ok(false);
+        }
+        collect_parquet_files_from_list(&list_result)
     };
 
     if files_to_scan.is_empty() {
@@ -785,7 +809,9 @@ pub async fn pk_exists_in_cold(
             &file_name,
             pk_column,
             pk_value,
-        ).await? {
+        )
+        .await?
+        {
             log::trace!(
                 "[pk_exists_in_cold] Found PK {} in {} for {}.{} {}",
                 pk_value,
@@ -799,6 +825,22 @@ pub async fn pk_exists_in_cold(
     }
 
     Ok(false)
+}
+
+fn collect_parquet_files_from_list(list_result: &ListResult) -> Vec<String> {
+    let prefix = list_result.prefix.trim_end_matches('/');
+    list_result
+        .paths
+        .iter()
+        .filter_map(|path| {
+            let stripped = strip_list_prefix(path, prefix).unwrap_or(path);
+            if stripped.ends_with(".parquet") {
+                Some(stripped.to_string())
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 /// Batch check if any PK values exist in cold storage (Parquet files) (async).
@@ -855,34 +897,9 @@ pub async fn pk_exists_batch_in_cold(
     let storage_registry = core.storage_registry.as_ref().ok_or_else(|| {
         KalamDbError::InvalidOperation("Storage registry not configured".to_string())
     })?;
-    let storage_cached = storage_registry
-        .get_cached(&storage_id)?
-        .ok_or_else(|| {
-            KalamDbError::InvalidOperation(format!("Storage '{}' not found", storage_id.as_str()))
-        })?;
-
-    let list_result = match storage_cached.list(table_type, table_id, user_id).await {
-        Ok(result) => result,
-        Err(_) => {
-            log::trace!(
-                "[pk_exists_batch_in_cold] No storage dir for {}.{} {} - PK not in cold",
-                namespace.as_str(),
-                table.as_str(),
-                scope_label
-            );
-            return Ok(None);
-        },
-    };
-
-    if list_result.is_empty() {
-        log::trace!(
-            "[pk_exists_batch_in_cold] No files in storage for {}.{} {} - PK not in cold",
-            namespace.as_str(),
-            table.as_str(),
-            scope_label
-        );
-        return Ok(None);
-    }
+    let storage_cached = storage_registry.get_cached(&storage_id)?.ok_or_else(|| {
+        KalamDbError::InvalidOperation(format!("Storage '{}' not found", storage_id.as_str()))
+    })?;
 
     // 4. Load manifest from cache
     let manifest_service = core.manifest_service.clone();
@@ -911,6 +928,20 @@ pub async fn pk_exists_batch_in_cold(
         },
     };
 
+    // Fast path: manifest loaded and has no cold segments.
+    // Avoid storage listing on hot-only write paths.
+    if let Some(ref m) = manifest {
+        if m.segments.is_empty() {
+            log::trace!(
+                "[pk_exists_batch_in_cold] Manifest has no segments for {}.{} {} - PK not in cold",
+                namespace.as_str(),
+                table.as_str(),
+                scope_label
+            );
+            return Ok(None);
+        }
+    }
+
     // 5. Determine files to scan - union of files that may contain any of the PK values
     let planner = ManifestAccessPlanner::new();
     let files_to_scan: Vec<String> = if let Some(ref m) = manifest {
@@ -921,39 +952,70 @@ pub async fn pk_exists_batch_in_cold(
             relevant_files.extend(pruned_paths);
         }
         if relevant_files.is_empty() {
+            let list_result = match storage_cached.list(table_type, table_id, user_id).await {
+                Ok(result) => result,
+                Err(_) => {
+                    log::trace!(
+                        "[pk_exists_batch_in_cold] No storage dir for {}.{} {} - PK not in cold",
+                        namespace.as_str(),
+                        table.as_str(),
+                        scope_label
+                    );
+                    return Ok(None);
+                },
+            };
+            if list_result.is_empty() {
+                log::trace!(
+                    "[pk_exists_batch_in_cold] No files in storage for {}.{} {} - PK not in cold",
+                    namespace.as_str(),
+                    table.as_str(),
+                    scope_label
+                );
+                return Ok(None);
+            }
             log::trace!(
-                "[pk_exists_batch_in_cold] Manifest pruning: no segments may contain any PK for {}.{} {}",
+                "[pk_exists_batch_in_cold] Manifest pruning returned no candidate segments for {}.{} {} - falling back to full parquet scan",
+                namespace.as_str(),
+                table.as_str(),
+                scope_label
+            );
+            collect_parquet_files_from_list(&list_result)
+        } else {
+            log::trace!(
+                "[pk_exists_batch_in_cold] Manifest pruning: {} of {} segments may contain {} PKs for {}.{} {}",
+                relevant_files.len(),
+                m.segments.len(),
+                pk_values.len(),
+                namespace.as_str(),
+                table.as_str(),
+                scope_label
+            );
+            relevant_files.into_iter().collect()
+        }
+    } else {
+        // No manifest - use all Parquet files from listing
+        let list_result = match storage_cached.list(table_type, table_id, user_id).await {
+            Ok(result) => result,
+            Err(_) => {
+                log::trace!(
+                    "[pk_exists_batch_in_cold] No storage dir for {}.{} {} - PK not in cold",
+                    namespace.as_str(),
+                    table.as_str(),
+                    scope_label
+                );
+                return Ok(None);
+            },
+        };
+        if list_result.is_empty() {
+            log::trace!(
+                "[pk_exists_batch_in_cold] No files in storage for {}.{} {} - PK not in cold",
                 namespace.as_str(),
                 table.as_str(),
                 scope_label
             );
             return Ok(None);
         }
-        log::trace!(
-            "[pk_exists_batch_in_cold] Manifest pruning: {} of {} segments may contain {} PKs for {}.{} {}",
-            relevant_files.len(),
-            m.segments.len(),
-            pk_values.len(),
-            namespace.as_str(),
-            table.as_str(),
-            scope_label
-        );
-        relevant_files.into_iter().collect()
-    } else {
-        // No manifest - use all Parquet files from listing
-        let prefix = list_result.prefix.trim_end_matches('/');
-        list_result
-            .paths
-            .into_iter()
-            .filter_map(|path| {
-                let stripped = strip_list_prefix(&path, prefix).unwrap_or(&path);
-                if stripped.ends_with(".parquet") {
-                    Some(stripped.to_string())
-                } else {
-                    None
-                }
-            })
-            .collect()
+        collect_parquet_files_from_list(&list_result)
     };
 
     if files_to_scan.is_empty() {
@@ -973,7 +1035,9 @@ pub async fn pk_exists_batch_in_cold(
             &file_name,
             pk_column,
             &pk_set,
-        ).await? {
+        )
+        .await?
+        {
             log::trace!(
                 "[pk_exists_batch_in_cold] Found PK {} in {} for {}.{} {}",
                 found_pk,
@@ -1223,27 +1287,27 @@ where
     let table_id = provider.table_id();
 
     // Get table definition to check if PK is auto-increment
-    let table_def = if let Some(table_def) = provider.schema_registry().get_table_if_exists(table_id)?
-    {
-        // Fast path: Skip uniqueness check if PK is auto-increment
-        if crate::utils::pk::PkExistenceChecker::is_auto_increment_pk(&table_def) {
-            log::trace!(
-                "[ensure_unique_pk_value] Skipping PK check for {} - PK is auto-increment",
-                table_id
-            );
-            return Ok(());
-        }
-        table_def
-    } else {
-        return Ok(()); // Table not found, will error elsewhere
-    };
+    let table_def =
+        if let Some(table_def) = provider.schema_registry().get_table_if_exists(table_id)? {
+            // Fast path: Skip uniqueness check if PK is auto-increment
+            if crate::utils::pk::PkExistenceChecker::is_auto_increment_pk(&table_def) {
+                log::trace!(
+                    "[ensure_unique_pk_value] Skipping PK check for {} - PK is auto-increment",
+                    table_id
+                );
+                return Ok(());
+            }
+            table_def
+        } else {
+            return Ok(()); // Table not found, will error elsewhere
+        };
 
     let pk_name = provider.primary_key_field_name();
     if let Some(pk_value) = row_data.get(pk_name) {
         if !matches!(pk_value, ScalarValue::Null) {
             let pk_str = unified_dml::extract_user_pk_value(row_data, pk_name)?;
             let user_scope = resolve_user_scope(scope);
-            
+
             //Step 1: Check hot storage (RocksDB) - fast PK index lookup
             if provider.find_row_key_by_id_field(user_scope, &pk_str).await?.is_some() {
                 return Err(KalamDbError::AlreadyExists(format!(
@@ -1254,12 +1318,12 @@ where
 
             // Step 2: Check cold storage (Parquet files) using PkExistenceChecker
             let core = provider.core();
-            
+
             // Skip cold storage check if storage registry is not available
             let Some(storage_registry) = core.storage_registry.clone() else {
                 return Ok(()); // No cold storage to check
             };
-            
+
             let pk_checker = crate::utils::pk::PkExistenceChecker::new(
                 core.schema_registry.clone(),
                 storage_registry,
@@ -1267,13 +1331,9 @@ where
             );
 
             let table_type = P::provider_table_type(provider);
-            let check_result = pk_checker.check_pk_exists(
-                &table_def,
-                table_id,
-                table_type,
-                scope,
-                &pk_str,
-            ).await?;
+            let check_result = pk_checker
+                .check_pk_exists(&table_def, table_id, table_type, scope, &pk_str)
+                .await?;
 
             if let crate::utils::pk::PkCheckResult::FoundInCold { segment_path } = check_result {
                 return Err(KalamDbError::AlreadyExists(format!(
@@ -1357,8 +1417,7 @@ where
     }
 
     // Get table definition to check if PK is auto-increment
-    if let Some(table_def) = provider.schema_registry().get_table_if_exists(table_id)?
-    {
+    if let Some(table_def) = provider.schema_registry().get_table_if_exists(table_id)? {
         if crate::utils::pk::PkExistenceChecker::is_auto_increment_pk(&table_def) {
             return Err(KalamDbError::InvalidOperation(format!(
                 "Cannot modify auto-increment primary key column '{}' in table {}",

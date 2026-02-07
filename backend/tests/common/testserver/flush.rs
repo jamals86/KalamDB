@@ -22,11 +22,7 @@ async fn force_flush_table(server: &HttpTestServer, ns: &str, table: &str) -> Re
         flush_threshold: None,
     };
 
-    let ctx = JobContext::new(
-        app_ctx.clone(),
-        format!("test-flush-{}-{}", ns, table),
-        params,
-    );
+    let ctx = JobContext::new(app_ctx.clone(), format!("test-flush-{}-{}", ns, table), params);
 
     let executor = FlushExecutor::new();
     let _ = executor.execute_leader(&ctx).await?;

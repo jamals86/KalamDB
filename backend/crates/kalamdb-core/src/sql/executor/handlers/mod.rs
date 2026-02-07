@@ -21,7 +21,6 @@ use kalamdb_sql::statement_classifier::SqlStatement;
 // Typed handlers organized by category
 pub mod cluster;
 pub mod compact;
-pub mod dml;
 pub mod flush;
 pub mod jobs;
 pub mod namespace;
@@ -35,12 +34,7 @@ pub mod user;
 pub mod view;
 
 // Re-export core types from executor/models for convenience
-pub use crate::sql::context::{
-    ExecutionContext, ExecutionMetadata, ExecutionResult, ScalarValue,
-};
-
-// Re-export DML handlers (keeping old exports for compatibility)
-pub use dml::{DeleteHandler, InsertHandler, UpdateHandler};
+pub use crate::sql::context::{ExecutionContext, ExecutionMetadata, ExecutionResult, ScalarValue};
 
 // Re-export legacy placeholder handlers
 pub use typed::TypedStatementHandler;
@@ -89,7 +83,7 @@ pub trait StatementHandler: Send + Sync {
     ///
     /// # Arguments
     /// * `statement` - Parsed SQL statement (from kalamdb_sql)
-    /// * `params` - Parameter values for prepared statements (? placeholders)
+    /// * `params` - Parameter values for prepared statements ($1, $2, ... placeholders)
     /// * `context` - Execution context (user, role, namespace, audit info, session)
     ///
     /// # Returns

@@ -286,16 +286,8 @@ impl DropStorageStatement {
         let mut if_exists = false;
         let mut storage_index = 2;
 
-        if tokens
-            .get(2)
-            .map(|token| token.eq_ignore_ascii_case("IF"))
-            .unwrap_or(false)
-        {
-            if tokens
-                .get(3)
-                .map(|token| token.eq_ignore_ascii_case("EXISTS"))
-                .unwrap_or(false)
-            {
+        if tokens.get(2).map(|token| token.eq_ignore_ascii_case("IF")).unwrap_or(false) {
+            if tokens.get(3).map(|token| token.eq_ignore_ascii_case("EXISTS")).unwrap_or(false) {
                 if_exists = true;
                 storage_index = 4;
             } else {

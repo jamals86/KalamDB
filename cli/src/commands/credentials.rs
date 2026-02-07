@@ -45,7 +45,11 @@ pub fn handle_credentials(cli: &Cli, credential_store: &mut FileCredentialStore)
                 if let Some(ref refresh_token) = creds.refresh_token {
                     println!("Refresh Token: {}...", &refresh_token[..refresh_token.len().min(20)]);
                     if let Some(ref refresh_expires) = creds.refresh_expires_at {
-                        let expired = if creds.is_refresh_expired() { " (EXPIRED)" } else { "" };
+                        let expired = if creds.is_refresh_expired() {
+                            " (EXPIRED)"
+                        } else {
+                            ""
+                        };
                         println!("Refresh Expires: {}{}", refresh_expires, expired);
                     }
                 }

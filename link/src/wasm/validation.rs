@@ -49,8 +49,7 @@ pub(crate) fn validate_row_id(row_id: &str) -> Result<(), JsValue> {
 
     // Check for SQL injection patterns
     let dangerous_patterns = [
-        ";", "--", "/*", "*/", "'", "\"", "DROP", "DELETE", "UPDATE", "INSERT", "UNION",
-        "SELECT",
+        ";", "--", "/*", "*/", "'", "\"", "DROP", "DELETE", "UPDATE", "INSERT", "UNION", "SELECT",
     ];
     let upper = row_id.to_uppercase();
     for pattern in dangerous_patterns {
@@ -83,11 +82,7 @@ pub(crate) fn quote_table_name(table_name: &str) -> String {
     if let Some(dot_pos) = table_name.find('.') {
         let namespace = &table_name[..dot_pos];
         let table = &table_name[dot_pos + 1..];
-        format!(
-            "\"{}\".\"{}\"",
-            namespace.replace('"', "\"\""),
-            table.replace('"', "\"\"")
-        )
+        format!("\"{}\".\"{}\"", namespace.replace('"', "\"\""), table.replace('"', "\"\""))
     } else {
         format!("\"{}\"", table_name.replace('"', "\"\""))
     }

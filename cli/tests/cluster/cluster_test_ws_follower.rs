@@ -124,7 +124,7 @@ async fn execute_query_with_retry(
                 } else {
                     return Err(err_msg);
                 }
-            }
+            },
             Err(e) => {
                 let err_msg = e.to_string();
                 if is_retryable_cluster_error_for_sql(sql, &err_msg) {
@@ -132,7 +132,7 @@ async fn execute_query_with_retry(
                 } else {
                     return Err(err_msg);
                 }
-            }
+            },
         }
 
         tokio::time::sleep(Duration::from_millis(300 + (attempt as u64 * 200))).await;

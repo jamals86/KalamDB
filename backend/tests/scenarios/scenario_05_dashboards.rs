@@ -111,7 +111,8 @@ async fn test_scenario_05_dashboards_shared_reference() -> anyhow::Result<()> {
                 &format!(
                     "INSERT INTO {}.activity (id, plan_id, action) VALUES ({}, 2, 'action_{}')",
                     ns, i, i
-                ), None,
+                ),
+                None,
                 None,
                 None,
             )
@@ -126,7 +127,8 @@ async fn test_scenario_05_dashboards_shared_reference() -> anyhow::Result<()> {
                 &format!(
                     "INSERT INTO {}.activity (id, plan_id, action) VALUES ({}, 1, 'action_{}')",
                     ns, i, i
-                ), None,
+                ),
+                None,
                 None,
                 None,
             )
@@ -169,7 +171,8 @@ async fn test_scenario_05_dashboards_shared_reference() -> anyhow::Result<()> {
     // =========================================================
     let _ = user1_client
         .execute_query(
-            &format!("INSERT INTO {}.plans (id, name, price) VALUES (99, 'Hacker Plan', 0)", ns), None,
+            &format!("INSERT INTO {}.plans (id, name, price) VALUES (99, 'Hacker Plan', 0)", ns),
+            None,
             None,
             None,
         )
@@ -207,7 +210,12 @@ async fn test_scenario_05_dashboards_shared_reference() -> anyhow::Result<()> {
         if resp.success() {
             // Verify old rows still readable
             let resp = user1_client
-                .execute_query(&format!("SELECT * FROM {}.activity WHERE id = 1", ns), None, None, None)
+                .execute_query(
+                    &format!("SELECT * FROM {}.activity WHERE id = 1", ns),
+                    None,
+                    None,
+                    None,
+                )
                 .await?;
             assert!(resp.success(), "Old rows should still be readable after schema change");
         }
@@ -260,7 +268,8 @@ async fn test_scenario_05_rbac_restrictions() -> anyhow::Result<()> {
     let admin_client = server.link_client("root");
     let resp = admin_client
         .execute_query(
-            &format!("INSERT INTO {}.system_config (key, value) VALUES ('max_users', '1000')", ns), None,
+            &format!("INSERT INTO {}.system_config (key, value) VALUES ('max_users', '1000')", ns),
+            None,
             None,
             None,
         )
@@ -314,7 +323,8 @@ async fn test_scenario_05_schema_evolution() -> anyhow::Result<()> {
                 &format!(
                     "INSERT INTO {}.events (id, event_name) VALUES ({}, 'event_{}')",
                     ns, i, i
-                ), None,
+                ),
+                None,
                 None,
                 None,
             )
@@ -351,7 +361,8 @@ async fn test_scenario_05_schema_evolution() -> anyhow::Result<()> {
         // Old data should still be readable
         let resp = client
             .execute_query(
-                &format!("SELECT id, event_name FROM {}.events WHERE id <= 5 ORDER BY id", ns), None,
+                &format!("SELECT id, event_name FROM {}.events WHERE id <= 5 ORDER BY id", ns),
+                None,
                 None,
                 None,
             )

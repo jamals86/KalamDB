@@ -136,9 +136,8 @@ mod tests {
 
         // Test bincode round-trip
         let encoded = bincode::encode_to_vec(&route, bincode::config::standard()).unwrap();
-        let decoded: TopicRoute = bincode::decode_from_slice(&encoded, bincode::config::standard())
-            .unwrap()
-            .0;
+        let decoded: TopicRoute =
+            bincode::decode_from_slice(&encoded, bincode::config::standard()).unwrap().0;
         assert_eq!(route, decoded);
 
         // Test JSON round-trip

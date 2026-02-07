@@ -5,6 +5,7 @@ interface QueryResultsBarProps {
   success: boolean;
   rowCount: number | null;
   executionTime: number | null;
+  executedAs: string | null;
   error: string | null;
   onExport: () => void;
 }
@@ -13,6 +14,7 @@ export function QueryResultsBar({
   success,
   rowCount,
   executionTime,
+  executedAs,
   error,
   onExport,
 }: QueryResultsBarProps) {
@@ -50,6 +52,12 @@ export function QueryResultsBar({
         {executionTime !== null && (
           <span className="text-sm text-muted-foreground">
             Time: {executionTime}ms
+          </span>
+        )}
+
+        {executedAs && (
+          <span className="text-sm text-muted-foreground">
+            As: {executedAs}
           </span>
         )}
       </div>

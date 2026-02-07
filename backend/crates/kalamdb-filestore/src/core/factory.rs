@@ -15,7 +15,9 @@
 use crate::core::paths::parse_remote_url;
 use crate::error::{FilestoreError, Result};
 use kalamdb_configs::config::types::RemoteStorageTimeouts;
-use kalamdb_system::providers::storages::models::{StorageLocationConfig, StorageLocationConfigError};
+use kalamdb_system::providers::storages::models::{
+    StorageLocationConfig, StorageLocationConfigError,
+};
 use kalamdb_system::Storage;
 use object_store::aws::AmazonS3Builder;
 use object_store::azure::MicrosoftAzureBuilder;
@@ -28,12 +30,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-
 /// Build an `ObjectStore` instance from a Storage entity.
 ///
 /// All storage types (local, S3, GCS, Azure) are unified under `Arc<dyn ObjectStore>`.
 /// For local storage, uses `LocalFileSystem` which implements the same trait.
-/// 
+///
 /// Timeouts are applied from server config for remote storage backends.
 pub fn build_object_store(
     storage: &Storage,
@@ -52,9 +53,11 @@ pub fn build_object_store(
 /// Build ClientOptions with timeouts from server configuration.
 fn build_client_options(timeouts: &RemoteStorageTimeouts) -> Option<ClientOptions> {
     let mut client_options = ClientOptions::new();
-    client_options = client_options.with_timeout(Duration::from_secs(timeouts.request_timeout_secs));
-    client_options = client_options.with_connect_timeout(Duration::from_secs(timeouts.connect_timeout_secs));
-    
+    client_options =
+        client_options.with_timeout(Duration::from_secs(timeouts.request_timeout_secs));
+    client_options =
+        client_options.with_connect_timeout(Duration::from_secs(timeouts.connect_timeout_secs));
+
     Some(client_options)
 }
 
@@ -121,8 +124,7 @@ fn build_s3(
     let (bucket, prefix) = parse_remote_url(&storage.base_directory, &["s3://"])?;
 
     // Start with bucket name
-    let mut builder = AmazonS3Builder::new()
-        .with_bucket_name(bucket);
+    let mut builder = AmazonS3Builder::new().with_bucket_name(bucket);
 
     // Always set region (even for S3-compatible)
     let region = cfg.region.as_deref().unwrap_or("us-east-1");
@@ -158,9 +160,7 @@ fn build_s3(
         }
     }
 
-    let store = builder.build().map_err(|e| {
-        FilestoreError::Config(format!("S3: {}", e))
-    })?;
+    let store = builder.build().map_err(|e| FilestoreError::Config(format!("S3: {}", e)))?;
 
     wrap_with_prefix(store, &prefix)
 }
@@ -172,13 +172,12 @@ fn build_gcs(
 ) -> Result<Arc<dyn ObjectStore>> {
     let (bucket, prefix) = parse_remote_url(&storage.base_directory, &["gs://", "gcs://"])?;
 
-    let mut builder = GoogleCloudStorageBuilder::new()
-        .with_bucket_name(&bucket);
+    let mut builder = GoogleCloudStorageBuilder::new().with_bucket_name(&bucket);
 
     if let Some(ref sa) = cfg.service_account_json {
         builder = builder.with_service_account_key(sa);
     }
-    
+
     // Apply timeout configuration from server config
     if let Some(client_options) = build_client_options(timeouts) {
         builder = builder.with_client_options(client_options);
@@ -196,8 +195,7 @@ fn build_azure(
 ) -> Result<Arc<dyn ObjectStore>> {
     let (container, prefix) = parse_remote_url(&storage.base_directory, &["az://", "azure://"])?;
 
-    let mut builder = MicrosoftAzureBuilder::new()
-        .with_container_name(&container);
+    let mut builder = MicrosoftAzureBuilder::new().with_container_name(&container);
 
     if let Some(ref account) = cfg.account_name {
         builder = builder.with_account(account);
@@ -214,7 +212,7 @@ fn build_azure(
             .collect();
         builder = builder.with_sas_authorization(query_pairs);
     }
-    
+
     // Apply timeout configuration from server config
     if let Some(client_options) = build_client_options(timeouts) {
         builder = builder.with_client_options(client_options);

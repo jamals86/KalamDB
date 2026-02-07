@@ -85,9 +85,7 @@ pub fn init_test_app_context() -> Arc<TestDb> {
             "data/storage".to_string(),
             test_config,
         );
-        TEST_APP_CONTEXT
-            .set(app_ctx)
-            .expect("TEST_APP_CONTEXT already initialized");
+        TEST_APP_CONTEXT.set(app_ctx).expect("TEST_APP_CONTEXT already initialized");
     });
 
     BOOTSTRAP_INIT.call_once(|| {
@@ -95,10 +93,7 @@ pub fn init_test_app_context() -> Arc<TestDb> {
         let executor = app_ctx.executor();
 
         // Use the existing shared runtime
-        let rt = TEST_RUNTIME
-            .get()
-            .expect("TEST_RUNTIME should be initialized")
-            .clone();
+        let rt = TEST_RUNTIME.get().expect("TEST_RUNTIME should be initialized").clone();
 
         let (tx, rx) = std::sync::mpsc::channel();
         rt.spawn(async move {
@@ -144,7 +139,8 @@ pub fn init_test_app_context() -> Arc<TestDb> {
                     storage_id,
                     storage_name: "Local Storage".to_string(),
                     description: Some("Default local storage for tests".to_string()),
-                    storage_type: kalamdb_system::providers::storages::models::StorageType::Filesystem,
+                    storage_type:
+                        kalamdb_system::providers::storages::models::StorageType::Filesystem,
                     base_directory: "/tmp/kalamdb_test".to_string(),
                     credentials: None,
                     config_json: None,
@@ -163,10 +159,7 @@ pub fn init_test_app_context() -> Arc<TestDb> {
 
 pub fn test_app_context() -> Arc<AppContext> {
     init_test_app_context();
-    TEST_APP_CONTEXT
-        .get()
-        .expect("TEST_APP_CONTEXT should be initialized")
-        .clone()
+    TEST_APP_CONTEXT.get().expect("TEST_APP_CONTEXT should be initialized").clone()
 }
 
 /// Create a JobsTableProvider for testing

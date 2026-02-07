@@ -7,8 +7,8 @@
 //! Manages the connection to KalamDB server and execution state throughout
 //! the CLI session lifetime.
 
-use crate::CLI_VERSION;
 use crate::history_menu::{HistoryMenu, HistoryMenuResult};
+use crate::CLI_VERSION;
 use clap::ValueEnum;
 use colored::*;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -537,18 +537,11 @@ impl CLISession {
         for (placeholder, path, mime) in specs {
             let expanded = expand_config_path(Path::new(&path));
             if !expanded.exists() {
-                return Err(CLIError::FileError(format!(
-                    "File not found: {}",
-                    expanded.display()
-                )));
+                return Err(CLIError::FileError(format!("File not found: {}", expanded.display())));
             }
 
             let data = fs::read(&expanded).map_err(|e| {
-                CLIError::FileError(format!(
-                    "Failed to read file {}: {}",
-                    expanded.display(),
-                    e
-                ))
+                CLIError::FileError(format!("Failed to read file {}: {}", expanded.display(), e))
             })?;
 
             let filename = expanded
@@ -603,9 +596,7 @@ impl CLISession {
         }
 
         if idx >= bytes.len() || bytes[idx] != b'(' {
-            return Err(CLIError::ParseError(
-                "Invalid file() syntax: expected '('".into(),
-            ));
+            return Err(CLIError::ParseError("Invalid file() syntax: expected '('".into()));
         }
         idx += 1;
 
@@ -636,9 +627,7 @@ impl CLISession {
         }
 
         if idx >= bytes.len() || bytes[idx] != b')' {
-            return Err(CLIError::ParseError(
-                "Invalid file() syntax: expected ')'".into(),
-            ));
+            return Err(CLIError::ParseError("Invalid file() syntax: expected ')'".into()));
         }
 
         Ok((idx + 1, path, mime))
@@ -688,20 +677,21 @@ impl CLISession {
             idx += 1;
         }
 
-        Err(CLIError::ParseError(
-            "Invalid file() syntax: unterminated string".into(),
-        ))
+        Err(CLIError::ParseError("Invalid file() syntax: unterminated string".into()))
     }
 
     fn build_placeholder(path: &str, counts: &mut HashMap<String, usize>) -> String {
-        let filename = Path::new(path)
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("file");
+        let filename = Path::new(path).file_name().and_then(|name| name.to_str()).unwrap_or("file");
 
         let mut base = filename
             .chars()
-            .map(|c| if c.is_ascii_alphanumeric() || "-_.".contains(c) { c } else { '_' })
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || "-_.".contains(c) {
+                    c
+                } else {
+                    '_'
+                }
+            })
             .collect::<String>();
 
         if base.is_empty() {
@@ -996,7 +986,7 @@ impl CLISession {
         let mut rl = Editor::<CLIHelper, DefaultHistory>::with_config(config)?;
         rl.set_helper(Some(helper));
         rl.bind_sequence(KeyEvent::from('\t'), Cmd::Complete);
-        
+
         // Bind Up arrow to move to beginning then accept line (submits with current content)
         // We'll detect empty submissions from up arrow
         // Note: This works best on empty lines - if line has content, up arrow will submit it
@@ -1018,7 +1008,7 @@ impl CLISession {
         // Main REPL loop
         let mut accumulated_command = String::new();
         let mut prefill_next = String::new(); // Track if we need to prefill from history
-        
+
         loop {
             // Use continuation prompt if we're accumulating a multi-line command
             let prompt = if accumulated_command.is_empty() {
@@ -1039,16 +1029,17 @@ impl CLISession {
             match readline_result {
                 Ok(line) => {
                     let line = line.trim();
-                    
+
                     // Check if we got an empty line while not accumulating and no prefill
                     // This happens when user presses Up arrow on empty line (bound to AcceptLine)
                     // DON'T open menu if:
                     // - User already has text (they want to navigate within text)
                     // - There's a prefill pending (user pressed Enter on prefilled command)
-                    if line.is_empty() && accumulated_command.is_empty() && prefill_next.is_empty() {
+                    if line.is_empty() && accumulated_command.is_empty() && prefill_next.is_empty()
+                    {
                         // Show history menu instead of doing nothing
                         let history_entries = history.load().unwrap_or_default();
-                        
+
                         if !history_entries.is_empty() {
                             // Show the interactive history menu
                             let mut menu = HistoryMenu::new(history_entries, self.color);
@@ -1061,7 +1052,8 @@ impl CLISession {
                                     prefill_next = selected_cmd;
                                     // Continue to show the prompt with command prefilled
                                 },
-                                Ok(HistoryMenuResult::Cancelled) | Ok(HistoryMenuResult::Continue) => {
+                                Ok(HistoryMenuResult::Cancelled)
+                                | Ok(HistoryMenuResult::Continue) => {
                                     // No action needed
                                 },
                                 Err(e) => {
@@ -1098,7 +1090,8 @@ impl CLISession {
 
                     // Add complete command to history (preserving newlines)
                     // Skip adding \history, \h, \quit, and \q commands to history
-                    let skip_history = matches!(final_command.as_str(), "\\history" | "\\h" | "\\quit" | "\\q");
+                    let skip_history =
+                        matches!(final_command.as_str(), "\\history" | "\\h" | "\\quit" | "\\q");
                     if !skip_history {
                         let _ = rl.add_history_entry(&final_command);
                         let _ = history.append(&final_command);
@@ -1127,12 +1120,12 @@ impl CLISession {
                             if matches!(command, Command::History) {
                                 // Load history entries for the menu
                                 let history_entries = history.load().unwrap_or_default();
-                                
+
                                 if history_entries.is_empty() {
                                     println!("{}", "No command history available".dimmed());
                                     continue;
                                 }
-                                
+
                                 // Show the interactive history menu
                                 let mut menu = HistoryMenu::new(history_entries, self.color);
                                 match menu.run("") {
@@ -1301,13 +1294,23 @@ impl CLISession {
             pb.enable_steady_tick(Duration::from_millis(80));
             let resp = self
                 .client
-                .execute_query("SELECT table_name, namespace_id FROM system.tables", None, None, None)
+                .execute_query(
+                    "SELECT table_name, namespace_id FROM system.tables",
+                    None,
+                    None,
+                    None,
+                )
                 .await?;
             pb.finish_and_clear();
             resp
         } else {
             self.client
-                .execute_query("SELECT table_name, namespace_id FROM system.tables", None, None, None)
+                .execute_query(
+                    "SELECT table_name, namespace_id FROM system.tables",
+                    None,
+                    None,
+                    None,
+                )
                 .await?
         };
 

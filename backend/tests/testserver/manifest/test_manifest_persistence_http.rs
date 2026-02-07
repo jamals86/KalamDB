@@ -86,7 +86,7 @@ async fn test_user_table_manifest_persistence_over_http() -> anyhow::Result<()> 
 
         flush_table_and_wait(server, &ns, table).await?;
 
-            // wait_for_flush_job_completed(server, &ns, table).await?;
+        // wait_for_flush_job_completed(server, &ns, table).await?;
 
         let deadline = Instant::now() + Duration::from_secs(20);
         let _manifest_path = loop {

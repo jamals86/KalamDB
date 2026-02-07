@@ -304,6 +304,91 @@ async fn test_delete_as_user() {
     assert_eq!(resp.results[0].rows.as_ref().unwrap().len(), 0, "Record should be deleted");
 }
 
+/// T175: SELECT AS USER scopes reads to impersonated subject on USER tables
+#[actix_web::test]
+async fn test_select_as_user_scopes_reads() {
+    let server = TestServer::new_shared().await;
+    let ns = "test_select_as_user_scope";
+
+    let service_user = insert_user(&server, "svc_select_scope", Role::Service).await;
+    let user1 = insert_user(&server, "scope_user1", Role::User).await;
+    let user2 = insert_user(&server, "scope_user2", Role::User).await;
+
+    server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await;
+    let create_table = format!(
+        "CREATE TABLE {}.items (id VARCHAR PRIMARY KEY, value VARCHAR) WITH (TYPE = 'USER', STORAGE_ID = 'local')",
+        ns
+    );
+    server.execute_sql(&create_table).await;
+
+    let insert_user1 = format!(
+        "INSERT INTO {}.items (id, value) VALUES ('1', 'user1-data') AS USER '{}'",
+        ns,
+        user1.as_str()
+    );
+    let insert_user2 = format!(
+        "INSERT INTO {}.items (id, value) VALUES ('2', 'user2-data') AS USER '{}'",
+        ns,
+        user2.as_str()
+    );
+    assert_eq!(
+        server.execute_sql_as_user(&insert_user1, service_user.as_str()).await.status,
+        ResponseStatus::Success
+    );
+    assert_eq!(
+        server.execute_sql_as_user(&insert_user2, service_user.as_str()).await.status,
+        ResponseStatus::Success
+    );
+
+    let select_as_user1 = format!("SELECT * FROM {}.items AS USER '{}'", ns, user1.as_str());
+    let resp = server.execute_sql_as_user(&select_as_user1, service_user.as_str()).await;
+    assert_eq!(resp.status, ResponseStatus::Success);
+    let rows = resp.rows_as_maps();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].get("value").and_then(|v| v.as_str()), Some("user1-data"));
+}
+
+/// T175.1: Stream table data remains isolated across users, including SELECT AS USER
+#[actix_web::test]
+async fn test_stream_table_isolation_with_select_as_user() {
+    let server = TestServer::new_shared().await;
+    let ns = "test_stream_as_user_scope";
+
+    let service_user = insert_user(&server, "svc_stream_scope", Role::Service).await;
+    let user1 = insert_user(&server, "stream_scope_user1", Role::User).await;
+    let user2 = insert_user(&server, "stream_scope_user2", Role::User).await;
+
+    server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await;
+    let create_table = format!(
+        "CREATE TABLE {}.events (id VARCHAR PRIMARY KEY, payload VARCHAR) WITH (TYPE = 'STREAM', TTL_SECONDS = 3600)",
+        ns
+    );
+    server.execute_sql(&create_table).await;
+
+    let insert_stream_user1 = format!(
+        "INSERT INTO {}.events (id, payload) VALUES ('1', 'event-user1') AS USER '{}'",
+        ns,
+        user1.as_str()
+    );
+    assert_eq!(
+        server
+            .execute_sql_as_user(&insert_stream_user1, service_user.as_str())
+            .await
+            .status,
+        ResponseStatus::Success
+    );
+
+    let select_as_user2 = format!("SELECT * FROM {}.events AS USER '{}'", ns, user2.as_str());
+    let resp_user2 = server.execute_sql_as_user(&select_as_user2, service_user.as_str()).await;
+    assert_eq!(resp_user2.status, ResponseStatus::Success);
+    assert_eq!(resp_user2.rows_as_maps().len(), 0);
+
+    let direct_user2 = format!("SELECT * FROM {}.events", ns);
+    let resp_direct_user2 = server.execute_sql_as_user(&direct_user2, user2.as_str()).await;
+    assert_eq!(resp_direct_user2.status, ResponseStatus::Success);
+    assert_eq!(resp_direct_user2.rows_as_maps().len(), 0);
+}
+
 /// T173: AS USER on SHARED table is rejected
 #[actix_web::test]
 async fn test_as_user_on_shared_table_rejected() {

@@ -7,10 +7,10 @@
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use crate::schema_registry::TableType;
-use crate::sql::{ExecutionContext, ExecutionResult};
 use crate::sql::executor::SqlExecutor;
-use datafusion::execution::context::SessionContext;
+use crate::sql::{ExecutionContext, ExecutionResult};
 use datafusion::arrow::array::{Array, Int64Array};
+use datafusion::execution::context::SessionContext;
 use datafusion_common::ScalarValue;
 use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::ids::SeqId;
@@ -233,7 +233,8 @@ impl InitialDataFetcher {
 
         let mut sql = format!("SELECT {} FROM {}", select_clause, table_name);
 
-        let where_clauses = self.build_where_clauses(table_id, table_type, &options, where_clause)?;
+        let where_clauses =
+            self.build_where_clauses(table_id, table_type, &options, where_clause)?;
 
         if !where_clauses.is_empty() {
             sql.push_str(" WHERE ");
@@ -371,9 +372,11 @@ impl InitialDataFetcher {
                 .with_read_context(ReadContext::Internal);
 
         let table_name = table_id.full_name();
-        let mut sql = format!("SELECT MAX({}) AS max_seq FROM {}", SystemColumnNames::SEQ, table_name);
+        let mut sql =
+            format!("SELECT MAX({}) AS max_seq FROM {}", SystemColumnNames::SEQ, table_name);
 
-        let where_clauses = self.build_where_clauses(table_id, table_type, options, where_clause)?;
+        let where_clauses =
+            self.build_where_clauses(table_id, table_type, options, where_clause)?;
         if !where_clauses.is_empty() {
             sql.push_str(" WHERE ");
             sql.push_str(&where_clauses.join(" AND "));
@@ -401,9 +404,7 @@ impl InitialDataFetcher {
             .column(0)
             .as_any()
             .downcast_ref::<Int64Array>()
-            .ok_or_else(|| {
-                KalamDbError::Other("max_seq column is not Int64".to_string())
-            })?;
+            .ok_or_else(|| KalamDbError::Other("max_seq column is not Int64".to_string()))?;
 
         if array.is_null(0) {
             return Ok(None);
@@ -461,13 +462,13 @@ mod tests {
     use crate::schema_registry::CachedTableData;
     use crate::schema_registry::TablesSchemaRegistryAdapter;
     use crate::sql::executor::SqlExecutor;
-    use kalamdb_commons::ChangeNotification;
     use kalamdb_commons::ids::{SeqId, UserTableRowId};
     use kalamdb_commons::models::datatypes::KalamDataType;
     use kalamdb_commons::models::schemas::column_default::ColumnDefault;
     use kalamdb_commons::models::schemas::{ColumnDefinition, TableDefinition};
     use kalamdb_commons::models::{ConnectionId as ConnId, LiveQueryId as CommonsLiveQueryId};
     use kalamdb_commons::models::{NamespaceId, TableName};
+    use kalamdb_commons::ChangeNotification;
     use kalamdb_commons::UserId;
     use kalamdb_store::test_utils::InMemoryBackend;
     use kalamdb_system::NotificationService;
@@ -599,9 +600,8 @@ mod tests {
         let _ = schema_registry.put(table_def);
 
         // Create a mock provider with the store
-        let tables_schema_registry = Arc::new(TablesSchemaRegistryAdapter::new(
-            app_context.schema_registry(),
-        ));
+        let tables_schema_registry =
+            Arc::new(TablesSchemaRegistryAdapter::new(app_context.schema_registry()));
         let core = Arc::new(TableProviderCore::new(
             table_id.clone(),
             TableType::User,
@@ -609,7 +609,8 @@ mod tests {
             app_context.system_columns_service(),
             Some(app_context.storage_registry()),
             app_context.manifest_service(),
-            Arc::clone(app_context.notification_service()) as Arc<dyn NotificationService<Notification = ChangeNotification>>,
+            Arc::clone(app_context.notification_service())
+                as Arc<dyn NotificationService<Notification = ChangeNotification>>,
             app_context.clone(),
         ));
         let provider = Arc::new(
@@ -737,9 +738,8 @@ mod tests {
             .insert_cached(table_id.clone(), Arc::new(CachedTableData::new(Arc::new(table_def))));
 
         // Create and register provider
-        let tables_schema_registry = Arc::new(TablesSchemaRegistryAdapter::new(
-            app_context.schema_registry(),
-        ));
+        let tables_schema_registry =
+            Arc::new(TablesSchemaRegistryAdapter::new(app_context.schema_registry()));
         let core = Arc::new(TableProviderCore::new(
             table_id.clone(),
             TableType::User,
@@ -747,7 +747,8 @@ mod tests {
             app_context.system_columns_service(),
             Some(app_context.storage_registry()),
             app_context.manifest_service(),
-            Arc::clone(app_context.notification_service()) as Arc<dyn NotificationService<Notification = ChangeNotification>>,
+            Arc::clone(app_context.notification_service())
+                as Arc<dyn NotificationService<Notification = ChangeNotification>>,
             app_context.clone(),
         ));
         let provider = Arc::new(
@@ -906,9 +907,8 @@ mod tests {
             .insert_cached(table_id.clone(), Arc::new(CachedTableData::new(Arc::new(table_def))));
 
         // Create and register provider
-        let tables_schema_registry = Arc::new(TablesSchemaRegistryAdapter::new(
-            app_context.schema_registry(),
-        ));
+        let tables_schema_registry =
+            Arc::new(TablesSchemaRegistryAdapter::new(app_context.schema_registry()));
         let core = Arc::new(TableProviderCore::new(
             table_id.clone(),
             TableType::User,
@@ -916,7 +916,8 @@ mod tests {
             app_context.system_columns_service(),
             Some(app_context.storage_registry()),
             app_context.manifest_service(),
-            Arc::clone(app_context.notification_service()) as Arc<dyn NotificationService<Notification = ChangeNotification>>,
+            Arc::clone(app_context.notification_service())
+                as Arc<dyn NotificationService<Notification = ChangeNotification>>,
             app_context.clone(),
         ));
         let provider = Arc::new(

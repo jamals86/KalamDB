@@ -5,7 +5,9 @@ use kalamdb_core::sql::executor::ScalarValue;
 use serde_json::Value as JsonValue;
 
 /// Parse scalar parameters from JSON values
-pub fn parse_scalar_params(params_json: &Option<Vec<JsonValue>>) -> Result<Vec<ScalarValue>, String> {
+pub fn parse_scalar_params(
+    params_json: &Option<Vec<JsonValue>>,
+) -> Result<Vec<ScalarValue>, String> {
     match params_json {
         Some(json_params) => {
             let mut scalar_params = Vec::new();
@@ -15,7 +17,7 @@ pub fn parse_scalar_params(params_json: &Option<Vec<JsonValue>>) -> Result<Vec<S
                 scalar_params.push(scalar);
             }
             Ok(scalar_params)
-        }
+        },
         None => Ok(Vec::new()),
     }
 }

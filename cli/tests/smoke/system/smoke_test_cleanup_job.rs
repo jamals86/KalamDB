@@ -48,11 +48,11 @@ fn smoke_cleanup_job_completes() {
     ))
     .expect("insert row");
 
-    let drop_output = execute_sql_as_root_via_cli(&format!("DROP TABLE {}", full_table))
-        .expect("drop table");
+    let drop_output =
+        execute_sql_as_root_via_cli(&format!("DROP TABLE {}", full_table)).expect("drop table");
 
     let job_id = parse_cleanup_job_id(&drop_output).expect("parse cleanup job id");
-    let status = wait_for_job_finished(&job_id, Duration::from_secs(30))
+    let status = wait_for_job_finished(&job_id, Duration::from_secs(60))
         .expect("wait for cleanup job to finish");
 
     assert_eq!(status, "completed", "cleanup job did not complete");

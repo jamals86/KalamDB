@@ -15,7 +15,7 @@ use dashmap::DashMap;
 use kalamdb_commons::{
     conversions::arrow_json_conversion::row_to_json_map,
     errors::{CommonError, Result},
-    models::{rows::Row, ConsumerGroupId, PayloadMode, TableId, TopicId, TopicOp},
+    models::{rows::Row, ConsumerGroupId, PayloadMode, TableId, TopicId, TopicOp, UserId},
 };
 use kalamdb_store::{EntityStore, StorageBackend};
 use kalamdb_system::providers::topic_offsets::{TopicOffset, TopicOffsetsTableProvider};
@@ -44,15 +44,15 @@ pub struct TopicPublisherService {
     message_store: Arc<TopicMessageStore>,
     /// Store for consumer group offsets (system table provider)
     offset_store: Arc<TopicOffsetsTableProvider>,
-    
+
     /// In-memory cache: TableId → Vec<RouteEntry>
     /// Enables O(1) lookup to check if a table has any topic routes
     table_routes: DashMap<TableId, Vec<RouteEntry>>,
-    
+
     /// In-memory cache: TopicId → Topic
     /// Full topic metadata for quick access
     topics: DashMap<TopicId, Topic>,
-    
+
     /// Per-topic-partition offset counters for message ordering
     /// Key: "topic_id:partition_id", Value: next_offset
     offset_counters: DashMap<String, u64>, //TODO: Use type-safe keys
@@ -68,10 +68,8 @@ impl TopicPublisherService {
         let _ = storage_backend.create_partition(&messages_partition);
         let _ = storage_backend.create_partition(&offsets_partition);
 
-        let message_store = Arc::new(TopicMessageStore::new(
-            storage_backend.clone(),
-            messages_partition.clone()
-        ));
+        let message_store =
+            Arc::new(TopicMessageStore::new(storage_backend.clone(), messages_partition.clone()));
         let offset_store = Arc::new(TopicOffsetsTableProvider::new(storage_backend));
 
         Self {
@@ -149,7 +147,7 @@ impl TopicPublisherService {
     /// Add a single topic to the cache
     pub fn add_topic(&self, topic: Topic) {
         let topic_id = topic.topic_id.clone();
-        
+
         // Add routes to table mapping
         for route in &topic.routes {
             let entry = RouteEntry {
@@ -208,6 +206,7 @@ impl TopicPublisherService {
     /// * `table_id` - ID of the table (namespace + table name)
     /// * `operation` - Type of operation (Insert/Update/Delete)
     /// * `row` - Row containing the affected data
+    /// * `user_id` - Optional user who triggered the change
     ///
     /// # Returns
     /// Number of messages published across all matching topics
@@ -216,6 +215,7 @@ impl TopicPublisherService {
         table_id: &TableId,
         operation: TopicOp,
         row: &Row,
+        user_id: Option<&UserId>,
     ) -> Result<usize> {
         // Fast path: no routes for this table
         let routes = match self.table_routes.get(table_id) {
@@ -224,11 +224,8 @@ impl TopicPublisherService {
         };
 
         // Filter routes by operation
-        let matching: Vec<_> = routes
-            .iter()
-            .filter(|entry| entry.route.op == operation)
-            .cloned()
-            .collect();
+        let matching: Vec<_> =
+            routes.iter().filter(|entry| entry.route.op == operation).cloned().collect();
 
         if matching.is_empty() {
             return Ok(0);
@@ -259,20 +256,21 @@ impl TopicPublisherService {
 
             // Create message
             let timestamp_ms = chrono::Utc::now().timestamp_millis();
-            let message = TopicMessage::new(
+            let message = TopicMessage::new_with_user(
                 entry.topic_id.clone(),
                 partition_id,
                 offset,
                 payload,
                 key,
                 timestamp_ms,
+                user_id.cloned(),
             );
 
             // Store message (TODO: integrate with actual persistence layer)
             // For now, just using message_store directly
-            self.message_store
-                .put(&message.id(), &message)
-                .map_err(|e| CommonError::Internal(format!("Failed to store topic message: {}", e)))?;
+            self.message_store.put(&message.id(), &message).map_err(|e| {
+                CommonError::Internal(format!("Failed to store topic message: {}", e))
+            })?;
 
             total_published += 1;
         }
@@ -297,22 +295,20 @@ impl TopicPublisherService {
             PayloadMode::Diff => {
                 // For now, extract full row (diff requires before/after state)
                 self.extract_full_row_payload(row)
-            }
+            },
         }
     }
 
     /// Extract primary key columns from a Row
     fn extract_key_columns_from_row(&self, row: &Row) -> Result<Vec<u8>> {
         if row.values.is_empty() {
-            return Err(CommonError::InvalidInput(
-                "Cannot extract key from empty row".to_string(),
-            ));
+            return Err(CommonError::InvalidInput("Cannot extract key from empty row".to_string()));
         }
 
         // Convert ScalarValue to JSON using proper conversion (faster and cleaner than Debug)
         let json_map = row_to_json_map(row)
             .map_err(|e| CommonError::Internal(format!("Failed to convert row to JSON: {}", e)))?;
-        
+
         serde_json::to_vec(&json_map)
             .map_err(|e| CommonError::Internal(format!("Failed to serialize keys: {}", e)))
     }
@@ -322,7 +318,7 @@ impl TopicPublisherService {
         // Convert ScalarValue to JSON using proper conversion (faster and cleaner than Debug)
         let json_map = row_to_json_map(row)
             .map_err(|e| CommonError::Internal(format!("Failed to convert row to JSON: {}", e)))?;
-        
+
         serde_json::to_vec(&json_map)
             .map_err(|e| CommonError::Internal(format!("Failed to serialize row: {}", e)))
     }
@@ -334,13 +330,13 @@ impl TopicPublisherService {
         if row.values.is_empty() {
             return Ok(None);
         }
-        
+
         let json_map = row_to_json_map(row)
             .map_err(|e| CommonError::Internal(format!("Failed to convert row to JSON: {}", e)))?;
-        
+
         let json_str = serde_json::to_string(&json_map)
             .map_err(|e| CommonError::Internal(format!("Failed to serialize key: {}", e)))?;
-        
+
         Ok(Some(json_str))
     }
 
@@ -348,9 +344,9 @@ impl TopicPublisherService {
     fn hash_row(&self, row: &Row) -> u64 {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
-        
+
         let mut hasher = DefaultHasher::new();
-        
+
         // Hash the JSON representation for consistency (faster than Debug)
         if let Ok(json_map) = row_to_json_map(row) {
             if let Ok(json_str) = serde_json::to_string(&json_map) {
@@ -358,12 +354,12 @@ impl TopicPublisherService {
                 return hasher.finish();
             }
         }
-        
+
         // Fallback: hash column names only
         for key in row.values.keys() {
             key.hash(&mut hasher);
         }
-        
+
         hasher.finish()
     }
 
@@ -428,6 +424,52 @@ impl TopicPublisherService {
             total_routes: self.table_routes.iter().map(|r| r.len()).sum(),
         }
     }
+
+    /// Restore in-memory offset counters by scanning persisted messages.
+    ///
+    /// After a server restart the `offset_counters` DashMap is empty, which
+    /// would cause new messages to be published starting at offset 0 —
+    /// potentially overwriting previously committed data.  This method scans
+    /// each cached topic/partition for the highest existing offset and seeds
+    /// the counter to `max_offset + 1`.
+    pub fn restore_offset_counters(&self) {
+        for entry in self.topics.iter() {
+            let topic = entry.value();
+            for partition_id in 0..topic.partitions {
+                // Fetch a large batch from offset 0 to find the latest message.
+                // We scan with a high limit; the last returned message carries
+                // the highest offset.
+                match self.message_store.fetch_messages(
+                    &topic.topic_id,
+                    partition_id,
+                    0,
+                    usize::MAX, // scan all
+                ) {
+                    Ok(msgs) => {
+                        if let Some(last) = msgs.last() {
+                            let next = last.offset + 1;
+                            let key = format!("{}:{}", topic.topic_id.as_str(), partition_id);
+                            self.offset_counters.insert(key, next);
+                            log::info!(
+                                "Restored offset counter for topic={} partition={}: next_offset={}",
+                                topic.topic_id.as_str(),
+                                partition_id,
+                                next,
+                            );
+                        }
+                    },
+                    Err(e) => {
+                        log::warn!(
+                            "Failed to restore offset for topic={} partition={}: {}",
+                            topic.topic_id.as_str(),
+                            partition_id,
+                            e,
+                        );
+                    },
+                }
+            }
+        }
+    }
 }
 
 /// Statistics about the topic cache
@@ -441,10 +483,6 @@ pub struct TopicCacheStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datafusion::arrow::{
-        array::{Int32Array, StringArray},
-        datatypes::{DataType, Field, Schema},
-    };
     use datafusion::scalar::ScalarValue;
     use kalamdb_commons::models::{NamespaceId, TableName};
     use kalamdb_store::test_utils::InMemoryBackend;
@@ -544,12 +582,10 @@ mod tests {
             create_test_row(2, "Bob"),
             create_test_row(3, "Charlie"),
         ];
-        
+
         let mut total_count = 0;
         for row in &rows {
-            let count = service
-                .publish_message(&table_id, TopicOp::Insert, row)
-                .unwrap();
+            let count = service.publish_message(&table_id, TopicOp::Insert, row, None).unwrap();
             total_count += count;
         }
 
@@ -573,9 +609,7 @@ mod tests {
         let table_id = TableId::new(ns.clone(), TableName::from("no_routes"));
 
         let row = create_test_row(1, "Test");
-        let count = service
-            .publish_message(&table_id, TopicOp::Insert, &row)
-            .unwrap();
+        let count = service.publish_message(&table_id, TopicOp::Insert, &row, None).unwrap();
 
         assert_eq!(count, 0);
     }

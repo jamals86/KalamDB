@@ -84,12 +84,8 @@ impl FromStr for PayloadMode {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        PayloadMode::from_str_opt(s).ok_or_else(|| {
-            format!(
-                "Invalid PayloadMode: '{}'. Expected: key, full, diff",
-                s
-            )
-        })
+        PayloadMode::from_str_opt(s)
+            .ok_or_else(|| format!("Invalid PayloadMode: '{}'. Expected: key, full, diff", s))
     }
 }
 

@@ -60,10 +60,7 @@ impl HealthMonitor {
         };
 
         let metrics = kalamdb_observability::HealthMonitor::build_metrics(
-            memory_mb,
-            cpu_usage,
-            open_files,
-            counts,
+            memory_mb, cpu_usage, open_files, counts,
         );
 
         // Log the metrics

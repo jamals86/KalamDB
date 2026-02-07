@@ -154,8 +154,8 @@ fn smoke_user_table_subscription_lifecycle() {
     } else {
         std::time::Duration::from_secs(10)
     };
-    let final_status = wait_for_job_finished(&job_id, job_timeout)
-        .expect("flush job should reach terminal state");
+    let final_status =
+        wait_for_job_finished(&job_id, job_timeout).expect("flush job should reach terminal state");
     println!("[FLUSH] Job {} finished with status: {}", job_id, final_status);
 
     // Stop subscription

@@ -6,7 +6,7 @@
     "types": ["node"],
     "declaration": true,
     "outDir": "./dist",
-    "rootDir": "./src",
+    "rootDir": ".",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
@@ -14,11 +14,8 @@
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "allowSyntheticDefaultImports": true,
-    "paths": {
-      "./wasm/*": ["./dist/wasm/*"]
-    },
     "baseUrl": "."
   },
-  "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "tests", ".wasm-out"]
+  "include": ["src/**/*", ".wasm-out/**/*"],
+  "exclude": ["node_modules", "dist", "tests"]
 }

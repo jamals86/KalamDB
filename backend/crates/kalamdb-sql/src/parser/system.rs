@@ -2,9 +2,9 @@
 //!
 //! Parses SQL statements targeting system tables using sqlparser-rs.
 
+use crate::parser::utils::parse_sql_statements;
 use anyhow::{anyhow, Result};
 pub use kalamdb_system::SystemTable;
-use crate::parser::utils::parse_sql_statements;
 use sqlparser::ast::Statement;
 use sqlparser::dialect::PostgreSqlDialect;
 

@@ -310,7 +310,11 @@ impl UserDataStateMachine {
                 self.approximate_size.fetch_add(200, Ordering::Relaxed);
                 Ok(DataResponse::LiveQueryCreated {
                     live_id: live_query.live_id.clone(),
-                    message: if message.is_empty() { None } else { Some(message) },
+                    message: if message.is_empty() {
+                        None
+                    } else {
+                        Some(message)
+                    },
                 })
             },
 
@@ -349,14 +353,11 @@ impl UserDataStateMachine {
                 deleted_at,
                 ..
             } => {
-                log::debug!(
-                    "UserDataStateMachine[{}]: DeleteLiveQuery {}",
-                    self.shard,
-                    live_id
-                );
+                log::debug!("UserDataStateMachine[{}]: DeleteLiveQuery {}", self.shard, live_id);
 
                 if let Some(ref a) = applier {
-                    if let Err(e) = a.delete_live_query(&live_id, deleted_at.timestamp_millis()).await
+                    if let Err(e) =
+                        a.delete_live_query(&live_id, deleted_at.timestamp_millis()).await
                     {
                         log::warn!(
                             "UserDataStateMachine[{}]: DeleteLiveQuery failed: {}",
@@ -383,7 +384,10 @@ impl UserDataStateMachine {
 
                 let removed = if let Some(ref a) = applier {
                     match a
-                        .delete_live_queries_by_connection(&connection_id, deleted_at.timestamp_millis())
+                        .delete_live_queries_by_connection(
+                            &connection_id,
+                            deleted_at.timestamp_millis(),
+                        )
                         .await
                     {
                         Ok(count) => count,
@@ -403,10 +407,7 @@ impl UserDataStateMachine {
                 Ok(DataResponse::RowsAffected(removed))
             },
 
-            UserDataCommand::CleanupNodeSubscriptions {
-                failed_node_id,
-                ..
-            } => {
+            UserDataCommand::CleanupNodeSubscriptions { failed_node_id, .. } => {
                 log::info!(
                     "UserDataStateMachine[{}]: CleanupNodeSubscriptions from node {}",
                     self.shard,
@@ -477,7 +478,7 @@ impl KalamStateMachine for UserDataStateMachine {
                     required_meta_index: required_meta,
                     command_bytes: command.to_vec(),
                 });
-                
+
                 // Mark as applied (buffered) to satisfy Raft log progress
                 self.last_applied_index.store(index, Ordering::Release);
                 self.last_applied_term.store(term, Ordering::Release);

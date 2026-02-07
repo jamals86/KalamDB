@@ -35,8 +35,8 @@
 pub mod macros;
 
 pub mod error;
-pub mod initialization;
 pub mod impls;
+pub mod initialization;
 pub mod models; // Re-export models for external usage
 pub mod providers;
 pub mod registry;
@@ -46,8 +46,8 @@ pub mod system_table_trait;
 
 // Re-export main types
 pub use error::{Result, SystemError};
+pub use impls::{ClusterCoordinator, ManifestService, NotificationService, SchemaRegistry};
 pub use initialization::initialize_system_tables;
-pub use impls::{ClusterCoordinator, NotificationService, ManifestService, SchemaRegistry};
 pub use registry::SystemTablesRegistry;
 pub use services::SystemColumnsService;
 pub use system_table_trait::SystemTableProviderExt;
@@ -62,8 +62,8 @@ pub use kalamdb_session::{
 // Re-export all providers
 pub use providers::{
     AuditLogsTableProvider, InMemoryChecker, JobNodesTableProvider, JobsTableProvider,
-    LiveQueriesTableProvider, ManifestTableProvider, NamespacesTableProvider,
-    StoragesTableProvider, SchemasTableProvider, UsersTableProvider,
+    LiveQueriesTableProvider, ManifestTableProvider, NamespacesTableProvider, SchemasTableProvider,
+    StoragesTableProvider, UsersTableProvider,
 };
 
 // Re-export live query models for convenience
@@ -83,7 +83,9 @@ pub use providers::manifest::models::{
 };
 pub use providers::namespaces::models::Namespace;
 pub use providers::storages::models::{Storage, StorageType};
-pub use providers::users::models::{User, DEFAULT_LOCKOUT_DURATION_MINUTES, DEFAULT_MAX_FAILED_ATTEMPTS};
+pub use providers::users::models::{
+    User, DEFAULT_LOCKOUT_DURATION_MINUTES, DEFAULT_MAX_FAILED_ATTEMPTS,
+};
 
 // Re-export from kalamdb-commons for convenience
 pub use kalamdb_commons::models::{AuthType, Role, UserName};

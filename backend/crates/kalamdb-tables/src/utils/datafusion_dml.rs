@@ -1,0 +1,172 @@
+use datafusion::arrow::array::{ArrayRef, UInt64Array};
+use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
+use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::catalog::Session;
+use datafusion::common::DFSchema;
+use datafusion::datasource::memory::MemTable;
+use datafusion::datasource::TableProvider;
+use datafusion::error::{DataFusionError, Result as DataFusionResult};
+use datafusion::logical_expr::Expr;
+use datafusion::physical_plan::{collect, ExecutionPlan};
+use datafusion::scalar::ScalarValue;
+use kalamdb_commons::conversions::arrow_json_conversion::{
+    arrow_value_to_scalar, json_rows_to_arrow_batch,
+};
+use kalamdb_commons::conversions::scalar_to_pk_string;
+use kalamdb_commons::models::rows::Row;
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
+/// DataFusion requires DML providers to return an execution plan that yields one row
+/// with a single `count` column (`UInt64`) containing affected rows.
+pub async fn rows_affected_plan(
+    state: &dyn Session,
+    rows_affected: u64,
+) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+    let schema = Arc::new(Schema::new(vec![Field::new("count", DataType::UInt64, false)]));
+    let batch = RecordBatch::try_new(
+        Arc::clone(&schema),
+        vec![Arc::new(UInt64Array::from(vec![rows_affected])) as ArrayRef],
+    )?;
+
+    let mem = MemTable::try_new(schema, vec![vec![batch]])?;
+    mem.scan(state, None, &[], None).await
+}
+
+pub async fn collect_input_rows(
+    state: &dyn Session,
+    input: Arc<dyn ExecutionPlan>,
+) -> DataFusionResult<Vec<Row>> {
+    let task_ctx = state.task_ctx();
+    let batches = collect(input, task_ctx).await?;
+    record_batches_to_rows(&batches)
+}
+
+pub async fn collect_matching_rows(
+    provider: &dyn TableProvider,
+    state: &dyn Session,
+    filters: &[Expr],
+) -> DataFusionResult<Vec<Row>> {
+    let scan_plan = provider.scan(state, None, filters, None).await?;
+    let task_ctx = state.task_ctx();
+    let batches = collect(scan_plan, task_ctx).await?;
+    let rows = record_batches_to_rows(&batches)?;
+    if filters.is_empty() {
+        return Ok(rows);
+    }
+
+    let schema = provider.schema();
+    let mut matched = Vec::new();
+    for row in rows {
+        if row_matches_filters(state, &schema, &row, filters)? {
+            matched.push(row);
+        }
+    }
+
+    Ok(matched)
+}
+
+pub fn row_matches_filters(
+    state: &dyn Session,
+    schema: &SchemaRef,
+    row: &Row,
+    filters: &[Expr],
+) -> DataFusionResult<bool> {
+    for filter in filters {
+        let predicate = evaluate_assignment_expr(state, schema, row, filter)?;
+        if !predicate_to_bool(predicate)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+pub fn validate_where_clause(filters: &[Expr], op_name: &str) -> DataFusionResult<()> {
+    if filters.is_empty() {
+        return Err(DataFusionError::Plan(format!("{} requires a WHERE clause", op_name)));
+    }
+    Ok(())
+}
+
+pub fn validate_update_assignments(
+    assignments: &[(String, Expr)],
+    pk_column: &str,
+) -> DataFusionResult<()> {
+    if assignments.is_empty() {
+        return Err(DataFusionError::Plan("UPDATE requires at least one assignment".to_string()));
+    }
+
+    for (column, _) in assignments {
+        if column.eq_ignore_ascii_case(pk_column) {
+            return Err(DataFusionError::Plan(format!(
+                "UPDATE cannot modify primary key column '{}'",
+                pk_column
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+pub fn extract_pk_value(row: &Row, pk_column: &str) -> DataFusionResult<String> {
+    let scalar = row.values.get(pk_column).ok_or_else(|| {
+        DataFusionError::Execution(format!(
+            "Primary key column '{}' not found in matching row",
+            pk_column
+        ))
+    })?;
+
+    scalar_to_pk_string(scalar)
+        .map_err(|e| DataFusionError::Execution(format!("Invalid primary key value: {}", e)))
+}
+
+pub fn evaluate_assignment_expr(
+    state: &dyn Session,
+    schema: &SchemaRef,
+    row: &Row,
+    expr: &Expr,
+) -> DataFusionResult<ScalarValue> {
+    let batch =
+        json_rows_to_arrow_batch(schema, vec![row.clone()]).map_err(DataFusionError::Execution)?;
+
+    let df_schema = DFSchema::try_from(Arc::clone(schema))?;
+    let physical_expr = state.create_physical_expr(expr.clone(), &df_schema)?;
+    let value = physical_expr.evaluate(&batch)?;
+
+    match value {
+        datafusion::logical_expr::ColumnarValue::Scalar(scalar) => Ok(scalar),
+        datafusion::logical_expr::ColumnarValue::Array(array) => {
+            arrow_value_to_scalar(array.as_ref(), 0)
+        },
+    }
+}
+
+fn record_batches_to_rows(batches: &[RecordBatch]) -> DataFusionResult<Vec<Row>> {
+    let total_rows: usize = batches.iter().map(RecordBatch::num_rows).sum();
+    let mut rows = Vec::with_capacity(total_rows);
+
+    for batch in batches {
+        let schema = batch.schema();
+        for row_idx in 0..batch.num_rows() {
+            let mut values = BTreeMap::new();
+            for (col_idx, field) in schema.fields().iter().enumerate() {
+                let scalar = arrow_value_to_scalar(batch.column(col_idx).as_ref(), row_idx)?;
+                values.insert(field.name().to_string(), scalar);
+            }
+            rows.push(Row::new(values));
+        }
+    }
+
+    Ok(rows)
+}
+
+fn predicate_to_bool(value: ScalarValue) -> DataFusionResult<bool> {
+    match value {
+        ScalarValue::Boolean(Some(v)) => Ok(v),
+        ScalarValue::Boolean(None) | ScalarValue::Null => Ok(false),
+        other => Err(DataFusionError::Execution(format!(
+            "WHERE predicate did not evaluate to boolean: {:?}",
+            other
+        ))),
+    }
+}

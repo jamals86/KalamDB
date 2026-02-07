@@ -14,7 +14,9 @@
 
 use super::view_base::VirtualView;
 use crate::schema_registry::RegistryError;
-use datafusion::arrow::array::{ArrayRef, BooleanArray, Int32Array, Int64Array, RecordBatch, StringBuilder};
+use datafusion::arrow::array::{
+    ArrayRef, BooleanArray, Int32Array, Int64Array, RecordBatch, StringBuilder,
+};
 use datafusion::arrow::datatypes::SchemaRef;
 use kalamdb_commons::datatypes::KalamDataType;
 use kalamdb_commons::schemas::{
@@ -232,13 +234,13 @@ impl DescribeView {
             types.append_value(c.data_type.sql_name());
             nulls.push(c.is_nullable);
             pks.push(c.is_primary_key);
-            
+
             if c.default_value.is_none() {
                 defaults.append_null();
             } else {
                 defaults.append_value(c.default_value.to_sql());
             }
-            
+
             if let Some(comment) = &c.column_comment {
                 comments.append_value(comment);
             } else {
@@ -305,7 +307,7 @@ mod tests {
         assert_eq!(def.table_name.as_str(), "describe");
         assert_eq!(def.namespace_id.as_str(), "system");
         assert_eq!(def.columns.len(), 9);
-        
+
         // Verify schema has all required columns
         assert_eq!(def.columns[0].column_name, "column_name");
         assert_eq!(def.columns[1].column_name, "ordinal_position");
@@ -338,10 +340,10 @@ mod tests {
         .unwrap();
 
         let batch = DescribeView::build_batch(&table_def).unwrap();
-        
+
         assert_eq!(batch.num_rows(), 3);
         assert_eq!(batch.num_columns(), 9);
-        
+
         // Verify column names
         let names = batch
             .column(0)

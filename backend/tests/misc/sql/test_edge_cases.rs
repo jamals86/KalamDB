@@ -11,7 +11,10 @@
 
 use super::test_support::TestServer;
 use kalamdb_auth::{authenticate, AuthRequest};
-use kalamdb_commons::{models::{ConnectionInfo, UserId, UserName}, Role};
+use kalamdb_commons::{
+    models::{ConnectionInfo, UserId, UserName},
+    Role,
+};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn bearer_auth_header(username: &str, user_id: &str, role: Role) -> String {

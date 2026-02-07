@@ -14,9 +14,9 @@ use kalamdb_core::live::ConnectionsManager;
 use kalamdb_core::live_query::LiveQueryManager;
 use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
 use kalamdb_core::sql::executor::SqlExecutor;
-use kalamdb_system::providers::storages::models::StorageMode;
 use kalamdb_store::RocksDBBackend;
 use kalamdb_store::RocksDbInit;
+use kalamdb_system::providers::storages::models::StorageMode;
 use log::debug;
 use log::{info, warn};
 use std::net::{SocketAddr, TcpListener};
@@ -53,10 +53,11 @@ pub async fn bootstrap(
     // Initialize RocksDB backend with performance settings from config
     // sync_writes=false (default) gives 10-100x better write throughput
     // WAL is still enabled so data is safe from crashes (only ~1s of data could be lost)
-    let backend = Arc::new(RocksDBBackend::with_options(
+    let backend = Arc::new(RocksDBBackend::with_options_and_settings(
         db,
         config.storage.rocksdb.sync_writes,
         config.storage.rocksdb.disable_wal,
+        config.storage.rocksdb.clone(),
     ));
     if !config.storage.rocksdb.sync_writes {
         debug!("RocksDB async writes enabled (sync_writes=false) for high throughput");
@@ -345,10 +346,11 @@ pub async fn bootstrap_isolated(
         phase_start.elapsed().as_secs_f64() * 1000.0
     );
 
-    let backend = Arc::new(RocksDBBackend::with_options(
+    let backend = Arc::new(RocksDBBackend::with_options_and_settings(
         db,
         config.storage.rocksdb.sync_writes,
         config.storage.rocksdb.disable_wal,
+        config.storage.rocksdb.clone(),
     ));
 
     // Node ID: use cluster.node_id (u64) if cluster mode, otherwise default to 1 for standalone
@@ -899,7 +901,7 @@ async fn create_default_system_user(
             };
 
             let user = User {
-                user_id: user_id,
+                user_id,
                 username: username.clone().into(),
                 password_hash,
                 role,

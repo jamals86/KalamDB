@@ -26,15 +26,15 @@ use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use crate::jobs::executors::{JobContext, JobDecision, JobExecutor, JobParams};
 use crate::providers::StreamTableProvider;
+#[cfg(test)]
+use crate::schema_registry::TablesSchemaRegistryAdapter;
 use async_trait::async_trait;
 use kalamdb_commons::ids::{SeqId, SnowflakeGenerator};
 use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::TableId;
-use kalamdb_system::JobType;
 #[cfg(test)]
 use kalamdb_sharding::ShardRouter;
-#[cfg(test)]
-use crate::schema_registry::TablesSchemaRegistryAdapter;
+use kalamdb_system::JobType;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -243,11 +243,13 @@ mod tests {
     use chrono::Utc;
     use datafusion::datasource::TableProvider;
     use kalamdb_commons::models::datatypes::KalamDataType;
-    use kalamdb_commons::models::schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType};
+    use kalamdb_commons::models::schemas::{
+        ColumnDefinition, TableDefinition, TableOptions, TableType,
+    };
     use kalamdb_commons::models::{TableId, TableName, UserId};
-    use kalamdb_system::NotificationService;
-    use kalamdb_system::providers::jobs::models::Job;
     use kalamdb_commons::{ChangeNotification, JobId, NamespaceId, NodeId};
+    use kalamdb_system::providers::jobs::models::Job;
+    use kalamdb_system::NotificationService;
     use kalamdb_tables::StreamTableStoreConfig;
     use serde_json::json;
     use std::sync::Arc;
@@ -307,10 +309,7 @@ mod tests {
         )
         .expect("table definition");
 
-        app_ctx
-            .schema_registry()
-            .put(table_def)
-            .expect("Failed to put table def");
+        app_ctx.schema_registry().put(table_def).expect("Failed to put table def");
 
         let stream_temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
         let stream_store = Arc::new(kalamdb_tables::new_stream_table_store(
@@ -325,9 +324,8 @@ mod tests {
                 ttl_seconds: Some(1),
             },
         ));
-        let tables_schema_registry = Arc::new(TablesSchemaRegistryAdapter::new(
-            app_ctx.schema_registry(),
-        ));
+        let tables_schema_registry =
+            Arc::new(TablesSchemaRegistryAdapter::new(app_ctx.schema_registry()));
         let core = Arc::new(TableProviderCore::new(
             table_id.clone(),
             TableType::Stream,
@@ -335,7 +333,8 @@ mod tests {
             app_ctx.system_columns_service(),
             Some(app_ctx.storage_registry()),
             app_ctx.manifest_service(),
-            Arc::clone(app_ctx.notification_service()) as Arc<dyn NotificationService<Notification = ChangeNotification>>,
+            Arc::clone(app_ctx.notification_service())
+                as Arc<dyn NotificationService<Notification = ChangeNotification>>,
             app_ctx.clone(),
         ));
         let provider =

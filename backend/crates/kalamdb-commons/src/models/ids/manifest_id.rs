@@ -57,10 +57,7 @@ impl ManifestId {
 
     /// Create a prefix for scanning all manifest entries for a table.
     pub fn table_prefix(table_id: &TableId) -> Vec<u8> {
-        encode_prefix(&(
-            table_id.namespace_id().as_str(),
-            table_id.table_name().as_str(),
-        ))
+        encode_prefix(&(table_id.namespace_id().as_str(), table_id.table_name().as_str()))
     }
 
     /// Get the ID as a string representation
@@ -127,8 +124,7 @@ impl StorageKey for ManifestId {
     }
 
     fn from_storage_key(bytes: &[u8]) -> Result<Self, String> {
-        if let Ok((namespace_id, table_name, scope)) =
-            decode_key::<(String, String, String)>(bytes)
+        if let Ok((namespace_id, table_name, scope)) = decode_key::<(String, String, String)>(bytes)
         {
             let table_id = TableId::from_strings(&namespace_id, &table_name);
             let user_id = if scope == "shared" {

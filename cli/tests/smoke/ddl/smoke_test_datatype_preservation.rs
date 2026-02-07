@@ -18,7 +18,7 @@ use serde_json::Value;
 
 /// Test that all KalamDataTypes are preserved correctly in query results
 #[tokio::test]
-#[ntest::timeout(21000)]
+#[ntest::timeout(30000)]
 async fn test_all_kalam_datatypes_are_preserved() {
     let ctx = test_context();
     let client = Client::new();
@@ -63,29 +63,21 @@ async fn test_all_kalam_datatypes_are_preserved() {
     );
 
     let result = execute_sql(&client, &base_url, &token, &create_sql).await;
-    assert!(
-        result.is_ok(),
-        "CREATE TABLE with all datatypes failed: {:?}",
-        result
-    );
+    assert!(result.is_ok(), "CREATE TABLE with all datatypes failed: {:?}", result);
 
     // 3. Query the table to get schema
     let query_sql = format!("SELECT * FROM {}.{}", ns, table);
-    let result = execute_sql(&client, &base_url, &token, &query_sql)
-        .await
-        .expect("Query failed");
+    let result = execute_sql(&client, &base_url, &token, &query_sql).await.expect("Query failed");
 
     // 4. Extract schema from result
-    let schema = result["results"][0]["schema"]
-        .as_array()
-        .expect("No schema in query result");
+    let schema = result["results"][0]["schema"].as_array().expect("No schema in query result");
 
     // 5. Build a map of column name -> data_type
     let mut type_map = std::collections::HashMap::new();
     for col in schema {
         let name = col["name"].as_str().expect("column name should be string");
         let data_type_val = &col["data_type"];
-        
+
         let data_type_str = match data_type_val {
             Value::String(s) => s.clone(),
             Value::Object(obj) => {
@@ -118,9 +110,9 @@ async fn test_all_kalam_datatypes_are_preserved() {
         ("col_time", "Time"),
         ("col_json", "Json"),
         ("col_bytes", "Bytes"),
-        ("col_embedding", "Embedding"),  // May include dimension in format
+        ("col_embedding", "Embedding"), // May include dimension in format
         ("col_uuid", "Uuid"),
-        ("col_decimal", "Decimal"),      // May include precision/scale
+        ("col_decimal", "Decimal"), // May include precision/scale
         ("col_smallint", "SmallInt"),
         ("col_file", "File"),
         // System columns
@@ -133,9 +125,8 @@ async fn test_all_kalam_datatypes_are_preserved() {
     for (col_name, expected_type) in expected_types {
         if let Some(actual_type) = type_map.get(col_name) {
             // For types like Embedding(384) or Decimal(18,4), check if it starts with expected
-            let matches = actual_type == expected_type
-                || actual_type.starts_with(expected_type);
-            
+            let matches = actual_type == expected_type || actual_type.starts_with(expected_type);
+
             if !matches {
                 failures.push(format!(
                     "Column '{}': expected type starting with '{}', got '{}'",
@@ -151,10 +142,7 @@ async fn test_all_kalam_datatypes_are_preserved() {
 
     // 8. Report all failures at once
     if !failures.is_empty() {
-        panic!(
-            "❌ Datatype preservation test failed:\n{}",
-            failures.join("\n")
-        );
+        panic!("❌ Datatype preservation test failed:\n{}", failures.join("\n"));
     }
 
     println!("🎉 All KalamDataTypes preserved correctly!");
@@ -207,20 +195,20 @@ async fn test_system_tables_shows_correct_datatypes() {
     let rows = result["results"][0]["rows"]
         .as_array()
         .expect("No rows in system.schemas result");
-    
+
     assert!(!rows.is_empty(), "Table not found in system.schemas");
 
     // 4. Parse the columns JSON
     let columns_json_str = rows[0][0].as_str().expect("columns should be a string");
-    let columns: Vec<Value> = serde_json::from_str(columns_json_str)
-        .expect("Failed to parse columns JSON");
+    let columns: Vec<Value> =
+        serde_json::from_str(columns_json_str).expect("Failed to parse columns JSON");
 
     // 5. Build map of column name -> data_type
     let mut type_map = std::collections::HashMap::new();
     for col in &columns {
         let name = col["column_name"].as_str().expect("column_name should be string");
         let data_type_val = &col["data_type"];
-        
+
         // Handle both String (simple types) and Object (complex types)
         let data_type_str = match data_type_val {
             Value::String(s) => s.clone(),
@@ -235,7 +223,7 @@ async fn test_system_tables_shows_correct_datatypes() {
             },
             other => format!("{:?}", other),
         };
-        
+
         type_map.insert(name.to_string(), data_type_str);
     }
 

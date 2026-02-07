@@ -2,11 +2,11 @@ use super::types::JobsManager;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use chrono::Utc;
-use kalamdb_system::providers::jobs::models::JobFilter;
 use kalamdb_commons::{JobId, NodeId};
-use kalamdb_system::{JobStatus, JobType};
 use kalamdb_raft::commands::MetaCommand;
 use kalamdb_raft::NodeStatus;
+use kalamdb_system::providers::jobs::models::JobFilter;
+use kalamdb_system::{JobStatus, JobType};
 use log::Level;
 
 impl JobsManager {
@@ -95,10 +95,7 @@ impl JobsManager {
                 return Ok(());
             }
 
-            log::warn!(
-                "Recovering {} incomplete job_nodes from previous run",
-                job_nodes.len()
-            );
+            log::warn!("Recovering {} incomplete job_nodes from previous run", job_nodes.len());
 
             for node in job_nodes {
                 let job_id = node.job_id.clone();
@@ -110,16 +107,9 @@ impl JobsManager {
                     updated_at: chrono::Utc::now(),
                 };
 
-                app_ctx
-                    .executor()
-                    .execute_meta(cmd)
-                    .await
-                    .map_err(|e| {
-                        KalamDbError::Other(format!(
-                            "Failed to recover job_node via Raft: {}",
-                            e
-                        ))
-                    })?;
+                app_ctx.executor().execute_meta(cmd).await.map_err(|e| {
+                    KalamDbError::Other(format!("Failed to recover job_node via Raft: {}", e))
+                })?;
             }
 
             return Ok(());
@@ -185,7 +175,13 @@ impl JobsManager {
         let now = Utc::now();
 
         for node in job_nodes {
-            if matches!(node.status, JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled | JobStatus::Skipped) {
+            if matches!(
+                node.status,
+                JobStatus::Completed
+                    | JobStatus::Failed
+                    | JobStatus::Cancelled
+                    | JobStatus::Skipped
+            ) {
                 continue;
             }
 
@@ -198,10 +194,7 @@ impl JobsManager {
             };
 
             app_ctx.executor().execute_meta(cmd).await.map_err(|e| {
-                KalamDbError::Other(format!(
-                    "Failed to finalize job_node via Raft: {}",
-                    e
-                ))
+                KalamDbError::Other(format!("Failed to finalize job_node via Raft: {}", e))
             })?;
         }
 

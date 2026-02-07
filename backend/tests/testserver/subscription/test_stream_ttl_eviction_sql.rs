@@ -77,11 +77,7 @@ async fn test_stream_ttl_eviction_from_sql_script() -> anyhow::Result<()> {
         .filter_map(|row| row.get("event_id").and_then(|v| v.as_str()))
         .collect();
     for expected in ["evt1", "evt2", "evt3"] {
-        assert!(
-            event_ids.contains(expected),
-            "Missing expected event_id {}",
-            expected
-        );
+        assert!(event_ids.contains(expected), "Missing expected event_id {}", expected);
     }
 
     // Wait for TTL to expire (need to wait 3+ seconds for eviction to run)

@@ -174,7 +174,8 @@ async fn test_scenario_10_multi_tenant_isolation() -> anyhow::Result<()> {
     // =========================================================
     let resp = tenant_a_client
         .execute_query(
-            &format!("SELECT * FROM {}.feature_flags ORDER BY flag_name", global), None,
+            &format!("SELECT * FROM {}.feature_flags ORDER BY flag_name", global),
+            None,
             None,
             None,
         )
@@ -184,7 +185,8 @@ async fn test_scenario_10_multi_tenant_isolation() -> anyhow::Result<()> {
 
     let resp = tenant_b_client
         .execute_query(
-            &format!("SELECT * FROM {}.feature_flags ORDER BY flag_name", global), None,
+            &format!("SELECT * FROM {}.feature_flags ORDER BY flag_name", global),
+            None,
             None,
             None,
         )
@@ -278,7 +280,8 @@ async fn test_scenario_10_subscription_namespace_isolation() -> anyhow::Result<(
     // Insert to ns_a
     let resp = client_a
         .execute_query(
-            &format!("INSERT INTO {}.events (id, data) VALUES (1, 'event_a')", ns_a), None,
+            &format!("INSERT INTO {}.events (id, data) VALUES (1, 'event_a')", ns_a),
+            None,
             None,
             None,
         )
@@ -288,7 +291,8 @@ async fn test_scenario_10_subscription_namespace_isolation() -> anyhow::Result<(
     // Insert to ns_b
     let resp = client_b
         .execute_query(
-            &format!("INSERT INTO {}.events (id, data) VALUES (1, 'event_b')", ns_b), None,
+            &format!("INSERT INTO {}.events (id, data) VALUES (1, 'event_b')", ns_b),
+            None,
             None,
             None,
         )
@@ -357,7 +361,8 @@ async fn test_scenario_10_same_table_name_different_namespaces() -> anyhow::Resu
     // Insert different data
     let resp = client1
         .execute_query(
-            &format!("INSERT INTO {}.users (id, name) VALUES (1, 'NS1 User')", ns1), None,
+            &format!("INSERT INTO {}.users (id, name) VALUES (1, 'NS1 User')", ns1),
+            None,
             None,
             None,
         )
@@ -366,7 +371,8 @@ async fn test_scenario_10_same_table_name_different_namespaces() -> anyhow::Resu
 
     let resp = client2
         .execute_query(
-            &format!("INSERT INTO {}.users (id, name) VALUES (1, 'NS2 User')", ns2), None,
+            &format!("INSERT INTO {}.users (id, name) VALUES (1, 'NS2 User')", ns2),
+            None,
             None,
             None,
         )

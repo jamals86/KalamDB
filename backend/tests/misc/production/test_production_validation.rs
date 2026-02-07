@@ -225,10 +225,7 @@ async fn user_isolation_in_user_tables() {
     let user1_id = server.create_user("user1_iso", "Pass123!", Role::User).await;
     let resp = server
         .execute_sql_as_user(
-            &format!(
-                "INSERT INTO {}.private_data (id, secret) VALUES (1, 'user1_secret')",
-                ns
-            ),
+            &format!("INSERT INTO {}.private_data (id, secret) VALUES (1, 'user1_secret')", ns),
             user1_id.as_str(),
         )
         .await;
@@ -262,9 +259,7 @@ async fn duplicate_primary_key_rejected() {
     let server = TestServer::new_shared().await;
     let ns = consolidated_helpers::unique_namespace("app_dupkey");
 
-    let resp = server
-        .execute_sql_as_user(&format!("CREATE NAMESPACE {}", ns), "root")
-        .await;
+    let resp = server.execute_sql_as_user(&format!("CREATE NAMESPACE {}", ns), "root").await;
     assert_eq!(resp.status, ResponseStatus::Success);
 
     let create_table = format!(

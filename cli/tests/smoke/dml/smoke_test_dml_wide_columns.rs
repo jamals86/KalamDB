@@ -214,7 +214,9 @@ fn smoke_subscription_update_delete_notifications() {
             Ok(Some(line)) => {
                 println!("[subscription] Event: {}", &line[..std::cmp::min(200, line.len())]);
                 all_events.push(line.clone());
-                if line.contains("SUBSCRIPTION_FAILED") || line.contains("Subscription registration failed") {
+                if line.contains("SUBSCRIPTION_FAILED")
+                    || line.contains("Subscription registration failed")
+                {
                     if retries < 1 {
                         retries += 1;
                         listener.stop().ok();
@@ -287,7 +289,7 @@ fn smoke_subscription_update_delete_notifications() {
 
     // Wait for delete event
     let mut found_delete = false;
-    let delete_deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let delete_deadline = std::time::Instant::now() + Duration::from_secs(20);
     while std::time::Instant::now() < delete_deadline {
         match listener.try_read_line(Duration::from_millis(50)) {
             Ok(Some(line)) => {
@@ -296,7 +298,7 @@ fn smoke_subscription_update_delete_notifications() {
                     &line[..std::cmp::min(200, line.len())]
                 );
                 all_events.push(line.clone());
-                if line.contains("Delete") || line.contains(&update_value) {
+                if line.contains("Delete") || line.contains("_deleted\": Bool(true)") {
                     found_delete = true;
                     break;
                 }

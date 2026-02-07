@@ -320,12 +320,7 @@ mod tests {
         let long = encode_key(&"aaa");
 
         // "aaa" < "ab" lexicographically (first char same, second char 'a' < 'b')
-        assert!(
-            long < short,
-            "aaa should sort before ab: {:?} vs {:?}",
-            long,
-            short
-        );
+        assert!(long < short, "aaa should sort before ab: {:?} vs {:?}", long, short);
     }
 
     #[test]
@@ -384,4 +379,3 @@ mod tests {
         assert_eq!(seq, dec_seq);
     }
 }
-

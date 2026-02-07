@@ -34,8 +34,9 @@ pub async fn ack_handler(
 
     // Authorization check
     if !is_topic_authorized(&session) {
-        return HttpResponse::Forbidden()
-            .json(TopicErrorResponse::forbidden("Topic acknowledgment requires service, dba, or system role"));
+        return HttpResponse::Forbidden().json(TopicErrorResponse::forbidden(
+            "Topic acknowledgment requires service, dba, or system role",
+        ));
     }
 
     let topic_id = &body.topic_id;
@@ -44,15 +45,18 @@ pub async fn ack_handler(
     // Verify topic exists
     let topics_provider = app_context.system_tables().topics();
     match topics_provider.get_topic_by_id_async(topic_id).await {
-        Ok(Some(_)) => {}
+        Ok(Some(_)) => {},
         Ok(None) => {
-            return HttpResponse::NotFound()
-                .json(TopicErrorResponse::not_found(&format!("Topic '{}' does not exist", topic_id)));
-        }
+            return HttpResponse::NotFound().json(TopicErrorResponse::not_found(&format!(
+                "Topic '{}' does not exist",
+                topic_id
+            )));
+        },
         Err(e) => {
-            return HttpResponse::InternalServerError()
-                .json(TopicErrorResponse::internal_error(&format!("Failed to lookup topic: {}", e)));
-        }
+            return HttpResponse::InternalServerError().json(TopicErrorResponse::internal_error(
+                &format!("Failed to lookup topic: {}", e),
+            ));
+        },
     };
 
     // Commit the offset
@@ -60,8 +64,9 @@ pub async fn ack_handler(
     if let Err(e) =
         topic_publisher.ack_offset(topic_id, group_id, body.partition_id, body.upto_offset)
     {
-        return HttpResponse::InternalServerError()
-            .json(TopicErrorResponse::internal_error(&format!("Failed to acknowledge offset: {}", e)));
+        return HttpResponse::InternalServerError().json(TopicErrorResponse::internal_error(
+            &format!("Failed to acknowledge offset: {}", e),
+        ));
     }
 
     HttpResponse::Ok().json(AckResponse {

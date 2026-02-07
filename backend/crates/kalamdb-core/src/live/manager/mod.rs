@@ -1,5 +1,5 @@
 //! Live query manager module
-//! 
+//!
 //! Supports both WebSocket subscriptions and HTTP long-polling consumers
 
 pub mod connections_manager;

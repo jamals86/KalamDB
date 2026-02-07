@@ -18,12 +18,9 @@ impl StreamEvictionScheduler {
         app_context: &Arc<AppContext>,
         jobs_manager: &JobsManager,
     ) -> Result<(), KalamDbError> {
-        let tables = app_context
-            .schema_registry()
-            .scan_all_table_definitions()
-            .map_err(|e| {
-                KalamDbError::io_message(format!("Failed to scan table definitions: {}", e))
-            })?;
+        let tables = app_context.schema_registry().scan_all_table_definitions().map_err(|e| {
+            KalamDbError::io_message(format!("Failed to scan table definitions: {}", e))
+        })?;
 
         let mut stream_tables_found = 0;
         let mut jobs_created = 0;

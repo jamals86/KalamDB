@@ -163,7 +163,9 @@ fn smoke_test_flush_pk_integrity_user_table() {
                 "⚠️  WARNING: Duplicate PK insert succeeded (known backend limitation): {}",
                 output
             );
-            println!("⚠️  TODO: Backend must implement PK uniqueness validation against cold storage");
+            println!(
+                "⚠️  TODO: Backend must implement PK uniqueness validation against cold storage"
+            );
             // TODO: Uncomment this when backend fix is implemented:
             // panic!(
             //     "Expected duplicate PK insert to fail, but it succeeded with output: {}",

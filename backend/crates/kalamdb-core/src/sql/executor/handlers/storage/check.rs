@@ -4,8 +4,8 @@ use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
-use crate::sql::executor::helpers::guards::require_admin;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
+use crate::sql::executor::helpers::guards::require_admin;
 use arrow::array::{
     ArrayRef, BooleanBuilder, Int64Builder, StringBuilder, TimestampMillisecondBuilder,
 };
@@ -38,11 +38,7 @@ impl CheckStorageHandler {
             Field::new("total_bytes", DataType::Int64, true),
             Field::new("used_bytes", DataType::Int64, true),
             Field::new("error", DataType::Utf8, true),
-            Field::new(
-                "tested_at",
-                DataType::Timestamp(TimeUnit::Millisecond, None),
-                false,
-            ),
+            Field::new("tested_at", DataType::Timestamp(TimeUnit::Millisecond, None), false),
         ])
     }
 }
@@ -221,7 +217,10 @@ mod tests {
         if let Err(err) = &result {
             panic!("STORAGE CHECK local failed: {}", err);
         }
-        if let Ok(ExecutionResult::Rows { batches, row_count, .. }) = result {
+        if let Ok(ExecutionResult::Rows {
+            batches, row_count, ..
+        }) = result
+        {
             assert_eq!(row_count, 1);
             assert!(!batches.is_empty());
 
