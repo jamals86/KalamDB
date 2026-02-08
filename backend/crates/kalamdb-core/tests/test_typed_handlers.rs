@@ -8,9 +8,7 @@ use kalamdb_core::app_context::AppContext;
 use kalamdb_core::sql::context::ExecutionContext;
 use kalamdb_core::sql::context::ExecutionResult;
 use kalamdb_core::sql::executor::SqlExecutor;
-mod test_helpers;
 use std::sync::Arc;
-use test_helpers::{test_app_context, test_app_context_simple};
 
 fn init_app_context() -> Arc<AppContext> {
     test_app_context_simple()

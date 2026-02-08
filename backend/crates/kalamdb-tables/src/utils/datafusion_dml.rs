@@ -170,3 +170,107 @@ fn predicate_to_bool(value: ScalarValue) -> DataFusionResult<bool> {
         ))),
     }
 }
+
+/// Validate NOT NULL constraints on rows before INSERT/UPDATE
+///
+/// According to ADR-016, validation must occur before any RocksDB write.
+/// This ensures atomicity - if validation fails, no data is written.
+///
+/// # Arguments
+/// * `schema` - Arrow schema with field nullability information
+/// * `rows` - Rows to validate (each row is a map of column name -> ScalarValue)
+///
+/// # Returns
+/// * `Ok(())` if all non-nullable columns have non-NULL values
+/// * `Err(DataFusionError)` if any NOT NULL constraint is violated
+///
+/// # Example
+/// ```ignore
+/// let schema = table_provider.schema();
+/// validate_not_null_constraints(&schema, &rows)?;
+/// // Safe to write to storage now - validation passed
+/// ```
+pub fn validate_not_null_constraints(
+    schema: &SchemaRef,
+    rows: &[Row],
+) -> DataFusionResult<()> {
+    // Precompute non-nullable columns to avoid repeated checks
+    let non_nullable_columns: Vec<Arc<Field>> =
+        schema.fields().iter().filter(|f| !f.is_nullable()).cloned().collect();
+
+    if non_nullable_columns.is_empty() {
+        return Ok(()); // No constraints to validate
+    }
+
+    // Validate each row
+    for (row_idx, row) in rows.iter().enumerate() {
+        for field in &non_nullable_columns {
+            let column_name = field.name();
+
+            // Check if column value exists and is non-NULL
+            match row.values.get(column_name) {
+                None => {
+                    return Err(DataFusionError::Execution(format!(
+                        "NOT NULL constraint violation: column '{}' is missing in row {} (row index {})",
+                        column_name,
+                        row_idx + 1,
+                        row_idx
+                    )));
+                },
+                Some(value) if value.is_null() => {
+                    // Use is_null() to catch both ScalarValue::Null and typed NULLs like Utf8(None), Int32(None), etc.
+                    return Err(DataFusionError::Execution(format!(
+                        "NOT NULL constraint violation: column '{}' cannot be NULL (row {})",
+                        column_name,
+                        row_idx + 1
+                    )));
+                },
+                Some(_) => continue,
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Validate NOT NULL constraints using a precomputed set of non-nullable column names.
+///
+/// This is faster than `validate_not_null_constraints` because it avoids recomputing
+/// the non-nullable column set from the schema on every call.
+///
+/// # Arguments
+/// * `non_null_columns` - Precomputed set of column names with NOT NULL constraints
+/// * `rows` - Rows to validate
+pub fn validate_not_null_with_set(
+    non_null_columns: &std::collections::HashSet<String>,
+    rows: &[Row],
+) -> DataFusionResult<()> {
+    if non_null_columns.is_empty() {
+        return Ok(());
+    }
+
+    for (row_idx, row) in rows.iter().enumerate() {
+        for column_name in non_null_columns {
+            match row.values.get(column_name) {
+                None => {
+                    return Err(DataFusionError::Execution(format!(
+                        "NOT NULL constraint violation: column '{}' is missing in row {} (row index {})",
+                        column_name,
+                        row_idx + 1,
+                        row_idx
+                    )));
+                },
+                Some(value) if value.is_null() => {
+                    return Err(DataFusionError::Execution(format!(
+                        "NOT NULL constraint violation: column '{}' cannot be NULL (row {})",
+                        column_name,
+                        row_idx + 1
+                    )));
+                },
+                Some(_) => continue,
+            }
+        }
+    }
+
+    Ok(())
+}

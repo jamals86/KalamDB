@@ -31,11 +31,9 @@ use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::conversions::arrow_json_conversion::coerce_rows;
 use kalamdb_commons::ids::{SeqId, UserTableRowId};
 use kalamdb_commons::models::UserId;
-use kalamdb_commons::schemas::TableType;
-use kalamdb_commons::{StorageKey, TableId};
+use kalamdb_commons::StorageKey;
 use kalamdb_session::{can_read_all_users, check_user_table_access, check_user_table_write_access};
 use kalamdb_store::EntityStore;
-use kalamdb_system::SchemaRegistry as SchemaRegistryTrait;
 use std::any::Any;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
@@ -50,11 +48,11 @@ use kalamdb_commons::websocket::ChangeNotification;
 /// **Architecture**:
 /// - Stateless provider (user context passed per-operation)
 /// - Direct fields (no wrapper layer)
-/// - Shared core via Arc<TableProviderCore>
+/// - Shared core via Arc<TableProviderCore> (holds schema, pk_name, column_defaults, non_null_columns)
 /// - RLS enforced via user_id parameter
 /// - PK Index for efficient row lookup (Phase 14)
 pub struct UserTableProvider {
-    /// Shared core (app_context, live_query_manager, storage_registry)
+    /// Shared core (services, schema, pk_name, column_defaults, non_null_columns)
     core: Arc<TableProviderCore>,
 
     /// IndexedEntityStore with PK index for DML operations (public for flush jobs)
@@ -62,64 +60,22 @@ pub struct UserTableProvider {
 
     /// PK index for efficient lookups
     pk_index: UserTablePkIndex,
-
-    /// Cached primary key field name
-    primary_key_field_name: String,
-
-    /// Cached Arrow schema (prevents panics if table is dropped while provider is in use)
-    schema: SchemaRef,
-
-    /// DataFusion column defaults used by INSERT planning.
-    column_defaults: HashMap<String, Expr>,
 }
 
 impl UserTableProvider {
     /// Create a new user table provider
     ///
     /// # Arguments
-    /// * `core` - Shared core with app_context and optional services
+    /// * `core` - Shared core with services, schema, pk_name, etc.
     /// * `store` - IndexedEntityStore with PK index for this table
-    /// * `primary_key_field_name` - Primary key field name from schema
     pub fn new(
         core: Arc<TableProviderCore>,
         store: Arc<UserTableIndexedStore>,
-        primary_key_field_name: String,
     ) -> Self {
-        Self::try_new_with_defaults(core, store, primary_key_field_name, HashMap::new())
-            .expect("Failed to get Arrow schema from registry during provider creation")
-    }
-
-    pub fn new_with_defaults(
-        core: Arc<TableProviderCore>,
-        store: Arc<UserTableIndexedStore>,
-        primary_key_field_name: String,
-        column_defaults: HashMap<String, Expr>,
-    ) -> Self {
-        Self::try_new_with_defaults(core, store, primary_key_field_name, column_defaults)
-            .expect("Failed to get Arrow schema from registry during provider creation")
-    }
-
-    /// Create a new user table provider with fallible schema lookup.
-    pub fn try_new(
-        core: Arc<TableProviderCore>,
-        store: Arc<UserTableIndexedStore>,
-        primary_key_field_name: String,
-    ) -> Result<Self, KalamDbError> {
-        Self::try_new_with_defaults(core, store, primary_key_field_name, HashMap::new())
-    }
-
-    pub fn try_new_with_defaults(
-        core: Arc<TableProviderCore>,
-        store: Arc<UserTableIndexedStore>,
-        primary_key_field_name: String,
-        column_defaults: HashMap<String, Expr>,
-    ) -> Result<Self, KalamDbError> {
-        // Cache schema at creation time to avoid "Table not found" panics if table is dropped
-        // while provider is still in use by a query plan
-        let schema = core.schema_registry.get_arrow_schema(core.table_id())?;
+        let pk_index = UserTablePkIndex::new(core.table_id(), core.primary_key_field_name());
 
         if log::log_enabled!(log::Level::Debug) {
-            let field_names: Vec<_> = schema.fields().iter().map(|f| f.name()).collect();
+            let field_names: Vec<_> = core.schema().fields().iter().map(|f| f.name()).collect();
             log::debug!(
                 "UserTableProvider: Created for {} with schema fields: {:?}",
                 core.table_id(),
@@ -127,21 +83,36 @@ impl UserTableProvider {
             );
         }
 
-        let pk_index = UserTablePkIndex::new(core.table_id(), &primary_key_field_name);
-
-        Ok(Self {
+        Self {
             core,
             store,
             pk_index,
-            primary_key_field_name,
-            schema,
-            column_defaults,
-        })
+        }
+    }
+
+    /// Backward-compatible constructors that accept pk_field/column_defaults as separate args.
+    /// These are used by production code and tests that still pass them separately.
+    /// The values are expected to already be set in the core.
+    pub fn try_new(
+        core: Arc<TableProviderCore>,
+        store: Arc<UserTableIndexedStore>,
+        _primary_key_field_name: String,
+    ) -> Result<Self, KalamDbError> {
+        Ok(Self::new(core, store))
+    }
+
+    pub fn try_new_with_defaults(
+        core: Arc<TableProviderCore>,
+        store: Arc<UserTableIndexedStore>,
+        _primary_key_field_name: String,
+        _column_defaults: HashMap<String, Expr>,
+    ) -> Result<Self, KalamDbError> {
+        Ok(Self::new(core, store))
     }
 
     /// Get the primary key field name
     pub fn primary_key_field_name(&self) -> &str {
-        &self.primary_key_field_name
+        self.core.primary_key_field_name()
     }
 
     /// Access the underlying indexed store (used by flush jobs)
@@ -261,7 +232,7 @@ impl UserTableProvider {
             user_ids.insert(row.user_id.clone());
         }
 
-        if let Ok(scopes) = self.core.manifest_service.get_manifest_user_ids(table_id) {
+        if let Ok(scopes) = self.core.services.manifest_service.get_manifest_user_ids(table_id) {
             user_ids.extend(scopes);
         }
 
@@ -321,31 +292,6 @@ impl UserTableProvider {
 
 #[async_trait]
 impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
-    fn table_id(&self) -> &TableId {
-        self.core.table_id()
-    }
-
-    fn schema_ref(&self) -> SchemaRef {
-        // Return cached schema
-        self.schema.clone()
-    }
-
-    fn provider_table_type(&self) -> TableType {
-        self.core.table_type()
-    }
-
-    fn cluster_coordinator(&self) -> &Arc<dyn kalamdb_system::ClusterCoordinator> {
-        &self.core.cluster_coordinator
-    }
-
-    fn schema_registry(&self) -> &Arc<dyn SchemaRegistryTrait<Error = KalamDbError>> {
-        &self.core.schema_registry
-    }
-
-    fn primary_key_field_name(&self) -> &str {
-        &self.primary_key_field_name
-    }
-
     fn core(&self) -> &base::TableProviderCore {
         &self.core
     }
@@ -444,7 +390,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         base::ensure_unique_pk_value(self, Some(user_id), &row_data).await?;
 
         // Generate new SeqId via SystemColumnsService
-        let sys_cols = self.core.system_columns.clone();
+        let sys_cols = self.core.services.system_columns.clone();
         let seq_id = sys_cols.generate_seq_id().map_err(|e| {
             KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e))
         })?;
@@ -471,7 +417,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         log::debug!("Inserted user table row for user {} with _seq {}", user_id.as_str(), seq_id);
 
         // Fire live query notification (INSERT)
-        let notification_service = self.core.notification_service.clone();
+        let notification_service = self.core.services.notification_service.clone();
         let table_id = self.core.table_id().clone();
 
         if notification_service.has_subscribers(Some(&user_id), &table_id) {
@@ -519,6 +465,10 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         let coerced_rows = coerce_rows(rows, &self.schema_ref()).map_err(|e| {
             KalamDbError::InvalidOperation(format!("Schema coercion failed: {}", e))
         })?;
+
+        // VALIDATE NOT NULL CONSTRAINTS (per ADR-016: must occur before any RocksDB write)
+        crate::utils::datafusion_dml::validate_not_null_with_set(self.core.non_null_columns(), &coerced_rows)
+            .map_err(|e| KalamDbError::ConstraintViolation(e.to_string()))?;
 
         let row_count = coerced_rows.len();
 
@@ -575,7 +525,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         }
 
         // Generate all SeqIds in single mutex acquisition
-        let sys_cols = self.core.system_columns.clone();
+        let sys_cols = self.core.services.system_columns.clone();
         let seq_ids = sys_cols.generate_seq_ids(row_count).map_err(|e| {
             KalamDbError::InvalidOperation(format!("SeqId batch generation failed: {}", e))
         })?;
@@ -603,7 +553,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         })?;
 
         // Mark manifest as having pending writes (hot data needs to be flushed)
-        let manifest_service = self.core.manifest_service.clone();
+        let manifest_service = self.core.services.manifest_service.clone();
         if let Err(e) = manifest_service.mark_pending_write(self.core.table_id(), Some(user_id)) {
             log::warn!(
                 "Failed to mark manifest as pending_write for {}: {}",
@@ -621,7 +571,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         );
 
         // Fire live query notifications (one per row - async fire-and-forget)
-        let notification_service = self.core.notification_service.clone();
+        let notification_service = self.core.services.notification_service.clone();
         let table_id = self.core.table_id().clone();
         log::debug!(
             "UserTableProvider::insert_batch: Sending {} notifications for user={}, table={}",
@@ -652,8 +602,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         key: &UserTableRowId,
         updates: Row,
     ) -> Result<UserTableRowId, KalamDbError> {
-        // Load referenced version to extract PK
-        // Try RocksDB first, then Parquet
+        // Load referenced version to extract PK, then delegate to update_by_pk_value
         let prior_opt = self.store.get(key).into_kalamdb_error("Failed to load prior version")?;
 
         let prior = if let Some(p) = prior_opt {
@@ -662,7 +611,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             load_row_from_parquet_by_seq(
                 &self.core,
                 self.core.table_type(),
-                &self.schema,
+                self.core.schema(),
                 Some(user_id),
                 key.seq,
                 |row_data| UserTableRow {
@@ -681,80 +630,12 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             KalamDbError::InvalidOperation(format!("Prior row missing PK {}", pk_name))
         })?;
 
-        // Validate PK update (check if new PK value already exists)
+        // Validate PK update (check if new PK value already exists) — only needed when updating by key
         base::validate_pk_update(self, Some(user_id), &updates, &pk_value_scalar).await?;
 
-        // Find latest resolved row for this PK under same user
-        // First try hot storage (O(1) via PK index), then fall back to cold storage (Parquet scan)
-        let (_latest_key, latest_row) = if let Some(result) =
-            self.find_by_pk(user_id, &pk_value_scalar)?
-        {
-            result
-        } else {
-            // Not in hot storage, check cold storage
-            let pk_value_str = pk_value_scalar.to_string();
-            base::find_row_by_pk(self, Some(user_id), &pk_value_str).await?.ok_or_else(|| {
-                KalamDbError::NotFound(format!(
-                    "Row with {}={} not found",
-                    pk_name, pk_value_scalar
-                ))
-            })?
-        };
-
-        // Merge updates onto latest
-        let mut merged = latest_row.fields.values.clone();
-        for (k, v) in &updates.values {
-            merged.insert(k.clone(), v.clone());
-        }
-
-        let new_fields = Row::new(merged);
-        let sys_cols = self.core.system_columns.clone();
-        let seq_id = sys_cols.generate_seq_id().map_err(|e| {
-            KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e))
-        })?;
-        let entity = UserTableRow {
-            user_id: user_id.clone(),
-            _seq: seq_id,
-            _deleted: false,
-            fields: new_fields,
-        };
-        let row_key = UserTableRowId::new(user_id.clone(), seq_id);
-        // Insert new version (MVCC - all writes are inserts with new SeqId)
-        log::trace!(
-            "[UserProvider UPDATE] Inserting new version: user={}, pk={}, _seq={}",
-            user_id.as_str(),
-            pk_value_scalar,
-            seq_id.as_i64()
-        );
-        self.store.insert(&row_key, &entity).map_err(|e| {
-            KalamDbError::InvalidOperation(format!("Failed to update user table row: {}", e))
-        })?;
-
-        // Mark manifest as having pending writes (hot data needs to be flushed)
-        let manifest_service = self.core.manifest_service.clone();
-        if let Err(e) = manifest_service.mark_pending_write(self.core.table_id(), Some(user_id)) {
-            log::warn!(
-                "Failed to mark manifest as pending_write for {}: {}",
-                self.core.table_id(),
-                e
-            );
-        }
-
-        // Fire live query notification (UPDATE)
-        let notification_service = self.core.notification_service.clone();
-        let table_id = self.core.table_id().clone();
-
-        if notification_service.has_subscribers(Some(&user_id), &table_id) {
-            // Old data: latest prior resolved row (with system columns)
-            let old_row = Self::build_notification_row(&latest_row);
-
-            // New data: merged entity (with system columns)
-            let new_row = Self::build_notification_row(&entity);
-
-            let notification = ChangeNotification::update(table_id.clone(), old_row, new_row);
-            notification_service.notify_table_change(Some(user_id.clone()), table_id, notification);
-        }
-        Ok(row_key)
+        // Delegate to the canonical implementation
+        let pk_value_str = pk_value_scalar.to_string();
+        self.update_by_pk_value(user_id, &pk_value_str, updates).await
     }
 
     async fn update_by_pk_value(
@@ -776,7 +657,6 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         let pk_column_type = pk_field.data_type();
 
         // Convert string PK value to proper ScalarValue based on column type
-        // This ensures Parquet queries work correctly with typed columns
         use kalamdb_commons::conversions::parse_string_as_scalar;
         let pk_value_scalar = parse_string_as_scalar(pk_value, pk_column_type)
             .map_err(|e| KalamDbError::InvalidOperation(e))?;
@@ -810,7 +690,12 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         }
 
         let new_fields = Row::new(merged);
-        let sys_cols = self.core.system_columns.clone();
+
+        // VALIDATE NOT NULL CONSTRAINTS on the merged row (per ADR-016)
+        crate::utils::datafusion_dml::validate_not_null_with_set(self.core.non_null_columns(), &[new_fields.clone()])
+            .map_err(|e| KalamDbError::ConstraintViolation(e.to_string()))?;
+
+        let sys_cols = self.core.services.system_columns.clone();
         let seq_id = sys_cols.generate_seq_id().map_err(|e| {
             KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e))
         })?;
@@ -823,7 +708,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         let row_key = UserTableRowId::new(user_id.clone(), seq_id);
         // Insert new version (MVCC - all writes are inserts with new SeqId)
         log::trace!(
-            "[UserProvider UPDATE_BY_PK] Inserting new version: user={}, pk={}, _seq={}",
+            "[UserProvider UPDATE] Inserting new version: user={}, pk={}, _seq={}",
             user_id.as_str(),
             pk_value,
             seq_id.as_i64()
@@ -833,7 +718,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         })?;
 
         // Mark manifest as having pending writes (hot data needs to be flushed)
-        let manifest_service = self.core.manifest_service.clone();
+        let manifest_service = self.core.services.manifest_service.clone();
         if let Err(e) = manifest_service.mark_pending_write(self.core.table_id(), Some(user_id)) {
             log::warn!(
                 "Failed to mark manifest as pending_write for {}: {}",
@@ -843,16 +728,12 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         }
 
         // Fire live query notification (UPDATE)
-        let notification_service = self.core.notification_service.clone();
+        let notification_service = self.core.services.notification_service.clone();
         let table_id = self.core.table_id().clone();
 
         if notification_service.has_subscribers(Some(&user_id), &table_id) {
-            // Old data: latest prior resolved row (with system columns)
             let old_row = Self::build_notification_row(&latest_row);
-
-            // New data: merged entity (with system columns)
             let new_row = Self::build_notification_row(&entity);
-
             let notification = ChangeNotification::update(table_id.clone(), old_row, new_row);
             notification_service.notify_table_change(Some(user_id.clone()), table_id, notification);
         }
@@ -860,8 +741,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
     }
 
     async fn delete(&self, user_id: &UserId, key: &UserTableRowId) -> Result<(), KalamDbError> {
-        // Load referenced version to extract PK (for validation; we append tombstone regardless)
-        // Try RocksDB first, then Parquet
+        // Load referenced version to extract PK, then delegate to delete_by_pk_value
         let prior_opt = self.store.get(key).into_kalamdb_error("Failed to load prior version")?;
 
         let prior = if let Some(p) = prior_opt {
@@ -870,7 +750,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             load_row_from_parquet_by_seq(
                 &self.core,
                 self.core.table_type(),
-                &self.schema,
+                self.core.schema(),
                 Some(user_id),
                 key.seq,
                 |row_data| UserTableRow {
@@ -884,53 +764,13 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             .ok_or_else(|| KalamDbError::NotFound("Row not found for delete".to_string()))?
         };
 
-        let sys_cols = self.core.system_columns.clone();
-        let seq_id = sys_cols.generate_seq_id().map_err(|e| {
-            KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e))
+        let pk_name = self.primary_key_field_name().to_string();
+        let pk_value_scalar = prior.fields.get(&pk_name).cloned().ok_or_else(|| {
+            KalamDbError::InvalidOperation(format!("Prior row missing PK {}", pk_name))
         })?;
+        let pk_value_str = pk_value_scalar.to_string();
 
-        // Preserve ALL fields in the tombstone so they can be queried if _deleted=true
-        // This allows "undo" functionality and auditing of deleted records
-        let values = prior.fields.values.clone();
-
-        let entity = UserTableRow {
-            user_id: user_id.clone(),
-            _seq: seq_id,
-            _deleted: true,
-            fields: Row::new(values),
-        };
-        let row_key = UserTableRowId::new(user_id.clone(), seq_id);
-        log::info!(
-            "[UserProvider DELETE] Writing tombstone: user={}, _seq={}",
-            user_id.as_str(),
-            seq_id.as_i64()
-        );
-        // Insert tombstone version (MVCC - all writes are inserts with new SeqId)
-        self.store.insert(&row_key, &entity).map_err(|e| {
-            KalamDbError::InvalidOperation(format!("Failed to delete user table row: {}", e))
-        })?;
-
-        // Mark manifest as having pending writes (hot data needs to be flushed)
-        let manifest_service = self.core.manifest_service.clone();
-        if let Err(e) = manifest_service.mark_pending_write(self.core.table_id(), Some(user_id)) {
-            log::warn!(
-                "Failed to mark manifest as pending_write for {}: {}",
-                self.core.table_id(),
-                e
-            );
-        }
-
-        // Fire live query notification (DELETE soft)
-        let notification_service = self.core.notification_service.clone();
-        let table_id = self.core.table_id().clone();
-
-        if notification_service.has_subscribers(Some(&user_id), &table_id) {
-            // Provide tombstone entity with system columns for filter matching
-            let row = Self::build_notification_row(&entity);
-
-            let notification = ChangeNotification::delete_soft(table_id.clone(), row);
-            notification_service.notify_table_change(Some(user_id.clone()), table_id, notification);
-        }
+        self.delete_by_pk_value(user_id, &pk_value_str).await?;
         Ok(())
     }
 
@@ -971,7 +811,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             }
         };
 
-        let sys_cols = self.core.system_columns.clone();
+        let sys_cols = self.core.services.system_columns.clone();
         let seq_id = sys_cols.generate_seq_id().map_err(|e| {
             KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e))
         })?;
@@ -999,7 +839,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         })?;
 
         // Mark manifest as having pending writes (hot data needs to be flushed)
-        let manifest_service = self.core.manifest_service.clone();
+        let manifest_service = self.core.services.manifest_service.clone();
         if let Err(e) = manifest_service.mark_pending_write(self.core.table_id(), Some(user_id)) {
             log::warn!(
                 "Failed to mark manifest as pending_write for {}: {}",
@@ -1009,7 +849,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         }
 
         // Fire live query notification (DELETE soft)
-        let notification_service = self.core.notification_service.clone();
+        let notification_service = self.core.services.notification_service.clone();
         let table_id = self.core.table_id().clone();
 
         if notification_service.has_subscribers(Some(&user_id), &table_id) {
@@ -1188,7 +1028,7 @@ impl std::fmt::Debug for UserTableProvider {
         f.debug_struct("UserTableProvider")
             .field("table_id", self.core.table_id())
             .field("table_type", &self.core.table_type())
-            .field("primary_key_field_name", &self.primary_key_field_name)
+            .field("primary_key_field_name", &self.core.primary_key_field_name())
             .finish()
     }
 }
@@ -1209,7 +1049,7 @@ impl TableProvider for UserTableProvider {
     }
 
     fn get_column_default(&self, column: &str) -> Option<&Expr> {
-        self.column_defaults.get(column)
+        self.core.get_column_default(column)
     }
 
     fn supports_filters_pushdown(
@@ -1240,11 +1080,11 @@ impl TableProvider for UserTableProvider {
 
         // Check if this is a client read that requires leader
         // Skip check for internal reads (jobs, live query notifications, etc.)
-        if read_context.requires_leader() && self.core.cluster_coordinator.is_cluster_mode().await {
-            let is_leader = self.core.cluster_coordinator.is_leader_for_user(user_id).await;
+        if read_context.requires_leader() && self.core.services.cluster_coordinator.is_cluster_mode().await {
+            let is_leader = self.core.services.cluster_coordinator.is_leader_for_user(user_id).await;
             if !is_leader {
                 // Get leader hint for client redirection
-                let leader_addr = self.core.cluster_coordinator.leader_addr_for_user(user_id).await;
+                let leader_addr = self.core.services.cluster_coordinator.leader_addr_for_user(user_id).await;
                 return Err(DataFusionError::Execution(format!(
                     "NOT_LEADER: This node is not the leader for user {}. Leader: {:?}",
                     user_id, leader_addr

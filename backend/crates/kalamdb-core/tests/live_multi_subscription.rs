@@ -1,7 +1,5 @@
 use kalamdb_commons::models::{ConnectionId, ConnectionInfo, UserId};
 use kalamdb_commons::websocket::{SubscriptionOptions, SubscriptionRequest};
-mod test_helpers;
-use test_helpers::test_app_context;
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "Requires system schemas registered in live query session context"]

@@ -112,22 +112,48 @@ pub use crate::utils::row_utils::{inject_system_columns, rows_to_arrow_batch, Sc
 #[async_trait]
 pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     // ===========================
-    // Core Metadata (read-only)
+    // Core Access (required)
+    // ===========================
+
+    /// Get the TableProviderCore for low-level access (storage, manifest, etc.)
+    /// All other metadata accessors have default implementations that delegate here.
+    fn core(&self) -> &TableProviderCore;
+
+    // ===========================
+    // Core Metadata (default implementations via core())
     // ===========================
 
     /// Table identifier (namespace + table name)
-    fn table_id(&self) -> &TableId;
+    fn table_id(&self) -> &TableId {
+        self.core().table_id()
+    }
 
     /// Memoized Arrow schema (Phase 10 optimization: 50-100× faster than recomputation)
-    fn schema_ref(&self) -> SchemaRef;
+    fn schema_ref(&self) -> SchemaRef {
+        self.core().schema_ref()
+    }
 
     /// Logical table type (User, Shared, Stream)
     ///
     /// Named differently from DataFusion's TableProvider::table_type to avoid ambiguity.
-    fn provider_table_type(&self) -> TableType;
+    fn provider_table_type(&self) -> TableType {
+        self.core().table_type()
+    }
 
     /// Cluster coordinator for leader checks (read routing).
-    fn cluster_coordinator(&self) -> &Arc<dyn ClusterCoordinatorTrait>;
+    fn cluster_coordinator(&self) -> &Arc<dyn ClusterCoordinatorTrait> {
+        self.core().cluster_coordinator()
+    }
+
+    /// Access to schema registry for table metadata
+    fn schema_registry(&self) -> &Arc<dyn SchemaRegistryTrait<Error = KalamDbError>> {
+        self.core().schema_registry()
+    }
+
+    /// Primary key field name from schema definition (e.g., "id", "email")
+    fn primary_key_field_name(&self) -> &str {
+        self.core().primary_key_field_name()
+    }
 
     /// Get namespace ID from table_id (default implementation)
     fn namespace_id(&self) -> &NamespaceId {
@@ -154,18 +180,8 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     }
 
     // ===========================
-    // Storage Access
+    // Row Construction (required per provider)
     // ===========================
-
-    /// Access to schema registry for table metadata
-    fn schema_registry(&self) -> &Arc<dyn SchemaRegistryTrait<Error = KalamDbError>>;
-
-    /// Primary key field name from schema definition (e.g., "id", "email")
-    fn primary_key_field_name(&self) -> &str;
-
-    /// Get the TableProviderCore for low-level access (storage, manifest, etc.)
-    /// This is needed by find_row_by_pk to access storage for cold storage scans.
-    fn core(&self) -> &TableProviderCore;
 
     /// Construct (K, V) from ParquetRowData for cold storage lookups.
     /// Providers should override this to create their specific key and value types.
@@ -660,7 +676,7 @@ pub async fn pk_exists_in_cold(
         .unwrap_or_else(|| format!("scope={}", table_type.as_str()));
 
     // 1. Get storage_id from schema registry
-    let storage_id = match core.schema_registry.get_storage_id(table_id) {
+    let storage_id = match core.services.schema_registry.get_storage_id(table_id) {
         Ok(id) => id,
         Err(_) => {
             log::trace!(
@@ -674,7 +690,7 @@ pub async fn pk_exists_in_cold(
     };
 
     // 2. Get StorageCached from registry
-    let storage_registry = core.storage_registry.as_ref().ok_or_else(|| {
+    let storage_registry = core.services.storage_registry.as_ref().ok_or_else(|| {
         KalamDbError::InvalidOperation("Storage registry not configured".to_string())
     })?;
     let storage_cached = storage_registry.get_cached(&storage_id)?.ok_or_else(|| {
@@ -682,7 +698,7 @@ pub async fn pk_exists_in_cold(
     })?;
 
     // 4. Load manifest from cache
-    let manifest_service = core.manifest_service.clone();
+    let manifest_service = core.services.manifest_service.clone();
     let cache_result = manifest_service.get_or_load(table_id, user_id);
 
     let manifest: Option<Manifest> = match &cache_result {
@@ -880,7 +896,7 @@ pub async fn pk_exists_batch_in_cold(
         .unwrap_or_else(|| format!("scope={}", table_type.as_str()));
 
     // 1. Get storage_id from schema registry
-    let storage_id = match core.schema_registry.get_storage_id(table_id) {
+    let storage_id = match core.services.schema_registry.get_storage_id(table_id) {
         Ok(id) => id,
         Err(_) => {
             log::trace!(
@@ -894,7 +910,7 @@ pub async fn pk_exists_batch_in_cold(
     };
 
     // 2. Get StorageCached from registry
-    let storage_registry = core.storage_registry.as_ref().ok_or_else(|| {
+    let storage_registry = core.services.storage_registry.as_ref().ok_or_else(|| {
         KalamDbError::InvalidOperation("Storage registry not configured".to_string())
     })?;
     let storage_cached = storage_registry.get_cached(&storage_id)?.ok_or_else(|| {
@@ -902,7 +918,7 @@ pub async fn pk_exists_batch_in_cold(
     })?;
 
     // 4. Load manifest from cache
-    let manifest_service = core.manifest_service.clone();
+    let manifest_service = core.services.manifest_service.clone();
     let cache_result = manifest_service.get_or_load(table_id, user_id);
 
     let manifest: Option<Manifest> = match &cache_result {
@@ -1286,21 +1302,14 @@ where
 {
     let table_id = provider.table_id();
 
-    // Get table definition to check if PK is auto-increment
-    let table_def =
-        if let Some(table_def) = provider.schema_registry().get_table_if_exists(table_id)? {
-            // Fast path: Skip uniqueness check if PK is auto-increment
-            if crate::utils::pk::PkExistenceChecker::is_auto_increment_pk(&table_def) {
-                log::trace!(
-                    "[ensure_unique_pk_value] Skipping PK check for {} - PK is auto-increment",
-                    table_id
-                );
-                return Ok(());
-            }
-            table_def
-        } else {
-            return Ok(()); // Table not found, will error elsewhere
-        };
+    // Fast path: Skip uniqueness check if PK is auto-increment (O(1) cached value)
+    if provider.core().is_auto_increment_pk() {
+        log::trace!(
+            "[ensure_unique_pk_value] Skipping PK check for {} - PK is auto-increment",
+            table_id
+        );
+        return Ok(());
+    }
 
     let pk_name = provider.primary_key_field_name();
     if let Some(pk_value) = row_data.get(pk_name) {
@@ -1320,19 +1329,18 @@ where
             let core = provider.core();
 
             // Skip cold storage check if storage registry is not available
-            let Some(storage_registry) = core.storage_registry.clone() else {
+            let Some(storage_registry) = core.services.storage_registry.clone() else {
                 return Ok(()); // No cold storage to check
             };
 
             let pk_checker = crate::utils::pk::PkExistenceChecker::new(
-                core.schema_registry.clone(),
+                core.services.schema_registry.clone(),
                 storage_registry,
-                core.manifest_service.clone(),
+                core.services.manifest_service.clone(),
             );
 
-            let table_type = P::provider_table_type(provider);
             let check_result = pk_checker
-                .check_pk_exists(&table_def, table_id, table_type, scope, &pk_str)
+                .check_pk_exists(core, scope, &pk_str)
                 .await?;
 
             if let crate::utils::pk::PkCheckResult::FoundInCold { segment_path } = check_result {
@@ -1416,14 +1424,12 @@ where
         return Ok(()); // Same value, no change
     }
 
-    // Get table definition to check if PK is auto-increment
-    if let Some(table_def) = provider.schema_registry().get_table_if_exists(table_id)? {
-        if crate::utils::pk::PkExistenceChecker::is_auto_increment_pk(&table_def) {
-            return Err(KalamDbError::InvalidOperation(format!(
-                "Cannot modify auto-increment primary key column '{}' in table {}",
-                pk_name, table_id
-            )));
-        }
+    // Fast path: Reject PK modification if it's auto-increment (O(1) cached value)
+    if provider.core().is_auto_increment_pk() {
+        return Err(KalamDbError::InvalidOperation(format!(
+            "Cannot modify auto-increment primary key column '{}' in table {}",
+            pk_name, table_id
+        )));
     }
 
     // Check if the new PK value already exists

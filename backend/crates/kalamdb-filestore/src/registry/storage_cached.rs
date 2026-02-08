@@ -433,15 +433,91 @@ impl StorageCached {
         let mut batches = Vec::new();
         for file in files {
             let data = self.get(table_type, table_id, user_id, file).await?.data;
-            let builder =
-                parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder::try_new(data)
-                    .map_err(|e| FilestoreError::Format(e.to_string()))?;
-            let reader = builder.build().map_err(|e| FilestoreError::Format(e.to_string()))?;
-            for batch in reader {
-                batches.push(batch.map_err(|e| FilestoreError::Format(e.to_string()))?);
+            let file_batches = crate::parquet::reader::parse_parquet_from_bytes(data)?;
+            batches.extend(file_batches);
+        }
+        Ok(batches)
+    }
+
+    /// Read Parquet files with column projection (only decode specified columns).
+    ///
+    /// `columns` lists the column names to read. If empty, reads all columns.
+    /// This avoids decoding and allocating memory for unneeded columns.
+    pub async fn read_parquet_files_projected(
+        &self,
+        table_type: TableType,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+        files: &[String],
+        columns: &[&str],
+    ) -> Result<Vec<arrow::record_batch::RecordBatch>> {
+        let mut batches = Vec::new();
+        for file in files {
+            let data = self.get(table_type, table_id, user_id, file).await?.data;
+            let file_batches = crate::parquet::reader::parse_parquet_projected(data, columns)?;
+            batches.extend(file_batches);
+        }
+        Ok(batches)
+    }
+
+    /// Read Parquet files using bloom-filter-based row-group pruning.
+    ///
+    /// For each file, row groups whose bloom filter proves the `bloom_value` is
+    /// absent are skipped entirely, and only `columns` are decoded from surviving
+    /// row groups.
+    ///
+    /// Returns `None` for files where bloom filter proved absence across all row
+    /// groups, and `Some(batches)` otherwise.
+    ///
+    /// This is ideal for PK existence checks and point-query lookups.
+    pub async fn read_parquet_files_with_bloom_filter<V: parquet::data_type::AsBytes>(
+        &self,
+        table_type: TableType,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+        files: &[String],
+        bloom_column: &str,
+        bloom_value: &V,
+        columns: &[&str],
+    ) -> Result<Vec<arrow::record_batch::RecordBatch>> {
+        let mut batches = Vec::new();
+        for file in files {
+            let data = self.get(table_type, table_id, user_id, file).await?.data;
+            if let Some(file_batches) =
+                crate::parquet::reader::parse_parquet_with_bloom_filter(
+                    data,
+                    bloom_column,
+                    bloom_value,
+                    columns,
+                )?
+            {
+                batches.extend(file_batches);
             }
         }
         Ok(batches)
+    }
+
+    /// Check if a value is definitely absent from Parquet files using only bloom
+    /// filters (no row data decoded).
+    ///
+    /// Returns `true` if the value is provably absent from ALL files.
+    /// Returns `false` if the value *might* be present in any file.
+    pub async fn bloom_filter_check_absent<V: parquet::data_type::AsBytes>(
+        &self,
+        table_type: TableType,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+        files: &[String],
+        column: &str,
+        value: &V,
+    ) -> Result<bool> {
+        for file in files {
+            let data = self.get(table_type, table_id, user_id, file).await?.data;
+            if !crate::parquet::reader::bloom_filter_check_absent(data, column, value)? {
+                return Ok(false); // Value might be present in this file
+            }
+        }
+        Ok(true) // All files confirmed absence
     }
 
     /// Read a file from storage.

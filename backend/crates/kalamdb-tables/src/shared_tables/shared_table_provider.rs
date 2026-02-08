@@ -32,13 +32,9 @@ use kalamdb_commons::conversions::arrow_json_conversion::coerce_rows;
 use kalamdb_commons::ids::SharedTableRowId;
 use kalamdb_commons::models::rows::Row;
 use kalamdb_commons::models::UserId;
-use kalamdb_commons::schemas::TableDefinition;
-use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::websocket::ChangeNotification;
-use kalamdb_commons::TableId;
 use kalamdb_session::{check_shared_table_access, check_shared_table_write_access};
 use kalamdb_store::EntityStore;
-use kalamdb_system::SchemaRegistry as SchemaRegistryTrait;
 use std::any::Any;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
@@ -51,11 +47,11 @@ use crate::utils::version_resolution::{merge_versioned_rows, parquet_batch_to_ro
 /// **Architecture**:
 /// - Stateless provider (user context passed but ignored)
 /// - Direct fields (no wrapper layer)
-/// - Shared core via Arc<TableProviderCore>
+/// - Shared core via Arc<TableProviderCore> (holds schema, pk_name, column_defaults, non_null_columns, table_def)
 /// - NO RLS - user_id parameter ignored in all operations
 /// - Uses SharedTableIndexedStore for efficient PK lookups
 pub struct SharedTableProvider {
-    /// Shared core (app_context, live_query_manager, storage_registry)
+    /// Shared core (services, schema, pk_name, column_defaults, non_null_columns, table_def)
     core: Arc<TableProviderCore>,
 
     /// SharedTableIndexedStore for DML operations with PK index
@@ -63,67 +59,35 @@ pub struct SharedTableProvider {
 
     /// PK index for efficient lookups
     pk_index: SharedTablePkIndex,
-
-    /// Cached primary key field name
-    primary_key_field_name: String,
-
-    /// Cached Arrow schema (prevents panics if table is dropped while provider is in use)
-    schema: SchemaRef,
-
-    /// Cached table definition for shared table access control
-    table_def: Arc<TableDefinition>,
-
-    /// DataFusion column defaults used by INSERT planning.
-    column_defaults: HashMap<String, Expr>,
 }
 
 impl SharedTableProvider {
     /// Create a new shared table provider
     ///
     /// # Arguments
-    /// * `core` - Shared core with app_context and optional services
-    /// * `table_id` - Table identifier
+    /// * `core` - Shared core with services, schema, pk_name, table_def, etc.
     /// * `store` - SharedTableIndexedStore for this table
-    /// * `primary_key_field_name` - Primary key field name from schema
     pub fn new(
         core: Arc<TableProviderCore>,
         store: Arc<SharedTableIndexedStore>,
-        primary_key_field_name: String,
     ) -> Self {
-        Self::new_with_defaults(core, store, primary_key_field_name, HashMap::new())
-    }
-
-    pub fn new_with_defaults(
-        core: Arc<TableProviderCore>,
-        store: Arc<SharedTableIndexedStore>,
-        primary_key_field_name: String,
-        column_defaults: HashMap<String, Expr>,
-    ) -> Self {
-        // Cache schema at creation time to avoid "Table not found" panics if table is dropped
-        // while provider is still in use by a query plan
-        let schema = core
-            .schema_registry
-            .get_arrow_schema(core.table_id())
-            .expect("Failed to get Arrow schema from registry during provider creation");
-
-        let table_def = core
-            .schema_registry
-            .get_table_if_exists(core.table_id())
-            .expect("Failed to load table definition from registry during provider creation")
-            .unwrap_or_else(|| panic!("Table definition not found for {}", core.table_id()));
-
-        // Create PK index for efficient lookups
-        let pk_index = SharedTablePkIndex::new(core.table_id(), &primary_key_field_name);
+        let pk_index = SharedTablePkIndex::new(core.table_id(), core.primary_key_field_name());
 
         Self {
             core,
             store,
             pk_index,
-            primary_key_field_name,
-            schema,
-            table_def,
-            column_defaults,
         }
+    }
+
+    /// Backward-compatible constructor that accepts pk_field/column_defaults as separate args.
+    pub fn new_with_defaults(
+        core: Arc<TableProviderCore>,
+        store: Arc<SharedTableIndexedStore>,
+        _primary_key_field_name: String,
+        _column_defaults: HashMap<String, Expr>,
+    ) -> Self {
+        Self::new(core, store)
     }
 
     /// Build a complete Row for live query/topic notifications including system columns (_seq, _deleted)
@@ -212,31 +176,6 @@ impl SharedTableProvider {
 
 #[async_trait]
 impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider {
-    fn table_id(&self) -> &TableId {
-        self.core.table_id()
-    }
-
-    fn schema_ref(&self) -> SchemaRef {
-        // Return cached schema
-        self.schema.clone()
-    }
-
-    fn provider_table_type(&self) -> TableType {
-        self.core.table_type()
-    }
-
-    fn cluster_coordinator(&self) -> &Arc<dyn kalamdb_system::ClusterCoordinator> {
-        &self.core.cluster_coordinator
-    }
-
-    fn schema_registry(&self) -> &Arc<dyn SchemaRegistryTrait<Error = KalamDbError>> {
-        &self.core.schema_registry
-    }
-
-    fn primary_key_field_name(&self) -> &str {
-        &self.primary_key_field_name
-    }
-
     fn core(&self) -> &base::TableProviderCore {
         &self.core
     }
@@ -320,7 +259,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         base::ensure_unique_pk_value(self, None, &row_data).await?;
 
         // Generate new SeqId via SystemColumnsService
-        let sys_cols = self.core.system_columns.clone();
+        let sys_cols = self.core.services.system_columns.clone();
         let seq_id = sys_cols.generate_seq_id().map_err(|e| {
             KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e))
         })?;
@@ -343,7 +282,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         log::debug!("Inserted shared table row with _seq {}", seq_id);
 
         // Fire topic/CDC notification (INSERT) - no user_id for shared tables
-        let notification_service = self.core.notification_service.clone();
+        let notification_service = self.core.services.notification_service.clone();
         let table_id = self.core.table_id().clone();
 
         if notification_service.has_subscribers(None, &table_id) {
@@ -384,6 +323,10 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         let coerced_rows = coerce_rows(rows, &self.schema_ref()).map_err(|e| {
             KalamDbError::InvalidOperation(format!("Schema coercion failed: {}", e))
         })?;
+
+        // VALIDATE NOT NULL CONSTRAINTS (per ADR-016: must occur before any RocksDB write)
+        crate::utils::datafusion_dml::validate_not_null_with_set(self.core.non_null_columns(), &coerced_rows)
+            .map_err(|e| KalamDbError::ConstraintViolation(e.to_string()))?;
 
         let row_count = coerced_rows.len();
 
@@ -472,7 +415,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         }
 
         // Generate all SeqIds in single mutex acquisition
-        let sys_cols = self.core.system_columns.clone();
+        let sys_cols = self.core.services.system_columns.clone();
         let seq_ids = sys_cols.generate_seq_ids(row_count).map_err(|e| {
             KalamDbError::InvalidOperation(format!("SeqId batch generation failed: {}", e))
         })?;
@@ -502,7 +445,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         })?;
 
         // Mark manifest as having pending writes (hot data needs to be flushed)
-        let manifest_service = self.core.manifest_service.clone();
+        let manifest_service = self.core.services.manifest_service.clone();
         if let Err(e) = manifest_service.mark_pending_write(self.core.table_id(), None) {
             log::warn!(
                 "Failed to mark manifest as pending_write for {}: {}",
@@ -519,7 +462,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         );
 
         // Fire topic/CDC notifications (INSERT) - no user_id for shared tables
-        let notification_service = self.core.notification_service.clone();
+        let notification_service = self.core.services.notification_service.clone();
         let table_id = self.core.table_id().clone();
 
         if notification_service.has_subscribers(None, &table_id) {
@@ -540,10 +483,10 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         updates: Row,
     ) -> Result<SharedTableRowId, KalamDbError> {
         // IGNORE user_id parameter - no RLS for shared tables
-        // Merge updates onto latest resolved row by PK
+        // Extract PK from prior row, then delegate to update_by_pk_value
         let pk_name = self.primary_key_field_name().to_string();
-        // Load referenced prior version to derive PK value if not present in updates
-        // Try RocksDB first, then Parquet
+
+        // Load referenced prior version to derive PK value
         let prior_opt = self.store.get(key).into_kalamdb_error("Failed to load prior version")?;
 
         let prior = if let Some(p) = prior_opt {
@@ -552,7 +495,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
             load_row_from_parquet_by_seq(
                 &self.core,
                 self.core.table_type(),
-                &self.schema,
+                &self.core.schema_ref(),
                 None,
                 *key,
                 |row_data| SharedTableRow {
@@ -569,67 +512,11 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
             KalamDbError::InvalidOperation(format!("Prior row missing PK {}", pk_name))
         })?;
 
-        // Validate PK update (check if new PK value already exists)
+        // Validate PK is not being changed to a value that already exists
         base::validate_pk_update(self, None, &updates, &pk_value_scalar).await?;
 
-        // Resolve latest per PK - first try hot storage (O(1) via PK index),
-        // then fall back to cold storage (Parquet scan)
-        let (_latest_key, latest_row) = if let Some(result) = self.find_by_pk(&pk_value_scalar)? {
-            result
-        } else {
-            // Not in hot storage, check cold storage
-            let pk_value_str = pk_value_scalar.to_string();
-            base::find_row_by_pk(self, None, &pk_value_str).await?.ok_or_else(|| {
-                KalamDbError::NotFound(format!(
-                    "Row with {}={} not found",
-                    pk_name, pk_value_scalar
-                ))
-            })?
-        };
-
-        let mut merged = latest_row.fields.values.clone();
-        for (k, v) in &updates.values {
-            merged.insert(k.clone(), v.clone());
-        }
-        let new_fields = Row::new(merged);
-
-        let sys_cols = self.core.system_columns.clone();
-        let seq_id = sys_cols.generate_seq_id().map_err(|e| {
-            KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e))
-        })?;
-        let entity = SharedTableRow {
-            _seq: seq_id,
-            _deleted: false,
-            fields: new_fields,
-        };
-        let row_key = seq_id;
-        // Use insert() to update PK index for the new MVCC version
-        self.store.insert(&row_key, &entity).map_err(|e| {
-            KalamDbError::InvalidOperation(format!("Failed to update shared table row: {}", e))
-        })?;
-
-        // Mark manifest as having pending writes (hot data needs to be flushed)
-        let manifest_service = self.core.manifest_service.clone();
-        if let Err(e) = manifest_service.mark_pending_write(self.core.table_id(), None) {
-            log::warn!(
-                "Failed to mark manifest as pending_write for {}: {}",
-                self.core.table_id(),
-                e
-            );
-        }
-
-        // Fire topic/CDC notification (UPDATE) - no user_id for shared tables
-        let notification_service = self.core.notification_service.clone();
-        let table_id = self.core.table_id().clone();
-
-        if notification_service.has_subscribers(None, &table_id) {
-            let old_row = Self::build_notification_row(&latest_row);
-            let new_row = Self::build_notification_row(&entity);
-            let notification = ChangeNotification::update(table_id.clone(), old_row, new_row);
-            notification_service.notify_table_change(None, table_id, notification);
-        }
-
-        Ok(row_key)
+        let pk_value_str = pk_value_scalar.to_string();
+        self.update_by_pk_value(_user_id, &pk_value_str, updates).await
     }
 
     async fn update_by_pk_value(
@@ -681,7 +568,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         }
         let new_fields = Row::new(merged);
 
-        let sys_cols = self.core.system_columns.clone();
+        let sys_cols = self.core.services.system_columns.clone();
         let seq_id = sys_cols.generate_seq_id().map_err(|e| {
             KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e))
         })?;
@@ -697,7 +584,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         })?;
 
         // Mark manifest as having pending writes (hot data needs to be flushed)
-        let manifest_service = self.core.manifest_service.clone();
+        let manifest_service = self.core.services.manifest_service.clone();
         if let Err(e) = manifest_service.mark_pending_write(self.core.table_id(), None) {
             log::warn!(
                 "Failed to mark manifest as pending_write for {}: {}",
@@ -711,8 +598,9 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
 
     async fn delete(&self, _user_id: &UserId, key: &SharedTableRowId) -> Result<(), KalamDbError> {
         // IGNORE user_id parameter - no RLS for shared tables
-        // Load referenced version to extract PK so tombstone groups with same logical row
-        // Try RocksDB first, then Parquet
+        // Extract PK from prior row, then delegate to delete_by_pk_value
+        let pk_name = self.primary_key_field_name().to_string();
+
         let prior_opt = self.store.get(key).into_kalamdb_error("Failed to load prior version")?;
 
         let prior = if let Some(p) = prior_opt {
@@ -721,7 +609,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
             load_row_from_parquet_by_seq(
                 &self.core,
                 self.core.table_type(),
-                &self.schema,
+                &self.core.schema_ref(),
                 None,
                 *key,
                 |row_data| SharedTableRow {
@@ -734,44 +622,12 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
             .ok_or_else(|| KalamDbError::NotFound("Row not found for delete".to_string()))?
         };
 
-        let sys_cols = self.core.system_columns.clone();
-        let seq_id = sys_cols.generate_seq_id().map_err(|e| {
-            KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e))
+        let pk_value_scalar = prior.fields.get(&pk_name).cloned().ok_or_else(|| {
+            KalamDbError::InvalidOperation(format!("Prior row missing PK {}", pk_name))
         })?;
-        // Preserve ALL fields in the tombstone
-        let values = prior.fields.values.clone();
+        let pk_value_str = pk_value_scalar.to_string();
 
-        let entity = SharedTableRow {
-            _seq: seq_id,
-            _deleted: true,
-            fields: Row::new(values),
-        };
-        let row_key = seq_id;
-        // Use insert() to update PK index for the tombstone record
-        self.store.insert(&row_key, &entity).map_err(|e| {
-            KalamDbError::InvalidOperation(format!("Failed to delete shared table row: {}", e))
-        })?;
-
-        // Mark manifest as having pending writes (hot data needs to be flushed)
-        let manifest_service = self.core.manifest_service.clone();
-        if let Err(e) = manifest_service.mark_pending_write(self.core.table_id(), None) {
-            log::warn!(
-                "Failed to mark manifest as pending_write for {}: {}",
-                self.core.table_id(),
-                e
-            );
-        }
-
-        // Fire topic/CDC notification (DELETE) - no user_id for shared tables
-        let notification_service = self.core.notification_service.clone();
-        let table_id = self.core.table_id().clone();
-
-        if notification_service.has_subscribers(None, &table_id) {
-            let row = Self::build_notification_row(&entity);
-            let notification = ChangeNotification::delete_soft(table_id.clone(), row);
-            notification_service.notify_table_change(None, table_id, notification);
-        }
-
+        self.delete_by_pk_value(_user_id, &pk_value_str).await?;
         Ok(())
     }
 
@@ -813,7 +669,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
             }
         };
 
-        let sys_cols = self.core.system_columns.clone();
+        let sys_cols = self.core.services.system_columns.clone();
         let seq_id = sys_cols.generate_seq_id().map_err(|e| {
             KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e))
         })?;
@@ -838,7 +694,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         })?;
 
         // Mark manifest as having pending writes (hot data needs to be flushed)
-        let manifest_service = self.core.manifest_service.clone();
+        let manifest_service = self.core.services.manifest_service.clone();
         if let Err(e) = manifest_service.mark_pending_write(self.core.table_id(), None) {
             log::warn!(
                 "Failed to mark manifest as pending_write for {}: {}",
@@ -848,7 +704,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         }
 
         // Fire topic/CDC notification (DELETE) - no user_id for shared tables
-        let notification_service = self.core.notification_service.clone();
+        let notification_service = self.core.services.notification_service.clone();
         let table_id = self.core.table_id().clone();
 
         if notification_service.has_subscribers(None, &table_id) {
@@ -977,7 +833,7 @@ impl std::fmt::Debug for SharedTableProvider {
         f.debug_struct("SharedTableProvider")
             .field("table_id", &table_id)
             .field("table_type", &self.core.table_type())
-            .field("primary_key_field_name", &self.primary_key_field_name)
+            .field("primary_key_field_name", &self.core.primary_key_field_name())
             .finish()
     }
 }
@@ -998,7 +854,7 @@ impl TableProvider for SharedTableProvider {
     }
 
     fn get_column_default(&self, column: &str) -> Option<&Expr> {
-        self.column_defaults.get(column)
+        self.core.get_column_default(column)
     }
 
     async fn scan(
@@ -1009,7 +865,7 @@ impl TableProvider for SharedTableProvider {
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         // SECURITY: Enforce shared table access rules (access_level + role)
-        check_shared_table_access(state, &self.table_def).map_err(DataFusionError::from)?;
+        check_shared_table_access(state, self.core.table_def()).map_err(DataFusionError::from)?;
 
         // Extract user context including read_context for leader check
         // SharedTableProvider ignores user_id for data access (no RLS) but uses read_context
@@ -1019,8 +875,8 @@ impl TableProvider for SharedTableProvider {
 
         // Check if this is a client read that requires leader (shared data shard)
         // Skip check for internal reads (jobs, live query notifications, etc.)
-        if read_context.requires_leader() && self.core.cluster_coordinator.is_cluster_mode().await {
-            let is_leader = self.core.cluster_coordinator.is_leader_for_shared().await;
+        if read_context.requires_leader() && self.core.services.cluster_coordinator.is_cluster_mode().await {
+            let is_leader = self.core.services.cluster_coordinator.is_leader_for_shared().await;
             if !is_leader {
                 // For shared tables, redirect to leader
                 // We don't have a specific user, so we just report not leader
@@ -1039,7 +895,7 @@ impl TableProvider for SharedTableProvider {
         input: Arc<dyn ExecutionPlan>,
         insert_op: InsertOp,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        check_shared_table_write_access(state, &self.table_def).map_err(DataFusionError::from)?;
+        check_shared_table_write_access(state, self.core.table_def()).map_err(DataFusionError::from)?;
 
         if insert_op != InsertOp::Append {
             return Err(DataFusionError::Plan(format!(
@@ -1062,7 +918,7 @@ impl TableProvider for SharedTableProvider {
         state: &dyn Session,
         filters: Vec<Expr>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        check_shared_table_write_access(state, &self.table_def).map_err(DataFusionError::from)?;
+        check_shared_table_write_access(state, self.core.table_def()).map_err(DataFusionError::from)?;
         crate::utils::datafusion_dml::validate_where_clause(&filters, "DELETE")?;
 
         let rows =
@@ -1099,7 +955,7 @@ impl TableProvider for SharedTableProvider {
         assignments: Vec<(String, Expr)>,
         filters: Vec<Expr>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        check_shared_table_write_access(state, &self.table_def).map_err(DataFusionError::from)?;
+        check_shared_table_write_access(state, self.core.table_def()).map_err(DataFusionError::from)?;
         crate::utils::datafusion_dml::validate_where_clause(&filters, "UPDATE")?;
 
         let pk_column = self.primary_key_field_name().to_string();

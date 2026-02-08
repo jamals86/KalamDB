@@ -30,6 +30,7 @@ pub mod streams {
 
 // Re-export key types for convenience
 pub use base::{BaseTableProvider, TableProviderCore};
+pub use core::TableServices;
 pub use shared::SharedTableProvider;
 pub use streams::StreamTableProvider;
 pub use users::UserTableProvider;

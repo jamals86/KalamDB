@@ -2,8 +2,6 @@
 //!
 //! Provides optimized PK uniqueness validation using manifest-based segment pruning.
 
-use kalamdb_commons::models::schemas::ColumnDefault;
-use kalamdb_commons::models::schemas::TableDefinition;
 use kalamdb_commons::models::TableId;
 use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::UserId;
@@ -81,56 +79,17 @@ impl PkExistenceChecker {
         }
     }
 
-    /// Check if a PK column is configured for auto-increment
-    ///
-    /// Auto-increment columns use system-generated values, so we don't need
-    /// to check for uniqueness - the system guarantees it.
-    pub fn is_auto_increment_pk(table_def: &TableDefinition) -> bool {
-        // Find the primary key column
-        let pk_column = table_def.columns.iter().find(|col| col.is_primary_key);
-
-        if let Some(pk_col) = pk_column {
-            // Check if the default value is AUTO_INCREMENT function
-            matches!(
-                &pk_col.default_value,
-                ColumnDefault::FunctionCall { name, .. }
-                    if name.eq_ignore_ascii_case("auto_increment")
-                    || name.eq_ignore_ascii_case("snowflake_id")
-            )
-        } else {
-            // No PK column means no uniqueness constraint to check
-            true
-        }
-    }
-
-    /// Get the primary key column name from a table definition
-    pub fn get_pk_column_name(table_def: &TableDefinition) -> Option<&str> {
-        table_def
-            .columns
-            .iter()
-            .find(|col| col.is_primary_key)
-            .map(|col| col.column_name.as_str())
-    }
-
-    /// Get the primary key column_id from a table definition
-    pub fn get_pk_column_id(table_def: &TableDefinition) -> Option<u64> {
-        table_def.columns.iter().find(|col| col.is_primary_key).map(|col| col.column_id)
-    }
-
     /// Check if a PK value exists, using optimized manifest-based pruning
     ///
     /// ## Flow:
     /// 1. Check if PK is AUTO_INCREMENT → return AutoIncrement (skip check)
     /// 2. Check if PK value is provided (not null)
-    /// 3. Check hot storage via provider's PK index
-    /// 4. Load manifest from cache (L1 hot cache → L2 RocksDB → storage)
-    /// 5. Use column_stats min/max to prune segments
-    /// 6. Scan only matching Parquet files
+    /// 3. Load manifest from cache (L1 hot cache → L2 RocksDB → storage)
+    /// 4. Use column_stats min/max to prune segments
+    /// 5. Scan only matching Parquet files
     ///
     /// ## Arguments
-    /// * `table_def` - Table definition for schema info
-    /// * `table_id` - Table identifier
-    /// * `table_type` - Type of table (User, Shared, Stream)
+    /// * `core` - TableProviderCore with cached PK info
     /// * `user_id` - Optional user ID for scoping (User tables)
     /// * `pk_value` - The PK value to check (as string)
     ///
@@ -138,30 +97,26 @@ impl PkExistenceChecker {
     /// * `PkCheckResult` indicating where (or if) the PK was found
     pub async fn check_pk_exists(
         &self,
-        table_def: &TableDefinition,
-        table_id: &TableId,
-        table_type: TableType,
+        core: &crate::utils::base::TableProviderCore,
         user_id: Option<&UserId>,
         pk_value: &str,
     ) -> Result<PkCheckResult, KalamDbError> {
-        // Step 1: Check if PK is auto-increment
-        if Self::is_auto_increment_pk(table_def) {
+        // Step 1: Check if PK is auto-increment (O(1) cached value)
+        if core.is_auto_increment_pk() {
             log::trace!(
                 "[PkExistenceChecker] PK is auto-increment for {}, skipping check",
-                table_id
+                core.table_id()
             );
             return Ok(PkCheckResult::AutoIncrement);
         }
 
-        // Step 2: Get PK column name and id
-        let pk_column = Self::get_pk_column_name(table_def).ok_or_else(|| {
-            KalamDbError::InvalidOperation(format!("Table {} has no primary key column", table_id))
-        })?;
-        let pk_column_id = Self::get_pk_column_id(table_def).ok_or_else(|| {
-            KalamDbError::InvalidOperation(format!("Table {} has no primary key column", table_id))
-        })?;
+        // Step 2: Get PK info from core (O(1) cached values)
+        let table_id = core.table_id();
+        let table_type = core.table_type();
+        let pk_column = core.primary_key_field_name();
+        let pk_column_id = core.primary_key_column_id();
 
-        // Step 3-6: Use the optimized cold storage check
+        // Step 3-5: Use the optimized cold storage check
         let exists_in_cold = self
             .check_cold_storage(table_id, table_type, user_id, pk_column, pk_column_id, pk_value)
             .await?;
@@ -431,10 +386,33 @@ impl PkExistenceChecker {
         use kalamdb_commons::constants::SystemColumnNames;
         use std::collections::HashMap;
 
-        let batches = storage_cached
-            .read_parquet_files(table_type, table_id, user_id, &[parquet_filename.to_string()])
+        // Step 1: Use bloom filter to check if PK value is definitely absent.
+        // This avoids reading row data entirely when the bloom filter can prove absence.
+        let data = storage_cached
+            .get(table_type, table_id, user_id, parquet_filename)
             .await
-            .into_kalamdb_error("Failed to read Parquet file")?;
+            .into_kalamdb_error("Failed to read Parquet file")?
+            .data;
+
+        // Try bloom filter check first — O(metadata) with zero row decoding
+        let definitely_absent =
+            kalamdb_filestore::bloom_filter_check_absent(data.clone(), pk_column, &pk_value)
+                .unwrap_or(false);
+
+        if definitely_absent {
+            log::trace!(
+                "[PkExistenceChecker] Bloom filter confirmed PK '{}' absent from '{}'",
+                pk_value,
+                parquet_filename
+            );
+            return Ok(false);
+        }
+
+        // Step 2: Read only the columns needed for PK existence check
+        // (pk_column, _seq, _deleted) instead of the entire file
+        let columns_to_read = [pk_column, SystemColumnNames::SEQ, SystemColumnNames::DELETED];
+        let batches = kalamdb_filestore::parse_parquet_projected(data, &columns_to_read)
+            .into_kalamdb_error("Failed to parse projected Parquet")?;
 
         // Track latest version per PK value: pk_value -> (max_seq, is_deleted)
         let mut versions: HashMap<String, (i64, bool)> = HashMap::new();

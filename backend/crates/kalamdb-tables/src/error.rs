@@ -18,6 +18,9 @@ pub enum TableError {
     #[error("Invalid operation: {0}")]
     InvalidOperation(String),
 
+    #[error("Constraint violation: {0}")]
+    ConstraintViolation(String),
+
     #[error("Serialization error: {0}")]
     Serialization(String),
 

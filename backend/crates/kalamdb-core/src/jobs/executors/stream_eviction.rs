@@ -250,8 +250,10 @@ mod tests {
     use kalamdb_commons::{ChangeNotification, JobId, NamespaceId, NodeId};
     use kalamdb_system::providers::jobs::models::Job;
     use kalamdb_system::NotificationService;
+    use kalamdb_tables::utils::TableServices;
     use kalamdb_tables::StreamTableStoreConfig;
     use serde_json::json;
+    use std::collections::HashMap;
     use std::sync::Arc;
     use tokio::time::{sleep, Duration};
 
@@ -326,9 +328,7 @@ mod tests {
         ));
         let tables_schema_registry =
             Arc::new(TablesSchemaRegistryAdapter::new(app_ctx.schema_registry()));
-        let core = Arc::new(TableProviderCore::new(
-            table_id.clone(),
-            TableType::Stream,
+        let services = Arc::new(TableServices::new(
             tables_schema_registry.clone(),
             app_ctx.system_columns_service(),
             Some(app_ctx.storage_registry()),
@@ -337,8 +337,19 @@ mod tests {
                 as Arc<dyn NotificationService<Notification = ChangeNotification>>,
             app_ctx.clone(),
         ));
+        let arrow_schema = tables_schema_registry
+            .get_arrow_schema(&table_id)
+            .expect("get arrow schema");
+        let core = Arc::new(TableProviderCore::new(
+            table_id.clone(),
+            TableType::Stream,
+            services,
+            "event_id".to_string(),
+            arrow_schema,
+            HashMap::new(),
+        ));
         let provider =
-            Arc::new(StreamTableProvider::new(core, stream_store, Some(1), "event_id".to_string()));
+            Arc::new(StreamTableProvider::new(core, stream_store, Some(1)));
         let provider_trait: Arc<dyn TableProvider> = provider.clone();
         app_ctx
             .schema_registry()

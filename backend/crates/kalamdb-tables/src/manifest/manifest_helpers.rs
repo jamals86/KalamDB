@@ -20,7 +20,7 @@ pub fn ensure_manifest_ready(
     let table_id = core.table_id();
     let namespace = table_id.namespace_id().clone();
     let table = table_id.table_name().clone();
-    let manifest_service = core.manifest_service.clone();
+    let manifest_service = core.services.manifest_service.clone();
 
     match manifest_service.get_or_load(table_id, user_id) {
         Ok(Some(_)) => return Ok(()),
@@ -43,7 +43,7 @@ pub fn ensure_manifest_ready(
 
     // Get cached table data for path resolution using storage templates
     let _cached =
-        core.schema_registry
+        core.services.schema_registry
             .get_table_if_exists(table_id)
             .ok()
             .flatten()

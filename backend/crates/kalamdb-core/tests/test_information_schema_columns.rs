@@ -3,8 +3,6 @@
 //! This test verifies that the information_schema.columns table is properly
 //! registered and can be queried via SQL.
 
-mod test_helpers;
-use test_helpers::test_app_context_simple;
 
 #[tokio::test]
 async fn test_information_schema_columns_query() {

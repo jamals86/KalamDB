@@ -473,7 +473,9 @@ mod tests {
     use kalamdb_store::test_utils::InMemoryBackend;
     use kalamdb_system::NotificationService;
     use kalamdb_tables::user_tables::user_table_store::new_indexed_user_table_store;
+    use kalamdb_tables::utils::TableServices;
     use kalamdb_tables::UserTableRow;
+    use std::collections::HashMap;
     use std::sync::Arc;
     use tokio::sync::Mutex;
 
@@ -597,14 +599,12 @@ mod tests {
         .expect("create table def");
 
         // Insert into cache directly (bypassing persistence which might not be mocked)
-        let _ = schema_registry.put(table_def);
+        let _ = schema_registry.put(table_def.clone());
 
         // Create a mock provider with the store
         let tables_schema_registry =
             Arc::new(TablesSchemaRegistryAdapter::new(app_context.schema_registry()));
-        let core = Arc::new(TableProviderCore::new(
-            table_id.clone(),
-            TableType::User,
+        let services = Arc::new(TableServices::new(
             tables_schema_registry.clone(),
             app_context.system_columns_service(),
             Some(app_context.storage_registry()),
@@ -613,9 +613,18 @@ mod tests {
                 as Arc<dyn NotificationService<Notification = ChangeNotification>>,
             app_context.clone(),
         ));
+        let arrow_schema = tables_schema_registry
+            .get_arrow_schema(&table_id)
+            .expect("get arrow schema");
+        let core = Arc::new(TableProviderCore::new(
+            Arc::new(table_def),
+            services,
+            "id".to_string(),
+            arrow_schema,
+            HashMap::new(),
+        ));
         let provider = Arc::new(
-            UserTableProvider::try_new(core, store, "id".to_string())
-                .expect("create user table provider"),
+            UserTableProvider::new(core, store),
         );
 
         // Register the provider in schema_registry
@@ -734,15 +743,14 @@ mod tests {
         )
         .expect("create table def");
 
+        let table_def_arc = Arc::new(table_def);
         schema_registry
-            .insert_cached(table_id.clone(), Arc::new(CachedTableData::new(Arc::new(table_def))));
+            .insert_cached(table_id.clone(), Arc::new(CachedTableData::new(table_def_arc.clone())));
 
         // Create and register provider
         let tables_schema_registry =
             Arc::new(TablesSchemaRegistryAdapter::new(app_context.schema_registry()));
-        let core = Arc::new(TableProviderCore::new(
-            table_id.clone(),
-            TableType::User,
+        let services = Arc::new(TableServices::new(
             tables_schema_registry.clone(),
             app_context.system_columns_service(),
             Some(app_context.storage_registry()),
@@ -751,9 +759,18 @@ mod tests {
                 as Arc<dyn NotificationService<Notification = ChangeNotification>>,
             app_context.clone(),
         ));
+        let arrow_schema = tables_schema_registry
+            .get_arrow_schema(&table_id)
+            .expect("get arrow schema");
+        let core = Arc::new(TableProviderCore::new(
+            table_def_arc,
+            services,
+            "id".to_string(),
+            arrow_schema,
+            HashMap::new(),
+        ));
         let provider = Arc::new(
-            UserTableProvider::try_new(core, store, "id".to_string())
-                .expect("create user table provider"),
+            UserTableProvider::new(core, store),
         );
 
         schema_registry
@@ -903,15 +920,14 @@ mod tests {
         )
         .expect("create table def");
 
+        let table_def_arc = Arc::new(table_def);
         schema_registry
-            .insert_cached(table_id.clone(), Arc::new(CachedTableData::new(Arc::new(table_def))));
+            .insert_cached(table_id.clone(), Arc::new(CachedTableData::new(table_def_arc.clone())));
 
         // Create and register provider
         let tables_schema_registry =
             Arc::new(TablesSchemaRegistryAdapter::new(app_context.schema_registry()));
-        let core = Arc::new(TableProviderCore::new(
-            table_id.clone(),
-            TableType::User,
+        let services = Arc::new(TableServices::new(
             tables_schema_registry.clone(),
             app_context.system_columns_service(),
             Some(app_context.storage_registry()),
@@ -920,9 +936,18 @@ mod tests {
                 as Arc<dyn NotificationService<Notification = ChangeNotification>>,
             app_context.clone(),
         ));
+        let arrow_schema = tables_schema_registry
+            .get_arrow_schema(&table_id)
+            .expect("get arrow schema");
+        let core = Arc::new(TableProviderCore::new(
+            table_def_arc,
+            services,
+            "id".to_string(),
+            arrow_schema,
+            HashMap::new(),
+        ));
         let provider = Arc::new(
-            UserTableProvider::try_new(core, store, "id".to_string())
-                .expect("create user table provider"),
+            UserTableProvider::new(core, store),
         );
 
         schema_registry

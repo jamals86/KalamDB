@@ -30,10 +30,7 @@ use datafusion::scalar::ScalarValue;
 use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::ids::{SeqId, StreamTableRowId};
 use kalamdb_commons::models::UserId;
-use kalamdb_commons::schemas::TableType;
-use kalamdb_commons::TableId;
 use kalamdb_session::check_user_table_write_access;
-use kalamdb_system::SchemaRegistry as SchemaRegistryTrait;
 use std::any::Any;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -48,12 +45,12 @@ use kalamdb_commons::websocket::ChangeNotification;
 /// **Architecture**:
 /// - Stateless provider (user context passed per-operation)
 /// - Direct fields (no wrapper layer)
-/// - Shared core via Arc<TableProviderCore>
+/// - Shared core via Arc<TableProviderCore> (holds schema, pk_name, column_defaults, non_null_columns)
 /// - RLS enforced via user_id parameter
 /// - HOT-ONLY storage (ephemeral data, no Parquet)
 /// - TTL-based eviction
 pub struct StreamTableProvider {
-    /// Shared core (app_context, live_query_manager, storage_registry)
+    /// Shared core (services, schema, pk_name, column_defaults, non_null_columns)
     core: Arc<TableProviderCore>,
 
     /// StreamTableStore for DML operations (commit log-backed)
@@ -61,62 +58,36 @@ pub struct StreamTableProvider {
 
     /// TTL in seconds (optional)
     ttl_seconds: Option<u64>,
-
-    /// Cached primary key field name
-    primary_key_field_name: String,
-
-    /// Cached Arrow schema (prevents panics if table is dropped while provider is in use)
-    schema: SchemaRef,
-
-    /// Whether the Arrow schema includes a user_id column
-    has_user_column: bool,
-
-    /// DataFusion column defaults used by INSERT planning.
-    column_defaults: HashMap<String, Expr>,
 }
 
 impl StreamTableProvider {
     /// Create a new stream table provider
     ///
     /// # Arguments
-    /// * `core` - Shared core with app_context and optional services
-    /// * `table_id` - Table identifier
+    /// * `core` - Shared core with services, schema, pk_name, etc.
     /// * `store` - StreamTableStore for this table (hot-only)
     /// * `ttl_seconds` - Optional TTL for event eviction
-    /// * `primary_key_field_name` - Primary key field name from schema
     pub fn new(
         core: Arc<TableProviderCore>,
         store: Arc<StreamTableStore>,
         ttl_seconds: Option<u64>,
-        primary_key_field_name: String,
     ) -> Self {
-        Self::new_with_defaults(core, store, ttl_seconds, primary_key_field_name, HashMap::new())
-    }
-
-    pub fn new_with_defaults(
-        core: Arc<TableProviderCore>,
-        store: Arc<StreamTableStore>,
-        ttl_seconds: Option<u64>,
-        primary_key_field_name: String,
-        column_defaults: HashMap<String, Expr>,
-    ) -> Self {
-        // Cache schema at creation time to avoid "Table not found" panics if table is dropped
-        // while provider is still in use by a query plan
-        let schema = core
-            .schema_registry
-            .get_arrow_schema(core.table_id())
-            .expect("Failed to get Arrow schema from registry during provider creation");
-        let has_user_column = schema.field_with_name("user_id").is_ok();
-
         Self {
             core,
             store,
             ttl_seconds,
-            primary_key_field_name,
-            schema,
-            has_user_column,
-            column_defaults,
         }
+    }
+
+    /// Backward-compatible constructor that accepts pk_field/column_defaults as separate args.
+    pub fn new_with_defaults(
+        core: Arc<TableProviderCore>,
+        store: Arc<StreamTableStore>,
+        ttl_seconds: Option<u64>,
+        _primary_key_field_name: String,
+        _column_defaults: HashMap<String, Expr>,
+    ) -> Self {
+        Self::new(core, store, ttl_seconds)
     }
 
     /// Build a complete Row from StreamTableRow including system column (_seq)
@@ -147,31 +118,6 @@ impl StreamTableProvider {
 
 #[async_trait]
 impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider {
-    fn table_id(&self) -> &TableId {
-        self.core.table_id()
-    }
-
-    fn schema_ref(&self) -> SchemaRef {
-        // Return cached schema
-        self.schema.clone()
-    }
-
-    fn provider_table_type(&self) -> TableType {
-        self.core.table_type()
-    }
-
-    fn cluster_coordinator(&self) -> &Arc<dyn kalamdb_system::ClusterCoordinator> {
-        &self.core.cluster_coordinator
-    }
-
-    fn schema_registry(&self) -> &Arc<dyn SchemaRegistryTrait<Error = KalamDbError>> {
-        &self.core.schema_registry
-    }
-
-    fn primary_key_field_name(&self) -> &str {
-        &self.primary_key_field_name
-    }
-
     fn core(&self) -> &crate::utils::base::TableProviderCore {
         &self.core
     }
@@ -209,7 +155,7 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         let table_id = self.core.table_id();
 
         // Call SystemColumnsService to generate SeqId
-        let sys_cols = self.core.system_columns.clone();
+        let sys_cols = self.core.services.system_columns.clone();
         let seq_id = sys_cols.generate_seq_id().map_err(|e| {
             KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e))
         })?;
@@ -238,7 +184,7 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         );
 
         // Fire live query notification (INSERT)
-        let manager = self.core.notification_service.clone();
+        let manager = self.core.services.notification_service.clone();
         let table_id = self.core.table_id().clone();
 
         if manager.has_subscribers(Some(&user_id), &table_id) {
@@ -297,7 +243,7 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         })?;
 
         // Fire live query notification (DELETE hard)
-        let notification_service = self.core.notification_service.clone();
+        let notification_service = self.core.services.notification_service.clone();
         let table_id = self.core.table_id().clone();
 
         if notification_service.has_subscribers(Some(&user_id), &table_id) {
@@ -348,7 +294,7 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
                     deleted_count += 1;
 
                     // Fire live query notification (DELETE hard)
-                    let notification_service = self.core.notification_service.clone();
+                    let notification_service = self.core.services.notification_service.clone();
                     let table_id = self.core.table_id().clone();
 
                     if notification_service.has_subscribers(Some(&user_id), &table_id) {
@@ -408,7 +354,7 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
 
         let schema = self.schema_ref();
         crate::utils::base::rows_to_arrow_batch(&schema, kvs, projection, |row_values, row| {
-            if self.has_user_column {
+            if self.core.schema_ref().field_with_name("user_id").is_ok() {
                 row_values.values.insert(
                     "user_id".to_string(),
                     ScalarValue::Utf8(Some(row.user_id.as_str().to_string())),
@@ -481,7 +427,7 @@ impl std::fmt::Debug for StreamTableProvider {
             .field("table_id", &table_id)
             .field("table_type", &self.core.table_type())
             .field("ttl_seconds", &self.ttl_seconds)
-            .field("primary_key_field_name", &self.primary_key_field_name)
+            .field("primary_key_field_name", &self.core.primary_key_field_name())
             .finish()
     }
 }
@@ -502,7 +448,7 @@ impl TableProvider for StreamTableProvider {
     }
 
     fn get_column_default(&self, column: &str) -> Option<&Expr> {
-        self.column_defaults.get(column)
+        self.core.get_column_default(column)
     }
 
     async fn scan(
