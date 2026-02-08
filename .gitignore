@@ -90,3 +90,6 @@ ui/package-lock.json
 ui/package-lock.json
 /docker/utils/dav-data
 /backend/target_namespace_topic_fix
+cli/logs/server.jsonl
+cli/logs/server.jsonl
+/cli/logs
