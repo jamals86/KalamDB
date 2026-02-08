@@ -179,38 +179,30 @@ jobs:
 
       - name: Run tests and generate badge
         run: |
-          # Run tests and capture output
-          cargo nextest run --workspace --no-fail-fast > test_output.txt 2>&1 || true
-          cat test_output.txt
+          # Run tests with JSON output
+          NEXTEST_EXPERIMENTAL_LIBTEST_JSON=1 cargo nextest run \
+            --workspace \
+            --no-fail-fast \
+            --message-format libtest-json-plus > results.json 2>&1 || true
           
-          # Parse the summary line from nextest output
-          # Expected format: "     Summary [ 427.076s] 2204 tests run: 2203 passed, 1 failed, 90 skipped"
-          # Note: nextest adds leading spaces before "Summary"
-          SUMMARY=$(grep -E "^\s*Summary \[.*\] [0-9]+ tests run:" test_output.txt || echo "")
-          
-          if [ -z "$SUMMARY" ]; then
-            echo "Error: Could not find nextest summary line"
-            cat test_output.txt | tail -20
-            exit 1
-          fi
-          
-          echo "Found summary: $SUMMARY"
-          
-          # Extract numbers using grep with extended regex (more portable)
-          TOTAL=$(echo "$SUMMARY" | grep -oE "[0-9]+ tests run" | grep -oE "[0-9]+")
-          PASSED=$(echo "$SUMMARY" | grep -oE "[0-9]+ passed" | grep -oE "[0-9]+")
-          FAILED=$(echo "$SUMMARY" | grep -oE "[0-9]+ failed" | grep -oE "[0-9]+")
+          # Parse JSON results to count tests
+          # Each suite event has "passed" and "failed" counts
+          # Example: {"type":"suite","event":"failed","passed":12,"failed":135,...}
+          PASSED=$(grep -o '"type":"suite".*"passed":[0-9]*' results.json | grep -o '"passed":[0-9]*' | grep -o '[0-9]*' | awk '{s+=$1} END {print s}')
+          FAILED=$(grep -o '"type":"suite".*"failed":[0-9]*' results.json | grep -o '"failed":[0-9]*' | grep -o '[0-9]*' | awk '{s+=$1} END {print s}')
           
           # Default to 0 if extraction failed
           PASSED=${PASSED:-0}
           FAILED=${FAILED:-0}
-          TOTAL=${TOTAL:-0}
+          TOTAL=$((PASSED + FAILED))
           
           echo "Tests: $PASSED passed, $FAILED failed (total: $TOTAL)"
           
-          # Skip badge generation if parsing failed (total is 0 or 1)
-          if [ "$TOTAL" -le "1" ]; then
-            echo "Error: Invalid test count ($TOTAL). Parsing likely failed."
+          # Skip badge generation if parsing failed (total is 0)
+          if [ "$TOTAL" -eq "0" ]; then
+            echo "Error: No tests found. Parsing likely failed."
+            echo "First 50 lines of results.json:"
+            head -50 results.json
             exit 1
           fi
           
@@ -222,6 +214,8 @@ jobs:
             COLOR="red"
             MESSAGE="$PASSED/$TOTAL passed, $FAILED failed"
           fi
+          
+          echo "Badge: $MESSAGE ($COLOR)"
           
           # Generate badge JSON
           mkdir -p .github/badges

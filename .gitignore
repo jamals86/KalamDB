@@ -93,3 +93,4 @@ ui/package-lock.json
 cli/logs/server.jsonl
 cli/logs/server.jsonl
 /cli/logs
+cli/results.json
