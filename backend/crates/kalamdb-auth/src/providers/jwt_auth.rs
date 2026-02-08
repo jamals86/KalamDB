@@ -14,6 +14,23 @@ pub const DEFAULT_JWT_EXPIRY_HOURS: i64 = 24;
 /// Default issuer for KalamDB tokens
 pub const KALAMDB_ISSUER: &str = "kalamdb";
 
+/// Token type for distinguishing access from refresh tokens.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TokenType {
+    Access,
+    Refresh,
+}
+
+impl std::fmt::Display for TokenType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TokenType::Access => write!(f, "access"),
+            TokenType::Refresh => write!(f, "refresh"),
+        }
+    }
+}
+
 /// JWT claims structure for KalamDB tokens.
 ///
 /// Standard JWT claims plus custom KalamDB-specific fields.
@@ -33,10 +50,14 @@ pub struct JwtClaims {
     pub email: Option<String>,
     /// Role (custom claim)
     pub role: Option<Role>,
+    /// Token type: "access" or "refresh"
+    /// Optional for backward compatibility with tokens issued before this field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_type: Option<TokenType>,
 }
 
 impl JwtClaims {
-    /// Create new JWT claims for a user.
+    /// Create new JWT claims for a user (defaults to access token).
     ///
     /// # Arguments
     /// * `user_id` - User's unique identifier
@@ -51,6 +72,18 @@ impl JwtClaims {
         email: Option<&str>,
         expiry_hours: Option<i64>,
     ) -> Self {
+        Self::with_token_type(user_id, username, role, email, expiry_hours, TokenType::Access)
+    }
+
+    /// Create new JWT claims with an explicit token type.
+    pub fn with_token_type(
+        user_id: &UserId,
+        username: &UserName,
+        role: &Role,
+        email: Option<&str>,
+        expiry_hours: Option<i64>,
+        token_type: TokenType,
+    ) -> Self {
         let now = chrono::Utc::now();
         let exp_hours = expiry_hours.unwrap_or(DEFAULT_JWT_EXPIRY_HOURS);
         let exp = now + chrono::Duration::hours(exp_hours);
@@ -63,6 +96,7 @@ impl JwtClaims {
             username: Some(username.clone()),
             email: email.map(|e| e.to_string()),
             role: Some(*role),
+            token_type: Some(token_type),
         }
     }
 }
@@ -86,9 +120,10 @@ pub fn generate_jwt_token(claims: &JwtClaims, secret: &str) -> AuthResult<String
         .map_err(|e| AuthError::HashingError(format!("JWT encoding error: {}", e)))
 }
 
-/// Create and sign a new JWT token in one step.
+/// Create and sign a new JWT access token in one step.
 ///
 /// This is the preferred way to generate tokens to ensure consistency.
+/// Produces an access token (token_type = "access").
 pub fn create_and_sign_token(
     user_id: &UserId,
     username: &UserName,
@@ -97,7 +132,28 @@ pub fn create_and_sign_token(
     expiry_hours: Option<i64>,
     secret: &str,
 ) -> AuthResult<(String, JwtClaims)> {
-    let claims = JwtClaims::new(user_id, username, role, email, expiry_hours);
+    let claims = JwtClaims::with_token_type(
+        user_id, username, role, email, expiry_hours, TokenType::Access,
+    );
+    let token = generate_jwt_token(&claims, secret)?;
+    Ok((token, claims))
+}
+
+/// Create and sign a new JWT refresh token.
+///
+/// Refresh tokens have `token_type = "refresh"` and MUST NOT be accepted
+/// as access tokens for API authentication.
+pub fn create_and_sign_refresh_token(
+    user_id: &UserId,
+    username: &UserName,
+    role: &Role,
+    email: Option<&str>,
+    expiry_hours: Option<i64>,
+    secret: &str,
+) -> AuthResult<(String, JwtClaims)> {
+    let claims = JwtClaims::with_token_type(
+        user_id, username, role, email, expiry_hours, TokenType::Refresh,
+    );
     let token = generate_jwt_token(&claims, secret)?;
     Ok((token, claims))
 }
@@ -229,7 +285,7 @@ fn verify_issuer(issuer: &str, trusted_issuers: &[String]) -> AuthResult<()> {
 
 /// Extract claims from a JWT token without full validation.
 ///
-/// **WARNING**: This does NOT verify the signature! Only use for debugging
+/// **WARNING**: This does NOT verify the signature! Only use in tests
 /// or when you need to inspect a token before validation.
 ///
 /// # Arguments
@@ -240,6 +296,11 @@ fn verify_issuer(issuer: &str, trusted_issuers: &[String]) -> AuthResult<()> {
 ///
 /// # Errors
 /// Returns error if token structure is invalid
+///
+/// # Security
+/// This function is gated behind `#[cfg(test)]` to prevent accidental
+/// use in production code paths.
+#[cfg(test)]
 pub fn extract_claims_unverified(token: &str) -> AuthResult<JwtClaims> {
     // Decode without verification (dangerous!)
     let mut validation = Validation::new(Algorithm::HS256);
@@ -260,6 +321,14 @@ mod tests {
     use jsonwebtoken::{encode, EncodingKey, Header};
 
     fn create_test_token(secret: &str, exp_offset_secs: i64) -> String {
+        create_test_token_with_type(secret, exp_offset_secs, Some(TokenType::Access))
+    }
+
+    fn create_test_token_with_type(
+        secret: &str,
+        exp_offset_secs: i64,
+        token_type: Option<TokenType>,
+    ) -> String {
         let now = chrono::Utc::now().timestamp() as usize;
         let claims = JwtClaims {
             sub: "user_123".to_string(),
@@ -269,6 +338,7 @@ mod tests {
             username: Some(UserName::new("testuser")),
             email: Some("test@example.com".to_string()),
             role: Some(Role::User),
+            token_type,
         };
 
         let header = Header::new(Algorithm::HS256);

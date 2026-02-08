@@ -8,6 +8,7 @@ use kalamdb_auth::{
     authenticate, create_and_sign_token, create_auth_cookie, extract_client_ip_secure, AuthRequest,
     CookieConfig, UserRepository,
 };
+use kalamdb_auth::providers::jwt_auth::create_and_sign_refresh_token;
 use kalamdb_configs::AuthSettings;
 use std::sync::Arc;
 
@@ -78,8 +79,10 @@ pub async fn login_handler(
     };
 
     // Generate refresh token (7 days by default, or 7x access token expiry)
+    // SECURITY: Uses create_and_sign_refresh_token to set token_type="refresh",
+    // preventing refresh tokens from being used as access tokens.
     let refresh_expiry_hours = config.jwt_expiry_hours * 7;
-    let (refresh_token, _refresh_claims) = match create_and_sign_token(
+    let (refresh_token, _refresh_claims) = match create_and_sign_refresh_token(
         &user.user_id,
         &user.username,
         &user.role,

@@ -113,8 +113,6 @@ impl TableProvider for SecuredSystemTableProvider {
         // Permission check passed - delegate to inner provider
         self.inner.scan(state, projection, filters, limit).await
     }
-
-    //TODO: Should we cover scan_with_args as well?
 }
 
 /// Convenience function to wrap a system table provider with security checks.

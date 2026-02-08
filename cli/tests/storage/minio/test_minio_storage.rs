@@ -27,9 +27,6 @@ const MINIO_REGION: &str = "us-east-1";
 fn test_minio_storage_end_to_end() {
     println!("\n🚀 Starting MinIO storage integration test...");
 
-    let auto_url = force_auto_test_server_url();
-    std::env::set_var("KALAMDB_SERVER_URL", &auto_url);
-
     println!("📡 Checking if KalamDB server is running...");
     if !is_server_running() {
         eprintln!("❌ Server not running. Skipping MinIO storage test.");
@@ -230,9 +227,6 @@ fn test_minio_storage_end_to_end() {
 #[ignore]
 fn test_minio_storage_check() {
     println!("\n🚀 Starting MinIO STORAGE CHECK test...");
-
-    let auto_url = force_auto_test_server_url();
-    std::env::set_var("KALAMDB_SERVER_URL", &auto_url);
 
     println!("📡 Checking if KalamDB server is running...");
     if !is_server_running() {

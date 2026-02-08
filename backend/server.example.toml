@@ -238,6 +238,35 @@ max_subscriptions_per_user = 10
 # Applies to /auth/login, /auth/refresh, /setup endpoints
 max_auth_requests_per_ip_per_sec = 20
 
+# Maximum concurrent connections per IP address (default: 100)
+# Prevents a single IP from exhausting all server connections
+max_connections_per_ip = 100
+
+# Maximum requests per second per IP BEFORE authentication (default: 200)
+# ⚠️ CRITICAL: This is the main rate limit that triggers IP BANS
+# Applied before auth to protect against unauthenticated floods
+# If exceeded repeatedly, IP will be banned for ban_duration_seconds
+# For testing/development with high request rates, set to 100000+
+max_requests_per_ip_per_sec = 200
+
+# Maximum request body size in bytes (default: 10MB)
+# Prevents memory exhaustion from huge request payloads
+request_body_limit_bytes = 10485760
+
+# Duration in seconds to ban abusive IPs (default: 300 = 5 minutes)
+# IPs that violate max_requests_per_ip_per_sec 10+ times are banned
+ban_duration_seconds = 300
+
+# Enable connection protection middleware (default: true)
+# Set to false to completely disable rate limiting (NOT recommended for production)
+enable_connection_protection = true
+
+# Maximum cached entries for rate limiting state (default: 100,000)
+cache_max_entries = 100000
+
+# Time-to-idle for cached entries in seconds (default: 600 = 10 minutes)
+cache_ttl_seconds = 600
+
 # ============================================================================
 # Security Settings
 # ============================================================================
