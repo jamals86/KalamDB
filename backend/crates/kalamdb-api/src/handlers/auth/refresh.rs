@@ -5,9 +5,10 @@
 use actix_web::{web, HttpRequest, HttpResponse};
 use chrono::{Duration, Utc};
 use kalamdb_auth::{
-    authenticate, create_and_sign_token, create_auth_cookie, extract_client_ip_secure, AuthRequest,
+    create_and_sign_token, create_auth_cookie, extract_client_ip_secure,
     CookieConfig, UserRepository,
 };
+use kalamdb_auth::providers::jwt_auth::{create_and_sign_refresh_token, validate_jwt_token};
 use kalamdb_configs::AuthSettings;
 use std::sync::Arc;
 
@@ -40,19 +41,25 @@ pub async fn refresh_handler(
         Err(err) => return map_auth_error_to_response(err),
     };
 
-    // Validate existing token via unified auth (uses configured trusted issuers)
-    let auth_request = AuthRequest::Jwt {
-        token: token.clone(),
-    };
-    let auth_result = match authenticate(auth_request, &connection_info, user_repo.get_ref()).await
-    {
-        Ok(result) => result,
+    // Validate existing token directly (accepts both access and refresh tokens).
+    // Unlike authenticate_bearer (which rejects refresh tokens for API auth),
+    // the refresh endpoint must accept refresh tokens to issue new token pairs.
+    let jwt_config = kalamdb_auth::providers::jwt_config::get_jwt_config();
+    let claims = match validate_jwt_token(&token, &jwt_config.secret, &jwt_config.trusted_issuers) {
+        Ok(c) => c,
         Err(err) => return map_auth_error_to_response(err),
     };
 
-    // Verify user still exists and is active by username (we don't have find_by_id)
-    let username_typed = auth_result.user.username.clone();
-    let user = match user_repo.get_user_by_username(&username_typed).await {
+    let username_claim = match claims.username {
+        Some(ref u) => u.clone(),
+        None => {
+            return HttpResponse::Unauthorized()
+                .json(AuthErrorResponse::new("unauthorized", "Token missing username claim"));
+        },
+    };
+
+    // Verify user still exists and is active by username
+    let user = match user_repo.get_user_by_username(&username_claim).await {
         Ok(user) if user.deleted_at.is_none() => user,
         _ => {
             return HttpResponse::Unauthorized()
@@ -78,8 +85,10 @@ pub async fn refresh_handler(
     };
 
     // Generate new refresh token (7 days by default, or 7x access token expiry)
+    // SECURITY: Uses create_and_sign_refresh_token to set token_type="refresh",
+    // preventing refresh tokens from being used as access tokens.
     let refresh_expiry_hours = config.jwt_expiry_hours * 7;
-    let (new_refresh_token, _refresh_claims) = match create_and_sign_token(
+    let (new_refresh_token, _refresh_claims) = match create_and_sign_refresh_token(
         &user.user_id,
         &user.username,
         &user.role,

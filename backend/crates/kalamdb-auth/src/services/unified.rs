@@ -402,6 +402,8 @@ fn jwt_config() -> &'static jwt_config::JwtConfig {
 /// Authenticate using JWT Bearer token
 ///
 /// Uses cached JWT configuration for performance (avoids env var reads per request).
+/// SECURITY: Rejects refresh tokens - only access tokens (or legacy tokens without
+/// a token_type claim) are accepted for API authentication.
 async fn authenticate_bearer(
     token: &str,
     connection_info: &ConnectionInfo,
@@ -414,6 +416,22 @@ async fn authenticate_bearer(
 
     // Validate JWT
     let claims = jwt_auth::validate_jwt_token(token, secret, issuers)?;
+
+    // SECURITY: Reject refresh tokens used as access tokens.
+    // Refresh tokens have token_type = "refresh" and must only be used at the
+    // /v1/api/auth/refresh endpoint, not for general API authentication.
+    // Legacy tokens without a token_type are allowed for backward compatibility.
+    if let Some(ref tt) = claims.token_type {
+        if *tt == jwt_auth::TokenType::Refresh {
+            log::warn!(
+                "Refresh token used as access token for user={}",
+                claims.sub
+            );
+            return Err(AuthError::InvalidCredentials(
+                "Refresh tokens cannot be used for API authentication".to_string(),
+            ));
+        }
+    }
 
     // Get username from claims
     let username = claims

@@ -55,6 +55,7 @@ fn create_test_jwt_token(
         username: Some(UserName::new(username)),
         email: Some(format!("{}@example.com", username)),
         role: Some(Role::User),
+        token_type: None,
     };
 
     let header = Header::new(Algorithm::HS256);
