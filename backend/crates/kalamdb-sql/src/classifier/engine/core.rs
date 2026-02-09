@@ -72,8 +72,9 @@ impl SqlStatement {
 
         // Hot path: Check SELECT/INSERT/DELETE first (99% of queries)
         // DML statements - create typed markers for handler pattern
+        // CTEs (WITH clause) are treated as SELECT queries
         match first_keyword_upper.as_str() {
-            "SELECT" => {
+            "SELECT" | "WITH" => {
                 return Ok(Self::new(sql.to_string(), SqlStatementKind::Select));
             },
             "INSERT" => {

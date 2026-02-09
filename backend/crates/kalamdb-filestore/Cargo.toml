@@ -38,6 +38,7 @@ futures-util = { workspace = true }
 
 # Logging
 log = { workspace = true }
+tracing = { workspace = true }
 
 # Time handling
 chrono = { workspace = true }

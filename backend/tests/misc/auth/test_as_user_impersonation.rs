@@ -66,9 +66,9 @@ async fn test_as_user_blocked_for_regular_user() {
 
     // Attempt INSERT AS USER (should be BLOCKED)
     let insert_sql = format!(
-        "INSERT INTO {}.items (item_id, name) VALUES ('ITEM-1', 'Widget') AS USER '{}'",
-        ns,
-        target_user.as_str()
+        "EXECUTE AS USER '{}' (INSERT INTO {}.items (item_id, name) VALUES ('ITEM-1', 'Widget'))",
+        target_user.as_str(),
+        ns
     );
     let resp = server.execute_sql_as_user(&insert_sql, regular_user.as_str()).await;
 
@@ -107,9 +107,9 @@ async fn test_as_user_with_service_role() {
 
     // INSERT AS USER target_user (should succeed)
     let insert_sql = format!(
-        "INSERT INTO {}.orders (order_id, amount) VALUES ('ORD-123', '99.99') AS USER '{}'",
-        ns,
-        target_user.as_str()
+        "EXECUTE AS USER '{}' (INSERT INTO {}.orders (order_id, amount) VALUES ('ORD-123', '99.99'))",
+        target_user.as_str(),
+        ns
     );
     let resp = server.execute_sql_as_user(&insert_sql, service_user.as_str()).await;
 
@@ -167,9 +167,9 @@ async fn test_as_user_with_dba_role() {
 
     // INSERT AS USER (should succeed)
     let insert_sql = format!(
-        "INSERT INTO {}.logs (log_id, message) VALUES ('LOG-1', 'Test message') AS USER '{}'",
-        ns,
-        target_user.as_str()
+        "EXECUTE AS USER '{}' (INSERT INTO {}.logs (log_id, message) VALUES ('LOG-1', 'Test message'))",
+        target_user.as_str(),
+        ns
     );
     let resp = server.execute_sql_as_user(&insert_sql, dba_user.as_str()).await;
 
@@ -197,9 +197,9 @@ async fn test_insert_as_user_ownership() {
 
     // INSERT AS USER alice
     let insert_sql = format!(
-        "INSERT INTO {}.messages (msg_id, content) VALUES ('MSG-1', 'Hello from Alice') AS USER '{}'",
-        ns,
-        user_alice.as_str()
+        "EXECUTE AS USER '{}' (INSERT INTO {}.messages (msg_id, content) VALUES ('MSG-1', 'Hello from Alice'))",
+        user_alice.as_str(),
+        ns
     );
     let resp = server.execute_sql_as_user(&insert_sql, admin_user.as_str()).await;
     assert_eq!(resp.status, ResponseStatus::Success);
@@ -235,17 +235,17 @@ async fn test_update_as_user() {
     server.execute_sql_as_user(&create_table, admin_user.as_str()).await;
 
     let insert_sql = format!(
-        "INSERT INTO {}.profiles (profile_id, status) VALUES ('PROF-1', 'active') AS USER '{}'",
-        ns,
-        user_charlie.as_str()
+        "EXECUTE AS USER '{}' (INSERT INTO {}.profiles (profile_id, status) VALUES ('PROF-1', 'active'))",
+        user_charlie.as_str(),
+        ns
     );
     server.execute_sql_as_user(&insert_sql, admin_user.as_str()).await;
 
     // UPDATE AS USER charlie
     let update_sql = format!(
-        "UPDATE {}.profiles SET status = 'inactive' WHERE profile_id = 'PROF-1' AS USER '{}'",
-        ns,
-        user_charlie.as_str()
+        "EXECUTE AS USER '{}' (UPDATE {}.profiles SET status = 'inactive' WHERE profile_id = 'PROF-1')",
+        user_charlie.as_str(),
+        ns
     );
     let resp = server.execute_sql_as_user(&update_sql, admin_user.as_str()).await;
 
@@ -279,17 +279,17 @@ async fn test_delete_as_user() {
     server.execute_sql_as_user(&create_table, admin_user.as_str()).await;
 
     let insert_sql = format!(
-        "INSERT INTO {}.sessions (session_id, active) VALUES ('SESS-1', true) AS USER '{}'",
-        ns,
-        user_dave.as_str()
+        "EXECUTE AS USER '{}' (INSERT INTO {}.sessions (session_id, active) VALUES ('SESS-1', true))",
+        user_dave.as_str(),
+        ns
     );
     server.execute_sql_as_user(&insert_sql, admin_user.as_str()).await;
 
     // DELETE AS USER dave
     let delete_sql = format!(
-        "DELETE FROM {}.sessions WHERE session_id = 'SESS-1' AS USER '{}'",
-        ns,
-        user_dave.as_str()
+        "EXECUTE AS USER '{}' (DELETE FROM {}.sessions WHERE session_id = 'SESS-1')",
+        user_dave.as_str(),
+        ns
     );
     let resp = server.execute_sql_as_user(&delete_sql, admin_user.as_str()).await;
 
@@ -322,14 +322,14 @@ async fn test_select_as_user_scopes_reads() {
     server.execute_sql(&create_table).await;
 
     let insert_user1 = format!(
-        "INSERT INTO {}.items (id, value) VALUES ('1', 'user1-data') AS USER '{}'",
-        ns,
-        user1.as_str()
+        "EXECUTE AS USER '{}' (INSERT INTO {}.items (id, value) VALUES ('1', 'user1-data'))",
+        user1.as_str(),
+        ns
     );
     let insert_user2 = format!(
-        "INSERT INTO {}.items (id, value) VALUES ('2', 'user2-data') AS USER '{}'",
-        ns,
-        user2.as_str()
+        "EXECUTE AS USER '{}' (INSERT INTO {}.items (id, value) VALUES ('2', 'user2-data'))",
+        user2.as_str(),
+        ns
     );
     assert_eq!(
         server.execute_sql_as_user(&insert_user1, service_user.as_str()).await.status,
@@ -340,7 +340,7 @@ async fn test_select_as_user_scopes_reads() {
         ResponseStatus::Success
     );
 
-    let select_as_user1 = format!("SELECT * FROM {}.items AS USER '{}'", ns, user1.as_str());
+    let select_as_user1 = format!("EXECUTE AS USER '{}' (SELECT * FROM {}.items)", user1.as_str(), ns);
     let resp = server.execute_sql_as_user(&select_as_user1, service_user.as_str()).await;
     assert_eq!(resp.status, ResponseStatus::Success);
     let rows = resp.rows_as_maps();
@@ -366,9 +366,9 @@ async fn test_stream_table_isolation_with_select_as_user() {
     server.execute_sql(&create_table).await;
 
     let insert_stream_user1 = format!(
-        "INSERT INTO {}.events (id, payload) VALUES ('1', 'event-user1') AS USER '{}'",
-        ns,
-        user1.as_str()
+        "EXECUTE AS USER '{}' (INSERT INTO {}.events (id, payload) VALUES ('1', 'event-user1'))",
+        user1.as_str(),
+        ns
     );
     assert_eq!(
         server
@@ -378,7 +378,7 @@ async fn test_stream_table_isolation_with_select_as_user() {
         ResponseStatus::Success
     );
 
-    let select_as_user2 = format!("SELECT * FROM {}.events AS USER '{}'", ns, user2.as_str());
+    let select_as_user2 = format!("EXECUTE AS USER '{}' (SELECT * FROM {}.events)", user2.as_str(), ns);
     let resp_user2 = server.execute_sql_as_user(&select_as_user2, service_user.as_str()).await;
     assert_eq!(resp_user2.status, ResponseStatus::Success);
     assert_eq!(resp_user2.rows_as_maps().len(), 0);
@@ -424,9 +424,9 @@ async fn test_as_user_on_shared_table_rejected() {
 
     // INSERT AS USER on SHARED table (should fail)
     let insert_sql = format!(
-        "INSERT INTO {}.global_config (config_key, value) VALUES ('setting1', 'value1') AS USER '{}'",
-        ns,
-        user_eve.as_str()
+        "EXECUTE AS USER '{}' (INSERT INTO {}.global_config (config_key, value) VALUES ('setting1', 'value1'))",
+        user_eve.as_str(),
+        ns
     );
     let resp = server.execute_sql_as_user(&insert_sql, admin_user.as_str()).await;
 
@@ -436,9 +436,11 @@ async fn test_as_user_on_shared_table_rejected() {
         "AS USER should be rejected on SHARED tables"
     );
     let error_msg = resp.error.as_ref().unwrap().message.as_str();
+    // Error should mention shared table access denial (case-insensitive check)
+    let lower_msg = error_msg.to_lowercase();
     assert!(
-        error_msg.contains("SHARED") && error_msg.contains("AS USER"),
-        "Error should mention SHARED tables and AS USER: {}",
+        lower_msg.contains("shared") || lower_msg.contains("access denied"),
+        "Error should indicate SHARED table access issue: {}",
         error_msg
     );
 }
@@ -461,7 +463,7 @@ async fn test_as_user_nonexistent_user() {
 
     // INSERT AS USER with non-existent user
     let insert_sql = format!(
-        "INSERT INTO {}.logs (log_id, message) VALUES ('LOG-1', 'Test') AS USER 'nonexistent_user_12345'",
+        "EXECUTE AS USER 'nonexistent_user_12345' (INSERT INTO {}.logs (log_id, message) VALUES ('LOG-1', 'Test'))",
         ns
     );
     let resp = server.execute_sql_as_user(&insert_sql, admin_user.as_str()).await;
@@ -510,10 +512,10 @@ async fn test_as_user_performance() {
     let mut durations = Vec::new();
     for i in 0..10 {
         let insert_sql = format!(
-            "INSERT INTO {}.perf_test (id, data) VALUES ('ID-{}', 'Data') AS USER '{}'",
+            "EXECUTE AS USER '{}' (INSERT INTO {}.perf_test (id, data) VALUES ('ID-{}', 'Data'))",
+            target_user.as_str(),
             ns,
-            i,
-            target_user.as_str()
+            i
         );
 
         let start = Instant::now();

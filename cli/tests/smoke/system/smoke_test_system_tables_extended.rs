@@ -7,7 +7,6 @@
 //! Reference: docs/SQL.md system tables section
 
 use crate::common::*;
-use std::time::Duration;
 
 /// Test system.schemas query and verify options JSON column
 ///

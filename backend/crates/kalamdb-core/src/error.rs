@@ -715,6 +715,7 @@ impl From<kalamdb_tables::TableError> for KalamDbError {
             TableError::SchemaError(msg) => KalamDbError::SchemaError(msg),
             TableError::NotLeader { leader_addr } => KalamDbError::NotLeader { leader_addr },
             TableError::Other(msg) => KalamDbError::Other(msg),
+            TableError::ConstraintViolation(msg) => KalamDbError::InvalidOperation(format!("Constraint violation: {}", msg)),
         }
     }
 }

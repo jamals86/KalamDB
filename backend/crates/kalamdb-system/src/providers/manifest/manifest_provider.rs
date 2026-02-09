@@ -5,7 +5,7 @@
 
 use super::{create_manifest_indexes, ManifestTableSchema};
 use crate::error::{SystemError, SystemResultExt};
-use crate::providers::base::SimpleSystemTableScan;
+use crate::providers::base::{extract_filter_value, SimpleSystemTableScan};
 use crate::providers::manifest::ManifestCacheEntry;
 use crate::system_table_trait::SystemTableProviderExt;
 use async_trait::async_trait;
@@ -147,6 +147,95 @@ impl ManifestTableProvider {
         builder.build().into_arrow_error("Failed to create RecordBatch")
     }
 
+    /// Build a RecordBatch from a single manifest entry (point lookup result).
+    fn build_single_entry_batch(
+        &self,
+        manifest_id: &ManifestId,
+        entry: &ManifestCacheEntry,
+    ) -> Result<RecordBatch, SystemError> {
+        let cache_key_str = manifest_id.as_str();
+        let is_hot = self.is_in_memory(&cache_key_str);
+        let manifest_json_str = entry.manifest_json();
+        let last_refreshed_millis = entry.last_refreshed_millis();
+
+        let mut builder = RecordBatchBuilder::new(ManifestTableSchema::schema());
+        builder
+            .add_string_column_owned(vec![Some(cache_key_str)])
+            .add_string_column_owned(vec![Some(
+                manifest_id.table_id().namespace_id().as_str().to_string(),
+            )])
+            .add_string_column_owned(vec![Some(
+                manifest_id.table_id().table_name().as_str().to_string(),
+            )])
+            .add_string_column_owned(vec![Some(manifest_id.scope_str())])
+            .add_string_column_owned(vec![entry.etag.clone()])
+            .add_timestamp_micros_column(vec![Some(last_refreshed_millis)])
+            .add_timestamp_micros_column(vec![Some(last_refreshed_millis)])
+            .add_boolean_column(vec![Some(is_hot)])
+            .add_string_column_owned(vec![Some(entry.sync_state.to_string())])
+            .add_string_column_owned(vec![Some(manifest_json_str)]);
+
+        builder.build().into_arrow_error("Failed to create RecordBatch")
+    }
+
+    /// Scan manifest entries with a limit (early termination).
+    fn scan_to_record_batch_limited(&self, limit: usize) -> Result<RecordBatch, SystemError> {
+        let iter = self
+            .store
+            .scan_iterator(None, None)
+            .map_err(|e| SystemError::Storage(e.to_string()))?;
+
+        let mut cache_keys = Vec::with_capacity(limit);
+        let mut namespace_ids = Vec::with_capacity(limit);
+        let mut table_names = Vec::with_capacity(limit);
+        let mut scopes = Vec::with_capacity(limit);
+        let mut etags = Vec::with_capacity(limit);
+        let mut last_refreshed_vals = Vec::with_capacity(limit);
+        let mut last_accessed_vals = Vec::with_capacity(limit);
+        let mut in_memory_vals = Vec::with_capacity(limit);
+        let mut sync_states = Vec::with_capacity(limit);
+        let mut manifest_jsons = Vec::with_capacity(limit);
+
+        let mut count = 0usize;
+        for entry in iter {
+            if count >= limit {
+                break;
+            }
+            let (manifest_id, entry) = entry.map_err(|e| SystemError::Storage(e.to_string()))?;
+            let cache_key_str = manifest_id.as_str();
+            let is_hot = self.is_in_memory(&cache_key_str);
+            let manifest_json_str = entry.manifest_json();
+            let last_refreshed_millis = entry.last_refreshed_millis();
+
+            cache_keys.push(Some(cache_key_str));
+            namespace_ids.push(Some(manifest_id.table_id().namespace_id().as_str().to_string()));
+            table_names.push(Some(manifest_id.table_id().table_name().as_str().to_string()));
+            scopes.push(Some(manifest_id.scope_str()));
+            etags.push(entry.etag.clone());
+            last_refreshed_vals.push(Some(last_refreshed_millis));
+            last_accessed_vals.push(Some(last_refreshed_millis));
+            in_memory_vals.push(Some(is_hot));
+            sync_states.push(Some(entry.sync_state.to_string()));
+            manifest_jsons.push(Some(manifest_json_str));
+            count += 1;
+        }
+
+        let mut builder = RecordBatchBuilder::new(ManifestTableSchema::schema());
+        builder
+            .add_string_column_owned(cache_keys)
+            .add_string_column_owned(namespace_ids)
+            .add_string_column_owned(table_names)
+            .add_string_column_owned(scopes)
+            .add_string_column_owned(etags)
+            .add_timestamp_micros_column(last_refreshed_vals)
+            .add_timestamp_micros_column(last_accessed_vals)
+            .add_boolean_column(in_memory_vals)
+            .add_string_column_owned(sync_states)
+            .add_string_column_owned(manifest_jsons);
+
+        builder.build().into_arrow_error("Failed to create RecordBatch")
+    }
+
     /// Iterator over pending manifest IDs (from the pending-write index).
     pub fn pending_manifest_ids_iter(
         &self,
@@ -220,6 +309,30 @@ impl SimpleSystemTableScan<ManifestId, ManifestCacheEntry> for ManifestTableProv
     }
 
     fn scan_all_to_batch(&self) -> Result<RecordBatch, SystemError> {
+        self.scan_to_record_batch()
+    }
+
+    fn scan_to_batch(
+        &self,
+        filters: &[Expr],
+        limit: Option<usize>,
+    ) -> Result<RecordBatch, SystemError> {
+        // Check for primary key equality filter → O(1) point lookup
+        if let Some(cache_key_str) = extract_filter_value(filters, "cache_key") {
+            let manifest_id = ManifestId::from(cache_key_str.as_str());
+            if let Ok(Some(entry)) = self.store.get(&manifest_id) {
+                return self.build_single_entry_batch(&manifest_id, &entry);
+            }
+            // Empty result
+            return Ok(RecordBatch::new_empty(ManifestTableSchema::schema()));
+        }
+
+        // With limit: use iterator with early termination
+        if let Some(lim) = limit {
+            return self.scan_to_record_batch_limited(lim);
+        }
+
+        // No filters/limit: full scan
         self.scan_to_record_batch()
     }
 }

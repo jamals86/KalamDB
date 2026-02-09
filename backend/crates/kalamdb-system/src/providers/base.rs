@@ -19,6 +19,7 @@ use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::{KSerializable, StorageKey};
 use kalamdb_store::{EntityStore, IndexedEntityStore};
+use tracing::Instrument;
 
 use crate::error::SystemError;
 
@@ -86,116 +87,132 @@ where
         filters: &[Expr],
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        use datafusion::logical_expr::Operator;
-        use datafusion::scalar::ScalarValue;
+        let span = tracing::info_span!(
+            "system.base_system_scan",
+            table_id = self.table_name(),
+            filter_count = filters.len(),
+            projection_count = projection.map_or(0, Vec::len),
+            has_limit = limit.is_some(),
+            limit = limit.unwrap_or(0)
+        );
 
-        let mut start_key: Option<K> = None;
-        let mut prefix: Option<K> = None;
+        async move {
+            use datafusion::logical_expr::Operator;
+            use datafusion::scalar::ScalarValue;
 
-        // Extract start_key/prefix from filters
-        let pk_column = self.primary_key_column();
-        for expr in filters {
-            if let Expr::BinaryExpr(binary) = expr {
-                if let Expr::Column(col) = binary.left.as_ref() {
-                    if let Expr::Literal(val, _) = binary.right.as_ref() {
-                        if col.name == pk_column {
-                            if let ScalarValue::Utf8(Some(s)) = val {
-                                match binary.op {
-                                    Operator::Eq => {
-                                        prefix = self.parse_key(s);
-                                    },
-                                    Operator::Gt | Operator::GtEq => {
-                                        start_key = self.parse_key(s);
-                                    },
-                                    _ => {},
+            let mut start_key: Option<K> = None;
+            let mut prefix: Option<K> = None;
+
+            // Extract start_key/prefix from filters
+            let pk_column = self.primary_key_column();
+            for expr in filters {
+                if let Expr::BinaryExpr(binary) = expr {
+                    if let Expr::Column(col) = binary.left.as_ref() {
+                        if let Expr::Literal(val, _) = binary.right.as_ref() {
+                            if col.name == pk_column {
+                                if let ScalarValue::Utf8(Some(s)) = val {
+                                    match binary.op {
+                                        Operator::Eq => {
+                                            prefix = self.parse_key(s);
+                                        },
+                                        Operator::Gt | Operator::GtEq => {
+                                            start_key = self.parse_key(s);
+                                        },
+                                        _ => {},
+                                    }
                                 }
                             }
                         }
                     }
                 }
             }
-        }
 
-        let schema = self.arrow_schema();
-        let store = self.store();
+            let schema = self.arrow_schema();
+            let store = self.store();
 
-        // Prefer secondary index scans when possible (iterator-based to avoid large allocations)
-        let mut pairs: Vec<(K, V)> = Vec::new();
-        if let Some((index_idx, index_prefix)) = store.find_best_index_for_filters(filters) {
-            log::trace!(
-                "[{}] Using secondary index {} for filters: {:?}",
-                self.table_name(),
-                index_idx,
-                filters
-            );
-            let iter =
-                store.scan_by_index_iter(index_idx, Some(&index_prefix), limit).map_err(|e| {
+            // Prefer secondary index scans when possible (iterator-based to avoid large allocations)
+            let mut pairs: Vec<(K, V)> = Vec::new();
+            if let Some((index_idx, index_prefix)) = store.find_best_index_for_filters(filters) {
+                log::trace!(
+                    "[{}] Using secondary index {} for filters: {:?}",
+                    self.table_name(),
+                    index_idx,
+                    filters
+                );
+                let iter = store.scan_by_index_iter(index_idx, Some(&index_prefix), limit).map_err(
+                    |e| {
+                        DataFusionError::Execution(format!(
+                            "Failed to scan {} by index: {}",
+                            self.table_name(),
+                            e
+                        ))
+                    },
+                )?;
+
+                let effective_limit = limit.unwrap_or(100_000);
+                for result in iter {
+                    let (key, value) = result.map_err(|e| {
+                        DataFusionError::Execution(format!(
+                            "Failed to scan {} by index: {}",
+                            self.table_name(),
+                            e
+                        ))
+                    })?;
+                    pairs.push((key, value));
+                    if pairs.len() >= effective_limit {
+                        break;
+                    }
+                }
+            } else {
+                log::trace!(
+                    "[{}] Full table scan (no index match) for filters: {:?}",
+                    self.table_name(),
+                    filters
+                );
+                let iter = store.scan_iterator(prefix.as_ref(), start_key.as_ref()).map_err(|e| {
                     DataFusionError::Execution(format!(
-                        "Failed to scan {} by index: {}",
+                        "Failed to create iterator for {}: {}",
                         self.table_name(),
                         e
                     ))
                 })?;
 
-            let effective_limit = limit.unwrap_or(100_000);
-            for result in iter {
-                let (key, value) = result.map_err(|e| {
-                    DataFusionError::Execution(format!(
-                        "Failed to scan {} by index: {}",
-                        self.table_name(),
-                        e
-                    ))
-                })?;
-                pairs.push((key, value));
-                if pairs.len() >= effective_limit {
-                    break;
+                let effective_limit = limit.unwrap_or(100_000);
+                for result in iter {
+                    match result {
+                        Ok((key, value)) => {
+                            pairs.push((key, value));
+                            if pairs.len() >= effective_limit {
+                                break;
+                            }
+                        },
+                        Err(e) => {
+                            log::warn!("Error during scan of {}: {}", self.table_name(), e);
+                            continue;
+                        },
+                    }
                 }
             }
-        } else {
-            log::trace!(
-                "[{}] Full table scan (no index match) for filters: {:?}",
-                self.table_name(),
-                filters
-            );
-            let iter = store.scan_iterator(prefix.as_ref(), start_key.as_ref()).map_err(|e| {
+
+            tracing::debug!(row_count = pairs.len(), "base_system_scan collected rows");
+            let batch = self.create_batch_from_pairs(pairs).map_err(|e| {
                 DataFusionError::Execution(format!(
-                    "Failed to create iterator for {}: {}",
+                    "Failed to build {} batch: {}",
                     self.table_name(),
                     e
                 ))
             })?;
 
-            let effective_limit = limit.unwrap_or(100_000);
-            for result in iter {
-                match result {
-                    Ok((key, value)) => {
-                        pairs.push((key, value));
-                        if pairs.len() >= effective_limit {
-                            break;
-                        }
-                    },
-                    Err(e) => {
-                        log::warn!("Error during scan of {}: {}", self.table_name(), e);
-                        continue;
-                    },
-                }
-            }
+            let partitions = vec![vec![batch]];
+            let table = MemTable::try_new(schema, partitions).map_err(|e| {
+                DataFusionError::Execution(format!("Failed to create MemTable: {}", e))
+            })?;
+
+            // Pass through projection and filters to MemTable
+            table.scan(state, projection, filters, limit).await
         }
-
-        let batch = self.create_batch_from_pairs(pairs).map_err(|e| {
-            DataFusionError::Execution(format!(
-                "Failed to build {} batch: {}",
-                self.table_name(),
-                e
-            ))
-        })?;
-
-        let partitions = vec![vec![batch]];
-        let table = MemTable::try_new(schema, partitions)
-            .map_err(|e| DataFusionError::Execution(format!("Failed to create MemTable: {}", e)))?;
-
-        // Pass through projection and filters to MemTable
-        table.scan(state, projection, filters, limit).await
+        .instrument(span)
+        .await
     }
 
     /// Streaming scan using EntityIterator (memory-efficient)
@@ -214,86 +231,111 @@ where
         filters: &[Expr],
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        use datafusion::logical_expr::Operator;
-        use datafusion::scalar::ScalarValue;
+        let span = tracing::info_span!(
+            "system.streaming_scan",
+            table_id = self.table_name(),
+            filter_count = filters.len(),
+            projection_count = projection.map_or(0, Vec::len),
+            has_limit = limit.is_some(),
+            limit = limit.unwrap_or(0)
+        );
 
-        let mut start_key: Option<K> = None;
-        let mut prefix: Option<K> = None;
+        async move {
+            use datafusion::logical_expr::Operator;
+            use datafusion::scalar::ScalarValue;
 
-        // Extract start_key/prefix from filters
-        let pk_column = self.primary_key_column();
-        for expr in filters {
-            if let Expr::BinaryExpr(binary) = expr {
-                if let Expr::Column(col) = binary.left.as_ref() {
-                    if let Expr::Literal(val, _) = binary.right.as_ref() {
-                        if col.name == pk_column {
-                            if let ScalarValue::Utf8(Some(s)) = val {
-                                match binary.op {
-                                    Operator::Eq => {
-                                        prefix = self.parse_key(s);
-                                    },
-                                    Operator::Gt | Operator::GtEq => {
-                                        start_key = self.parse_key(s);
-                                    },
-                                    _ => {},
+            let mut start_key: Option<K> = None;
+            let mut prefix: Option<K> = None;
+
+            // Extract start_key/prefix from filters
+            let pk_column = self.primary_key_column();
+            for expr in filters {
+                if let Expr::BinaryExpr(binary) = expr {
+                    if let Expr::Column(col) = binary.left.as_ref() {
+                        if let Expr::Literal(val, _) = binary.right.as_ref() {
+                            if col.name == pk_column {
+                                if let ScalarValue::Utf8(Some(s)) = val {
+                                    match binary.op {
+                                        Operator::Eq => {
+                                            prefix = self.parse_key(s);
+                                        },
+                                        Operator::Gt | Operator::GtEq => {
+                                            start_key = self.parse_key(s);
+                                        },
+                                        _ => {},
+                                    }
                                 }
                             }
                         }
                     }
                 }
             }
-        }
 
-        let schema = self.arrow_schema();
-        let store = self.store();
+            let schema = self.arrow_schema();
+            let store = self.store();
 
-        // Use iterator for memory-efficient scanning
-        let iter = store.scan_iterator(prefix.as_ref(), start_key.as_ref()).map_err(|e| {
-            DataFusionError::Execution(format!(
-                "Failed to create iterator for {}: {}",
-                self.table_name(),
-                e
-            ))
-        })?;
+            // Use iterator for memory-efficient scanning
+            let iter = store.scan_iterator(prefix.as_ref(), start_key.as_ref()).map_err(|e| {
+                DataFusionError::Execution(format!(
+                    "Failed to create iterator for {}: {}",
+                    self.table_name(),
+                    e
+                ))
+            })?;
 
-        // Collect with limit - only takes what we need
-        let effective_limit = limit.unwrap_or(100_000);
-        let mut pairs = Vec::with_capacity(effective_limit.min(1000));
+            // Collect with limit - only takes what we need
+            let effective_limit = limit.unwrap_or(100_000);
+            let mut pairs = Vec::with_capacity(effective_limit.min(1000));
 
-        for result in iter {
-            match result {
-                Ok((key, value)) => {
-                    pairs.push((key, value));
-                    if pairs.len() >= effective_limit {
-                        break;
-                    }
-                },
-                Err(e) => {
-                    log::warn!("Error during streaming scan of {}: {}", self.table_name(), e);
-                    continue;
-                },
+            for result in iter {
+                match result {
+                    Ok((key, value)) => {
+                        pairs.push((key, value));
+                        if pairs.len() >= effective_limit {
+                            break;
+                        }
+                    },
+                    Err(e) => {
+                        log::warn!("Error during streaming scan of {}: {}", self.table_name(), e);
+                        continue;
+                    },
+                }
             }
+            tracing::debug!(row_count = pairs.len(), "streaming_scan collected rows");
+
+            let batch = self.create_batch_from_pairs(pairs).map_err(|e| {
+                DataFusionError::Execution(format!(
+                    "Failed to build {} batch: {}",
+                    self.table_name(),
+                    e
+                ))
+            })?;
+
+            let partitions = vec![vec![batch]];
+            let table = MemTable::try_new(schema, partitions).map_err(|e| {
+                DataFusionError::Execution(format!("Failed to create MemTable: {}", e))
+            })?;
+
+            table.scan(state, projection, filters, limit).await
         }
-
-        let batch = self.create_batch_from_pairs(pairs).map_err(|e| {
-            DataFusionError::Execution(format!(
-                "Failed to build {} batch: {}",
-                self.table_name(),
-                e
-            ))
-        })?;
-
-        let partitions = vec![vec![batch]];
-        let table = MemTable::try_new(schema, partitions)
-            .map_err(|e| DataFusionError::Execution(format!("Failed to create MemTable: {}", e)))?;
-
-        table.scan(state, projection, filters, limit).await
+        .instrument(span)
+        .await
     }
 }
 
 /// Trait for simple system tables without secondary indexes
 ///
-/// For tables like namespaces, storages that don't have IndexedEntityStore
+/// For tables like namespaces, storages that don't have IndexedEntityStore.
+///
+/// ## Performance
+///
+/// Override `scan_to_batch()` to enable filter/limit-aware scanning.
+/// The default falls back to `scan_all_to_batch()` (full table scan).
+///
+/// When `scan_to_batch()` is overridden, providers can:
+/// - Use primary key equality filters for O(1) point lookups
+/// - Respect `LIMIT` at the iterator level (early termination)
+/// - Avoid materializing the entire table for simple queries
 #[async_trait::async_trait]
 pub trait SimpleSystemTableScan<K, V>: Send + Sync
 where
@@ -306,31 +348,67 @@ where
     /// Returns the Arrow schema for this table
     fn arrow_schema(&self) -> arrow::datatypes::SchemaRef;
 
-    /// Scan all entries and return as RecordBatch
+    /// Scan all entries and return as RecordBatch (full table scan).
+    ///
+    /// Used as fallback when `scan_to_batch` is not overridden,
+    /// and by `SystemTableProviderExt::load_batch()`.
     fn scan_all_to_batch(&self) -> Result<RecordBatch, SystemError>;
 
-    /// Default scan implementation for simple tables
+    /// Scan entries with optional filter and limit support.
+    ///
+    /// Override this method to enable optimized scanning:
+    /// - Primary key equality filter → point lookup via `EntityStore::get()`
+    /// - Limit → iterator with early termination
+    ///
+    /// Default falls back to `scan_all_to_batch()` (full table scan).
+    fn scan_to_batch(
+        &self,
+        _filters: &[Expr],
+        _limit: Option<usize>,
+    ) -> Result<RecordBatch, SystemError> {
+        self.scan_all_to_batch()
+    }
+
+    /// Default scan implementation for simple tables.
+    ///
+    /// Uses `scan_to_batch()` for optimized scanning with filter/limit support,
+    /// then wraps in a MemTable for DataFusion execution.
     async fn base_simple_scan(
         &self,
         state: &dyn Session,
         projection: Option<&Vec<usize>>,
-        _filters: &[Expr],
+        filters: &[Expr],
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        let schema = self.arrow_schema();
-        let batch = self.scan_all_to_batch().map_err(|e| {
-            DataFusionError::Execution(format!(
-                "Failed to build {} batch: {}",
-                self.table_name(),
-                e
-            ))
-        })?;
+        let span = tracing::info_span!(
+            "system.base_simple_scan",
+            table_id = self.table_name(),
+            filter_count = filters.len(),
+            has_limit = limit.is_some(),
+            limit = limit.unwrap_or(0),
+        );
 
-        let partitions = vec![vec![batch]];
-        let table = MemTable::try_new(schema, partitions)
-            .map_err(|e| DataFusionError::Execution(format!("Failed to create MemTable: {}", e)))?;
+        async move {
+            let schema = self.arrow_schema();
+            let batch = self.scan_to_batch(filters, limit).map_err(|e| {
+                DataFusionError::Execution(format!(
+                    "Failed to build {} batch: {}",
+                    self.table_name(),
+                    e
+                ))
+            })?;
 
-        table.scan(state, projection, &[], limit).await
+            tracing::debug!(row_count = batch.num_rows(), "base_simple_scan collected rows");
+
+            let partitions = vec![vec![batch]];
+            let table = MemTable::try_new(schema, partitions).map_err(|e| {
+                DataFusionError::Execution(format!("Failed to create MemTable: {}", e))
+            })?;
+
+            table.scan(state, projection, filters, limit).await
+        }
+        .instrument(span)
+        .await
     }
 }
 

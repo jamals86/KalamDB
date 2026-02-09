@@ -381,6 +381,14 @@ impl ConnectionsManager {
 
     /// Send notification to a specific subscription
     pub fn notify_subscription(&self, live_id: &LiveQueryId, notification: Notification) {
+        // let span = tracing::debug_span!(
+        //     "live_query.push",
+        //     live_id = %live_id,
+        //     delivered = Empty
+        // );
+        // let _span_guard = span.entered();
+        // let mut delivered = false;
+
         if let Some(conn_id) = self.live_id_to_connection.get(live_id) {
             if let Some(shared_state) = self.connections.get(conn_id.value()) {
                 let state = shared_state.read();
@@ -390,8 +398,13 @@ impl ConnectionsManager {
                         warn!("Notification channel full for {}, dropping notification", live_id);
                     }
                 }
+                //else {
+                //    delivered = true;
+                //}
             }
         }
+
+        // tracing::Span::current().record("delivered", delivered);
     }
 
     /// Send notification to all subscriptions for a table (for a specific user)
@@ -402,6 +415,15 @@ impl ConnectionsManager {
         table_id: &TableId,
         notification: Notification,
     ) {
+        // let span = tracing::debug_span!(
+        //     "live_query.push",
+        //     user_id = %user_id,
+        //     table_id = %table_id,
+        //     delivered_count = Empty,
+        //     dropped_count = Empty
+        // );
+        // let _span_guard = span.entered();
+
         if let Some(handles) =
             self.user_table_subscriptions.get(&(user_id.clone(), table_id.clone()))
         {

@@ -9,7 +9,6 @@
 //! that were written with previous schema versions.
 
 use crate::common::*;
-use std::time::Duration;
 
 /// Test that ALTER TABLE operations create schema history entries in system.schemas
 ///

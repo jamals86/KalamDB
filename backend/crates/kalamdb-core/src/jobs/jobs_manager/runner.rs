@@ -15,6 +15,7 @@ use tokio::sync::mpsc;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 use tokio::time::{sleep, Duration, Instant};
+use tracing::Instrument;
 
 const JOB_NODE_QUORUM_POLL_MS: u64 = 250;
 const JOB_NODE_QUORUM_TIMEOUT_SECS: u64 = 10;
@@ -542,16 +543,25 @@ impl JobsManager {
         _job_node: JobNode,
         is_leader: bool,
     ) -> Result<(), KalamDbError> {
-        let job_id = job.job_id.clone();
-        let job_type = job.job_type;
-
-        log::info!(
-            "[{}] execute_job started: type={:?}, has_local_work={}, has_leader_actions={}",
-            job_id,
-            job_type,
-            job_type.has_local_work(),
-            job_type.has_leader_actions()
+        let span = tracing::info_span!(
+            "jobs.execution",
+            job_id = %job.job_id,
+            job_type = ?job.job_type,
+            is_leader = is_leader,
+            has_local_work = job.job_type.has_local_work(),
+            has_leader_actions = job.job_type.has_leader_actions()
         );
+        async move {
+            let job_id = job.job_id.clone();
+            let job_type = job.job_type;
+
+            log::info!(
+                "[{}] execute_job started: type={:?}, has_local_work={}, has_leader_actions={}",
+                job_id,
+                job_type,
+                job_type.has_local_work(),
+                job_type.has_leader_actions()
+            );
 
         // Mark job as Running if still Queued/New (leader coordination)
         // Only leader should be executing jobs at this point due to creation constraints
@@ -803,7 +813,10 @@ impl JobsManager {
             }
         }
 
-        Ok(())
+            Ok(())
+        }
+        .instrument(span)
+        .await
     }
 
     /// Handle job retry logic

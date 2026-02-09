@@ -7,7 +7,6 @@
 use crate::cluster_common::*;
 use crate::common::*;
 use serde_json::Value;
-use std::time::Duration;
 
 /// Test: Basic CRUD operations work from any node
 #[test]

@@ -98,11 +98,13 @@ impl RocksDBBackend {
 
 impl StorageBackend for RocksDBBackend {
     fn get(&self, partition: &Partition, key: &[u8]) -> Result<Option<Vec<u8>>> {
+        let _span = tracing::trace_span!("rocksdb.get", partition = %partition.name()).entered();
         let cf = self.get_cf(partition)?;
         self.db.get_cf(&cf, key).map_err(|e| StorageError::IoError(e.to_string()))
     }
 
     fn put(&self, partition: &Partition, key: &[u8], value: &[u8]) -> Result<()> {
+        let _span = tracing::trace_span!("rocksdb.put", partition = %partition.name(), value_len = value.len()).entered();
         let cf = self.get_cf(partition)?;
         self.db
             .put_cf_opt(&cf, key, value, &self.write_opts)
@@ -110,6 +112,7 @@ impl StorageBackend for RocksDBBackend {
     }
 
     fn delete(&self, partition: &Partition, key: &[u8]) -> Result<()> {
+        let _span = tracing::trace_span!("rocksdb.delete", partition = %partition.name()).entered();
         let cf = self.get_cf(partition)?;
         self.db
             .delete_cf_opt(&cf, key, &self.write_opts)
@@ -117,6 +120,7 @@ impl StorageBackend for RocksDBBackend {
     }
 
     fn batch(&self, operations: Vec<Operation>) -> Result<()> {
+        let _span = tracing::debug_span!("rocksdb.batch", op_count = operations.len()).entered();
         use rocksdb::WriteBatch;
 
         let mut batch = WriteBatch::default();
@@ -150,6 +154,7 @@ impl StorageBackend for RocksDBBackend {
         start_key: Option<&[u8]>,
         limit: Option<usize>,
     ) -> Result<Box<dyn Iterator<Item = (Vec<u8>, Vec<u8>)> + Send + '_>> {
+        let _span = tracing::debug_span!("rocksdb.scan", partition = %partition.name(), has_prefix = prefix.is_some(), limit = ?limit).entered();
         use rocksdb::Direction;
 
         let cf = self.get_cf(partition)?;

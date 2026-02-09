@@ -45,6 +45,7 @@ chrono = { workspace = true }
 
 # Logging
 log = { workspace = true }
+tracing = { workspace = true }
 
 # UUID generation
 uuid = { workspace = true }

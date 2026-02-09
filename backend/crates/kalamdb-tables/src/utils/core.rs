@@ -1,5 +1,7 @@
 use crate::error::KalamDbError;
-use kalamdb_commons::schemas::TableType;
+use datafusion::arrow::datatypes::SchemaRef;
+use datafusion::logical_expr::Expr;
+use kalamdb_commons::schemas::{TableDefinition, TableType};
 use kalamdb_commons::websocket::ChangeNotification;
 use kalamdb_commons::TableId;
 use kalamdb_filestore::StorageRegistry;
@@ -7,27 +9,15 @@ use kalamdb_system::{
     ClusterCoordinator as ClusterCoordinatorTrait, ManifestService as ManifestServiceTrait,
     NotificationService as NotificationServiceTrait, SchemaRegistry as SchemaRegistryTrait,
 };
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-/// Shared core state for all table providers
+/// Combined services struct shared across all table providers.
 ///
-/// **Memory Optimization**: All provider types share this core structure,
-/// reducing per-table memory footprint from 3× allocation to 1× allocation.
-///
-/// **Phase 12 Refactoring**: Uses kalamdb-registry services directly
-///
-/// **Services**:
-/// - `schema_registry`: Table schema management and caching (from kalamdb-registry)
-/// - `system_columns`: SeqId generation, _deleted flag handling (from kalamdb-registry)
-/// - `notification_service`: WebSocket notifications (optional, from kalamdb-core)
-/// - `storage_registry`: Storage path resolution (optional, from kalamdb-core)
-pub struct TableProviderCore {
-    /// Table identity shared by provider implementations
-    table_id: Arc<TableId>,
-
-    /// Logical table type used for routing/storage decisions
-    table_type: TableType,
-
+/// All table providers need the same set of services. Wrapping them in a single
+/// `Arc<TableServices>` avoids 6 individual `Arc` clones per provider, reducing
+/// per-table memory overhead significantly.
+pub struct TableServices {
     /// Schema registry for table metadata and Arrow schema caching
     pub schema_registry: Arc<dyn SchemaRegistryTrait<Error = KalamDbError>>,
 
@@ -47,11 +37,9 @@ pub struct TableProviderCore {
     pub cluster_coordinator: Arc<dyn ClusterCoordinatorTrait>,
 }
 
-impl TableProviderCore {
-    /// Create new core with required services
+impl TableServices {
+    /// Create a new `TableServices` bundle.
     pub fn new(
-        table_id: TableId,
-        table_type: TableType,
         schema_registry: Arc<dyn SchemaRegistryTrait<Error = KalamDbError>>,
         system_columns: Arc<kalamdb_system::SystemColumnsService>,
         storage_registry: Option<Arc<StorageRegistry>>,
@@ -60,8 +48,6 @@ impl TableProviderCore {
         cluster_coordinator: Arc<dyn ClusterCoordinatorTrait>,
     ) -> Self {
         Self {
-            table_id: Arc::new(table_id),
-            table_type,
             schema_registry,
             system_columns,
             storage_registry,
@@ -70,53 +56,219 @@ impl TableProviderCore {
             cluster_coordinator,
         }
     }
+}
 
-    /// Add StorageRegistry to core
-    pub fn with_storage_registry(mut self, registry: Arc<StorageRegistry>) -> Self {
-        self.storage_registry = Some(registry);
-        self
+/// Shared core state for all table providers
+///
+/// **Memory Optimization**: All provider types share this core structure,
+/// reducing per-table memory footprint from 3× allocation to 1× allocation.
+/// Services are bundled into a single `Arc<TableServices>` to further
+/// reduce Arc overhead.
+///
+/// Also hosts per-table cached fields: schema, primary key name/id, column defaults,
+/// and a precomputed set of non-nullable column names for fast constraint checks.
+pub struct TableProviderCore {
+    /// Complete table definition (contains namespace_id, table_name, table_type, columns, etc.)
+    table_def: Arc<TableDefinition>,
+
+    /// Cached TableId (constructed from namespace_id + table_name for O(1) access)
+    table_id: TableId,
+
+    /// Bundled services (schema_registry, system_columns, manifest, notifications, etc.)
+    pub services: Arc<TableServices>,
+
+    /// Cached primary key field name (O(1) access)
+    primary_key_field_name: String,
+
+    /// Cached primary key column_id (O(1) access, avoids O(n) column scan)
+    primary_key_column_id: u64,
+
+    /// Cached flag: is PK auto-increment? (avoids repeated column iteration)
+    is_auto_increment_pk: bool,
+
+    /// Cached Arrow schema (prevents panics if table is dropped while provider is in use)
+    schema: SchemaRef,
+
+    /// DataFusion column defaults used by INSERT planning.
+    column_defaults: HashMap<String, Expr>,
+
+    /// Precomputed set of non-nullable column names for fast NOT NULL constraint checks.
+    non_null_columns: HashSet<String>,
+}
+
+impl TableProviderCore {
+    /// Create new core with required services and table definition
+    pub fn new(
+        table_def: Arc<TableDefinition>,
+        services: Arc<TableServices>,
+        primary_key_field_name: String,
+        schema: SchemaRef,
+        column_defaults: HashMap<String, Expr>,
+    ) -> Self {
+        use kalamdb_commons::constants::SystemColumnNames;
+        use kalamdb_commons::schemas::ColumnDefault;
+
+        // Precompute non-nullable columns from the schema.
+        // Exclude system columns (_seq, _deleted) because they are auto-generated
+        // during INSERT and should not be validated against user-provided data.
+        let non_null_columns: HashSet<String> = schema
+            .fields()
+            .iter()
+            .filter(|f| !f.is_nullable() && !SystemColumnNames::is_system_column(f.name()))
+            .map(|f| f.name().clone())
+            .collect();
+
+        // Find PK column (O(n) once at construction, then O(1) access for all derived values)
+        let pk_column = table_def.columns.iter().find(|c| c.is_primary_key);
+
+        // Extract primary key column_id
+        let primary_key_column_id = pk_column.map(|c| c.column_id).unwrap_or(0);
+
+        // Check if PK is auto-increment (AUTO_INCREMENT or SNOWFLAKE_ID function)
+        let is_auto_increment_pk = if let Some(pk_col) = pk_column {
+            matches!(
+                &pk_col.default_value,
+                ColumnDefault::FunctionCall { name, .. }
+                    if name.eq_ignore_ascii_case("auto_increment")
+                    || name.eq_ignore_ascii_case("snowflake_id")
+            )
+        } else {
+            // No PK column means no uniqueness constraint to check
+            true
+        };
+
+        // Cache TableId (constructed once, then O(1) access)
+        let table_id = TableId::from_strings(
+            table_def.namespace_id.as_str(),
+            table_def.table_name.as_str(),
+        );
+
+        Self {
+            table_def,
+            table_id,
+            services,
+            primary_key_field_name,
+            primary_key_column_id,
+            is_auto_increment_pk,
+            schema,
+            column_defaults,
+            non_null_columns,
+        }
+    }
+
+    /// Add StorageRegistry to services
+    pub fn with_storage_registry(self, registry: Arc<StorageRegistry>) -> Self {
+        // Since services is behind Arc, we need to create a new TableServices
+        // This is only used during construction so the extra allocation is fine
+        let new_services = Arc::new(TableServices {
+            schema_registry: self.services.schema_registry.clone(),
+            system_columns: self.services.system_columns.clone(),
+            storage_registry: Some(registry),
+            manifest_service: self.services.manifest_service.clone(),
+            notification_service: self.services.notification_service.clone(),
+            cluster_coordinator: self.services.cluster_coordinator.clone(),
+        });
+        Self {
+            services: new_services,
+            ..self
+        }
+    }
+
+    // ===========================
+    // Delegating accessors for backward compatibility
+    // ===========================
+
+    /// Schema registry accessor
+    pub fn schema_registry(&self) -> &Arc<dyn SchemaRegistryTrait<Error = KalamDbError>> {
+        &self.services.schema_registry
+    }
+
+    /// System columns service accessor
+    pub fn system_columns(&self) -> &Arc<kalamdb_system::SystemColumnsService> {
+        &self.services.system_columns
+    }
+
+    /// Storage registry accessor
+    pub fn storage_registry(&self) -> &Option<Arc<StorageRegistry>> {
+        &self.services.storage_registry
     }
 
     /// ManifestService accessor
     pub fn manifest_service(&self) -> &Arc<dyn ManifestServiceTrait> {
-        &self.manifest_service
+        &self.services.manifest_service
     }
 
-    /// LiveQueryManager accessor
+    /// NotificationService accessor
     pub fn notification_service(
         &self,
     ) -> &Arc<dyn NotificationServiceTrait<Notification = ChangeNotification>> {
-        &self.notification_service
+        &self.services.notification_service
     }
 
     /// Cluster coordinator accessor
     pub fn cluster_coordinator(&self) -> &Arc<dyn ClusterCoordinatorTrait> {
-        &self.cluster_coordinator
+        &self.services.cluster_coordinator
     }
 
-    /// TableId accessor (shared across providers)
+    /// Table definition accessor
+    pub fn table_def(&self) -> &Arc<TableDefinition> {
+        &self.table_def
+    }
+
+    /// TableId accessor (constructed from namespace_id and table_name)
     pub fn table_id(&self) -> &TableId {
-        self.table_id.as_ref()
+        &self.table_id
     }
 
-    /// Best-effort primary key column_id for this table.
-    /// Returns 0 if the schema is missing or no primary key is defined.
+    /// Cached Arrow schema
+    pub fn schema(&self) -> &SchemaRef {
+        &self.schema
+    }
+
+    /// Cached Arrow schema (cloned Arc)
+    pub fn schema_ref(&self) -> SchemaRef {
+        self.schema.clone()
+    }
+
+    /// Is PK auto-increment? (O(1), precomputed at construction)
+    pub fn is_auto_increment_pk(&self) -> bool {
+        self.is_auto_increment_pk
+    }
+
+    /// Primary key field name accessor (O(1))
+    pub fn primary_key_field_name(&self) -> &str {
+        &self.primary_key_field_name
+    }
+
+    /// Primary key column_id accessor (O(1), precomputed at construction)
     pub fn primary_key_column_id(&self) -> u64 {
-        self.schema_registry
-            .get_table_if_exists(self.table_id())
-            .ok()
-            .flatten()
-            .and_then(|def| def.columns.iter().find(|c| c.is_primary_key).map(|c| c.column_id))
-            .unwrap_or(0)
+        self.primary_key_column_id
     }
 
-    /// Cloneable TableId handle (avoids leaking Arc internals to callers)
+    /// Column defaults accessor
+    pub fn column_defaults(&self) -> &HashMap<String, Expr> {
+        &self.column_defaults
+    }
+
+    /// Get column default for a specific column
+    pub fn get_column_default(&self, column: &str) -> Option<&Expr> {
+        self.column_defaults.get(column)
+    }
+
+    /// Precomputed set of non-nullable column names.
+    ///
+    /// Use this instead of recomputing from schema on every insert/update.
+    pub fn non_null_columns(&self) -> &HashSet<String> {
+        &self.non_null_columns
+    }
+
+    /// Cloneable TableId handle (for backward compatibility)
     pub fn table_id_arc(&self) -> Arc<TableId> {
-        self.table_id.clone()
+        Arc::new(self.table_id.clone())
     }
 
     /// TableType accessor
     pub fn table_type(&self) -> TableType {
-        self.table_type
+        self.table_def.table_type
     }
 }

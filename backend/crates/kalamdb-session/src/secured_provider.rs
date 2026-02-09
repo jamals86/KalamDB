@@ -37,6 +37,7 @@ use kalamdb_commons::models::TableId;
 use std::any::Any;
 use std::fmt::Debug;
 use std::sync::Arc;
+use tracing::Instrument;
 
 /// Wrapper that enforces permission checks on system tables.
 ///
@@ -107,11 +108,25 @@ impl TableProvider for SecuredSystemTableProvider {
         filters: &[Expr],
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        // SECURITY: Check permissions before delegating to inner provider
-        check_system_table_access(state, &self.table_id)?;
+        let span = tracing::info_span!(
+            "provider.scan",
+            table_id = %self.table_id,
+            filter_count = filters.len(),
+            projection_count = projection.map_or(0, Vec::len),
+            has_limit = limit.is_some(),
+            limit = limit.unwrap_or(0)
+        );
 
-        // Permission check passed - delegate to inner provider
-        self.inner.scan(state, projection, filters, limit).await
+        async move {
+            // SECURITY: Check permissions before delegating to inner provider
+            check_system_table_access(state, &self.table_id)?;
+            tracing::debug!("System table access granted");
+
+            // Permission check passed - delegate to inner provider
+            self.inner.scan(state, projection, filters, limit).await
+        }
+        .instrument(span)
+        .await
     }
 }
 

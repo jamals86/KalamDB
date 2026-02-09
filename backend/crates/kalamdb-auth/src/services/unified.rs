@@ -72,12 +72,15 @@ use crate::providers::jwt_config;
 use crate::repository::user_repo::UserRepository;
 use crate::security::password;
 use crate::services::login_tracker::LoginTracker;
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use kalamdb_commons::constants::AuthConstants;
 use kalamdb_commons::models::ConnectionInfo;
 use kalamdb_commons::models::UserName;
 use kalamdb_commons::{AuthType, Role};
 use log::debug;
 use once_cell::sync::Lazy;
 use std::sync::Arc;
+use tracing::Instrument;
 
 /// Cached login tracker instance
 static LOGIN_TRACKER: Lazy<LoginTracker> = Lazy::new(LoginTracker::new);
@@ -191,20 +194,42 @@ pub async fn authenticate(
     connection_info: &ConnectionInfo,
     repo: &Arc<dyn UserRepository>,
 ) -> AuthResult<AuthenticationResult> {
-    match request {
-        AuthRequest::Header(header) => authenticate_header(&header, connection_info, repo).await,
-        AuthRequest::Credentials { username, password } => {
-            authenticate_credentials(&username, &password, connection_info, repo).await
-        },
-        AuthRequest::Jwt { token } => {
-            // Direct JWT token authentication (from WebSocket)
-            let user = authenticate_bearer(&token, connection_info, repo).await?;
-            Ok(AuthenticationResult {
-                user,
-                method: AuthMethod::Bearer,
-            })
-        },
+    let request_kind = match &request {
+        AuthRequest::Header(_) => "header",
+        AuthRequest::Credentials { .. } => "credentials",
+        AuthRequest::Jwt { .. } => "jwt",
+    };
+    let span = tracing::info_span!(
+        "auth.check",
+        auth_request_kind = request_kind,
+        is_localhost = connection_info.is_localhost(),
+        role = tracing::field::Empty, // Fill in role after authentication
+        user = tracing::field::Empty  // Fill in username after authentication
+    );
+
+    async move {
+        match request {
+            AuthRequest::Header(header) => authenticate_header(&header, connection_info, repo).await,
+            AuthRequest::Credentials { username, password } => {
+                authenticate_credentials(&username, &password, connection_info, repo).await
+            },
+            AuthRequest::Jwt { token } => {
+                // Direct JWT token authentication (from WebSocket)
+                let user = authenticate_bearer(&token, connection_info, repo).await?;
+
+                // Update span with authenticated role for better observability
+                tracing::Span::current().record("role", format!("{:?}", user.role).as_str());
+                tracing::Span::current().record("user", user.username.as_str());
+
+                Ok(AuthenticationResult {
+                    user,
+                    method: AuthMethod::Bearer,
+                })
+            },
+        }
     }
+    .instrument(span)
+    .await
 }
 
 /// Authenticate using an Authorization header (Basic or Bearer)
@@ -225,6 +250,11 @@ async fn authenticate_header(
             return Err(AuthError::MalformedAuthorization("Bearer token missing".to_string()));
         }
         let user = authenticate_bearer(token, connection_info, repo).await?;
+        
+        // Update span with authenticated role for better observability
+        tracing::Span::current().record("role", format!("{:?}", user.role).as_str());
+        tracing::Span::current().record("user", user.username.as_str());
+        
         Ok(AuthenticationResult {
             user,
             method: AuthMethod::Bearer,
@@ -278,113 +308,133 @@ async fn authenticate_username_password(
     connection_info: &ConnectionInfo,
     repo: &Arc<dyn UserRepository>,
 ) -> AuthResult<AuthenticatedUser> {
-    use kalamdb_commons::constants::AuthConstants;
+    let span = tracing::info_span!(
+        "auth.username_password",
+        username = username,
+        is_localhost = connection_info.is_localhost()
+    );
+    async move {
+        if username.trim().is_empty() {
+            return Err(AuthError::InvalidCredentials("Invalid username or password".to_string()));
+        }
 
-    if username.trim().is_empty() {
-        return Err(AuthError::InvalidCredentials("Invalid username or password".to_string()));
-    }
+        // Look up user
+        let username_typed = kalamdb_commons::models::UserName::from(username);
+        let mut user = repo.get_user_by_username(&username_typed).await?;
 
-    // Look up user
-    let username_typed = kalamdb_commons::models::UserName::from(username);
-    let mut user = repo.get_user_by_username(&username_typed).await?;
+        // Check if user is deleted
+        if user.deleted_at.is_some() {
+            // Security: Use generic message to prevent username enumeration
+            debug!("Authentication failed for user attempt");
+            return Err(AuthError::InvalidCredentials("Invalid username or password".to_string()));
+        }
 
-    // Check if user is deleted
-    if user.deleted_at.is_some() {
-        // Security: Use generic message to prevent username enumeration
-        debug!("Authentication failed for user attempt");
-        return Err(AuthError::InvalidCredentials("Invalid username or password".to_string()));
-    }
+        // Check if account is locked BEFORE password verification
+        LOGIN_TRACKER.check_lockout(&user)?;
 
-    // Check if account is locked BEFORE password verification
-    LOGIN_TRACKER.check_lockout(&user)?;
+        // OAuth users cannot use password auth
+        if user.auth_type == AuthType::OAuth {
+            return Err(AuthError::AuthenticationFailed(
+                "OAuth users cannot authenticate with password. Use OAuth token instead."
+                    .to_string(),
+            ));
+        }
 
-    // OAuth users cannot use password auth
-    if user.auth_type == AuthType::OAuth {
-        return Err(AuthError::AuthenticationFailed(
-            "OAuth users cannot authenticate with password. Use OAuth token instead.".to_string(),
-        ));
-    }
+        let is_localhost = connection_info.is_localhost();
+        let is_system_internal = user.role == Role::System && user.auth_type == AuthType::Internal;
 
-    let is_localhost = connection_info.is_localhost();
-    let is_system_internal = user.role == Role::System && user.auth_type == AuthType::Internal;
+        // Check if root user has no password configured - require setup
+        // This applies even for localhost connections
+        if username == AuthConstants::DEFAULT_SYSTEM_USERNAME
+            && user.password_hash.is_empty()
+            && password.is_empty()
+        {
+            return Err(AuthError::SetupRequired(
+                "Server requires initial setup. Root password is not configured.".to_string(),
+            ));
+        }
 
-    // Check if root user has no password configured - require setup
-    // This applies even for localhost connections
-    if username == AuthConstants::DEFAULT_SYSTEM_USERNAME
-        && user.password_hash.is_empty()
-        && password.is_empty()
-    {
-        return Err(AuthError::SetupRequired(
-            "Server requires initial setup. Root password is not configured.".to_string(),
-        ));
-    }
+        // Track whether authentication succeeded
+        let mut auth_success = false;
 
-    // Track whether authentication succeeded
-    let mut auth_success = false;
+        if is_system_internal {
+            if is_localhost {
+                // Localhost system users: require valid password (no more empty password bypass)
+                let password_ok = !password.is_empty()
+                    && !user.password_hash.is_empty()
+                    && password::verify_password(password, &user.password_hash)
+                        .await
+                        .unwrap_or(false);
 
-    if is_system_internal {
-        if is_localhost {
-            // Localhost system users: require valid password (no more empty password bypass)
-            let password_ok = !password.is_empty()
-                && !user.password_hash.is_empty()
-                && password::verify_password(password, &user.password_hash).await.unwrap_or(false);
-
-            if password_ok {
-                auth_success = true;
+                if password_ok {
+                    auth_success = true;
+                } else {
+                    // Security: Generic message prevents username enumeration
+                    debug!("Authentication failed for system user attempt");
+                }
             } else {
-                // Security: Generic message prevents username enumeration
-                debug!("Authentication failed for system user attempt");
+                // Remote system users
+                if user.password_hash.is_empty() {
+                    return Err(AuthError::RemoteAccessDenied(
+                        "System users with empty passwords cannot authenticate remotely. Set a password with: ALTER USER root SET PASSWORD '...'".to_string(),
+                    ));
+                }
+                if !password.is_empty()
+                    && password::verify_password(password, &user.password_hash)
+                        .await
+                        .unwrap_or(false)
+                {
+                    auth_success = true;
+                } else {
+                    // Security: Generic message prevents username enumeration
+                    debug!("Authentication failed for remote user attempt");
+                }
             }
         } else {
-            // Remote system users
+            // Regular users must have a password
             if user.password_hash.is_empty() {
-                return Err(AuthError::RemoteAccessDenied(
-                    "System users with empty passwords cannot authenticate remotely. Set a password with: ALTER USER root SET PASSWORD '...'".to_string(),
+                return Err(AuthError::InvalidCredentials(
+                    "Invalid username or password".to_string(),
                 ));
-            }
-            if !password.is_empty()
-                && password::verify_password(password, &user.password_hash).await.unwrap_or(false)
+            } else if !password.is_empty()
+                && password::verify_password(password, &user.password_hash)
+                    .await
+                    .unwrap_or(false)
             {
                 auth_success = true;
             } else {
                 // Security: Generic message prevents username enumeration
-                debug!("Authentication failed for remote user attempt");
+                debug!("Authentication failed for user attempt");
             }
         }
-    } else {
-        // Regular users must have a password
-        if user.password_hash.is_empty() {
-            return Err(AuthError::InvalidCredentials("Invalid username or password".to_string()));
-        } else if !password.is_empty()
-            && password::verify_password(password, &user.password_hash).await.unwrap_or(false)
-        {
-            auth_success = true;
-        } else {
-            // Security: Generic message prevents username enumeration
-            debug!("Authentication failed for user attempt");
+
+        if !auth_success {
+            tracing::warn!(username = username, "Password authentication failed");
+            // Record failed login attempt (fire and forget, don't fail auth on tracking error)
+            if let Err(e) = LOGIN_TRACKER.record_failed_login(&mut user, repo).await {
+                log::error!("Failed to record failed login: {}", e);
+            }
+            return Err(AuthError::InvalidCredentials(
+                "Invalid username or password".to_string(),
+            ));
         }
-    }
 
-    if !auth_success {
-        // Record failed login attempt (fire and forget, don't fail auth on tracking error)
-        if let Err(e) = LOGIN_TRACKER.record_failed_login(&mut user, repo).await {
-            log::error!("Failed to record failed login: {}", e);
+        // Record successful login (fire and forget, don't fail auth on tracking error)
+        if let Err(e) = LOGIN_TRACKER.record_successful_login(&mut user, repo).await {
+            log::error!("Failed to record successful login: {}", e);
         }
-        return Err(AuthError::InvalidCredentials("Invalid username or password".to_string()));
-    }
+        tracing::debug!(username = %user.username, role = ?user.role, "Password authentication succeeded");
 
-    // Record successful login (fire and forget, don't fail auth on tracking error)
-    if let Err(e) = LOGIN_TRACKER.record_successful_login(&mut user, repo).await {
-        log::error!("Failed to record successful login: {}", e);
+        Ok(AuthenticatedUser::new(
+            user.user_id,
+            user.username.clone(),
+            user.role,
+            user.email,
+            connection_info.clone(),
+        ))
     }
-
-    Ok(AuthenticatedUser::new(
-        user.user_id,
-        user.username.clone(),
-        user.role,
-        user.email,
-        connection_info.clone(),
-    ))
+    .instrument(span)
+    .await
 }
 
 /// Initialize JWT configuration from server settings.
@@ -409,73 +459,85 @@ async fn authenticate_bearer(
     connection_info: &ConnectionInfo,
     repo: &Arc<dyn UserRepository>,
 ) -> AuthResult<AuthenticatedUser> {
-    // Use cached JWT configuration
-    let config = jwt_config();
-    let secret = &config.secret;
-    let issuers = &config.trusted_issuers;
+    let span = tracing::info_span!(
+        "auth.bearer",
+        token_len = token.len(),
+        is_localhost = connection_info.is_localhost()
+    );
+    async move {
+        // Use cached JWT configuration
+        let config = jwt_config();
+        let secret = &config.secret;
+        let issuers = &config.trusted_issuers;
 
-    // Validate JWT
-    let claims = jwt_auth::validate_jwt_token(token, secret, issuers)?;
+        // Validate JWT
+        let claims = jwt_auth::validate_jwt_token(token, secret, issuers)?;
 
-    // SECURITY: Reject refresh tokens used as access tokens.
-    // Refresh tokens have token_type = "refresh" and must only be used at the
-    // /v1/api/auth/refresh endpoint, not for general API authentication.
-    // Legacy tokens without a token_type are allowed for backward compatibility.
-    if let Some(ref tt) = claims.token_type {
-        if *tt == jwt_auth::TokenType::Refresh {
-            log::warn!(
-                "Refresh token used as access token for user={}",
-                claims.sub
-            );
+        // SECURITY: Reject refresh tokens used as access tokens.
+        // Refresh tokens have token_type = "refresh" and must only be used at the
+        // /v1/api/auth/refresh endpoint, not for general API authentication.
+        // Legacy tokens without a token_type are allowed for backward compatibility.
+        if let Some(ref tt) = claims.token_type {
+            if *tt == jwt_auth::TokenType::Refresh {
+                log::warn!(
+                    "Refresh token used as access token for user={}",
+                    claims.sub
+                );
+                return Err(AuthError::InvalidCredentials(
+                    "Refresh tokens cannot be used for API authentication".to_string(),
+                ));
+            }
+        }
+
+        // Get username from claims
+        let username = claims
+            .username
+            .as_ref()
+            .ok_or_else(|| AuthError::MissingClaim("username".to_string()))?;
+
+        // Look up user
+        let username_typed = UserName::from(username.as_str());
+        let user = repo.get_user_by_username(&username_typed).await?;
+
+        if user.deleted_at.is_some() {
             return Err(AuthError::InvalidCredentials(
-                "Refresh tokens cannot be used for API authentication".to_string(),
+                "Invalid username or password".to_string(),
             ));
         }
+
+        // SECURITY: Validate role from claims matches database
+        // If JWT contains a role claim, it must match the user's actual role in the database.
+        // This prevents privilege escalation attacks where an attacker modifies JWT claims.
+        let role = if let Some(claimed_role) = &claims.role {
+            // Role claim present - must match database
+            if *claimed_role != user.role {
+                log::warn!(
+                    "JWT role mismatch: claimed={:?}, actual={:?} for user={}",
+                    claimed_role,
+                    user.role,
+                    user.username
+                );
+                return Err(AuthError::InvalidCredentials(
+                    "Token role does not match user role".to_string(),
+                ));
+            }
+            *claimed_role
+        } else {
+            // No role claim - use database role
+            user.role
+        };
+        tracing::debug!(username = %user.username, role = ?role, "Bearer authentication succeeded");
+
+        Ok(AuthenticatedUser::new(
+            user.user_id.clone(),
+            user.username.clone(),
+            role,
+            user.email.clone(),
+            connection_info.clone(),
+        ))
     }
-
-    // Get username from claims
-    let username = claims
-        .username
-        .as_ref()
-        .ok_or_else(|| AuthError::MissingClaim("username".to_string()))?;
-
-    // Look up user
-    let username_typed = UserName::from(username.as_str());
-    let user = repo.get_user_by_username(&username_typed).await?;
-
-    if user.deleted_at.is_some() {
-        return Err(AuthError::InvalidCredentials("Invalid username or password".to_string()));
-    }
-
-    // SECURITY: Validate role from claims matches database
-    // If JWT contains a role claim, it must match the user's actual role in the database.
-    // This prevents privilege escalation attacks where an attacker modifies JWT claims.
-    let role = if let Some(claimed_role) = &claims.role {
-        // Role claim present - must match database
-        if *claimed_role != user.role {
-            log::warn!(
-                "JWT role mismatch: claimed={:?}, actual={:?} for user={}",
-                claimed_role,
-                user.role,
-                user.username
-            );
-            return Err(AuthError::InvalidCredentials(
-                "Token role does not match user role".to_string(),
-            ));
-        }
-        *claimed_role
-    } else {
-        // No role claim - use database role
-        user.role
-    };
-
-    Ok(AuthenticatedUser::new(
-        user.user_id.clone(),
-        user.username.clone(),
-        role,
-        user.email.clone(),
-        connection_info.clone(),
-    ))
+    .instrument(span)
+    .await
 }
 
 /// Extract username from an Authorization header for audit logging
@@ -514,7 +576,6 @@ fn extract_jwt_username_unsafe(token: &str) -> String {
     }
 
     // Decode payload (base64url)
-    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
     if let Ok(payload_bytes) = URL_SAFE_NO_PAD.decode(payload.unwrap()) {
         if let Ok(payload_str) = String::from_utf8(payload_bytes) {
             if let Ok(claims) = serde_json::from_str::<serde_json::Value>(&payload_str) {

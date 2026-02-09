@@ -1,27 +1,61 @@
-// Logging module
-use colored::*;
-use log::{Level, LevelFilter};
+// Logging module — powered by tracing-subscriber
+//
+// Uses tracing-subscriber for structured spans & events.
+// A compatibility bridge (`tracing_log::LogTracer`) captures all existing
+// `log::*` macro calls and routes them through the tracing subscriber so
+// span context is preserved end-to-end.
+
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::path::Path;
+use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
 
-/// Format log level with color for console
-fn format_level_colored(level: Level) -> ColoredString {
-    match level {
-        Level::Error => format!("[{:5}]", level).bright_red().bold(),
-        Level::Warn => format!("[{:5}]", level).bright_yellow().bold(),
-        Level::Info => format!("[{:5}]", level).bright_green().bold(),
-        Level::Debug => format!("[{:5}]", level).bright_blue().bold(),
-        Level::Trace => format!("[{:5}]", level).bright_magenta().bold(),
-    }
+use kalamdb_configs::config::types::OtlpSettings;
+use opentelemetry::trace::TracerProvider as _;
+use opentelemetry_otlp::WithExportConfig;
+use opentelemetry_sdk::trace::SdkTracerProvider;
+use opentelemetry_sdk::Resource;
+use tracing_subscriber::filter::filter_fn;
+use tracing_subscriber::fmt::format::FmtSpan;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::{EnvFilter, Layer};
+
+static OTEL_TRACER_PROVIDER: OnceLock<Mutex<Option<SdkTracerProvider>>> = OnceLock::new();
+
+fn tracer_provider_slot() -> &'static Mutex<Option<SdkTracerProvider>> {
+    OTEL_TRACER_PROVIDER.get_or_init(|| Mutex::new(None))
+}
+
+fn is_otlp_noisy_target(target: &str) -> bool {
+    // Drop exporter/system transport chatter while keeping application spans/events.
+    let noisy_prefixes = [
+        "h2",
+        "hyper",
+        "tower",
+        "tonic",
+        "openraft",
+        "kalamdb_raft",
+        "opentelemetry",
+        "opentelemetry_sdk",
+        "opentelemetry_otlp",
+        "mio",
+        "tokio_util",
+        "want",
+    ];
+
+    noisy_prefixes
+        .iter()
+        .any(|prefix| target == *prefix || target.starts_with(&format!("{}::", prefix)))
 }
 
 /// Log format type
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LogFormat {
-    /// Compact text format: [timestamp] [LEVEL] [thread - target:line] - message
+    /// Compact text format: timestamp LEVEL target - message
     Compact,
-    /// JSON Lines format for structured logging and DataFusion queries
+    /// JSON Lines format for structured logging
     Json,
 }
 
@@ -34,21 +68,66 @@ impl LogFormat {
     }
 }
 
-/// Initialize logging based on configuration
-/// Console pattern (colored): [timestamp] [LEVEL] - thread - module:line - message
-/// File pattern (compact): [timestamp] [LEVEL] [thread - module:line] - message
-/// File pattern (json): {"timestamp":"...","level":"...","thread":"...","target":"...","line":N,"message":"..."}
+/// Build the `EnvFilter` from the base level, hardcoded noisy-crate
+/// overrides, and optional per-target overrides from config.
+fn build_env_filter(
+    level: &str,
+    target_levels: Option<&HashMap<String, String>>,
+) -> anyhow::Result<EnvFilter> {
+    // Base directive — set the default level
+    let mut directives = vec![level.to_string()];
+
+    // Suppress noisy third-party crates
+    let noisy: &[(&str, &str)] = &[
+        ("actix_server", "warn"),
+        ("actix_web", "warn"),
+        ("h2", "warn"),
+        ("sqlparser", "warn"),
+        ("datafusion", "warn"),
+        ("datafusion_optimizer", "warn"),
+        ("datafusion_datasource", "warn"),
+        ("arrow", "warn"),
+        ("parquet", "warn"),
+        ("object_store", "info"),
+        ("openraft", "error"),
+        ("openraft::replication", "off"),
+        ("tracing", "warn"),
+        // Reduce verbose SQL execution span logs
+        ("kalamdb_core::sql::executor", "warn"),
+        ("kalamdb_core::applier::raft", "warn"),
+    ];
+    for (target, lvl) in noisy {
+        directives.push(format!("{}={}", target, lvl));
+    }
+
+    // Per-target overrides from server.toml
+    if let Some(map) = target_levels {
+        for (target, lvl) in map.iter() {
+            directives.push(format!("{}={}", target, lvl));
+        }
+    }
+
+    let filter_str = directives.join(",");
+    EnvFilter::try_new(&filter_str)
+        .map_err(|e| anyhow::anyhow!("Invalid tracing filter '{}': {}", filter_str, e))
+}
+
+/// Initialize logging based on configuration.
+///
+/// Sets up `tracing-subscriber` with:
+///  - Colored console layer (when `log_to_console` is true)
+///  - File layer (compact text or JSON lines)
+///  - `tracing_log::LogTracer` bridge so that all `log::*` calls are captured
+///  - Span events on CLOSE (prints elapsed time for each span)
 pub fn init_logging(
     level: &str,
     file_path: &str,
     log_to_console: bool,
     target_levels: Option<&HashMap<String, String>>,
     format: &str,
+    otlp: &OtlpSettings,
 ) -> anyhow::Result<()> {
-    // Parse log format
     let log_format = LogFormat::from_str(format);
-    // Parse log level
-    let level_filter = parse_log_level(level)?;
 
     // Create logs directory if it doesn't exist
     if let Some(parent) = Path::new(file_path).parent() {
@@ -58,234 +137,178 @@ pub fn init_logging(
     // Open log file in append mode
     let log_file = OpenOptions::new().create(true).append(true).open(file_path)?;
 
-    if log_to_console {
-        // Setup dual logging: colored console + plain file
-        let mut base_config = fern::Dispatch::new()
-            .level(level_filter)
-            // Filter out noisy third-party debug logs
-            //actix_server
-            .level_for("actix_server", LevelFilter::Warn)
-            .level_for("actix_web", LevelFilter::Warn)
-            .level_for("h2", LevelFilter::Warn)
-            .level_for("sqlparser", LevelFilter::Warn)
-            .level_for("datafusion", LevelFilter::Warn)
-            .level_for("datafusion_optimizer", LevelFilter::Warn)
-            .level_for("datafusion_datasource", LevelFilter::Warn)
-            .level_for("arrow", LevelFilter::Warn)
-            .level_for("parquet", LevelFilter::Warn)
-            .level_for("object_store", LevelFilter::Info)
-            // OpenRaft generates frequent timeout warnings during normal operation
-            // These are expected in clustered environments and fill up logs quickly
-            .level_for("openraft", LevelFilter::Error)
-            .level_for("openraft::replication", LevelFilter::Off)
-            .level_for("tracing", LevelFilter::Warn);
-
-        // Apply per-target overrides from configuration (if any)
-        if let Some(map) = target_levels {
-            for (target, lvl) in map.iter() {
-                if let Ok(parsed) = parse_log_level(lvl) {
-                    // fern::level_for expects a 'static str; leak the config string (tiny, one-time)
-                    let target_static: &'static str = Box::leak(target.clone().into_boxed_str());
-                    base_config = base_config.level_for(target_static, parsed);
-                } else {
-                    eprintln!(
-                        "Ignoring invalid log level '{}' for target '{}' in config",
-                        lvl, target
-                    );
-                }
-            }
-        }
-
-        // Console output with colors
-        let console_config = fern::Dispatch::new()
-            .format(|out, message, record| {
-                out.finish(format_args!(
-                    "{} {} - {} - {}",
-                    format!("[{}]", chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f"))
-                        .bright_green()
-                        .bold(),
-                    format_level_colored(record.level()),
-                    format!(
-                        "{} - {}:{}",
-                        std::thread::current().name().unwrap_or("main"),
-                        record.target(),
-                        record.line().unwrap_or(0)
-                    )
-                    .bright_magenta(),
-                    message
-                ))
-            })
-            .chain(std::io::stdout());
-
-        // File output - format depends on config
-        let file_config = if log_format == LogFormat::Json {
-            // JSON Lines format for structured logging
-            fern::Dispatch::new()
-                .format(|out, message, record| {
-                    let json = serde_json::json!({
-                        "timestamp": chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f%:z").to_string(),
-                        "level": record.level().to_string(),
-                        "thread": std::thread::current().name().unwrap_or("main"),
-                        "target": record.target(),
-                        "line": record.line().unwrap_or(0),
-                        "message": message.to_string()
-                    });
-                    out.finish(format_args!("{}", json))
-                })
-                .chain(log_file)
-        } else {
-            // Compact text format
-            fern::Dispatch::new()
-                .format(|out, message, record| {
-                    out.finish(format_args!(
-                        "[{}] [{:5}] [{} - {}:{}] - {}",
-                        chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f"),
-                        record.level(),
-                        std::thread::current().name().unwrap_or("main"),
-                        record.target(),
-                        record.line().unwrap_or(0),
-                        message
-                    ))
-                })
-                .chain(log_file)
-        };
-
-        // Combine console and file outputs
-        base_config.chain(console_config).chain(file_config).apply()?;
-
-        log::trace!("Logging initialized: level={}, console=yes, file={}", level, file_path);
+    // -- Console layer (optional) --
+    let console_layer = if log_to_console {
+        Some(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(true)
+                .with_target(true)
+                .with_thread_names(true)
+                .with_span_events(FmtSpan::NONE) // Change to CLOSE to show span timing
+                .with_filter(build_env_filter(level, target_levels)?),
+        )
     } else {
-        // File only output - use JSON or compact format based on config
-        let mut file_only = if log_format == LogFormat::Json {
-            fern::Dispatch::new()
-                .level(level_filter)
-                // Filter out noisy third-party logs
-                .level_for("actix_server", LevelFilter::Warn)
-                .level_for("actix_web", LevelFilter::Warn)
-                .level_for("h2", LevelFilter::Warn)
-                .level_for("sqlparser", LevelFilter::Warn)
-                .level_for("datafusion", LevelFilter::Warn)
-                .level_for("datafusion_optimizer", LevelFilter::Warn)
-                .level_for("datafusion_datasource", LevelFilter::Warn)
-                .level_for("arrow", LevelFilter::Warn)
-                .level_for("parquet", LevelFilter::Warn)
-                .level_for("object_store", LevelFilter::Info)
-                .level_for("openraft", LevelFilter::Error)
-                .level_for("openraft::replication", LevelFilter::Off)
-                .level_for("tracing", LevelFilter::Warn)
-                .format(|out, message, record| {
-                    let json = serde_json::json!({
-                        "timestamp": chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f%:z").to_string(),
-                        "level": record.level().to_string(),
-                        "thread": std::thread::current().name().unwrap_or("main"),
-                        "target": record.target(),
-                        "line": record.line().unwrap_or(0),
-                        "message": message.to_string()
-                    });
-                    out.finish(format_args!("{}", json))
-                })
-        } else {
-            fern::Dispatch::new()
-                .level(level_filter)
-                // Filter out noisy third-party logs
-                .level_for("actix_server", LevelFilter::Warn)
-                .level_for("actix_web", LevelFilter::Warn)
-                .level_for("h2", LevelFilter::Warn)
-                .level_for("sqlparser", LevelFilter::Warn)
-                .level_for("datafusion", LevelFilter::Warn)
-                .level_for("datafusion_optimizer", LevelFilter::Warn)
-                .level_for("datafusion_datasource", LevelFilter::Warn)
-                .level_for("arrow", LevelFilter::Warn)
-                .level_for("parquet", LevelFilter::Warn)
-                .level_for("object_store", LevelFilter::Info)
-                .level_for("openraft", LevelFilter::Error)
-                .level_for("openraft::replication", LevelFilter::Off)
-                .level_for("tracing", LevelFilter::Warn)
-                .format(|out, message, record| {
-                    out.finish(format_args!(
-                        "[{}] [{:5}] [{} - {}:{}] - {}",
-                        chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f"),
-                        record.level(),
-                        std::thread::current().name().unwrap_or("main"),
-                        record.target(),
-                        record.line().unwrap_or(0),
-                        message
-                    ))
-                })
-        };
+        None
+    };
 
-        // Apply per-target overrides from configuration (if any)
-        if let Some(map) = target_levels {
-            for (target, lvl) in map.iter() {
-                if let Ok(parsed) = parse_log_level(lvl) {
-                    let target_static: &'static str = Box::leak(target.clone().into_boxed_str());
-                    file_only = file_only.level_for(target_static, parsed);
-                } else {
-                    eprintln!(
-                        "Ignoring invalid log level '{}' for target '{}' in config",
-                        lvl, target
-                    );
+    // -- File layer --
+    let file_layer = if log_format == LogFormat::Json {
+        // JSON lines — includes span fields automatically
+        let layer = tracing_subscriber::fmt::layer()
+            .json()
+            .with_writer(log_file)
+            .with_target(true)
+            .with_thread_names(true)
+            .with_span_events(FmtSpan::NONE) // Change to CLOSE to show span timing
+            .with_span_list(true)
+            .with_filter(build_env_filter(level, target_levels)?);
+        // We need to box because the json() layer has a different type
+        layer.boxed()
+    } else {
+        let layer = tracing_subscriber::fmt::layer()
+            .with_ansi(false)
+            .with_writer(log_file)
+            .with_target(true)
+            .with_thread_names(true)
+            .with_span_events(FmtSpan::NONE) // Change to CLOSE to show span timing
+            .with_filter(build_env_filter(level, target_levels)?);
+        layer.boxed()
+    };
+
+    // Compose and install as global subscriber.
+    // Use try_init() to handle cases where subscriber is already initialized
+    // (e.g., in testing or when running multiple times).
+    let init_result = if otlp.enabled {
+        let tracer_provider = build_otlp_provider(otlp)?;
+        let tracer = tracer_provider.tracer("kalamdb-server");
+
+        // Default-allow everything, but remove known noisy transport/system internals.
+        // This keeps future app spans/events visible without h2/poll_ready-style chatter.
+        let otlp_filter = filter_fn(|metadata| {
+            !is_otlp_noisy_target(metadata.target())
+                && matches!(
+                    *metadata.level(),
+                    tracing::Level::ERROR | tracing::Level::WARN | tracing::Level::INFO
+                )
+        });
+
+        let otlp_layer = tracing_opentelemetry::layer()
+            .with_tracer(tracer)
+            .with_filter(otlp_filter);
+
+        let result = tracing_subscriber::registry()
+            .with(console_layer)
+            .with(file_layer)
+            .with(otlp_layer)
+            .try_init();
+        (result, Some(tracer_provider))
+    } else {
+        let result = tracing_subscriber::registry()
+            .with(console_layer)
+            .with(file_layer)
+            .try_init();
+        (result, None)
+    };
+
+    match init_result.0 {
+        Ok(_) => {
+            // Bridge `log` crate → tracing (for all existing log::info!() etc. calls)
+            // Only initialize after subscriber is set up
+            tracing_log::LogTracer::init().ok(); // ok() in case already initialized
+
+            if let Some(provider) = init_result.1 {
+                if let Ok(mut guard) = tracer_provider_slot().lock() {
+                    *guard = Some(provider);
                 }
             }
-        }
 
-        file_only.chain(log_file).apply()?;
+            tracing::trace!("Logging initialized: level={}, console={}, file={}", level, log_to_console, file_path);
+        },
+        Err(e) => {
+            if let Some(provider) = init_result.1 {
+                let _ = provider.shutdown();
+            }
+            // Subscriber already initialized - this can happen in test contexts
+            // Continue with existing subscriber, but file logging won't be available
+            eprintln!("⚠️  Note: Tracing subscriber already initialized: {}", e);
+            eprintln!("   Using existing logging configuration (file logging may not be available).");
+        }
     }
 
     Ok(())
-}
-
-/// Parse log level string to LevelFilter
-fn parse_log_level(level: &str) -> anyhow::Result<LevelFilter> {
-    match level.to_lowercase().as_str() {
-        "error" => Ok(LevelFilter::Error),
-        "warn" => Ok(LevelFilter::Warn),
-        "info" => Ok(LevelFilter::Info),
-        "debug" => Ok(LevelFilter::Debug),
-        "trace" => Ok(LevelFilter::Trace),
-        _ => Err(anyhow::anyhow!("Invalid log level: {}", level)),
-    }
 }
 
 #[allow(dead_code)]
 /// Initialize simple logging for development (console only)
 pub fn init_simple_logging() -> anyhow::Result<()> {
-    fern::Dispatch::new()
-        .format(|out, message, record| {
-            out.finish(format_args!(
-                "{} [{}] {}",
-                chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
-                record.level(),
-                message
-            ))
-        })
-        .level(LevelFilter::Info)
-        .chain(std::io::stdout())
-        .apply()?;
+    tracing_log::LogTracer::init().ok();
+
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .with_target(true)
+        .with_span_events(FmtSpan::CLOSE)
+        .init();
 
     Ok(())
 }
 
+/// Flush and shutdown OTLP tracer provider, if installed.
+pub fn shutdown_telemetry() {
+    if let Ok(mut guard) = tracer_provider_slot().lock() {
+        if let Some(provider) = guard.take() {
+            let _ = provider.shutdown();
+        }
+    }
+}
+
+fn build_otlp_provider(otlp: &OtlpSettings) -> anyhow::Result<SdkTracerProvider> {
+    let protocol = otlp.protocol.to_ascii_lowercase();
+    let timeout = Duration::from_millis(otlp.timeout_ms.max(1));
+
+    let exporter = match protocol.as_str() {
+        "grpc" => opentelemetry_otlp::SpanExporter::builder()
+            .with_tonic()
+            .with_endpoint(otlp.endpoint.clone())
+            .with_timeout(timeout)
+            .build()
+            .map_err(|e| anyhow::anyhow!("Failed to build OTLP gRPC span exporter: {}", e))?,
+        "http" => opentelemetry_otlp::SpanExporter::builder()
+            .with_http()
+            .with_endpoint(normalize_http_endpoint(&otlp.endpoint))
+            .with_timeout(timeout)
+            .build()
+            .map_err(|e| anyhow::anyhow!("Failed to build OTLP HTTP span exporter: {}", e))?,
+        _ => {
+            return Err(anyhow::anyhow!(
+                "Unsupported OTLP protocol '{}'. Use 'grpc' or 'http'.",
+                otlp.protocol
+            ));
+        },
+    };
+
+    let resource = Resource::builder()
+        .with_service_name(otlp.service_name.clone())
+        .build();
+
+    let tracer_provider = SdkTracerProvider::builder()
+        .with_resource(resource)
+        .with_batch_exporter(exporter)
+        .build();
+
+    Ok(tracer_provider)
+}
+
+fn normalize_http_endpoint(endpoint: &str) -> String {
+    if endpoint.ends_with("/v1/traces") {
+        endpoint.to_string()
+    } else {
+        format!("{}/v1/traces", endpoint.trim_end_matches('/'))
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::*;
     use kalamdb_commons::helpers::security::redact_sensitive_sql;
-
-    #[test]
-    fn test_parse_log_level() {
-        assert!(matches!(parse_log_level("error"), Ok(LevelFilter::Error)));
-        assert!(matches!(parse_log_level("warn"), Ok(LevelFilter::Warn)));
-        assert!(matches!(parse_log_level("info"), Ok(LevelFilter::Info)));
-        assert!(matches!(parse_log_level("debug"), Ok(LevelFilter::Debug)));
-        assert!(matches!(parse_log_level("trace"), Ok(LevelFilter::Trace)));
-        assert!(parse_log_level("invalid").is_err());
-    }
-
-    #[test]
-    fn test_parse_log_level_case_insensitive() {
-        assert!(matches!(parse_log_level("INFO"), Ok(LevelFilter::Info)));
-        assert!(matches!(parse_log_level("Debug"), Ok(LevelFilter::Debug)));
-    }
 
     #[test]
     fn test_redact_sensitive_sql_passwords() {

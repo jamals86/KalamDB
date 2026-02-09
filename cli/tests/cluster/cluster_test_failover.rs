@@ -4,7 +4,6 @@
 
 use crate::cluster_common::*;
 use crate::common::*;
-use std::time::Duration;
 
 /// Test: Cluster remains operational when one node fails
 ///

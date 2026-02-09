@@ -325,6 +325,30 @@ impl SchemaRegistry {
         let tables_schema_registry =
             Arc::new(TablesSchemaRegistryAdapter::new(app_ctx.schema_registry()));
 
+        // Build shared TableServices (one Arc for all provider types)
+        let services = Arc::new(kalamdb_tables::utils::TableServices::new(
+            tables_schema_registry.clone(),
+            app_ctx.system_columns_service(),
+            Some(app_ctx.storage_registry()),
+            app_ctx.manifest_service(),
+            Arc::clone(app_ctx.notification_service())
+                as Arc<dyn NotificationService<Notification = ChangeNotification>>,
+            app_ctx.clone(),
+        ));
+
+        // Get Arrow schema from registry (cached at core level)
+        let arrow_schema = tables_schema_registry
+            .get_arrow_schema(&table_id)
+            .map_err(|e| {
+                KalamDbError::InvalidOperation(format!(
+                    "Failed to get Arrow schema for {}: {}",
+                    table_id, e
+                ))
+            })?;
+
+        // Wrap table_def in Arc for sharing across core (avoids cloning TableDefinition)
+        let table_def_arc = Arc::new(table_def.clone());
+
         match table_def.table_type {
             TableType::User => {
                 let user_table_store = Arc::new(new_indexed_user_table_store(
@@ -334,23 +358,17 @@ impl SchemaRegistry {
                 ));
 
                 let core = Arc::new(TableProviderCore::new(
-                    table_id.clone(),
-                    TableType::User,
-                    tables_schema_registry.clone(),
-                    app_ctx.system_columns_service(),
-                    Some(app_ctx.storage_registry()),
-                    app_ctx.manifest_service(),
-                    Arc::clone(app_ctx.notification_service())
-                        as Arc<dyn NotificationService<Notification = ChangeNotification>>,
-                    app_ctx.clone(),
+                    table_def_arc,
+                    services,
+                    pk_field,
+                    arrow_schema,
+                    column_defaults,
                 ));
 
-                let provider = UserTableProvider::try_new_with_defaults(
+                let provider = UserTableProvider::new(
                     core,
                     user_table_store,
-                    pk_field,
-                    column_defaults,
-                )?;
+                );
                 Ok(Arc::new(provider))
             },
             TableType::Shared => {
@@ -361,22 +379,16 @@ impl SchemaRegistry {
                 ));
 
                 let core = Arc::new(TableProviderCore::new(
-                    table_id.clone(),
-                    TableType::Shared,
-                    tables_schema_registry.clone(),
-                    app_ctx.system_columns_service(),
-                    Some(app_ctx.storage_registry()),
-                    app_ctx.manifest_service(),
-                    Arc::clone(app_ctx.notification_service())
-                        as Arc<dyn NotificationService<Notification = ChangeNotification>>,
-                    app_ctx.clone(),
+                    table_def_arc,
+                    services,
+                    pk_field,
+                    arrow_schema,
+                    column_defaults,
                 ));
 
-                let provider = SharedTableProvider::new_with_defaults(
+                let provider = SharedTableProvider::new(
                     core,
                     shared_store,
-                    pk_field,
-                    column_defaults,
                 );
                 Ok(Arc::new(provider))
             },
@@ -402,23 +414,17 @@ impl SchemaRegistry {
                 ));
 
                 let core = Arc::new(TableProviderCore::new(
-                    table_id.clone(),
-                    TableType::Stream,
-                    tables_schema_registry.clone(),
-                    app_ctx.system_columns_service(),
-                    Some(app_ctx.storage_registry()),
-                    app_ctx.manifest_service(),
-                    Arc::clone(app_ctx.notification_service())
-                        as Arc<dyn NotificationService<Notification = ChangeNotification>>,
-                    app_ctx.clone(),
+                    table_def_arc,
+                    services,
+                    pk_field,
+                    arrow_schema,
+                    column_defaults,
                 ));
 
-                let provider = StreamTableProvider::new_with_defaults(
+                let provider = StreamTableProvider::new(
                     core,
                     stream_store,
                     Some(ttl_seconds),
-                    pk_field,
-                    column_defaults,
                 );
                 Ok(Arc::new(provider))
             },

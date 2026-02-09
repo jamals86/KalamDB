@@ -26,18 +26,18 @@ pub(crate) async fn scan_parquet_files_as_batch_async(
 
     // 1. Get storage_id from schema registry
     let storage_id = core
-        .schema_registry
+        .schema_registry()
         .get_storage_id(table_id)
         .map_err(|_| KalamDbError::TableNotFound(format!("Table not found: {}", table_id)))?;
 
-    let storage_registry = core.storage_registry.as_ref().ok_or_else(|| {
+    let storage_registry = core.services.storage_registry.as_ref().ok_or_else(|| {
         KalamDbError::InvalidOperation("Storage registry not configured".to_string())
     })?;
     let storage_cached = storage_registry.get_cached(&storage_id)?.ok_or_else(|| {
         KalamDbError::InvalidOperation(format!("Storage '{}' not found", storage_id.as_str()))
     })?;
 
-    let manifest_service = core.manifest_service.clone();
+    let manifest_service = core.services.manifest_service.clone();
     log::debug!(
         "[PARQUET_SCAN_ASYNC] About to get_or_load manifest: table={} {}",
         table_id,
@@ -77,7 +77,7 @@ pub(crate) async fn scan_parquet_files_as_batch_async(
                 let uid = user_id.cloned();
                 let scope_for_spawn = scope_label.clone();
                 let table_id_for_spawn = table_id.clone();
-                let manifest_service_clone = core.manifest_service.clone();
+                let manifest_service_clone = core.services.manifest_service.clone();
                 tokio::task::spawn_blocking(move || {
                     log::info!(
                         "🔧 [MANIFEST REBUILD STARTED] table={} {}",
@@ -145,7 +145,7 @@ pub(crate) async fn scan_parquet_files_as_batch_async(
             seq_range,
             use_degraded_mode,
             schema.clone(),
-            core.schema_registry.as_ref(),
+            core.services.schema_registry.as_ref(),
         )
         .await?;
 

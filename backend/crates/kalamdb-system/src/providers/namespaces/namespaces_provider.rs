@@ -5,7 +5,7 @@
 
 use super::{new_namespaces_store, NamespacesStore, NamespacesTableSchema};
 use crate::error::{SystemError, SystemResultExt};
-use crate::providers::base::SimpleSystemTableScan;
+use crate::providers::base::{extract_filter_value, SimpleSystemTableScan};
 use crate::providers::namespaces::models::Namespace;
 use crate::system_table_trait::SystemTableProviderExt;
 use async_trait::async_trait;
@@ -188,21 +188,18 @@ impl NamespacesTableProvider {
         Ok(results.into_iter().map(|(_, ns)| ns).collect())
     }
 
-    /// Scan all namespaces and return as RecordBatch
-    pub fn scan_all_namespaces(&self) -> Result<RecordBatch, SystemError> {
-        let iter = self.store.scan_iterator(None, None)?;
-        let mut namespaces = Vec::new();
-        for item in iter {
-            namespaces.push(item?);
-        }
-        // Extract data into vectors
-        let mut namespace_ids = Vec::with_capacity(namespaces.len());
-        let mut names = Vec::with_capacity(namespaces.len());
-        let mut created_ats = Vec::with_capacity(namespaces.len());
-        let mut options = Vec::with_capacity(namespaces.len());
-        let mut table_counts = Vec::with_capacity(namespaces.len());
+    /// Build a RecordBatch from a list of (NamespaceId, Namespace) pairs
+    fn build_namespaces_batch(
+        &self,
+        entries: Vec<(NamespaceId, Namespace)>,
+    ) -> Result<RecordBatch, SystemError> {
+        let mut namespace_ids = Vec::with_capacity(entries.len());
+        let mut names = Vec::with_capacity(entries.len());
+        let mut created_ats = Vec::with_capacity(entries.len());
+        let mut options = Vec::with_capacity(entries.len());
+        let mut table_counts = Vec::with_capacity(entries.len());
 
-        for (_key, ns) in namespaces {
+        for (_key, ns) in entries {
             namespace_ids.push(Some(ns.namespace_id.as_str().to_string()));
             names.push(Some(ns.name));
             created_ats.push(Some(ns.created_at));
@@ -210,7 +207,6 @@ impl NamespacesTableProvider {
             table_counts.push(Some(ns.table_count));
         }
 
-        // Build batch using RecordBatchBuilder
         let mut builder = RecordBatchBuilder::new(NamespacesTableSchema::schema());
         builder
             .add_string_column_owned(namespace_ids)
@@ -220,8 +216,17 @@ impl NamespacesTableProvider {
             .add_int32_column(table_counts);
 
         let batch = builder.build().into_arrow_error("Failed to create RecordBatch")?;
-
         Ok(batch)
+    }
+
+    /// Scan all namespaces and return as RecordBatch
+    pub fn scan_all_namespaces(&self) -> Result<RecordBatch, SystemError> {
+        let iter = self.store.scan_iterator(None, None)?;
+        let mut entries = Vec::new();
+        for item in iter {
+            entries.push(item?);
+        }
+        self.build_namespaces_batch(entries)
     }
 }
 
@@ -236,6 +241,33 @@ impl SimpleSystemTableScan<NamespaceId, Namespace> for NamespacesTableProvider {
 
     fn scan_all_to_batch(&self) -> Result<RecordBatch, SystemError> {
         self.scan_all_namespaces()
+    }
+
+    fn scan_to_batch(
+        &self,
+        filters: &[Expr],
+        limit: Option<usize>,
+    ) -> Result<RecordBatch, SystemError> {
+        // Check for primary key equality filter → O(1) point lookup
+        if let Some(ns_id_str) = extract_filter_value(filters, "namespace_id") {
+            let namespace_id = NamespaceId::new(&ns_id_str);
+            if let Some(ns) = self.store.get(&namespace_id)? {
+                return self.build_namespaces_batch(vec![(namespace_id, ns)]);
+            }
+            return self.build_namespaces_batch(vec![]);
+        }
+
+        // Use iterator with early termination on limit
+        let iter = self.store.scan_iterator(None, None)?;
+        let effective_limit = limit.unwrap_or(100_000);
+        let mut entries = Vec::with_capacity(effective_limit.min(1000));
+        for item in iter {
+            entries.push(item?);
+            if entries.len() >= effective_limit {
+                break;
+            }
+        }
+        self.build_namespaces_batch(entries)
     }
 }
 

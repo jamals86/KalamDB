@@ -16,7 +16,8 @@ use log::info;
 #[global_allocator]
 static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
-#[actix_web::main]
+// Use tokio::main instead of actix_web::main to avoid early tracing initialization
+#[tokio::main]
 async fn main() -> Result<()> {
     let main_start = std::time::Instant::now();
 
@@ -161,6 +162,7 @@ async fn main() -> Result<()> {
         config.logging.log_to_console,
         Some(&config.logging.targets),
         &config.logging.format,
+        &config.logging.otlp,
     )?;
 
     // Display enhanced version information
@@ -170,5 +172,7 @@ async fn main() -> Result<()> {
     let (components, app_context) = bootstrap(&config).await?;
 
     // Run HTTP server until termination signal is received
-    run(&config, components, app_context, main_start).await
+    let run_result = run(&config, components, app_context, main_start).await;
+    logging::shutdown_telemetry();
+    run_result
 }

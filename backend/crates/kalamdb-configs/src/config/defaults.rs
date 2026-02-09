@@ -57,6 +57,26 @@ pub fn default_log_format() -> String {
     "compact".to_string()
 }
 
+pub fn default_otlp_enabled() -> bool {
+    false
+}
+
+pub fn default_otlp_endpoint() -> String {
+    "http://127.0.0.1:4317".to_string()
+}
+
+pub fn default_otlp_protocol() -> String {
+    "grpc".to_string()
+}
+
+pub fn default_otlp_service_name() -> String {
+    "kalamdb-server".to_string()
+}
+
+pub fn default_otlp_timeout_ms() -> u64 {
+    3000
+}
+
 pub fn default_slow_query_threshold_ms() -> u64 {
     1200 // 1.2 seconds
 }
