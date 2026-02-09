@@ -6,7 +6,7 @@
 use super::{new_audit_logs_store, AuditLogsStore, AuditLogsTableSchema};
 use crate::error::{SystemError, SystemResultExt};
 use crate::providers::audit_logs::models::AuditLogEntry;
-use crate::providers::base::SimpleSystemTableScan;
+use crate::providers::base::{extract_filter_value, SimpleSystemTableScan};
 use crate::system_table_trait::SystemTableProviderExt;
 use async_trait::async_trait;
 use datafusion::arrow::array::RecordBatch;
@@ -201,6 +201,37 @@ impl SimpleSystemTableScan<AuditLogId, AuditLogEntry> for AuditLogsTableProvider
     }
 
     fn scan_all_to_batch(&self) -> Result<RecordBatch, SystemError> {
+        self.scan_all_entries()
+    }
+
+    fn scan_to_batch(
+        &self,
+        filters: &[Expr],
+        limit: Option<usize>,
+    ) -> Result<RecordBatch, SystemError> {
+        // Check for primary key equality filter → O(1) point lookup
+        if let Some(audit_id_str) = extract_filter_value(filters, "audit_id") {
+            let audit_id = AuditLogId::new(&audit_id_str);
+            if let Some(entry) = self.store.get(&audit_id)? {
+                return self.create_batch(vec![(audit_id, entry)]);
+            }
+            return self.create_batch(vec![]);
+        }
+
+        // Use iterator with early termination on limit
+        if let Some(lim) = limit {
+            let iter = self.store.scan_iterator(None, None)?;
+            let mut entries = Vec::with_capacity(lim.min(1000));
+            for item in iter {
+                entries.push(item?);
+                if entries.len() >= lim {
+                    break;
+                }
+            }
+            return self.create_batch(entries);
+        }
+
+        // No filters/limit: full scan
         self.scan_all_entries()
     }
 }

@@ -50,6 +50,7 @@ use kalamdb_system::Storage;
 use object_store::{path::Path as ObjectPath, ObjectStore};
 use parking_lot::RwLock;
 use std::sync::Arc;
+use tracing::Instrument;
 
 /// Unified storage interface with lazy ObjectStore and template resolution.
 ///
@@ -285,19 +286,31 @@ impl StorageCached {
         table_id: &TableId,
         user_id: Option<&UserId>,
     ) -> Result<ListResult> {
-        let store = self.object_store_internal()?;
-        let relative = self.resolve_full_template(table_type, table_id, user_id);
-        let prefix_path = self.to_object_path(&relative)?;
+        let span = tracing::info_span!(
+            "storage.list",
+            storage_id = %self.storage.storage_id,
+            table_type = ?table_type,
+            table_id = %table_id,
+            has_user_id = user_id.is_some()
+        );
+        async move {
+            let store = self.object_store_internal()?;
+            let relative = self.resolve_full_template(table_type, table_id, user_id);
+            let prefix_path = self.to_object_path(&relative)?;
 
-        let mut stream = store.list(Some(&prefix_path));
-        let mut paths = Vec::new();
+            let mut stream = store.list(Some(&prefix_path));
+            let mut paths = Vec::new();
 
-        while let Some(result) = stream.next().await {
-            let meta = result.map_err(|e| FilestoreError::ObjectStore(e.to_string()))?;
-            paths.push(meta.location.to_string());
+            while let Some(result) = stream.next().await {
+                let meta = result.map_err(|e| FilestoreError::ObjectStore(e.to_string()))?;
+                paths.push(meta.location.to_string());
+            }
+            tracing::debug!(count = paths.len(), "Storage list completed");
+
+            Ok(ListResult::new(paths, relative))
         }
-
-        Ok(ListResult::new(paths, relative))
+        .instrument(span)
+        .await
     }
 
     /// Read manifest.json directly (Task 102)
@@ -327,11 +340,20 @@ impl StorageCached {
         user_id: Option<&UserId>,
         manifest: &serde_json::Value,
     ) -> Result<()> {
+        let span = tracing::info_span!(
+            "manifest.write",
+            storage_id = %self.storage.storage_id,
+            table_type = ?table_type,
+            table_id = %table_id,
+            has_user_id = user_id.is_some()
+        );
+        let _span_guard = span.entered();
         let data = serde_json::to_vec_pretty(manifest)
             .map_err(|e| FilestoreError::Format(format!("Failed to serialize manifest: {}", e)))?;
 
         // Pass just the filename, not the full path - put_sync will construct the full path
         self.put_sync(table_type, table_id, user_id, "manifest.json", bytes::Bytes::from(data))?;
+        tracing::debug!("Manifest write completed");
         Ok(())
     }
 
@@ -537,20 +559,34 @@ impl StorageCached {
         user_id: Option<&UserId>,
         filename: &str,
     ) -> Result<GetResult> {
-        let store = self.object_store_internal()?;
-        let path_result = self.get_file_path(table_type, table_id, user_id, filename);
-        let object_path = self.to_object_path(&path_result.relative_path)?;
+        let span = tracing::info_span!(
+            "storage.get",
+            storage_id = %self.storage.storage_id,
+            table_type = ?table_type,
+            table_id = %table_id,
+            has_user_id = user_id.is_some(),
+            filename = filename
+        );
+        async move {
+            let store = self.object_store_internal()?;
+            let path_result = self.get_file_path(table_type, table_id, user_id, filename);
+            let object_path = self.to_object_path(&path_result.relative_path)?;
 
-        let result = store.get(&object_path).await.map_err(|e| match e {
-            object_store::Error::NotFound { .. } => {
-                FilestoreError::NotFound(path_result.full_path.clone())
-            },
-            _ => FilestoreError::ObjectStore(e.to_string()),
-        })?;
+            let result = store.get(&object_path).await.map_err(|e| match e {
+                object_store::Error::NotFound { .. } => {
+                    FilestoreError::NotFound(path_result.full_path.clone())
+                },
+                _ => FilestoreError::ObjectStore(e.to_string()),
+            })?;
 
-        let bytes = result.bytes().await.map_err(|e| FilestoreError::ObjectStore(e.to_string()))?;
+            let bytes =
+                result.bytes().await.map_err(|e| FilestoreError::ObjectStore(e.to_string()))?;
+            tracing::debug!(bytes = bytes.len(), "Storage get completed");
 
-        Ok(GetResult::new(bytes, path_result.full_path))
+            Ok(GetResult::new(bytes, path_result.full_path))
+        }
+        .instrument(span)
+        .await
     }
 
     /// Read a file from storage (sync).
@@ -590,21 +626,34 @@ impl StorageCached {
         filename: &str,
         data: Bytes,
     ) -> Result<PutResult> {
-        let store = self.object_store_internal()?;
-        let path_result = self.get_file_path(table_type, table_id, user_id, filename);
-        let object_path = self.to_object_path(&path_result.relative_path)?;
+        let bytes_len = data.len();
+        let span = tracing::info_span!(
+            "storage.put",
+            storage_id = %self.storage.storage_id,
+            table_type = ?table_type,
+            table_id = %table_id,
+            has_user_id = user_id.is_some(),
+            filename = filename,
+            bytes = bytes_len
+        );
+        async move {
+            let store = self.object_store_internal()?;
+            let path_result = self.get_file_path(table_type, table_id, user_id, filename);
+            let object_path = self.to_object_path(&path_result.relative_path)?;
 
-        let size = data.len();
+            // Check if file exists for is_new flag
+            let existed = store.head(&object_path).await.is_ok();
 
-        // Check if file exists for is_new flag
-        let existed = store.head(&object_path).await.is_ok();
+            store
+                .put(&object_path, data.into())
+                .await
+                .map_err(|e| FilestoreError::ObjectStore(e.to_string()))?;
+            tracing::debug!(is_new = !existed, "Storage put completed");
 
-        store
-            .put(&object_path, data.into())
-            .await
-            .map_err(|e| FilestoreError::ObjectStore(e.to_string()))?;
-
-        Ok(PutResult::new(path_result.full_path, size, !existed))
+            Ok(PutResult::new(path_result.full_path, bytes_len, !existed))
+        }
+        .instrument(span)
+        .await
     }
 
     /// Write data to a file in storage (sync).
@@ -636,12 +685,29 @@ impl StorageCached {
         batches: Vec<RecordBatch>,
         bloom_filter_columns: Option<Vec<String>>,
     ) -> Result<ParquetWriteResult> {
-        let parquet_bytes = serialize_to_parquet(schema, batches, bloom_filter_columns)?;
-        let size_bytes = parquet_bytes.len() as u64;
+        let batch_count = batches.len();
+        let row_count: usize = batches.iter().map(RecordBatch::num_rows).sum();
+        let span = tracing::info_span!(
+            "parquet.write",
+            storage_id = %self.storage.storage_id,
+            table_type = ?table_type,
+            table_id = %table_id,
+            has_user_id = user_id.is_some(),
+            filename = filename,
+            batch_count = batch_count,
+            row_count = row_count
+        );
+        async move {
+            let parquet_bytes = serialize_to_parquet(schema, batches, bloom_filter_columns)?;
+            let size_bytes = parquet_bytes.len() as u64;
 
-        self.put(table_type, table_id, user_id, filename, parquet_bytes).await?;
+            self.put(table_type, table_id, user_id, filename, parquet_bytes).await?;
+            tracing::debug!(size_bytes = size_bytes, "Parquet write completed");
 
-        Ok(ParquetWriteResult { size_bytes })
+            Ok(ParquetWriteResult { size_bytes })
+        }
+        .instrument(span)
+        .await
     }
 
     /// Write Parquet batches to storage (sync).
@@ -691,21 +757,34 @@ impl StorageCached {
         user_id: Option<&UserId>,
         filename: &str,
     ) -> Result<DeleteResult> {
-        let store = self.object_store_internal()?;
-        let path_result = self.get_file_path(table_type, table_id, user_id, filename);
-        let object_path = self.to_object_path(&path_result.relative_path)?;
+        let span = tracing::info_span!(
+            "storage.delete",
+            storage_id = %self.storage.storage_id,
+            table_type = ?table_type,
+            table_id = %table_id,
+            has_user_id = user_id.is_some(),
+            filename = filename
+        );
+        async move {
+            let store = self.object_store_internal()?;
+            let path_result = self.get_file_path(table_type, table_id, user_id, filename);
+            let object_path = self.to_object_path(&path_result.relative_path)?;
 
-        // Check if file exists
-        let existed = store.head(&object_path).await.is_ok();
+            // Check if file exists
+            let existed = store.head(&object_path).await.is_ok();
 
-        if existed {
-            store
-                .delete(&object_path)
-                .await
-                .map_err(|e| FilestoreError::ObjectStore(e.to_string()))?;
+            if existed {
+                store
+                    .delete(&object_path)
+                    .await
+                    .map_err(|e| FilestoreError::ObjectStore(e.to_string()))?;
+            }
+            tracing::debug!(existed = existed, "Storage delete completed");
+
+            Ok(DeleteResult::new(path_result.full_path, existed))
         }
-
-        Ok(DeleteResult::new(path_result.full_path, existed))
+        .instrument(span)
+        .await
     }
 
     /// Delete a file from storage (sync).

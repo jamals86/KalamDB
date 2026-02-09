@@ -398,6 +398,43 @@ pub struct LoggingSettings {
     /// Queries taking longer than this threshold will be logged to slow.log
     #[serde(default = "default_slow_query_threshold_ms")]
     pub slow_query_threshold_ms: u64,
+    /// OpenTelemetry OTLP export settings (Jaeger/Tempo/Collector)
+    #[serde(default)]
+    pub otlp: OtlpSettings,
+}
+
+/// OpenTelemetry OTLP trace export settings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OtlpSettings {
+    /// Enable OTLP trace exporting
+    #[serde(default = "default_otlp_enabled")]
+    pub enabled: bool,
+    /// OTLP endpoint.
+    /// - gRPC: "http://127.0.0.1:4317"
+    /// - HTTP: "http://127.0.0.1:4318" ("/v1/traces" appended automatically)
+    #[serde(default = "default_otlp_endpoint")]
+    pub endpoint: String,
+    /// Protocol: "grpc" or "http"
+    #[serde(default = "default_otlp_protocol")]
+    pub protocol: String,
+    /// Service name shown in Jaeger
+    #[serde(default = "default_otlp_service_name")]
+    pub service_name: String,
+    /// Export timeout in milliseconds
+    #[serde(default = "default_otlp_timeout_ms")]
+    pub timeout_ms: u64,
+}
+
+impl Default for OtlpSettings {
+    fn default() -> Self {
+        Self {
+            enabled: default_otlp_enabled(),
+            endpoint: default_otlp_endpoint(),
+            protocol: default_otlp_protocol(),
+            service_name: default_otlp_service_name(),
+            timeout_ms: default_otlp_timeout_ms(),
+        }
+    }
 }
 
 /// Performance settings
@@ -956,6 +993,7 @@ impl Default for ServerConfig {
                 format: "compact".to_string(),
                 targets: HashMap::new(),
                 slow_query_threshold_ms: default_slow_query_threshold_ms(),
+                otlp: OtlpSettings::default(),
             },
             performance: PerformanceSettings {
                 request_timeout: 30,

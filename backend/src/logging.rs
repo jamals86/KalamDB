@@ -8,11 +8,47 @@
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::path::Path;
+use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
 
+use kalamdb_configs::config::types::OtlpSettings;
+use opentelemetry::trace::TracerProvider as _;
+use opentelemetry_otlp::WithExportConfig;
+use opentelemetry_sdk::trace::SdkTracerProvider;
+use opentelemetry_sdk::Resource;
+use tracing_subscriber::filter::filter_fn;
 use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Layer};
+
+static OTEL_TRACER_PROVIDER: OnceLock<Mutex<Option<SdkTracerProvider>>> = OnceLock::new();
+
+fn tracer_provider_slot() -> &'static Mutex<Option<SdkTracerProvider>> {
+    OTEL_TRACER_PROVIDER.get_or_init(|| Mutex::new(None))
+}
+
+fn is_otlp_noisy_target(target: &str) -> bool {
+    // Drop exporter/system transport chatter while keeping application spans/events.
+    let noisy_prefixes = [
+        "h2",
+        "hyper",
+        "tower",
+        "tonic",
+        "openraft",
+        "kalamdb_raft",
+        "opentelemetry",
+        "opentelemetry_sdk",
+        "opentelemetry_otlp",
+        "mio",
+        "tokio_util",
+        "want",
+    ];
+
+    noisy_prefixes
+        .iter()
+        .any(|prefix| target == *prefix || target.starts_with(&format!("{}::", prefix)))
+}
 
 /// Log format type
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,6 +92,9 @@ fn build_env_filter(
         ("openraft", "error"),
         ("openraft::replication", "off"),
         ("tracing", "warn"),
+        // Reduce verbose SQL execution span logs
+        ("kalamdb_core::sql::executor", "warn"),
+        ("kalamdb_core::applier::raft", "warn"),
     ];
     for (target, lvl) in noisy {
         directives.push(format!("{}={}", target, lvl));
@@ -86,6 +125,7 @@ pub fn init_logging(
     log_to_console: bool,
     target_levels: Option<&HashMap<String, String>>,
     format: &str,
+    otlp: &OtlpSettings,
 ) -> anyhow::Result<()> {
     let log_format = LogFormat::from_str(format);
 
@@ -97,9 +137,6 @@ pub fn init_logging(
     // Open log file in append mode
     let log_file = OpenOptions::new().create(true).append(true).open(file_path)?;
 
-    // Bridge `log` crate → tracing (for all existing log::info!() etc. calls)
-    tracing_log::LogTracer::init().ok(); // ok() in case already initialized
-
     // -- Console layer (optional) --
     let console_layer = if log_to_console {
         Some(
@@ -107,7 +144,7 @@ pub fn init_logging(
                 .with_ansi(true)
                 .with_target(true)
                 .with_thread_names(true)
-                .with_span_events(FmtSpan::CLOSE)
+                .with_span_events(FmtSpan::NONE) // Change to CLOSE to show span timing
                 .with_filter(build_env_filter(level, target_levels)?),
         )
     } else {
@@ -122,7 +159,7 @@ pub fn init_logging(
             .with_writer(log_file)
             .with_target(true)
             .with_thread_names(true)
-            .with_span_events(FmtSpan::CLOSE)
+            .with_span_events(FmtSpan::NONE) // Change to CLOSE to show span timing
             .with_span_list(true)
             .with_filter(build_env_filter(level, target_levels)?);
         // We need to box because the json() layer has a different type
@@ -133,18 +170,70 @@ pub fn init_logging(
             .with_writer(log_file)
             .with_target(true)
             .with_thread_names(true)
-            .with_span_events(FmtSpan::CLOSE)
+            .with_span_events(FmtSpan::NONE) // Change to CLOSE to show span timing
             .with_filter(build_env_filter(level, target_levels)?);
         layer.boxed()
     };
 
-    // Compose and install as global subscriber
-    tracing_subscriber::registry()
-        .with(console_layer)
-        .with(file_layer)
-        .init();
+    // Compose and install as global subscriber.
+    // Use try_init() to handle cases where subscriber is already initialized
+    // (e.g., in testing or when running multiple times).
+    let init_result = if otlp.enabled {
+        let tracer_provider = build_otlp_provider(otlp)?;
+        let tracer = tracer_provider.tracer("kalamdb-server");
 
-    tracing::trace!("Logging initialized: level={}, console={}, file={}", level, log_to_console, file_path);
+        // Default-allow everything, but remove known noisy transport/system internals.
+        // This keeps future app spans/events visible without h2/poll_ready-style chatter.
+        let otlp_filter = filter_fn(|metadata| {
+            !is_otlp_noisy_target(metadata.target())
+                && matches!(
+                    *metadata.level(),
+                    tracing::Level::ERROR | tracing::Level::WARN | tracing::Level::INFO
+                )
+        });
+
+        let otlp_layer = tracing_opentelemetry::layer()
+            .with_tracer(tracer)
+            .with_filter(otlp_filter);
+
+        let result = tracing_subscriber::registry()
+            .with(console_layer)
+            .with(file_layer)
+            .with(otlp_layer)
+            .try_init();
+        (result, Some(tracer_provider))
+    } else {
+        let result = tracing_subscriber::registry()
+            .with(console_layer)
+            .with(file_layer)
+            .try_init();
+        (result, None)
+    };
+
+    match init_result.0 {
+        Ok(_) => {
+            // Bridge `log` crate → tracing (for all existing log::info!() etc. calls)
+            // Only initialize after subscriber is set up
+            tracing_log::LogTracer::init().ok(); // ok() in case already initialized
+
+            if let Some(provider) = init_result.1 {
+                if let Ok(mut guard) = tracer_provider_slot().lock() {
+                    *guard = Some(provider);
+                }
+            }
+
+            tracing::trace!("Logging initialized: level={}, console={}, file={}", level, log_to_console, file_path);
+        },
+        Err(e) => {
+            if let Some(provider) = init_result.1 {
+                let _ = provider.shutdown();
+            }
+            // Subscriber already initialized - this can happen in test contexts
+            // Continue with existing subscriber, but file logging won't be available
+            eprintln!("⚠️  Note: Tracing subscriber already initialized: {}", e);
+            eprintln!("   Using existing logging configuration (file logging may not be available).");
+        }
+    }
 
     Ok(())
 }
@@ -161,6 +250,60 @@ pub fn init_simple_logging() -> anyhow::Result<()> {
         .init();
 
     Ok(())
+}
+
+/// Flush and shutdown OTLP tracer provider, if installed.
+pub fn shutdown_telemetry() {
+    if let Ok(mut guard) = tracer_provider_slot().lock() {
+        if let Some(provider) = guard.take() {
+            let _ = provider.shutdown();
+        }
+    }
+}
+
+fn build_otlp_provider(otlp: &OtlpSettings) -> anyhow::Result<SdkTracerProvider> {
+    let protocol = otlp.protocol.to_ascii_lowercase();
+    let timeout = Duration::from_millis(otlp.timeout_ms.max(1));
+
+    let exporter = match protocol.as_str() {
+        "grpc" => opentelemetry_otlp::SpanExporter::builder()
+            .with_tonic()
+            .with_endpoint(otlp.endpoint.clone())
+            .with_timeout(timeout)
+            .build()
+            .map_err(|e| anyhow::anyhow!("Failed to build OTLP gRPC span exporter: {}", e))?,
+        "http" => opentelemetry_otlp::SpanExporter::builder()
+            .with_http()
+            .with_endpoint(normalize_http_endpoint(&otlp.endpoint))
+            .with_timeout(timeout)
+            .build()
+            .map_err(|e| anyhow::anyhow!("Failed to build OTLP HTTP span exporter: {}", e))?,
+        _ => {
+            return Err(anyhow::anyhow!(
+                "Unsupported OTLP protocol '{}'. Use 'grpc' or 'http'.",
+                otlp.protocol
+            ));
+        },
+    };
+
+    let resource = Resource::builder()
+        .with_service_name(otlp.service_name.clone())
+        .build();
+
+    let tracer_provider = SdkTracerProvider::builder()
+        .with_resource(resource)
+        .with_batch_exporter(exporter)
+        .build();
+
+    Ok(tracer_provider)
+}
+
+fn normalize_http_endpoint(endpoint: &str) -> String {
+    if endpoint.ends_with("/v1/traces") {
+        endpoint.to_string()
+    } else {
+        format!("{}/v1/traces", endpoint.trim_end_matches('/'))
+    }
 }
 
 #[cfg(test)]

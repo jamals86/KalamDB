@@ -105,13 +105,16 @@ impl TableProviderCore {
         schema: SchemaRef,
         column_defaults: HashMap<String, Expr>,
     ) -> Self {
+        use kalamdb_commons::constants::SystemColumnNames;
         use kalamdb_commons::schemas::ColumnDefault;
 
-        // Precompute non-nullable columns from the schema
+        // Precompute non-nullable columns from the schema.
+        // Exclude system columns (_seq, _deleted) because they are auto-generated
+        // during INSERT and should not be validated against user-provided data.
         let non_null_columns: HashSet<String> = schema
             .fields()
             .iter()
-            .filter(|f| !f.is_nullable())
+            .filter(|f| !f.is_nullable() && !SystemColumnNames::is_system_column(f.name()))
             .map(|f| f.name().clone())
             .collect();
 

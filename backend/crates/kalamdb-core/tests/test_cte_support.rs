@@ -8,12 +8,13 @@
 //! - CTEs with JOINs
 //! - CTEs with filtering
 
-use kalamdb_commons::{Role, UserId, UserName};
-use kalamdb_core::app_context::{AppContext, AppContextBuilder};
-use kalamdb_core::execution_result::ExecutionResult;
-use kalamdb_core::sql::context::ExecutionContext;
+use kalamdb_commons::{Role, UserId, UserName, NodeId};
+use kalamdb_core::app_context::AppContext;
+use kalamdb_core::sql::context::{ExecutionContext, ExecutionResult};
 use kalamdb_core::sql::executor::SqlExecutor;
 use kalamdb_session::AuthSession;
+use kalamdb_store::RocksDBBackend;
+use kalamdb_configs::ServerConfig;
 use std::sync::Arc;
 use tempfile::TempDir;
 
@@ -21,13 +22,21 @@ use tempfile::TempDir;
 async fn create_test_app_context() -> (Arc<AppContext>, TempDir) {
     let temp_dir = TempDir::new().expect("Failed to create temp directory");
     let rocksdb_path = temp_dir.path().join("rocksdb");
+    std::fs::create_dir_all(&rocksdb_path).expect("Failed to create rocksdb directory");
 
-    let app_context = AppContextBuilder::new(&rocksdb_path)
-        .build()
-        .await
-        .expect("Failed to build AppContext");
+    let db = rocksdb::DB::open_default(&rocksdb_path).expect("Failed to open RocksDB");
+    let backend = Arc::new(RocksDBBackend::new(db));
+    let config = ServerConfig::default();
+    let node_id = NodeId::new(1);
 
-    (Arc::new(app_context), temp_dir)
+    let app_context = AppContext::create_isolated(
+        backend,
+        node_id,
+        rocksdb_path.to_string_lossy().into_owned(),
+        config,
+    );
+
+    (app_context, temp_dir)
 }
 
 /// Helper to create ExecutionContext with username
@@ -37,16 +46,12 @@ fn create_exec_context_with_app_context(
     user_id: &str,
     role: Role,
 ) -> ExecutionContext {
-    let auth_session = AuthSession::with_username_and_auth_details(
-        UserId::new(user_id),
-        UserName::new(username),
-        role,
-        kalamdb_commons::models::ConnectionInfo::new(None),
-        kalamdb_session::AuthMethod::Bearer,
-    );
+    let user_id = UserId::new(user_id.to_string());
+    let base_session = app_context.base_session_context();
     ExecutionContext::new(
-        auth_session,
-        app_context.datafusion_session_factory().clone(),
+        user_id,
+        role,
+        base_session,
     )
 }
 
@@ -114,7 +119,7 @@ async fn test_simple_cte() {
     setup_test_table(&executor, &exec_ctx).await.unwrap();
 
     // Test simple CTE
-    let result = executor
+    let result: Result<ExecutionResult, _> = executor
         .execute(
             r#"
             WITH high_earners AS (
@@ -157,7 +162,7 @@ async fn test_cte_with_aggregation() {
     setup_test_table(&executor, &exec_ctx).await.unwrap();
 
     // Test CTE with aggregation
-    let result = executor
+    let result: Result<ExecutionResult, _> = executor
         .execute(
             r#"
             WITH dept_stats AS (
@@ -207,7 +212,7 @@ async fn test_multiple_ctes() {
     setup_test_table(&executor, &exec_ctx).await.unwrap();
 
     // Test multiple CTEs
-    let result = executor
+    let result: Result<ExecutionResult, _> = executor
         .execute(
             r#"
             WITH 
@@ -259,7 +264,7 @@ async fn test_chained_ctes() {
     setup_test_table(&executor, &exec_ctx).await.unwrap();
 
     // Test chained CTEs (one CTE references another)
-    let result = executor
+    let result: Result<ExecutionResult, _> = executor
         .execute(
             r#"
             WITH 
@@ -310,7 +315,7 @@ async fn test_cte_with_where_clause() {
     setup_test_table(&executor, &exec_ctx).await.unwrap();
 
     // Test CTE with WHERE clause in both CTE and main query
-    let result = executor
+    let result: Result<ExecutionResult, _> = executor
         .execute(
             r#"
             WITH dept_employees AS (
@@ -355,7 +360,7 @@ async fn test_cte_with_limit() {
     setup_test_table(&executor, &exec_ctx).await.unwrap();
 
     // Test CTE with LIMIT
-    let result = executor
+    let result: Result<ExecutionResult, _> = executor
         .execute(
             r#"
             WITH all_salaries AS (
@@ -402,7 +407,7 @@ async fn test_cte_syntax_error() {
     setup_test_table(&executor, &exec_ctx).await.unwrap();
 
     // Test CTE with syntax error (missing AS keyword)
-    let result = executor
+    let result: Result<ExecutionResult, _> = executor
         .execute(
             r#"
             WITH high_earners (
@@ -435,7 +440,7 @@ async fn test_cte_undefined_table() {
     // No setup - testing undefined table
 
     // Test CTE referencing non-existent table
-    let result = executor
+    let result: Result<ExecutionResult, _> = executor
         .execute(
             r#"
             WITH data AS (

@@ -5,7 +5,7 @@
 
 use super::{new_storages_store, StoragesStore, StoragesTableSchema};
 use crate::error::{SystemError, SystemResultExt};
-use crate::providers::base::SimpleSystemTableScan;
+use crate::providers::base::{extract_filter_value, SimpleSystemTableScan};
 use crate::providers::storages::models::Storage;
 use crate::system_table_trait::SystemTableProviderExt;
 use async_trait::async_trait;
@@ -174,39 +174,24 @@ impl StoragesTableProvider {
         Ok(results.into_iter().map(|(_, s)| s).collect())
     }
 
-    /// Scan all storages and return as RecordBatch
-    pub fn scan_all_storages(&self) -> Result<RecordBatch, SystemError> {
-        let iter = self.store.scan_iterator(None, None)?;
-        let mut storages = Vec::new();
-        for item in iter {
-            storages.push(item?);
-        }
-        storages.sort_by(|a, b| {
-            let storage_a = &a.1;
-            let storage_b = &b.1;
-            if storage_a.storage_id.is_local() {
-                std::cmp::Ordering::Less
-            } else if storage_b.storage_id.is_local() {
-                std::cmp::Ordering::Greater
-            } else {
-                storage_a.storage_id.as_str().cmp(storage_b.storage_id.as_str())
-            }
-        });
+    /// Build a RecordBatch from a list of (StorageId, Storage) pairs
+    fn build_storages_batch(
+        &self,
+        entries: Vec<(StorageId, Storage)>,
+    ) -> Result<RecordBatch, SystemError> {
+        let mut storage_ids = Vec::with_capacity(entries.len());
+        let mut storage_names = Vec::with_capacity(entries.len());
+        let mut descriptions = Vec::with_capacity(entries.len());
+        let mut storage_types = Vec::with_capacity(entries.len());
+        let mut base_directories = Vec::with_capacity(entries.len());
+        let mut credentials = Vec::with_capacity(entries.len());
+        let mut config_jsons = Vec::with_capacity(entries.len());
+        let mut shared_templates = Vec::with_capacity(entries.len());
+        let mut user_templates = Vec::with_capacity(entries.len());
+        let mut created_ats = Vec::with_capacity(entries.len());
+        let mut updated_ats = Vec::with_capacity(entries.len());
 
-        // Extract data into column vectors (owned strings to avoid lifetime issues)
-        let mut storage_ids = Vec::with_capacity(storages.len());
-        let mut storage_names = Vec::with_capacity(storages.len());
-        let mut descriptions = Vec::with_capacity(storages.len());
-        let mut storage_types = Vec::with_capacity(storages.len());
-        let mut base_directories = Vec::with_capacity(storages.len());
-        let mut credentials = Vec::with_capacity(storages.len());
-        let mut config_jsons = Vec::with_capacity(storages.len());
-        let mut shared_templates = Vec::with_capacity(storages.len());
-        let mut user_templates = Vec::with_capacity(storages.len());
-        let mut created_ats = Vec::with_capacity(storages.len());
-        let mut updated_ats = Vec::with_capacity(storages.len());
-
-        for (_key, storage) in storages {
+        for (_key, storage) in entries {
             storage_ids.push(Some(storage.storage_id.to_string()));
             storage_names.push(Some(storage.storage_name));
             descriptions.push(storage.description);
@@ -220,7 +205,6 @@ impl StoragesTableProvider {
             updated_ats.push(Some(storage.updated_at));
         }
 
-        // Use RecordBatchBuilder for cleaner batch construction
         let mut builder = RecordBatchBuilder::new(StoragesTableSchema::schema());
         builder
             .add_string_column_owned(storage_ids)
@@ -236,8 +220,29 @@ impl StoragesTableProvider {
             .add_timestamp_micros_column(updated_ats);
 
         let batch = builder.build().into_arrow_error("Failed to create RecordBatch")?;
-
         Ok(batch)
+    }
+
+    /// Scan all storages and return as RecordBatch
+    pub fn scan_all_storages(&self) -> Result<RecordBatch, SystemError> {
+        let iter = self.store.scan_iterator(None, None)?;
+        let mut entries = Vec::new();
+        for item in iter {
+            entries.push(item?);
+        }
+        entries.sort_by(|a, b| {
+            let storage_a = &a.1;
+            let storage_b = &b.1;
+            if storage_a.storage_id.is_local() {
+                std::cmp::Ordering::Less
+            } else if storage_b.storage_id.is_local() {
+                std::cmp::Ordering::Greater
+            } else {
+                storage_a.storage_id.as_str().cmp(storage_b.storage_id.as_str())
+            }
+        });
+
+        self.build_storages_batch(entries)
     }
 }
 
@@ -251,6 +256,37 @@ impl SimpleSystemTableScan<StorageId, Storage> for StoragesTableProvider {
     }
 
     fn scan_all_to_batch(&self) -> Result<RecordBatch, SystemError> {
+        self.scan_all_storages()
+    }
+
+    fn scan_to_batch(
+        &self,
+        filters: &[Expr],
+        limit: Option<usize>,
+    ) -> Result<RecordBatch, SystemError> {
+        // Check for primary key equality filter → O(1) point lookup
+        if let Some(storage_id_str) = extract_filter_value(filters, "storage_id") {
+            let storage_id = StorageId::new(&storage_id_str);
+            if let Some(storage) = self.store.get(&storage_id)? {
+                return self.build_storages_batch(vec![(storage_id, storage)]);
+            }
+            return self.build_storages_batch(vec![]);
+        }
+
+        // With limit: use iterator with early termination (skip sort)
+        if let Some(lim) = limit {
+            let iter = self.store.scan_iterator(None, None)?;
+            let mut entries = Vec::with_capacity(lim.min(1000));
+            for item in iter {
+                entries.push(item?);
+                if entries.len() >= lim {
+                    break;
+                }
+            }
+            return self.build_storages_batch(entries);
+        }
+
+        // No limit: full scan with sort (default behavior)
         self.scan_all_storages()
     }
 }

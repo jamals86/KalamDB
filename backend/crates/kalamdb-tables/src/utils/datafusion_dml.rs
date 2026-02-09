@@ -38,8 +38,27 @@ pub async fn collect_input_rows(
     input: Arc<dyn ExecutionPlan>,
 ) -> DataFusionResult<Vec<Row>> {
     let task_ctx = state.task_ctx();
-    let batches = collect(input, task_ctx).await?;
-    record_batches_to_rows(&batches)
+
+    // Try executing the input plan directly.
+    // If it fails due to a type cast (e.g., Utf8 → FixedSizeBinary(16) for UUID columns),
+    // fall back to collecting from the child plan (before the CastExec) and let coerce_rows
+    // handle the conversion later.
+    match collect(input.clone(), task_ctx.clone()).await {
+        Ok(batches) => record_batches_to_rows(&batches),
+        Err(e) => {
+            let err_msg = e.to_string();
+            // Check if this is a type mismatch cast failure (e.g., UUID from string literal)
+            if err_msg.contains("type mismatch") || err_msg.contains("can't cast") {
+                // Try to collect from the child plan (e.g., values before CastExec)
+                if input.children().len() == 1 {
+                    let child = input.children()[0].clone();
+                    let child_batches = collect(child, task_ctx).await?;
+                    return record_batches_to_rows(&child_batches);
+                }
+            }
+            Err(e)
+        }
+    }
 }
 
 pub async fn collect_matching_rows(

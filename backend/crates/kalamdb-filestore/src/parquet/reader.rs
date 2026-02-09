@@ -28,6 +28,7 @@ use datafusion::parquet::arrow::ProjectionMask;
 use datafusion::parquet::file::reader::{FileReader, SerializedFileReader};
 use kalamdb_commons::models::{TableId, UserId};
 use kalamdb_commons::schemas::TableType;
+use tracing::Instrument;
 
 // ========== High-level StorageCached functions ==========
 
@@ -41,8 +42,22 @@ pub async fn read_parquet_batches(
     user_id: Option<&UserId>,
     parquet_filename: &str,
 ) -> Result<Vec<RecordBatch>> {
-    let bytes = storage_cached.get(table_type, table_id, user_id, parquet_filename).await?.data;
-    parse_parquet_from_bytes(bytes)
+    let span = tracing::info_span!(
+        "parquet.read",
+        table_type = ?table_type,
+        table_id = %table_id,
+        has_user_id = user_id.is_some(),
+        filename = parquet_filename
+    );
+    async move {
+        let bytes = storage_cached.get(table_type, table_id, user_id, parquet_filename).await?.data;
+        let batches = parse_parquet_from_bytes(bytes)?;
+        let row_count: usize = batches.iter().map(RecordBatch::num_rows).sum();
+        tracing::debug!(batch_count = batches.len(), row_count = row_count, "Parquet read completed");
+        Ok(batches)
+    }
+    .instrument(span)
+    .await
 }
 
 /// Synchronous wrapper for read_parquet_batches.
@@ -114,10 +129,15 @@ pub fn read_parquet_schema_sync(
 /// let batches = parse_parquet_from_bytes(result.data)?;
 /// ```
 pub fn parse_parquet_from_bytes(bytes: bytes::Bytes) -> Result<Vec<RecordBatch>> {
-    build_and_collect(
+    let span = tracing::debug_span!("parquet.decode_bytes", bytes = bytes.len());
+    let _span_guard = span.entered();
+    let batches = build_and_collect(
         ParquetRecordBatchReaderBuilder::try_new(bytes)
             .map_err(|e| FilestoreError::Parquet(e.to_string()))?,
-    )
+    )?;
+    let row_count: usize = batches.iter().map(RecordBatch::num_rows).sum();
+    tracing::trace!(batch_count = batches.len(), row_count = row_count, "Parquet decode completed");
+    Ok(batches)
 }
 
 /// Parse Parquet schema from in-memory bytes without reading data.

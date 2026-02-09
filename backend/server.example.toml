@@ -176,6 +176,18 @@ format = "compact"
 # Set to a high value (e.g., 999999) to disable slow query logging
 slow_query_threshold_ms = 1000
 
+[logging.otlp]
+# Export tracing spans to an OTLP collector (Jaeger all-in-one supports this)
+enabled = false
+# gRPC endpoint for Jaeger OTLP receiver (port 4317)
+endpoint = "http://127.0.0.1:4317"
+# Protocol: "grpc" or "http"
+protocol = "grpc"
+# Service name shown in Jaeger UI
+service_name = "kalamdb-server"
+# Export timeout in milliseconds
+timeout_ms = 3000
+
 [performance]
 # Request timeout in seconds (default: 30s)
 # Requests exceeding this duration will be terminated

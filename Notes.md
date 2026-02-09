@@ -1332,6 +1332,8 @@ Query OK, 0 rows affected
 - storage delete
 - parquet read
 - parquet write
+- Push to live query
+- publish to topic <topic name>
 
 176) Add jaeger
 

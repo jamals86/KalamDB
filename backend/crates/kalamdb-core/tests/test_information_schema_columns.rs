@@ -3,21 +3,32 @@
 //! This test verifies that the information_schema.columns table is properly
 //! registered and can be queried via SQL.
 
-use kalamdb_core::app_context::AppContextBuilder;
+use kalamdb_core::app_context::AppContext;
+use kalamdb_store::RocksDBBackend;
+use kalamdb_configs::ServerConfig;
+use kalamdb_commons::NodeId;
 use std::sync::Arc;
 use tempfile::TempDir;
 
 /// Helper to create AppContext with temporary RocksDB for testing
-async fn create_test_app_context() -> (Arc<kalamdb_core::app_context::AppContext>, TempDir) {
+async fn create_test_app_context() -> (Arc<AppContext>, TempDir) {
     let temp_dir = TempDir::new().expect("Failed to create temp directory");
     let rocksdb_path = temp_dir.path().join("rocksdb");
+    std::fs::create_dir_all(&rocksdb_path).expect("Failed to create rocksdb directory");
 
-    let app_context = AppContextBuilder::new(&rocksdb_path)
-        .build()
-        .await
-        .expect("Failed to build AppContext");
+    let db = rocksdb::DB::open_default(&rocksdb_path).expect("Failed to open RocksDB");
+    let backend = Arc::new(RocksDBBackend::new(db));
+    let config = ServerConfig::default();
+    let node_id = NodeId::new(1);
 
-    (Arc::new(app_context), temp_dir)
+    let app_context = AppContext::create_isolated(
+        backend,
+        node_id,
+        rocksdb_path.to_string_lossy().into_owned(),
+        config,
+    );
+
+    (app_context, temp_dir)
 }
 
 #[tokio::test]

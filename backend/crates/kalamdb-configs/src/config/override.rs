@@ -13,6 +13,11 @@ impl ServerConfig {
     /// - KALAMDB_LOGS_DIR: Override logging.logs_path
     /// - KALAMDB_LOG_FILE: Override logging.file_path (legacy, extracts parent dir)
     /// - KALAMDB_LOG_TO_CONSOLE: Override logging.log_to_console
+    /// - KALAMDB_OTLP_ENABLED: Override logging.otlp.enabled
+    /// - KALAMDB_OTLP_ENDPOINT: Override logging.otlp.endpoint
+    /// - KALAMDB_OTLP_PROTOCOL: Override logging.otlp.protocol ("grpc" | "http")
+    /// - KALAMDB_OTLP_SERVICE_NAME: Override logging.otlp.service_name
+    /// - KALAMDB_OTLP_TIMEOUT_MS: Override logging.otlp.timeout_ms
     /// - KALAMDB_DATA_DIR: Override storage.data_path (base directory for rocksdb, storage, snapshots)
     /// - KALAMDB_ROCKSDB_PATH: Override storage.data_path (legacy, extracts parent dir)
     /// - KALAMDB_LOG_FILE_PATH: Override logging.file_path (legacy, prefer KALAMDB_LOG_FILE)
@@ -76,6 +81,26 @@ impl ServerConfig {
         if let Ok(val) = env::var("KALAMDB_LOG_TO_CONSOLE") {
             self.logging.log_to_console =
                 val.to_lowercase() == "true" || val == "1" || val.to_lowercase() == "yes";
+        }
+
+        // OTLP tracing settings
+        if let Ok(val) = env::var("KALAMDB_OTLP_ENABLED") {
+            self.logging.otlp.enabled =
+                val.to_lowercase() == "true" || val == "1" || val.to_lowercase() == "yes";
+        }
+        if let Ok(val) = env::var("KALAMDB_OTLP_ENDPOINT") {
+            self.logging.otlp.endpoint = val;
+        }
+        if let Ok(val) = env::var("KALAMDB_OTLP_PROTOCOL") {
+            self.logging.otlp.protocol = val;
+        }
+        if let Ok(val) = env::var("KALAMDB_OTLP_SERVICE_NAME") {
+            self.logging.otlp.service_name = val;
+        }
+        if let Ok(val) = env::var("KALAMDB_OTLP_TIMEOUT_MS") {
+            self.logging.otlp.timeout_ms = val
+                .parse()
+                .map_err(|_| anyhow::anyhow!("Invalid KALAMDB_OTLP_TIMEOUT_MS value: {}", val))?;
         }
 
         // JWT secret

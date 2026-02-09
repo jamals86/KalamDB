@@ -217,6 +217,16 @@ impl TopicPublisherService {
         row: &Row,
         user_id: Option<&UserId>,
     ) -> Result<usize> {
+        let span = tracing::debug_span!(
+            "topic.publish",
+            table_id = %table_id,
+            operation = ?operation,
+            has_user_id = user_id.is_some(),
+            row_value_count = row.values.len(),
+            published_count = tracing::field::Empty
+        );
+        let _span_guard = span.entered();
+
         // Fast path: no routes for this table
         let routes = match self.table_routes.get(table_id) {
             Some(r) => r.clone(),
@@ -234,6 +244,14 @@ impl TopicPublisherService {
         let mut total_published = 0;
 
         for entry in matching {
+            let topic_span = tracing::debug_span!(
+                "publish_to_topic",
+                topic_name = entry.topic_id.as_str(),
+                topic_partitions = entry.topic_partitions,
+                operation = ?entry.route.op
+            );
+            let _topic_span_guard = topic_span.entered();
+
             // Extract payload based on route's payload mode
             let payload = self.extract_payload_from_row(&entry.route, row)?;
 
@@ -271,10 +289,18 @@ impl TopicPublisherService {
             self.message_store.put(&message.id(), &message).map_err(|e| {
                 CommonError::Internal(format!("Failed to store topic message: {}", e))
             })?;
+            tracing::debug!(
+                topic_name = entry.topic_id.as_str(),
+                partition_id = partition_id,
+                offset = offset,
+                payload_bytes = message.payload.len(),
+                "Published message to topic"
+            );
 
             total_published += 1;
         }
 
+        tracing::Span::current().record("published_count", total_published);
         Ok(total_published)
     }
 

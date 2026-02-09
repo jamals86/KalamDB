@@ -23,7 +23,7 @@ services:
       - ./minio-data:/data
 
   jaeger:
-    image: jaegertracing/all-in-one:1.35
+    image: jaegertracing/jaeger:latest
     environment:
       - COLLECTOR_OTLP_ENABLED=true
     ports:

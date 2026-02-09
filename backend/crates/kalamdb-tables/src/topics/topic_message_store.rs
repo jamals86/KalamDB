@@ -55,9 +55,20 @@ impl TopicMessageStore {
         key: Option<String>,
         timestamp_ms: i64,
     ) -> kalamdb_store::storage_trait::Result<()> {
+        let payload_bytes = payload.len();
+        let span = tracing::debug_span!(
+            "topic.store_publish",
+            topic_name = topic_id.as_str(),
+            partition_id = partition_id,
+            offset = offset,
+            payload_bytes = payload_bytes,
+            has_key = key.is_some()
+        );
+        let _span_guard = span.entered();
         let message =
             TopicMessage::new(topic_id.clone(), partition_id, offset, payload, key, timestamp_ms);
         let msg_id = message.id();
+        tracing::trace!("Persisting topic message");
         self.put(&msg_id, &message)
     }
 

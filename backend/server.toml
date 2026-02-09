@@ -169,6 +169,18 @@ format = "json"
 # Set to a high value (e.g., 999999) to disable slow query logging
 slow_query_threshold_ms = 1000
 
+[logging.otlp]
+# Export tracing spans to Jaeger OTLP receiver
+enabled = true
+# Jaeger gRPC OTLP endpoint
+endpoint = "http://127.0.0.1:4317"
+# Protocol: "grpc" or "http"
+protocol = "grpc"
+# Service name shown in Jaeger UI
+service_name = "kalamdb-server"
+# Export timeout in milliseconds
+timeout_ms = 3000
+
 [performance]
 # Request timeout in seconds (default: 30s)
 # Requests exceeding this duration will be terminated
@@ -473,4 +485,3 @@ user_shards = 8
 # # node_id = 3
 # # rpc_addr = "10.0.0.3:9100"
 # # api_addr = "http://10.0.0.3:8080"
-
