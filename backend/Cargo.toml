@@ -51,6 +51,12 @@ colored = { workspace = true }
 fern = { workspace = true }
 regex = { workspace = true }
 
+# Tracing / observability
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-actix-web = { workspace = true }
+tracing-log = { workspace = true }
+
 # Time handling
 chrono = { workspace = true }
 

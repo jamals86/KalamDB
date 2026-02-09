@@ -8,6 +8,7 @@ use datafusion::scalar::ScalarValue;
 use kalamdb_commons::conversions::arrow_json_conversion::arrow_value_to_scalar;
 use kalamdb_sql::statement_classifier::{SqlStatement, SqlStatementKind};
 use std::time::Duration;
+use tracing::Instrument;
 
 #[derive(Debug, Clone, Copy)]
 enum DmlKind {
@@ -101,6 +102,15 @@ impl SqlExecutor {
         _metadata: Option<&ExecutionMetadata>,
         params: Vec<ScalarValue>,
     ) -> Result<ExecutionResult, KalamDbError> {
+        let span = tracing::info_span!(
+            "sql.execute",
+            user_id = %exec_ctx.user_id().as_str(),
+            namespace = %exec_ctx.default_namespace().as_str(),
+            command = tracing::field::Empty,
+            rows = tracing::field::Empty,
+        );
+        // Enter the span for the entire execution
+        async {
         // Step 0: Check SQL query length to prevent DoS attacks
         // Most legitimate queries are under 10KB, we allow up to 1MB
         if sql.len() > kalamdb_commons::constants::MAX_SQL_QUERY_LENGTH {
@@ -119,6 +129,7 @@ impl SqlExecutor {
         // Step 1: Classify, authorize, and parse statement in one pass
         // Prioritize SELECT/DML checks as they represent 99% of queries
         // Authorization happens before parsing for fail-fast behavior
+        let classify_span = tracing::debug_span!("sql.classify");
         let classified = SqlStatement::classify_and_parse(
             sql,
             &exec_ctx.default_namespace(),
@@ -134,8 +145,12 @@ impl SqlExecutor {
             } => KalamDbError::InvalidSql(message),
         })?;
 
+        // Record the command kind in the span
+        let command_label = format!("{:?}", classified.kind());
+        tracing::Span::current().record("command", &command_label.as_str());
+
         // Step 2: Route based on statement type
-        match classified.kind() {
+        let result = match classified.kind() {
             // Hot path: SELECT queries use DataFusion
             // Tables are already registered in base session, we just inject user_id
             SqlStatementKind::Select => {
@@ -198,9 +213,32 @@ impl SqlExecutor {
 
             // All other statements: Delegate to handler registry (no cache invalidation needed)
             _ => self.handler_registry.handle(classified, params, exec_ctx).await,
+        };
+
+        // Record row count in the span
+        if let Ok(ref res) = result {
+            let rows = match res {
+                ExecutionResult::Rows { row_count, .. } => *row_count,
+                ExecutionResult::Inserted { rows_affected } => *rows_affected,
+                ExecutionResult::Updated { rows_affected } => *rows_affected,
+                ExecutionResult::Deleted { rows_affected } => *rows_affected,
+                _ => 0,
+            };
+            tracing::Span::current().record("rows", rows);
         }
+
+        result
+        }.instrument(span).await
     }
 
+    #[tracing::instrument(
+        name = "sql.dml_datafusion",
+        skip_all,
+        fields(
+            dml_kind = %Self::dml_operation_name(dml_kind),
+            rows_affected = tracing::field::Empty,
+        )
+    )]
     async fn execute_dml_via_datafusion(
         &self,
         sql: &str,
@@ -350,6 +388,7 @@ impl SqlExecutor {
         })?;
 
         let rows_affected = Self::extract_rows_affected(&batches)?;
+        tracing::Span::current().record("rows_affected", rows_affected);
 
         Ok(match dml_kind {
             DmlKind::Insert => ExecutionResult::Inserted { rows_affected },
@@ -359,6 +398,11 @@ impl SqlExecutor {
     }
 
     /// Execute SELECT via DataFusion with per-user session
+    #[tracing::instrument(
+        name = "sql.select_datafusion",
+        skip_all,
+        fields(row_count = tracing::field::Empty)
+    )]
     async fn execute_via_datafusion(
         &self,
         sql: &str,
@@ -537,6 +581,7 @@ impl SqlExecutor {
 
         // Calculate total row count
         let row_count: usize = batches.iter().map(|b| b.num_rows()).sum();
+        tracing::Span::current().record("row_count", row_count);
 
         // Return batches with row count and schema (schema is needed when batches is empty)
         Ok(ExecutionResult::Rows {
@@ -551,6 +596,7 @@ impl SqlExecutor {
     /// These commands are passed directly to DataFusion without custom parsing.
     /// No plan caching is performed since these are diagnostic/config commands.
     /// Authorization is already checked in the classifier (admin only).
+    #[tracing::instrument(name = "sql.meta_command", skip_all)]
     async fn execute_meta_command(
         &self,
         sql: &str,

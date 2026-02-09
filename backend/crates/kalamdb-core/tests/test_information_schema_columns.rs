@@ -3,11 +3,27 @@
 //! This test verifies that the information_schema.columns table is properly
 //! registered and can be queried via SQL.
 
+use kalamdb_core::app_context::AppContextBuilder;
+use std::sync::Arc;
+use tempfile::TempDir;
+
+/// Helper to create AppContext with temporary RocksDB for testing
+async fn create_test_app_context() -> (Arc<kalamdb_core::app_context::AppContext>, TempDir) {
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    let rocksdb_path = temp_dir.path().join("rocksdb");
+
+    let app_context = AppContextBuilder::new(&rocksdb_path)
+        .build()
+        .await
+        .expect("Failed to build AppContext");
+
+    (Arc::new(app_context), temp_dir)
+}
 
 #[tokio::test]
 async fn test_information_schema_columns_query() {
     // Initialize AppContext (which registers information_schema.columns)
-    let app_ctx = test_app_context_simple();
+    let (app_ctx, _temp_dir) = create_test_app_context().await;
 
     // Get the base session context
     let session = app_ctx.base_session_context();
@@ -37,7 +53,7 @@ async fn test_information_schema_columns_query() {
 #[tokio::test]
 async fn test_information_schema_columns_shows_system_jobs() {
     // Initialize AppContext
-    let app_ctx = test_app_context_simple();
+    let (app_ctx, _temp_dir) = create_test_app_context().await;
 
     // Get the base session context
     let session = app_ctx.base_session_context();

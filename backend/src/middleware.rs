@@ -20,7 +20,6 @@ use actix_cors::Cors;
 use actix_web::body::{BoxBody, EitherBody};
 use actix_web::dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform};
 use actix_web::http::{header::HeaderName, Method, StatusCode};
-use actix_web::middleware;
 use actix_web::{Error, HttpResponse};
 use futures_util::future::LocalBoxFuture;
 use kalamdb_api::limiter::{ConnectionGuard, ConnectionGuardResult};
@@ -86,11 +85,6 @@ pub fn build_cors_from_config(config: &ServerConfig) -> Cors {
     cors = cors.max_age(cors_config.max_age as usize);
 
     cors
-}
-
-/// Build the request logger middleware.
-pub fn request_logger() -> middleware::Logger {
-    middleware::Logger::default()
 }
 
 // ============================================================================

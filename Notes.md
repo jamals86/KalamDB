@@ -1318,6 +1318,7 @@ Query OK, 0 rows affected
 172) Whenever we subscribe to a query and there is an update only push the updated columns and not all the other columns data
 173) Support admin ui download file as_user=<user> so we can support downloading files from the service as well
 
+174) When we implement the delivery_policy we mustc verify the user is subscribing to this tableid before calling out the insert
 
 
 
@@ -1334,6 +1335,7 @@ Main Epics:
 8) Done - Add page for Server Initial Setup
 9) Check S3/WebDAV Storages
 10) Move permissions to Shared tables with policies
+11) A new option for STREAM table to only insert the row if the user is online option (delivery_policy = 'online_only'  -- or 'always')
 
 
 Target Usecase:

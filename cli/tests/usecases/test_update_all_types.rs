@@ -238,6 +238,7 @@ fn test_update_all_types_user_table() {
 
     let ts_expected = NaiveDateTime::parse_from_str("2023-01-01 10:00:00", "%Y-%m-%d %H:%M:%S")
         .expect("Invalid timestamp literal")
+        .and_utc()
         .timestamp_micros();
     let col_timestamp = normalize_value(row.get("col_timestamp").expect("Missing col_timestamp"));
     assert_eq!(value_as_i64(&col_timestamp, "col_timestamp", &output), ts_expected);
@@ -251,6 +252,7 @@ fn test_update_all_types_user_table() {
 
     let dt_expected = NaiveDateTime::parse_from_str("2023-01-01 10:00:00", "%Y-%m-%d %H:%M:%S")
         .expect("Invalid datetime literal")
+        .and_utc()
         .timestamp_micros();
     let col_datetime = normalize_value(row.get("col_datetime").expect("Missing col_datetime"));
     assert_eq!(value_as_i64(&col_datetime, "col_datetime", &output), dt_expected);

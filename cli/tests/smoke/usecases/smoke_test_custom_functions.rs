@@ -10,7 +10,6 @@
 //! Reference: docs/SQL.md lines 1551-1875
 
 use crate::common::*;
-use std::time::Duration;
 
 /// Test SNOWFLAKE_ID() as PRIMARY KEY default
 ///

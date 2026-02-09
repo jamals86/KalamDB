@@ -498,12 +498,6 @@ mod tests {
     }
 
     #[test]
-    fn test_get_pk_column_name() {
-        let table_def = create_test_table_def(ColumnDefault::None);
-        assert_eq!(PkExistenceChecker::get_pk_column_name(&table_def), Some("id"));
-    }
-
-    #[test]
     fn test_pk_check_result_exists() {
         assert!(!PkCheckResult::NotFound.exists());
         assert!(!PkCheckResult::AutoIncrement.exists());

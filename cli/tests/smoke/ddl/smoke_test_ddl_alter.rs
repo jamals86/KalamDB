@@ -10,7 +10,6 @@
 //! Reference: docs/SQL.md lines 438-460
 
 use crate::common::*;
-use std::time::Duration;
 
 /// Test ALTER TABLE ADD COLUMN
 ///

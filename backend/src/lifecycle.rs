@@ -21,6 +21,7 @@ use log::debug;
 use log::{info, warn};
 use std::net::{SocketAddr, TcpListener};
 use std::sync::Arc;
+use tracing_actix_web::TracingLogger;
 
 /// Aggregated application components that need to be shared across the
 /// HTTP server and shutdown handling.
@@ -546,8 +547,8 @@ pub async fn run(
         let mut app = App::new()
             // Connection protection (first middleware - drops bad requests early)
             .wrap(connection_protection.clone())
-            // Standard middleware
-            .wrap(middleware::request_logger())
+            // Tracing middleware (creates a root span per HTTP request)
+            .wrap(TracingLogger::default())
             .wrap(middleware::build_cors_from_config(&cors_config))
             .app_data(web::Data::new(app_context_for_handler.clone()))
             .app_data(web::Data::new(session_factory.clone()))
@@ -774,7 +775,7 @@ pub async fn run_for_tests(
     let server = HttpServer::new(move || {
         let mut app = App::new()
             .wrap(connection_protection.clone())
-            .wrap(middleware::request_logger())
+            .wrap(TracingLogger::default())
             .wrap(middleware::build_cors_from_config(&cors_config))
             .app_data(web::Data::new(app_context_for_handler.clone()))
             .app_data(web::Data::new(session_factory.clone()))

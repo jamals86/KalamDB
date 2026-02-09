@@ -50,6 +50,10 @@ chrono = { workspace = true }
 # Logging
 log = { workspace = true }
 
+# Tracing / observability
+tracing = { workspace = true }
+tracing-actix-web = { workspace = true }
+
 # Async runtime
 tokio = { workspace = true }
 futures-util = { workspace = true }

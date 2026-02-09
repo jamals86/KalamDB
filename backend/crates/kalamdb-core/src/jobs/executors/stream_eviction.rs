@@ -250,6 +250,7 @@ mod tests {
     use kalamdb_commons::{ChangeNotification, JobId, NamespaceId, NodeId};
     use kalamdb_system::providers::jobs::models::Job;
     use kalamdb_system::NotificationService;
+    use kalamdb_system::SchemaRegistry;
     use kalamdb_tables::utils::TableServices;
     use kalamdb_tables::StreamTableStoreConfig;
     use serde_json::json;
@@ -340,9 +341,9 @@ mod tests {
         let arrow_schema = tables_schema_registry
             .get_arrow_schema(&table_id)
             .expect("get arrow schema");
+        let cached_data = app_ctx.schema_registry().get(&table_id).expect("table def");
         let core = Arc::new(TableProviderCore::new(
-            table_id.clone(),
-            TableType::Stream,
+            Arc::clone(&cached_data.table),
             services,
             "event_id".to_string(),
             arrow_schema,

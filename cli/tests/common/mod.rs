@@ -1,5 +1,6 @@
 #![allow(dead_code, unused_imports)]
 extern crate kalam_cli;
+#[cfg(unix)]
 use libc::{flock, LOCK_EX, LOCK_UN};
 use rand::{distr::Alphanumeric, Rng};
 use reqwest::Client;
@@ -100,15 +101,18 @@ impl TestAuthManager {
             .lock()
             .map_err(|_| "Failed to lock token cache mutex")?;
 
-        let lock_path = shared_token_cache_lock_path();
         let cache_path = shared_token_cache_path();
-        let mut lock_file =
-            OpenOptions::new().create(true).read(true).write(true).open(&lock_path)?;
 
         #[cfg(unix)]
-        unsafe {
-            if flock(lock_file.as_raw_fd(), LOCK_EX) != 0 {
-                return Err("Failed to acquire token cache lock".into());
+        {
+            let lock_path = shared_token_cache_lock_path();
+            let _lock_file =
+                OpenOptions::new().create(true).read(true).write(true).open(&lock_path)?;
+
+            unsafe {
+                if flock(_lock_file.as_raw_fd(), LOCK_EX) != 0 {
+                    return Err("Failed to acquire token cache lock".into());
+                }
             }
         }
 
@@ -125,8 +129,10 @@ impl TestAuthManager {
         std::fs::write(&cache_path, serialized)?;
 
         #[cfg(unix)]
-        unsafe {
-            let _ = flock(lock_file.as_raw_fd(), LOCK_UN);
+        if let Ok(lock_path) = OpenOptions::new().write(true).open(shared_token_cache_lock_path()) {
+            unsafe {
+                let _ = flock(lock_path.as_raw_fd(), LOCK_UN);
+            }
         }
 
         Ok(result)
@@ -641,12 +647,17 @@ enum ServerType {
 }
 
 fn server_type_from_env() -> Option<ServerType> {
+    // Always load .env first so KALAMDB_SERVER_TYPE is available
+    load_env_file();
+
     if let Ok(value) = std::env::var("KALAMDB_SERVER_TYPE") {
         match value.trim().to_lowercase().as_str() {
             "fresh" => return Some(ServerType::Fresh),
             "running" => return Some(ServerType::Running),
             "cluster" => return Some(ServerType::Cluster),
-            _ => {},
+            other => {
+                eprintln!("[TEST] WARNING: Unknown KALAMDB_SERVER_TYPE='{}', ignoring", other);
+            },
         }
     }
 
@@ -769,37 +780,13 @@ fn ensure_auto_test_server() -> Option<(String, PathBuf)> {
 /// This bypasses any externally running server to ensure tests use the
 /// in-process server with the current code version.
 pub fn force_auto_test_server_url() -> String {
-    if !should_auto_start_test_server() {
-        return server_url().to_string();
-    }
-    ensure_auto_test_server()
-        .map(|(url, _)| url)
-        .unwrap_or_else(|| server_url().to_string())
+    // test_context() already handles auto-starting or connecting to external server
+    server_url().to_string()
 }
 
 /// Async variant of forcing a local auto-started test server.
 pub async fn force_auto_test_server_url_async() -> String {
-    if !should_auto_start_test_server() {
-        return server_url().to_string();
-    }
-    let server_mutex = AUTO_TEST_SERVER.get_or_init(|| Mutex::new(None));
-    if let Ok(mut guard) = server_mutex.lock() {
-        if guard.is_none() {
-            match start_local_test_server().await {
-                Ok(server) => {
-                    *guard = Some(server);
-                },
-                Err(err) => {
-                    eprintln!("Failed to auto-start test server: {}", err);
-                },
-            }
-        }
-
-        if let Some(server) = guard.as_ref() {
-            return server.base_url.clone();
-        }
-    }
-
+    // test_context() already handles auto-starting or connecting to external server
     server_url().to_string()
 }
 
@@ -926,7 +913,25 @@ fn parse_test_urls() -> Option<Vec<String>> {
 }
 
 fn ensure_server_ready_sync(base_url: &str) {
+    let server_type = server_type_from_env();
+
     if !url_reachable(base_url) {
+        // If explicitly configured to use a running/cluster server, fail loudly
+        if matches!(server_type, Some(ServerType::Running) | Some(ServerType::Cluster)) {
+            panic!(
+                "\n\n\
+                ╔══════════════════════════════════════════════════════════════════╗\n\
+                ║              SERVER NOT REACHABLE                                ║\n\
+                ╠══════════════════════════════════════════════════════════════════╣\n\
+                ║  KALAMDB_SERVER_TYPE={:?} but server is NOT reachable             ║\n\
+                ║  at: {}\n\
+                ║                                                                  ║\n\
+                ║  Start the server:  cd backend && cargo run --release            ║\n\
+                ║  Or set KALAMDB_SERVER_TYPE=fresh to auto-start a test server    ║\n\
+                ╚══════════════════════════════════════════════════════════════════╝\n",
+                server_type.unwrap(), base_url
+            );
+        }
         return;
     }
 
@@ -1123,26 +1128,114 @@ fn reorder_cluster_urls_by_leader(
 
 pub fn test_context() -> &'static TestContext {
     TEST_CONTEXT.get_or_init(|| {
-        // Load environment from .env file first if it exists
+        // Load environment from .env file first so all env vars are available
         load_env_file();
 
         let server_type = server_type_from_env();
+        eprintln!("[TEST] Server type: {:?}", server_type);
 
         let mut server_url = parse_test_arg("--url")
             .or_else(|| std::env::var("KALAMDB_SERVER_URL").ok())
             .unwrap_or_else(|| "http://127.0.0.1:8080".to_string());
         let mut auto_started = false;
 
-        if should_auto_start_test_server() {
-            if let Some((auto_url, storage_dir)) = ensure_auto_test_server() {
-                std::env::set_var("KALAMDB_SERVER_URL", &auto_url);
-                if std::env::var("KALAMDB_ROOT_PASSWORD").is_err() {
-                    std::env::set_var("KALAMDB_ROOT_PASSWORD", root_password_from_env());
+        // ── Branch by server type ─────────────────────────────────
+        match server_type {
+            Some(ServerType::Running) => {
+                // "running" means use the existing server — fail-fast if unreachable
+                if !url_reachable(&server_url) {
+                    panic!(
+                        "\n\n\
+                        ╔══════════════════════════════════════════════════════════════════╗\n\
+                        ║              SERVER NOT REACHABLE                                ║\n\
+                        ╠══════════════════════════════════════════════════════════════════╣\n\
+                        ║  KALAMDB_SERVER_TYPE=running but server is NOT reachable at:     ║\n\
+                        ║    {}\n\
+                        ║                                                                  ║\n\
+                        ║  Start the server:  cd backend && cargo run --release            ║\n\
+                        ║  Or set KALAMDB_SERVER_TYPE=fresh to auto-start a test server    ║\n\
+                        ╚══════════════════════════════════════════════════════════════════╝\n",
+                        server_url
+                    );
                 }
-                std::env::set_var("KALAMDB_STORAGE_DIR", storage_dir.to_string_lossy().to_string());
-                server_url = auto_url;
-                auto_started = true;
-            }
+                eprintln!("✅ [TEST] Using existing server at {} (KALAMDB_SERVER_TYPE=running)", server_url);
+            },
+            Some(ServerType::Fresh) => {
+                // "fresh" means auto-start a local test server
+                if let Some((auto_url, storage_dir)) = ensure_auto_test_server() {
+                    std::env::set_var("KALAMDB_SERVER_URL", &auto_url);
+                    if std::env::var("KALAMDB_ROOT_PASSWORD").is_err() {
+                        std::env::set_var("KALAMDB_ROOT_PASSWORD", root_password_from_env());
+                    }
+                    std::env::set_var("KALAMDB_STORAGE_DIR", storage_dir.to_string_lossy().to_string());
+                    server_url = auto_url;
+                    auto_started = true;
+                    eprintln!("✅ [TEST] Auto-started fresh server at {}", server_url);
+                } else {
+                    panic!(
+                        "\n\n\
+                        ╔══════════════════════════════════════════════════════════════════╗\n\
+                        ║          FAILED TO START FRESH TEST SERVER                       ║\n\
+                        ╠══════════════════════════════════════════════════════════════════╣\n\
+                        ║  KALAMDB_SERVER_TYPE=fresh but could not auto-start server.      ║\n\
+                        ║  Build the server: cd backend && cargo build                    ║\n\
+                        ╚══════════════════════════════════════════════════════════════════╝\n"
+                    );
+                }
+            },
+            Some(ServerType::Cluster) => {
+                // Cluster mode — handled below in cluster URL resolution
+                eprintln!("[TEST] Cluster mode configured");
+            },
+            None => {
+                // No explicit type — auto-detect:
+                // If KALAMDB_SERVER_URL is set AND reachable, use it (Running behavior)
+                // Otherwise try to auto-start a fresh server
+                if has_explicit_server_target() && url_reachable(&server_url) {
+                    eprintln!("✅ [TEST] Using existing server at {} (auto-detected)", server_url);
+                } else if has_explicit_server_target() {
+                    // URL specified but not reachable — fail fast
+                    panic!(
+                        "\n\n\
+                        ╔══════════════════════════════════════════════════════════════════╗\n\
+                        ║              SERVER NOT REACHABLE                                ║\n\
+                        ╠══════════════════════════════════════════════════════════════════╣\n\
+                        ║  KALAMDB_SERVER_URL is set but server is NOT reachable at:       ║\n\
+                        ║    {}\n\
+                        ║                                                                  ║\n\
+                        ║  Start the server:  cd backend && cargo run --release            ║\n\
+                        ║  Or remove KALAMDB_SERVER_URL to auto-start a test server        ║\n\
+                        ╚══════════════════════════════════════════════════════════════════╝\n",
+                        server_url
+                    );
+                } else {
+                    // No URL set, try auto-start
+                    if let Some((auto_url, storage_dir)) = ensure_auto_test_server() {
+                        std::env::set_var("KALAMDB_SERVER_URL", &auto_url);
+                        if std::env::var("KALAMDB_ROOT_PASSWORD").is_err() {
+                            std::env::set_var("KALAMDB_ROOT_PASSWORD", root_password_from_env());
+                        }
+                        std::env::set_var("KALAMDB_STORAGE_DIR", storage_dir.to_string_lossy().to_string());
+                        server_url = auto_url;
+                        auto_started = true;
+                        eprintln!("✅ [TEST] Auto-started fresh server at {}", server_url);
+                    } else {
+                        panic!(
+                            "\n\n\
+                            ╔══════════════════════════════════════════════════════════════════╗\n\
+                            ║          NO SERVER AVAILABLE                                     ║\n\
+                            ╠══════════════════════════════════════════════════════════════════╣\n\
+                            ║  Could not find or start a KalamDB server for tests.             ║\n\
+                            ║                                                                  ║\n\
+                            ║  Options:                                                        ║\n\
+                            ║    1. Start server: cd backend && cargo run --release            ║\n\
+                            ║    2. Set KALAMDB_SERVER_TYPE=running in .env                    ║\n\
+                            ║    3. Set KALAMDB_SERVER_TYPE=fresh in .env                      ║\n\
+                            ╚══════════════════════════════════════════════════════════════════╝\n"
+                        );
+                    }
+                }
+            },
         }
 
         ensure_server_ready_sync(&server_url);
@@ -1157,7 +1250,9 @@ pub fn test_context() -> &'static TestContext {
             // Default to kalamdb123 to match autostart server setup
             .unwrap_or_else(|| default_password().to_string());
 
-        let cluster_default = "http://127.0.0.1:8081,http://127.0.0.1:8082,http://127.0.0.1:8083";
+        // ── Cluster URL resolution ─────────────────────────────────
+        // Only probe cluster nodes when server type is explicitly Cluster.
+        // For Running/Fresh, we skip cluster probing entirely (no slow TCP timeouts).
         let explicit_cluster_urls = parse_test_urls().or_else(|| {
             std::env::var("KALAMDB_CLUSTER_URLS").ok().map(|s| {
                 s.split(',')
@@ -1167,56 +1262,42 @@ pub fn test_context() -> &'static TestContext {
             })
         });
 
-        let cluster_urls: Vec<String> = explicit_cluster_urls.clone().unwrap_or_else(|| {
-            cluster_default
-                .split(',')
-                .map(|url| url.trim().to_string())
-                .filter(|url| !url.is_empty())
-                .collect()
-        });
-
-        let healthy_cluster_nodes: Vec<String> = if auto_started {
-            Vec::new()
-        } else {
-            cluster_urls
-                .iter()
-                .filter(|url| {
-                    let host_port = url
-                        .trim_start_matches("http://")
-                        .trim_start_matches("https://")
-                        .split('/')
-                        .next()
-                        .unwrap_or("127.0.0.1:8081");
-                    host_port_reachable(host_port)
-                })
-                .cloned()
-                .collect()
-        };
-
         let (is_cluster, mut cluster_urls) = match server_type {
             Some(ServerType::Cluster) => {
+                // Cluster mode: probe cluster URLs to find healthy nodes
+                let cluster_default = "http://127.0.0.1:8081,http://127.0.0.1:8082,http://127.0.0.1:8083";
+                let cluster_urls: Vec<String> = explicit_cluster_urls.clone().unwrap_or_else(|| {
+                    cluster_default
+                        .split(',')
+                        .map(|url| url.trim().to_string())
+                        .filter(|url| !url.is_empty())
+                        .collect()
+                });
+                let healthy: Vec<String> = cluster_urls
+                    .iter()
+                    .filter(|url| {
+                        let host_port = url
+                            .trim_start_matches("http://")
+                            .trim_start_matches("https://")
+                            .split('/')
+                            .next()
+                            .unwrap_or("127.0.0.1:8081");
+                        host_port_reachable(host_port)
+                    })
+                    .cloned()
+                    .collect();
                 if let Some(explicit_urls) = explicit_cluster_urls {
                     (explicit_urls.len() > 1, explicit_urls)
-                } else if !healthy_cluster_nodes.is_empty() {
-                    (true, healthy_cluster_nodes)
+                } else if !healthy.is_empty() {
+                    (true, healthy)
                 } else {
                     (false, vec![server_url.clone()])
                 }
             },
-            Some(ServerType::Fresh) | Some(ServerType::Running) => {
+            Some(ServerType::Fresh) | Some(ServerType::Running) | None => {
+                // Single-node: no cluster probing, instant startup
                 if let Some(explicit_urls) = explicit_cluster_urls {
                     (explicit_urls.len() > 1, explicit_urls)
-                } else {
-                    (false, vec![server_url.clone()])
-                }
-            },
-            None => {
-                if auto_started {
-                    (false, vec![server_url.clone()])
-                } else if let Some(explicit_urls) = explicit_cluster_urls {
-                    (explicit_urls.len() > 1, explicit_urls)
-                } else if !healthy_cluster_nodes.is_empty() {
-                    (true, healthy_cluster_nodes)
                 } else {
                     (false, vec![server_url.clone()])
                 }
@@ -1715,45 +1796,44 @@ fn cli_output_error(stdout: &str) -> Option<String> {
     None
 }
 
-/// Check if the KalamDB server is running
-/// Panics if server is not reachable to ensure tests fail loudly
+/// Check if the KalamDB server is running and reachable.
+/// Panics if server type is Running/Cluster and server is unreachable.
+/// Returns false only when no explicit server type is set and server is down.
 pub fn is_server_running() -> bool {
-    if cfg!(windows) && std::env::var("KALAMDB_FORCE_CLI_TESTS").is_err() {
-        eprintln!("⚠️  Skipping CLI tests on Windows due to intermittent access violations. Set KALAMDB_FORCE_CLI_TESTS=1 to override.");
-        return false;
+    // test_context() has already validated server reachability based on KALAMDB_SERVER_TYPE
+    let _ctx = test_context();
+    let url = server_url();
+
+    if is_server_reachable() {
+        match server_requires_auth() {
+            Some(_) => return true,
+            None => {
+                // Server is TCP-reachable but auth check failed; try briefly
+                if wait_for_url_reachable(url, Duration::from_secs(2)) {
+                    return server_requires_auth().is_some();
+                }
+            },
+        }
     }
-    if !is_server_reachable() && !wait_for_url_reachable(server_url(), Duration::from_secs(5)) {
+
+    // Server not reachable at this point
+    let server_type = server_type_from_env();
+    if matches!(server_type, Some(ServerType::Running) | Some(ServerType::Cluster)) {
         panic!(
             "\n\n\
             ╔══════════════════════════════════════════════════════════════════╗\n\
             ║                    SERVER NOT REACHABLE                          ║\n\
             ╠══════════════════════════════════════════════════════════════════╣\n\
-            ║  Tests require a running KalamDB server at {}    ║\n\
+            ║  Tests require a running KalamDB server at:                      ║\n\
+            ║    {}                                                            \n\
             ║                                                                  ║\n\
-            ║  Start the server:                                               ║\n\
-            ║    cd backend && cargo run                                       ║\n\
+            ║  Start the server:  cd backend && cargo run --release            ║\n\
             ╚══════════════════════════════════════════════════════════════════╝\n\n",
-            server_url()
+            url
         );
     }
 
-    match server_requires_auth() {
-        Some(_auth_required) => true,
-        None => {
-            panic!(
-                "\n\n\
-                ╔══════════════════════════════════════════════════════════════════╗\n\
-                ║               SERVER AUTH CHECK FAILED                           ║\n\
-                ╠══════════════════════════════════════════════════════════════════╣\n\
-                ║  Could not determine server auth requirements at {}   ║\n\
-                ║                                                                  ║\n\
-                ║  Server may be starting up or not fully initialized.             ║\n\
-                ║  Please ensure the server is fully running.                      ║\n\
-                ╚══════════════════════════════════════════════════════════════════╝\n\n",
-                server_url()
-            );
-        },
-    }
+    false
 }
 
 fn is_server_reachable() -> bool {
@@ -1902,12 +1982,8 @@ pub fn get_available_server_urls() -> Vec<String> {
         return urls;
     }
 
-    let single_node_url = ctx.server_url.clone();
-    if is_server_running() {
-        return vec![single_node_url];
-    }
-
-    vec![]
+    // test_context() already validated the server is reachable for Running/Fresh modes
+    vec![ctx.server_url.clone()]
 }
 
 pub fn cluster_urls_config_order() -> Vec<String> {
@@ -2150,48 +2226,40 @@ pub fn wait_for_path_exists(path: &std::path::Path, timeout: Duration) -> bool {
 
 /// Require the KalamDB server to be running, panic if not.
 ///
-/// Use this at the start of smoke tests to fail fast with a clear error message
-/// instead of silently skipping the test.
+/// Use this at the start of smoke/e2e tests to fail fast with a clear error message.
+/// Delegates to is_server_running() which uses the unified server detection logic.
 ///
 /// # Panics
 /// Panics with a clear error message if the server is not running.
 pub fn require_server_running() -> bool {
-    if cfg!(windows) && std::env::var("KALAMDB_FORCE_CLI_TESTS").is_err() {
-        eprintln!("⚠️  Skipping CLI tests on Windows due to intermittent access violations. Set KALAMDB_FORCE_CLI_TESTS=1 to override.");
-        return false;
-    }
-    let available_urls = get_available_server_urls();
-
-    if available_urls.is_empty() {
-        // ALWAYS fail tests when server is not running - don't silently skip!
+    if !is_server_running() {
         panic!(
             "\n\n\
             ╔══════════════════════════════════════════════════════════════════╗\n\
             ║                    SERVER NOT RUNNING                            ║\n\
             ╠══════════════════════════════════════════════════════════════════╣\n\
             ║  All tests require a running KalamDB server!                     ║\n\
+            ║  Server URL: {}                                                  \n\
             ║                                                                  ║\n\
-            ║  Single-node mode:                                               ║\n\
-            ║    cd backend && cargo run                                       ║\n\
-            ║                                                                  ║\n\
-            ║  Cluster mode (3 nodes):                                         ║\n\
-            ║    ./scripts/cluster.sh start                                    ║\n\
+            ║  Start the server:  cd backend && cargo run --release            ║\n\
             ║                                                                  ║\n\
             ║  Then run the tests:                                             ║\n\
             ║    cd cli && cargo nextest run --no-fail-fast                    ║\n\
-            ╚══════════════════════════════════════════════════════════════════╝\n\n"
+            ╚══════════════════════════════════════════════════════════════════╝\n\n",
+            server_url()
         );
     }
 
     // Print mode information
     if is_cluster_mode() {
+        let available_urls = get_available_server_urls();
         println!(
             "ℹ️  Running in CLUSTER mode with {} nodes: {:?}",
             available_urls.len(),
             available_urls
         );
     } else {
-        println!("ℹ️  Running in SINGLE-NODE mode: {}", available_urls[0]);
+        println!("ℹ️  Running in SINGLE-NODE mode: {}", server_url());
     }
 
     true
@@ -2350,14 +2418,9 @@ fn execute_sql_via_cli_as_with_args_and_urls(
     use std::time::Instant;
     use wait_timeout::ChildExt;
 
+    // test_context() already ensures server is started/reachable
     if is_server_reachable() {
         ensure_cli_server_setup()?;
-    }
-
-    if should_auto_start_test_server() {
-        if let Some((auto_url, _)) = ensure_auto_test_server() {
-            let _ = wait_for_url_reachable(&auto_url, Duration::from_secs(10));
-        }
     }
 
     let sql_preview = if sql.len() > 60 {
@@ -4143,7 +4206,7 @@ pub fn assert_flush_storage_files_exist(
     }
 
     let deadline = Instant::now() + Duration::from_secs(20);
-    let mut last_result: Option<FlushStorageVerificationResult> = None;
+    let mut last_result;
 
     loop {
         let result = if is_user_table {

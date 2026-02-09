@@ -460,6 +460,7 @@ mod tests {
     use crate::providers::base::TableProviderCore;
     use crate::providers::UserTableProvider;
     use crate::schema_registry::CachedTableData;
+    use kalamdb_system::SchemaRegistry;
     use crate::schema_registry::TablesSchemaRegistryAdapter;
     use crate::sql::executor::SqlExecutor;
     use kalamdb_commons::ids::{SeqId, UserTableRowId};

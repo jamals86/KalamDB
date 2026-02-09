@@ -5,7 +5,6 @@
 use crate::cluster_common::*;
 use crate::common::*;
 use serde_json::Value;
-use std::time::Duration;
 
 fn normalize_rows(rows: &[Vec<Value>]) -> Vec<String> {
     rows.iter()

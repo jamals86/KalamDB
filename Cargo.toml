@@ -173,6 +173,12 @@ mime_guess = "2.0"
 kalamdb-configs = { path = "backend/crates/kalamdb-configs" }
 kalamdb-server = { path = "backend" }
 
+# Tracing / observability
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
+tracing-actix-web = "0.7"
+tracing-log = "0.2"
+
 # Custom profile for distribution builds (smaller, optimized binaries)
 # Use with: cargo build --profile release-dist
 [profile.release-dist]
