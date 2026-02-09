@@ -53,13 +53,14 @@
 //!   • Stream: user-scoped RocksDB only, TTL filter, streamable
 //! ```
 
-use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
+use crate::error::KalamDbError;
+
 use crate::manifest::ManifestAccessPlanner;
 use crate::utils::unified_dml;
 use async_trait::async_trait;
 use datafusion::arrow::array::{
-    Array, BooleanArray, Int16Array, Int32Array, Int64Array, StringArray, UInt32Array, UInt64Array,
+    Array, BooleanArray, Int64Array, UInt64Array,
 };
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
@@ -1071,6 +1072,7 @@ pub async fn pk_exists_batch_in_cold(
 
 /// Batch check if any PK values exist in a single Parquet file via StorageCached (async).
 ///
+/// **Phase 13.7: Uses bloom filter fast-fail + column projection for optimal batch checking.**
 /// Returns the first matching PK found (with non-deleted latest version).
 async fn pk_exists_batch_in_parquet_via_storage_cache(
     storage_cached: &kalamdb_filestore::StorageCached,
@@ -1081,24 +1083,44 @@ async fn pk_exists_batch_in_parquet_via_storage_cache(
     pk_column: &str,
     pk_values: &std::collections::HashSet<&str>,
 ) -> Result<Option<String>, KalamDbError> {
+    // Get file data once
     let result = storage_cached
         .get(table_type, table_id, user_id, parquet_filename)
         .await
         .into_kalamdb_error("Failed to read Parquet file")?;
-    let batches = kalamdb_filestore::parse_parquet_from_bytes(result.data)
-        .into_kalamdb_error("Failed to parse Parquet file")?;
+
+    // Phase 1: Bloom filter fast-fail for each PK (O(metadata) checks)
+    let mut maybe_present = Vec::new();
+    for &pk in pk_values {
+        let definitely_absent =
+            kalamdb_filestore::bloom_filter_check_absent(result.data.clone(), pk_column, &pk)
+                .unwrap_or(false);
+
+        if !definitely_absent {
+            maybe_present.push(pk);
+        }
+    }
+
+    // Early exit if all PKs are definitely absent
+    if maybe_present.is_empty() {
+        return Ok(None);
+    }
+
+    // Phase 2: Read with column projection (only pk, _seq, _deleted)
+    let columns_to_read = [pk_column, SystemColumnNames::SEQ, SystemColumnNames::DELETED];
+    let batches = kalamdb_filestore::parse_parquet_projected(result.data, &columns_to_read)
+        .into_kalamdb_error("Failed to parse projected Parquet")?;
 
     // Track latest version per PK value: pk_value -> (max_seq, is_deleted)
     let mut versions: HashMap<String, (i64, bool)> = HashMap::new();
 
     for batch in batches {
-        // Find column indices
         let pk_idx = batch.schema().index_of(pk_column).ok();
         let seq_idx = batch.schema().index_of(SystemColumnNames::SEQ).ok();
         let deleted_idx = batch.schema().index_of(SystemColumnNames::DELETED).ok();
 
         let (Some(pk_i), Some(seq_i)) = (pk_idx, seq_idx) else {
-            continue; // Missing required columns
+            continue;
         };
 
         let pk_col = batch.column(pk_i);
@@ -1106,16 +1128,14 @@ async fn pk_exists_batch_in_parquet_via_storage_cache(
         let deleted_col = deleted_idx.map(|i| batch.column(i));
 
         for row_idx in 0..batch.num_rows() {
-            // Extract PK value as string
             let row_pk = extract_pk_as_string(pk_col.as_ref(), row_idx);
             let Some(row_pk_str) = row_pk else { continue };
 
-            // Only check rows matching target PKs (O(1) lookup in HashSet)
+            // Only check rows matching target PKs (O(1) lookup)
             if !pk_values.contains(row_pk_str.as_str()) {
                 continue;
             }
 
-            // Extract _seq
             let seq = if let Some(arr) = seq_col.as_any().downcast_ref::<Int64Array>() {
                 arr.value(row_idx)
             } else if let Some(arr) = seq_col.as_any().downcast_ref::<UInt64Array>() {
@@ -1124,7 +1144,6 @@ async fn pk_exists_batch_in_parquet_via_storage_cache(
                 continue;
             };
 
-            // Extract _deleted
             let deleted = if let Some(del_col) = &deleted_col {
                 if let Some(arr) = del_col.as_any().downcast_ref::<BooleanArray>() {
                     arr.value(row_idx)
@@ -1135,18 +1154,20 @@ async fn pk_exists_batch_in_parquet_via_storage_cache(
                 false
             };
 
-            // Update version tracking
-            if let Some((max_seq, _)) = versions.get(&row_pk_str) {
-                if seq > *max_seq {
-                    versions.insert(row_pk_str, (seq, deleted));
-                }
-            } else {
-                versions.insert(row_pk_str, (seq, deleted));
-            }
+            // Update version tracking (keep only latest _seq)
+            versions
+                .entry(row_pk_str)
+                .and_modify(|(max_seq, del)| {
+                    if seq > *max_seq {
+                        *max_seq = seq;
+                        *del = deleted;
+                    }
+                })
+                .or_insert((seq, deleted));
         }
     }
 
-    // Check if any target PK has a non-deleted latest version
+    // Return first non-deleted PK found
     for (pk, (_, is_deleted)) in versions {
         if !is_deleted && pk_values.contains(pk.as_str()) {
             return Ok(Some(pk));
@@ -1158,7 +1179,8 @@ async fn pk_exists_batch_in_parquet_via_storage_cache(
 
 /// Check if a PK value exists in a single Parquet file via StorageCached (async, with MVCC version resolution).
 ///
-/// Reads the file via StorageCached and checks if any non-deleted row has the matching PK value.
+/// **Phase 13.7: Uses bloom filter-based reading for optimal performance.**
+/// Fast-fails if bloom filter proves absence (O(metadata)), then projects only pk/_seq/_deleted columns.
 async fn pk_exists_in_parquet_via_storage_cache(
     storage_cached: &kalamdb_filestore::StorageCached,
     table_type: TableType,
@@ -1168,24 +1190,36 @@ async fn pk_exists_in_parquet_via_storage_cache(
     pk_column: &str,
     pk_value: &str,
 ) -> Result<bool, KalamDbError> {
+    // Step 1: Get file data
     let result = storage_cached
         .get(table_type, table_id, user_id, parquet_filename)
         .await
         .into_kalamdb_error("Failed to read Parquet file")?;
-    let batches = kalamdb_filestore::parse_parquet_from_bytes(result.data)
-        .into_kalamdb_error("Failed to parse Parquet file")?;
 
-    // Track latest version per PK value: pk_value -> (max_seq, is_deleted)
+    // Step 2: Bloom filter fast-fail (O(metadata))
+    let definitely_absent =
+        kalamdb_filestore::bloom_filter_check_absent(result.data.clone(), pk_column, &pk_value)
+            .unwrap_or(false);
+
+    if definitely_absent {
+        return Ok(false);
+    }
+
+    // Step 3: Read with column projection (only pk, _seq, _deleted)
+    let columns_to_read = [pk_column, SystemColumnNames::SEQ, SystemColumnNames::DELETED];
+    let batches = kalamdb_filestore::parse_parquet_projected(result.data, &columns_to_read)
+        .into_kalamdb_error("Failed to parse projected Parquet")?;
+
+    // Track latest version: pk_value -> (max_seq, is_deleted)
     let mut versions: HashMap<String, (i64, bool)> = HashMap::new();
 
     for batch in batches {
-        // Find column indices
         let pk_idx = batch.schema().index_of(pk_column).ok();
         let seq_idx = batch.schema().index_of(SystemColumnNames::SEQ).ok();
         let deleted_idx = batch.schema().index_of(SystemColumnNames::DELETED).ok();
 
         let (Some(pk_i), Some(seq_i)) = (pk_idx, seq_idx) else {
-            continue; // Missing required columns
+            continue;
         };
 
         let pk_col = batch.column(pk_i);
@@ -1193,16 +1227,13 @@ async fn pk_exists_in_parquet_via_storage_cache(
         let deleted_col = deleted_idx.map(|i| batch.column(i));
 
         for row_idx in 0..batch.num_rows() {
-            // Extract PK value as string
             let row_pk = extract_pk_as_string(pk_col.as_ref(), row_idx);
             let Some(row_pk_str) = row_pk else { continue };
 
-            // Only check rows matching target PK
             if row_pk_str != pk_value {
                 continue;
             }
 
-            // Extract _seq
             let seq = if let Some(arr) = seq_col.as_any().downcast_ref::<Int64Array>() {
                 arr.value(row_idx)
             } else if let Some(arr) = seq_col.as_any().downcast_ref::<UInt64Array>() {
@@ -1211,7 +1242,6 @@ async fn pk_exists_in_parquet_via_storage_cache(
                 continue;
             };
 
-            // Extract _deleted
             let deleted = if let Some(del_col) = &deleted_col {
                 if let Some(arr) = del_col.as_any().downcast_ref::<BooleanArray>() {
                     arr.value(row_idx)
@@ -1222,51 +1252,29 @@ async fn pk_exists_in_parquet_via_storage_cache(
                 false
             };
 
-            // Update version tracking
-            if let Some((max_seq, _)) = versions.get(&row_pk_str) {
-                if seq > *max_seq {
-                    versions.insert(row_pk_str, (seq, deleted));
-                }
-            } else {
-                versions.insert(row_pk_str, (seq, deleted));
-            }
+            // Update version tracking (keep only latest _seq)
+            versions
+                .entry(row_pk_str)
+                .and_modify(|(max_seq, del)| {
+                    if seq > *max_seq {
+                        *max_seq = seq;
+                        *del = deleted;
+                    }
+                })
+                .or_insert((seq, deleted));
         }
     }
 
-    // Check if target PK has a non-deleted latest version
-    if let Some((_, is_deleted)) = versions.get(pk_value) {
-        Ok(!*is_deleted)
-    } else {
-        Ok(false)
-    }
+    // Return true if latest version is not deleted
+    Ok(versions
+        .get(pk_value)
+        .map(|(_, is_deleted)| !*is_deleted)
+        .unwrap_or(false))
 }
 
-/// Extract PK value as string from an Arrow array at given index.
+/// Extract PK value as string from an Arrow array at given index (delegates to shared utility).
 fn extract_pk_as_string(col: &dyn Array, idx: usize) -> Option<String> {
-    if col.is_null(idx) {
-        return None;
-    }
-
-    if let Some(arr) = col.as_any().downcast_ref::<StringArray>() {
-        return Some(arr.value(idx).to_string());
-    }
-    if let Some(arr) = col.as_any().downcast_ref::<Int64Array>() {
-        return Some(arr.value(idx).to_string());
-    }
-    if let Some(arr) = col.as_any().downcast_ref::<Int32Array>() {
-        return Some(arr.value(idx).to_string());
-    }
-    if let Some(arr) = col.as_any().downcast_ref::<Int16Array>() {
-        return Some(arr.value(idx).to_string());
-    }
-    if let Some(arr) = col.as_any().downcast_ref::<UInt64Array>() {
-        return Some(arr.value(idx).to_string());
-    }
-    if let Some(arr) = col.as_any().downcast_ref::<UInt32Array>() {
-        return Some(arr.value(idx).to_string());
-    }
-
-    None
+    crate::utils::pk_utils::extract_pk_as_string(col, idx)
 }
 
 fn strip_list_prefix<'a>(path: &'a str, prefix: &str) -> Option<&'a str> {

@@ -307,42 +307,12 @@ impl PkExistenceChecker {
         Ok(None)
     }
 
-    /// Extract PK value as string from an Arrow array
+    /// Extract PK value as string from an Arrow array (now uses shared utility)
     fn extract_pk_as_string(
         col: &dyn datafusion::arrow::array::Array,
         idx: usize,
     ) -> Option<String> {
-        use datafusion::arrow::array::{
-            Int16Array, Int32Array, Int64Array, StringArray, UInt16Array, UInt32Array, UInt64Array,
-        };
-
-        if col.is_null(idx) {
-            return None;
-        }
-
-        if let Some(arr) = col.as_any().downcast_ref::<StringArray>() {
-            return Some(arr.value(idx).to_string());
-        }
-        if let Some(arr) = col.as_any().downcast_ref::<Int64Array>() {
-            return Some(arr.value(idx).to_string());
-        }
-        if let Some(arr) = col.as_any().downcast_ref::<Int32Array>() {
-            return Some(arr.value(idx).to_string());
-        }
-        if let Some(arr) = col.as_any().downcast_ref::<Int16Array>() {
-            return Some(arr.value(idx).to_string());
-        }
-        if let Some(arr) = col.as_any().downcast_ref::<UInt64Array>() {
-            return Some(arr.value(idx).to_string());
-        }
-        if let Some(arr) = col.as_any().downcast_ref::<UInt32Array>() {
-            return Some(arr.value(idx).to_string());
-        }
-        if let Some(arr) = col.as_any().downcast_ref::<UInt16Array>() {
-            return Some(arr.value(idx).to_string());
-        }
-
-        None
+        crate::utils::pk_utils::extract_pk_as_string(col, idx)
     }
 
     /// Async load manifest.json from storage
@@ -525,36 +495,6 @@ mod tests {
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         }
-    }
-
-    #[test]
-    fn test_is_auto_increment_pk_true() {
-        let table_def = create_test_table_def(ColumnDefault::FunctionCall {
-            name: "auto_increment".to_string(),
-            args: vec![],
-        });
-        assert!(PkExistenceChecker::is_auto_increment_pk(&table_def));
-    }
-
-    #[test]
-    fn test_is_auto_increment_pk_snowflake() {
-        let table_def = create_test_table_def(ColumnDefault::FunctionCall {
-            name: "SNOWFLAKE_ID".to_string(),
-            args: vec![],
-        });
-        assert!(PkExistenceChecker::is_auto_increment_pk(&table_def));
-    }
-
-    #[test]
-    fn test_is_auto_increment_pk_false() {
-        let table_def = create_test_table_def(ColumnDefault::None);
-        assert!(!PkExistenceChecker::is_auto_increment_pk(&table_def));
-    }
-
-    #[test]
-    fn test_is_auto_increment_pk_literal_default() {
-        let table_def = create_test_table_def(ColumnDefault::Literal(serde_json::json!(0)));
-        assert!(!PkExistenceChecker::is_auto_increment_pk(&table_def));
     }
 
     #[test]

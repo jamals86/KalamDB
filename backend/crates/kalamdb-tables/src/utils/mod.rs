@@ -10,6 +10,7 @@ pub mod core;
 pub mod datafusion_dml;
 pub mod parquet;
 pub mod pk; // Primary key utilities and existence checking
+pub mod pk_utils; // Phase 13.7: Shared PK extraction and bloom filter utilities
 pub mod row_utils;
 pub mod unified_dml; // Phase 13.6: Moved from tables/
 pub mod version_resolution; // Phase 13.6: Moved from tables/
