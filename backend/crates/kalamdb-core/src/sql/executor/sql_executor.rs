@@ -129,7 +129,6 @@ impl SqlExecutor {
         // Step 1: Classify, authorize, and parse statement in one pass
         // Prioritize SELECT/DML checks as they represent 99% of queries
         // Authorization happens before parsing for fail-fast behavior
-        let classify_span = tracing::debug_span!("sql.classify");
         let classified = SqlStatement::classify_and_parse(
             sql,
             &exec_ctx.default_namespace(),

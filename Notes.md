@@ -1321,6 +1321,21 @@ Query OK, 0 rows affected
 174) When we implement the delivery_policy we mustc verify the user is subscribing to this tableid before calling out the insert
 
 
+175) add for span:
+- auth check
+- provider scan
+- jobs exeuction
+- manifest write
+- storage get
+- storage put
+- storage list
+- storage delete
+- parquet read
+- parquet write
+
+176) Add jaeger
+
+
 
 
 Main Epics:

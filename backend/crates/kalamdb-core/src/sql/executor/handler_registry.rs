@@ -752,6 +752,8 @@ impl HandlerRegistry {
         params: Vec<ScalarValue>,
         context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
+        let stmt_name = statement.name().to_string();
+        let _span = tracing::debug_span!("sql.handler", handler = %stmt_name).entered();
         // Step 1: Extract statement discriminant for O(1) lookup
         let key = std::mem::discriminant(statement.kind());
 

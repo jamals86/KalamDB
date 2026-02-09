@@ -48,7 +48,6 @@ toml = { workspace = true }
 # Logging
 log = { workspace = true }
 colored = { workspace = true }
-fern = { workspace = true }
 regex = { workspace = true }
 
 # Tracing / observability
