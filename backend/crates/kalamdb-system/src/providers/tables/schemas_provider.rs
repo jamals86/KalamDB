@@ -5,7 +5,7 @@
 
 use super::{new_schemas_store, SchemasStore, SchemasTableSchema};
 use crate::error::{SystemError, SystemResultExt};
-use crate::providers::base::SimpleSystemTableScan;
+use crate::providers::base::{extract_filter_value, SimpleSystemTableScan};
 use crate::system_table_trait::SystemTableProviderExt;
 use async_trait::async_trait;
 use datafusion::arrow::array::RecordBatch;
@@ -331,6 +331,128 @@ impl SchemasTableProvider {
 
         Ok(batch)
     }
+
+    /// Build a RecordBatch with all versions for a specific table.
+    ///
+    /// Much cheaper than `scan_all_tables()` when querying a single table.
+    fn build_versions_batch_for_table(
+        &self,
+        table_id: &TableId,
+    ) -> Result<RecordBatch, SystemError> {
+        let versions = self.store.list_versions(table_id)?;
+        if versions.is_empty() {
+            return Ok(RecordBatch::new_empty(SchemasTableSchema::schema()));
+        }
+
+        let max_version = versions.iter().map(|(v, _)| *v).max().unwrap_or(0);
+        self.build_table_def_batch(
+            versions.into_iter().map(|(v, def)| (def, v == max_version)).collect(),
+        )
+    }
+
+    /// Build a RecordBatch with latest versions for a specific namespace.
+    fn build_versions_batch_for_namespace(
+        &self,
+        namespace_id: &kalamdb_commons::NamespaceId,
+    ) -> Result<RecordBatch, SystemError> {
+        let tables = self.store.scan_namespace(namespace_id)?;
+        if tables.is_empty() {
+            return Ok(RecordBatch::new_empty(SchemasTableSchema::schema()));
+        }
+
+        self.build_table_def_batch(
+            tables.into_iter().map(|(_, def)| (def, true)).collect(),
+        )
+    }
+
+    /// Build a RecordBatch from a vec of (TableDefinition, is_latest) pairs.
+    fn build_table_def_batch(
+        &self,
+        entries: Vec<(TableDefinition, bool)>,
+    ) -> Result<RecordBatch, SystemError> {
+        let mut table_ids = Vec::with_capacity(entries.len());
+        let mut table_names = Vec::with_capacity(entries.len());
+        let mut namespaces = Vec::with_capacity(entries.len());
+        let mut table_types = Vec::with_capacity(entries.len());
+        let mut created_ats = Vec::with_capacity(entries.len());
+        let mut schema_versions = Vec::with_capacity(entries.len());
+        let mut columns_json = Vec::with_capacity(entries.len());
+        let mut table_comments = Vec::with_capacity(entries.len());
+        let mut updated_ats = Vec::with_capacity(entries.len());
+        let mut options_json = Vec::with_capacity(entries.len());
+        let mut access_levels = Vec::with_capacity(entries.len());
+        let mut is_latest_flags = Vec::with_capacity(entries.len());
+        let mut storage_ids = Vec::with_capacity(entries.len());
+        let mut use_user_storage_flags = Vec::with_capacity(entries.len());
+
+        for (table_def, is_latest) in entries {
+            let table_id_str =
+                format!("{}:{}", table_def.namespace_id.as_str(), table_def.table_name.as_str());
+            table_ids.push(Some(table_id_str));
+            table_names.push(Some(table_def.table_name.as_str().to_string()));
+            namespaces.push(Some(table_def.namespace_id.as_str().to_string()));
+            table_types.push(Some(table_def.table_type.as_str().to_string()));
+            created_ats.push(Some(table_def.created_at.timestamp_millis()));
+            schema_versions.push(Some(table_def.schema_version as i32));
+
+            let col_json = match serde_json::to_string(&table_def.columns) {
+                Ok(json) => json,
+                Err(e) => format!("{{\"error\":\"failed to serialize columns: {}\"}}", e),
+            };
+            columns_json.push(Some(col_json));
+
+            table_comments.push(table_def.table_comment);
+            updated_ats.push(Some(table_def.updated_at.timestamp_millis()));
+
+            let opt_json = match serde_json::to_string(&table_def.table_options) {
+                Ok(json) => json,
+                Err(e) => format!("{{\"error\":\"failed to serialize options: {}\"}}", e),
+            };
+            options_json.push(Some(opt_json));
+
+            use kalamdb_commons::schemas::TableOptions;
+            let access_level = if let TableOptions::Shared(opts) = &table_def.table_options {
+                opts.access_level.as_ref().map(|a| a.as_str().to_string())
+            } else {
+                None
+            };
+            access_levels.push(access_level);
+            is_latest_flags.push(Some(is_latest));
+
+            let storage_id = match &table_def.table_options {
+                TableOptions::User(opts) => Some(opts.storage_id.as_str().to_string()),
+                TableOptions::Shared(opts) => Some(opts.storage_id.as_str().to_string()),
+                TableOptions::Stream(_) => Some("local".to_string()),
+                TableOptions::System(_) => Some("local".to_string()),
+            };
+            storage_ids.push(storage_id);
+
+            let use_user_storage = match &table_def.table_options {
+                TableOptions::User(opts) => Some(opts.use_user_storage),
+                _ => None,
+            };
+            use_user_storage_flags.push(use_user_storage);
+        }
+
+        let mut builder = RecordBatchBuilder::new(SchemasTableSchema::schema());
+        builder
+            .add_string_column_owned(table_ids)
+            .add_string_column_owned(table_names)
+            .add_string_column_owned(namespaces)
+            .add_string_column_owned(table_types)
+            .add_timestamp_micros_column(created_ats)
+            .add_int32_column(schema_versions)
+            .add_string_column_owned(columns_json)
+            .add_string_column_owned(table_comments)
+            .add_timestamp_micros_column(updated_ats)
+            .add_string_column_owned(options_json)
+            .add_string_column_owned(access_levels)
+            .add_boolean_column(is_latest_flags)
+            .add_string_column_owned(storage_ids)
+            .add_boolean_column(use_user_storage_flags);
+
+        builder.build().into_arrow_error("Failed to create RecordBatch")
+    }
 }
 
 impl SimpleSystemTableScan<TableId, TableDefinition> for SchemasTableProvider {
@@ -343,6 +465,34 @@ impl SimpleSystemTableScan<TableId, TableDefinition> for SchemasTableProvider {
     }
 
     fn scan_all_to_batch(&self) -> Result<RecordBatch, SystemError> {
+        self.scan_all_tables()
+    }
+
+    fn scan_to_batch(
+        &self,
+        filters: &[Expr],
+        _limit: Option<usize>,
+    ) -> Result<RecordBatch, SystemError> {
+        // Check for table_id equality filter → use get_latest for O(1) lookup
+        if let Some(table_id_str) = extract_filter_value(filters, "table_id") {
+            // table_id format is "namespace:table_name"
+            if let Some((ns, tbl)) = table_id_str.split_once(':') {
+                let table_id = TableId::new(
+                    kalamdb_commons::NamespaceId::new(ns),
+                    kalamdb_commons::TableName::new(tbl),
+                );
+                // Return all versions for this specific table
+                return self.build_versions_batch_for_table(&table_id);
+            }
+        }
+
+        // Check for namespace equality filter → use scan_namespace-based construction
+        if let Some(ns_str) = extract_filter_value(filters, "namespace") {
+            let namespace_id = kalamdb_commons::NamespaceId::new(&ns_str);
+            return self.build_versions_batch_for_namespace(&namespace_id);
+        }
+
+        // Fall back to full scan (for LIMIT-only queries, DataFusion will truncate)
         self.scan_all_tables()
     }
 }
