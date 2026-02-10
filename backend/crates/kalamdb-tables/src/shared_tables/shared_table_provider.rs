@@ -593,6 +593,17 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
             );
         }
 
+        // Fire topic/CDC notification (UPDATE) - no user_id for shared tables
+        let notification_service = self.core.services.notification_service.clone();
+        let table_id = self.core.table_id().clone();
+
+        if notification_service.has_subscribers(None, &table_id) {
+            let old_row = Self::build_notification_row(&latest_row);
+            let new_row = Self::build_notification_row(&entity);
+            let notification = ChangeNotification::update(table_id.clone(), old_row, new_row);
+            notification_service.notify_table_change(None, table_id, notification);
+        }
+
         Ok(row_key)
     }
 

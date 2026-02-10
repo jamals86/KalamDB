@@ -4,7 +4,7 @@
 //! - TopicMessageId: Composite key for message identification
 //! - TopicMessage: Message envelope with payload and metadata
 
-use kalamdb_commons::models::{TopicId, UserId};
+use kalamdb_commons::models::{TopicId, TopicOp, UserId};
 use kalamdb_commons::{decode_key, encode_key, encode_prefix, KSerializable, StorageKey};
 use serde::{Deserialize, Serialize};
 
@@ -75,6 +75,9 @@ pub struct TopicMessage {
     /// User who triggered the event that produced this message
     #[serde(default)]
     pub user_id: Option<UserId>,
+    /// Operation type that produced this message (INSERT, UPDATE, DELETE)
+    #[serde(default)]
+    pub op: TopicOp,
 }
 
 impl TopicMessage {
@@ -86,6 +89,7 @@ impl TopicMessage {
         payload: Vec<u8>,
         key: Option<String>,
         timestamp_ms: i64,
+        op: TopicOp,
     ) -> Self {
         Self {
             topic_id,
@@ -95,6 +99,7 @@ impl TopicMessage {
             key,
             timestamp_ms,
             user_id: None,
+            op,
         }
     }
 
@@ -107,6 +112,7 @@ impl TopicMessage {
         key: Option<String>,
         timestamp_ms: i64,
         user_id: Option<UserId>,
+        op: TopicOp,
     ) -> Self {
         Self {
             topic_id,
@@ -116,6 +122,7 @@ impl TopicMessage {
             key,
             timestamp_ms,
             user_id,
+            op,
         }
     }
 
@@ -163,6 +170,7 @@ mod tests {
             b"test payload".to_vec(),
             Some("key1".to_string()),
             1706745600000,
+            TopicOp::Insert,
         );
 
         assert_eq!(msg.topic_id, TopicId::from("test_topic"));
@@ -174,7 +182,7 @@ mod tests {
 
     #[test]
     fn test_message_id_extraction() {
-        let msg = TopicMessage::new(TopicId::from("test"), 5, 99, vec![], None, 0);
+        let msg = TopicMessage::new(TopicId::from("test"), 5, 99, vec![], None, 0, TopicOp::Insert);
 
         let id = msg.id();
         assert_eq!(id.topic_id, TopicId::from("test"));

@@ -8,13 +8,14 @@ use std::sync::{Arc, OnceLock};
 
 /// Topic message schema singleton
 ///
-/// Returns cached Arrow schema for CONSUME FROM query results with 6 fields:
+/// Returns cached Arrow schema for CONSUME FROM query results with 7 fields:
 /// - topic: Utf8 (NOT NULL) - Topic name
 /// - partition: Int32 (NOT NULL) - Partition ID
 /// - offset: Int64 (NOT NULL) - Message offset
 /// - key: Utf8 (NULLABLE) - Optional message key
 /// - payload: Binary (NOT NULL) - Message payload bytes
 /// - timestamp_ms: Int64 (NOT NULL) - Message timestamp in milliseconds
+/// - op: Utf8 (NOT NULL) - Operation type (Insert, Update, Delete)
 ///
 /// # Performance
 /// Schema is constructed once and cached globally using `OnceLock`.
@@ -38,6 +39,7 @@ pub fn topic_message_schema() -> SchemaRef {
                 Field::new("key", DataType::Utf8, true),
                 Field::new("payload", DataType::Binary, false),
                 Field::new("timestamp_ms", DataType::Int64, false),
+                Field::new("op", DataType::Utf8, false),
             ]))
         })
         .clone()
@@ -50,7 +52,7 @@ mod tests {
     #[test]
     fn test_topic_message_schema() {
         let schema = topic_message_schema();
-        assert_eq!(schema.fields().len(), 6);
+        assert_eq!(schema.fields().len(), 7);
         assert_eq!(schema.field(0).name(), "topic");
         assert_eq!(schema.field(0).is_nullable(), false);
         assert_eq!(schema.field(1).name(), "partition");
@@ -59,6 +61,8 @@ mod tests {
         assert_eq!(schema.field(3).is_nullable(), true);
         assert_eq!(schema.field(4).name(), "payload");
         assert_eq!(schema.field(5).name(), "timestamp_ms");
+        assert_eq!(schema.field(6).name(), "op");
+        assert_eq!(schema.field(6).is_nullable(), false);
     }
 
     #[test]

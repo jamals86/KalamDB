@@ -5,22 +5,15 @@
 
 use super::{new_live_queries_store, LiveQueriesStore, LiveQueriesTableSchema};
 use crate::error::{SystemError, SystemResultExt};
-use crate::providers::base::SystemTableScan;
+use crate::providers::base::IndexedProviderDefinition;
 use crate::providers::live_queries::models::{LiveQuery, LiveQueryStatus};
-use crate::system_table_trait::SystemTableProviderExt;
-use async_trait::async_trait;
 use datafusion::arrow::array::RecordBatch;
-use datafusion::arrow::datatypes::SchemaRef;
-use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
-use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::models::ConnectionId;
-use kalamdb_commons::RecordBatchBuilder;
 use kalamdb_commons::{LiveQueryId, NodeId, TableId, UserId};
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_store::StorageBackend;
-use std::any::Any;
 use std::sync::Arc;
 
 /// System.live_queries table provider using EntityStore architecture
@@ -308,67 +301,27 @@ impl LiveQueriesTableProvider {
         &self,
         live_queries: Vec<(LiveQueryId, LiveQuery)>,
     ) -> Result<RecordBatch, SystemError> {
-        // Extract data into vectors
-        let mut live_ids = Vec::with_capacity(live_queries.len());
-        let mut connection_ids = Vec::with_capacity(live_queries.len());
-        let mut subscription_ids = Vec::with_capacity(live_queries.len());
-        let mut namespace_ids = Vec::with_capacity(live_queries.len());
-        let mut table_names = Vec::with_capacity(live_queries.len());
-        let mut user_ids = Vec::with_capacity(live_queries.len());
-        let mut queries = Vec::with_capacity(live_queries.len());
-        let mut options = Vec::with_capacity(live_queries.len());
-        let mut statuses = Vec::with_capacity(live_queries.len());
-        let mut created_ats = Vec::with_capacity(live_queries.len());
-        let mut last_updates = Vec::with_capacity(live_queries.len());
-        let mut last_ping_ats = Vec::with_capacity(live_queries.len());
-        let mut changes = Vec::with_capacity(live_queries.len());
-        let mut node_ids = Vec::with_capacity(live_queries.len());
-
-        for (_key, lq) in live_queries {
-            live_ids.push(Some(lq.live_id.as_str().to_string()));
-            connection_ids.push(Some(lq.connection_id));
-            subscription_ids.push(Some(lq.subscription_id));
-            namespace_ids.push(Some(lq.namespace_id.as_str().to_string()));
-            table_names.push(Some(lq.table_name.as_str().to_string()));
-            user_ids.push(Some(lq.user_id.as_str().to_string()));
-            queries.push(Some(lq.query));
-            options.push(lq.options);
-            statuses.push(Some(lq.status.as_str().to_string()));
-            created_ats.push(Some(lq.created_at));
-            last_updates.push(Some(lq.last_update));
-            last_ping_ats.push(Some(lq.last_ping_at));
-            changes.push(Some(lq.changes));
-            node_ids.push(Some(lq.node_id.as_u64() as i64));
-        }
-
-        // Build batch using RecordBatchBuilder
-        // Column order MUST match the schema definition in live_queries_table_definition:
-        // 1-9: String columns
-        // 10: created_at (Timestamp)
-        // 11: last_update (Timestamp)
-        // 12: changes (Int64)
-        // 13: node_id (Int64)
-        // 14: last_ping_at (Timestamp)
-        let mut builder = RecordBatchBuilder::new(LiveQueriesTableSchema::schema());
-        builder
-            .add_string_column_owned(live_ids)
-            .add_string_column_owned(connection_ids)
-            .add_string_column_owned(subscription_ids)
-            .add_string_column_owned(namespace_ids)
-            .add_string_column_owned(table_names)
-            .add_string_column_owned(user_ids)
-            .add_string_column_owned(queries)
-            .add_string_column_owned(options)
-            .add_string_column_owned(statuses)
-            .add_timestamp_micros_column(created_ats)
-            .add_timestamp_micros_column(last_updates)
-            .add_int64_column(changes)
-            .add_int64_column(node_ids)
-            .add_timestamp_micros_column(last_ping_ats);
-
-        let batch = builder.build().into_arrow_error("Failed to create RecordBatch")?;
-
-        Ok(batch)
+        crate::build_record_batch!(
+            schema: LiveQueriesTableSchema::schema(),
+            entries: live_queries,
+            columns: [
+                live_ids => OptionalString(|entry| Some(entry.1.live_id.as_str())),
+                connection_ids => OptionalString(|entry| Some(entry.1.connection_id.as_str())),
+                subscription_ids => OptionalString(|entry| Some(entry.1.subscription_id.as_str())),
+                namespace_ids => OptionalString(|entry| Some(entry.1.namespace_id.as_str())),
+                table_names => OptionalString(|entry| Some(entry.1.table_name.as_str())),
+                user_ids => OptionalString(|entry| Some(entry.1.user_id.as_str())),
+                queries => OptionalString(|entry| Some(entry.1.query.as_str())),
+                options => OptionalString(|entry| entry.1.options.as_deref()),
+                statuses => OptionalString(|entry| Some(entry.1.status.as_str())),
+                created_ats => Timestamp(|entry| Some(entry.1.created_at)),
+                last_updates => Timestamp(|entry| Some(entry.1.last_update)),
+                changes => OptionalInt64(|entry| Some(entry.1.changes)),
+                node_ids => OptionalInt64(|entry| Some(entry.1.node_id.as_u64() as i64)),
+                last_ping_ats => Timestamp(|entry| Some(entry.1.last_ping_at))
+            ]
+        )
+        .into_arrow_error("Failed to create RecordBatch")
     }
 
     // =========================================================================
@@ -429,87 +382,38 @@ impl LiveQueriesTableProvider {
     }
 }
 
-impl SystemTableScan<LiveQueryId, LiveQuery> for LiveQueriesTableProvider {
-    fn store(&self) -> &kalamdb_store::IndexedEntityStore<LiveQueryId, LiveQuery> {
-        &self.store
+impl LiveQueriesTableProvider {
+    fn provider_definition() -> IndexedProviderDefinition<LiveQueryId> {
+        IndexedProviderDefinition {
+            table_name: LiveQueriesTableSchema::table_name(),
+            primary_key_column: "live_id",
+            schema: LiveQueriesTableSchema::schema,
+            parse_key: |value| LiveQueryId::from_string(value).ok(),
+        }
     }
 
-    fn table_name(&self) -> &str {
-        LiveQueriesTableSchema::table_name()
-    }
-
-    fn primary_key_column(&self) -> &str {
-        "live_id"
-    }
-
-    fn arrow_schema(&self) -> SchemaRef {
-        LiveQueriesTableSchema::schema()
-    }
-
-    fn parse_key(&self, value: &str) -> Option<LiveQueryId> {
-        LiveQueryId::from_string(value).ok()
-    }
-
-    fn create_batch_from_pairs(
-        &self,
-        pairs: Vec<(LiveQueryId, LiveQuery)>,
-    ) -> Result<RecordBatch, SystemError> {
-        self.create_batch(pairs)
-    }
-}
-
-#[async_trait]
-impl TableProvider for LiveQueriesTableProvider {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn schema(&self) -> SchemaRef {
-        LiveQueriesTableSchema::schema()
-    }
-
-    fn table_type(&self) -> TableType {
-        TableType::Base
-    }
-
-    fn supports_filters_pushdown(
-        &self,
-        filters: &[&Expr],
-    ) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
+    fn filter_pushdown(filters: &[&Expr]) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
         // Inexact pushdown: we may use filters for index/prefix scans,
         // but DataFusion must still apply them for correctness.
         Ok(vec![TableProviderFilterPushDown::Inexact; filters.len()])
     }
-
-    async fn scan(
-        &self,
-        state: &dyn datafusion::catalog::Session,
-        projection: Option<&Vec<usize>>,
-        filters: &[Expr],
-        limit: Option<usize>,
-    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        // Use the common SystemTableScan implementation
-        self.base_system_scan(state, projection, filters, limit).await
-    }
 }
 
-impl SystemTableProviderExt for LiveQueriesTableProvider {
-    fn table_name(&self) -> &str {
-        LiveQueriesTableSchema::table_name()
-    }
-
-    fn schema_ref(&self) -> SchemaRef {
-        LiveQueriesTableSchema::schema()
-    }
-
-    fn load_batch(&self) -> Result<RecordBatch, SystemError> {
-        self.scan_all_live_queries()
-    }
-}
+crate::impl_indexed_system_table_provider!(
+    provider = LiveQueriesTableProvider,
+    key = LiveQueryId,
+    value = LiveQuery,
+    store = store,
+    definition = provider_definition,
+    build_batch = create_batch,
+    load_batch = scan_all_live_queries,
+    pushdown = LiveQueriesTableProvider::filter_pushdown
+);
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use datafusion::datasource::TableProvider;
     use kalamdb_commons::{NamespaceId, TableName, UserId};
     use kalamdb_store::test_utils::InMemoryBackend;
 

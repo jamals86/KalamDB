@@ -282,6 +282,7 @@ impl TopicPublisherService {
                 key,
                 timestamp_ms,
                 user_id.cloned(),
+                operation.clone(),
             );
 
             // Store message (TODO: integrate with actual persistence layer)

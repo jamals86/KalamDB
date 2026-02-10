@@ -5,20 +5,13 @@
 
 use super::TopicOffsetsTableSchema;
 use crate::error::{SystemError, SystemResultExt};
-use crate::system_table_trait::SystemTableProviderExt;
-use async_trait::async_trait;
+use crate::providers::base::{extract_filter_value, SimpleProviderDefinition};
 use datafusion::arrow::array::RecordBatch;
-use datafusion::arrow::datatypes::SchemaRef;
-use datafusion::datasource::{TableProvider, TableType};
-use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::Expr;
-use datafusion::logical_expr::TableProviderFilterPushDown;
-use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::models::{ConsumerGroupId, TopicId};
-use kalamdb_commons::{RecordBatchBuilder, SystemTable};
+use kalamdb_commons::SystemTable;
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_store::{IndexedEntityStore, StorageBackend};
-use std::any::Any;
 use std::sync::Arc;
 
 use super::models::TopicOffset;
@@ -252,92 +245,87 @@ impl TopicOffsetsTableProvider {
         &self.store
     }
 
+    /// Build a RecordBatch from topic offset rows.
+    fn build_batch_from_offsets(
+        &self,
+        offsets: Vec<TopicOffset>,
+    ) -> Result<RecordBatch, SystemError> {
+        crate::build_record_batch!(
+            schema: TopicOffsetsTableSchema::schema(),
+            entries: offsets,
+            columns: [
+                topic_ids => OptionalString(|entry| Some(entry.topic_id.as_str())),
+                group_ids => OptionalString(|entry| Some(entry.group_id.as_str())),
+                partition_ids => OptionalInt32(|entry| Some(entry.partition_id as i32)),
+                last_acked_offsets => OptionalInt64(|entry| Some(entry.last_acked_offset as i64)),
+                updated_ats => Timestamp(|entry| Some(entry.updated_at))
+            ]
+        )
+        .into_arrow_error("Failed to create RecordBatch")
+    }
+
     /// Load all topic offsets as a single RecordBatch for DataFusion
     fn load_batch_internal(&self) -> Result<RecordBatch, SystemError> {
-        let offsets = self.list_offsets()?;
-
-        let mut topic_ids = Vec::with_capacity(offsets.len());
-        let mut group_ids = Vec::with_capacity(offsets.len());
-        let mut partition_ids = Vec::with_capacity(offsets.len());
-        let mut last_acked_offsets = Vec::with_capacity(offsets.len());
-        let mut updated_ats = Vec::with_capacity(offsets.len());
-
-        for offset in offsets {
-            topic_ids.push(Some(offset.topic_id.as_str().to_string()));
-            group_ids.push(Some(offset.group_id.as_str().to_string()));
-            partition_ids.push(Some(offset.partition_id as i32));
-            last_acked_offsets.push(Some(offset.last_acked_offset as i64));
-            updated_ats.push(Some(offset.updated_at));
-        }
-
-        let mut builder = RecordBatchBuilder::new(TopicOffsetsTableSchema::schema());
-        builder
-            .add_string_column_owned(topic_ids)
-            .add_string_column_owned(group_ids)
-            .add_int32_column(partition_ids)
-            .add_int64_column(last_acked_offsets)
-            .add_timestamp_micros_column(updated_ats);
-
-        let batch = builder.build().into_arrow_error("Failed to create RecordBatch")?;
-        Ok(batch)
-    }
-}
-
-impl SystemTableProviderExt for TopicOffsetsTableProvider {
-    fn table_name(&self) -> &str {
-        TopicOffsetsTableSchema::table_name()
+        self.build_batch_from_offsets(self.list_offsets()?)
     }
 
-    fn schema_ref(&self) -> SchemaRef {
-        TopicOffsetsTableSchema::schema()
-    }
-
-    fn load_batch(&self) -> Result<RecordBatch, SystemError> {
-        self.load_batch_internal()
-    }
-}
-
-#[async_trait]
-impl TableProvider for TopicOffsetsTableProvider {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn schema(&self) -> SchemaRef {
-        TopicOffsetsTableSchema::schema()
-    }
-
-    fn table_type(&self) -> TableType {
-        TableType::Base
-    }
-
-    fn supports_filters_pushdown(
+    fn scan_to_batch_filtered(
         &self,
-        filters: &[&Expr],
-    ) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
-        Ok(vec![TableProviderFilterPushDown::Inexact; filters.len()])
-    }
-
-    async fn scan(
-        &self,
-        _state: &dyn datafusion::catalog::Session,
-        projection: Option<&Vec<usize>>,
         filters: &[Expr],
         limit: Option<usize>,
-    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        use datafusion::datasource::MemTable;
+    ) -> Result<RecordBatch, SystemError> {
+        let topic_id_filter = extract_filter_value(filters, "topic_id");
+        let group_id_filter = extract_filter_value(filters, "group_id");
+        let partition_id_filter =
+            extract_filter_value(filters, "partition_id").and_then(|v| v.parse::<u32>().ok());
 
-        let batch = self.load_batch_internal().map_err(|e| {
-            datafusion::error::DataFusionError::Execution(format!(
-                "Failed to load topic offsets: {}",
-                e
-            ))
-        })?;
+        let iter = self.store.scan_iterator(None, None)?;
+        let effective_limit = limit.unwrap_or(100_000);
+        let mut offsets = Vec::with_capacity(effective_limit.min(1000));
 
-        let table = MemTable::try_new(self.schema(), vec![vec![batch]])?;
-        table.scan(_state, projection, filters, limit).await
+        for item in iter {
+            let (_, offset) = item?;
+            if topic_id_filter
+                .as_deref()
+                .is_some_and(|topic_id| offset.topic_id.as_str() != topic_id)
+            {
+                continue;
+            }
+            if group_id_filter
+                .as_deref()
+                .is_some_and(|group_id| offset.group_id.as_str() != group_id)
+            {
+                continue;
+            }
+            if partition_id_filter.is_some_and(|partition_id| offset.partition_id != partition_id) {
+                continue;
+            }
+
+            offsets.push(offset);
+            if offsets.len() >= effective_limit {
+                break;
+            }
+        }
+
+        self.build_batch_from_offsets(offsets)
+    }
+
+    fn provider_definition() -> SimpleProviderDefinition {
+        SimpleProviderDefinition {
+            table_name: TopicOffsetsTableSchema::table_name(),
+            schema: TopicOffsetsTableSchema::schema,
+        }
     }
 }
+
+crate::impl_simple_system_table_provider!(
+    provider = TopicOffsetsTableProvider,
+    key = TopicOffsetKey,
+    value = TopicOffset,
+    definition = provider_definition,
+    scan_all = load_batch_internal,
+    scan_filtered = scan_to_batch_filtered
+);
 
 #[cfg(test)]
 mod tests {

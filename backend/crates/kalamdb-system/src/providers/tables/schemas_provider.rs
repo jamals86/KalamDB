@@ -5,20 +5,13 @@
 
 use super::{new_schemas_store, SchemasStore, SchemasTableSchema};
 use crate::error::{SystemError, SystemResultExt};
-use crate::providers::base::{extract_filter_value, SimpleSystemTableScan};
-use crate::system_table_trait::SystemTableProviderExt;
-use async_trait::async_trait;
+use crate::providers::base::{extract_filter_value, SimpleProviderDefinition};
 use datafusion::arrow::array::RecordBatch;
-use datafusion::arrow::datatypes::SchemaRef;
-use datafusion::datasource::{TableProvider, TableType};
-use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::Expr;
-use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::models::TableId;
-use kalamdb_commons::schemas::TableDefinition;
-use kalamdb_commons::RecordBatchBuilder;
+use kalamdb_commons::schemas::{TableDefinition, TableOptions};
 use kalamdb_store::StorageBackend;
-use std::any::Any;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 /// System.tables table provider using consolidated store with versioning
@@ -200,18 +193,15 @@ impl SchemasTableProvider {
     /// Each ALTER TABLE creates a new version entry with an incremented schema_version.
     /// The `is_latest` column indicates which version is the current active schema.
     pub fn scan_all_tables(&self) -> Result<RecordBatch, SystemError> {
-        use kalamdb_commons::models::TableId;
-        use std::collections::HashMap;
-
-        // Return ALL versions including historical ones for schema evolution support
-        // (the store has both <lat> pointer AND <ver>N entries - we skip <lat> and use <ver> entries)
+        // Return ALL versions including historical ones for schema evolution support.
+        // The store contains both `<lat>` pointers and `<ver>N` rows; we expose only versioned rows.
         let entries = self.store.scan_all_with_versions()?;
 
-        // First pass: find the max version for each table to compute is_latest
+        // First pass: find max version for each table.
         let mut max_versions: HashMap<TableId, u32> = HashMap::new();
         for (version_key, table_def, _) in &entries {
             if version_key.is_latest() {
-                continue; // Skip <lat> entries
+                continue;
             }
             let table_id = version_key.table_id().clone();
             let version = table_def.schema_version;
@@ -225,111 +215,22 @@ impl SchemasTableProvider {
                 .or_insert(version);
         }
 
-        // Extract data into vectors
-        let mut table_ids = Vec::with_capacity(entries.len());
-        let mut table_names = Vec::with_capacity(entries.len());
-        let mut namespaces = Vec::with_capacity(entries.len());
-        let mut table_types = Vec::with_capacity(entries.len());
-        let mut created_ats = Vec::with_capacity(entries.len());
-        let mut schema_versions = Vec::with_capacity(entries.len());
-        let mut columns_json = Vec::with_capacity(entries.len());
-        let mut table_comments = Vec::with_capacity(entries.len());
-        let mut updated_ats = Vec::with_capacity(entries.len());
-        let mut options_json = Vec::with_capacity(entries.len());
-        let mut access_levels = Vec::with_capacity(entries.len());
-        let mut is_latest_flags = Vec::with_capacity(entries.len());
-        let mut storage_ids = Vec::with_capacity(entries.len());
-        let mut use_user_storage_flags = Vec::with_capacity(entries.len());
+        let table_rows: Vec<(TableDefinition, bool)> = entries
+            .into_iter()
+            .filter_map(|(version_key, table_def, _)| {
+                if version_key.is_latest() {
+                    return None;
+                }
+                let max_version = max_versions
+                    .get(version_key.table_id())
+                    .copied()
+                    .unwrap_or(table_def.schema_version);
+                let is_latest = table_def.schema_version == max_version;
+                Some((table_def, is_latest))
+            })
+            .collect();
 
-        for (version_key, table_def, _) in entries {
-            // Skip <lat> entries - only include <ver>N versioned entries
-            // The <lat> pointer is just a shortcut to the latest version, not a distinct row
-            if version_key.is_latest() {
-                continue;
-            }
-
-            // Compute is_latest by comparing with the max version for this table
-            let table_id = version_key.table_id();
-            let max_version = max_versions.get(table_id).copied().unwrap_or(0);
-            let is_latest = table_def.schema_version == max_version;
-
-            // Convert TableId to string format
-            let table_id_str =
-                format!("{}:{}", table_def.namespace_id.as_str(), table_def.table_name.as_str());
-            table_ids.push(Some(table_id_str));
-            table_names.push(Some(table_def.table_name.as_str().to_string()));
-            namespaces.push(Some(table_def.namespace_id.as_str().to_string()));
-            table_types.push(Some(table_def.table_type.as_str().to_string()));
-            created_ats.push(Some(table_def.created_at.timestamp_millis()));
-            schema_versions.push(Some(table_def.schema_version as i32));
-
-            // Serialize columns as JSON array
-            let col_json = match serde_json::to_string(&table_def.columns) {
-                Ok(json) => json,
-                Err(e) => format!("{{\"error\":\"failed to serialize columns: {}\"}}", e),
-            };
-            columns_json.push(Some(col_json));
-
-            table_comments.push(table_def.table_comment);
-            updated_ats.push(Some(table_def.updated_at.timestamp_millis()));
-
-            // Serialize TableOptions
-            let opt_json = match serde_json::to_string(&table_def.table_options) {
-                Ok(json) => json,
-                Err(e) => format!("{{\"error\":\"failed to serialize options: {}\"}}", e),
-            };
-            options_json.push(Some(opt_json));
-
-            // Access Level (only for Shared tables)
-            use kalamdb_commons::schemas::TableOptions;
-            let access_level = if let TableOptions::Shared(opts) = &table_def.table_options {
-                opts.access_level.as_ref().map(|a| a.as_str().to_string())
-            } else {
-                None
-            };
-            access_levels.push(access_level);
-
-            // is_latest flag
-            is_latest_flags.push(Some(is_latest));
-
-            // Extract storage_id from TableOptions
-            let storage_id = match &table_def.table_options {
-                TableOptions::User(opts) => Some(opts.storage_id.as_str().to_string()),
-                TableOptions::Shared(opts) => Some(opts.storage_id.as_str().to_string()),
-                TableOptions::Stream(_) => Some("local".to_string()),
-                TableOptions::System(_) => Some("local".to_string()),
-            };
-            storage_ids.push(storage_id);
-
-            // Extract use_user_storage from TableOptions (only for User tables)
-            let use_user_storage = match &table_def.table_options {
-                TableOptions::User(opts) => Some(opts.use_user_storage),
-                _ => None,
-            };
-            use_user_storage_flags.push(use_user_storage);
-        }
-
-        // Build batch using RecordBatchBuilder
-        let mut builder = RecordBatchBuilder::new(SchemasTableSchema::schema());
-        builder
-            .add_string_column_owned(table_ids)
-            .add_string_column_owned(table_names)
-            .add_string_column_owned(namespaces)
-            .add_string_column_owned(table_types)
-            .add_timestamp_micros_column(created_ats)
-            .add_int32_column(schema_versions)
-            .add_string_column_owned(columns_json)
-            .add_string_column_owned(table_comments)
-            .add_timestamp_micros_column(updated_ats)
-            .add_string_column_owned(options_json)
-            .add_string_column_owned(access_levels)
-            .add_boolean_column(is_latest_flags)
-            .add_string_column_owned(storage_ids)
-            .add_boolean_column(use_user_storage_flags);
-
-        let batch = builder.build().into_arrow_error("Failed to create RecordBatch")?;
-
-        Ok(batch)
+        self.build_table_def_batch(table_rows)
     }
 
     /// Build a RecordBatch with all versions for a specific table.
@@ -360,9 +261,7 @@ impl SchemasTableProvider {
             return Ok(RecordBatch::new_empty(SchemasTableSchema::schema()));
         }
 
-        self.build_table_def_batch(
-            tables.into_iter().map(|(_, def)| (def, true)).collect(),
-        )
+        self.build_table_def_batch(tables.into_iter().map(|(_, def)| (def, true)).collect())
     }
 
     /// Build a RecordBatch from a vec of (TableDefinition, is_latest) pairs.
@@ -370,105 +269,50 @@ impl SchemasTableProvider {
         &self,
         entries: Vec<(TableDefinition, bool)>,
     ) -> Result<RecordBatch, SystemError> {
-        let mut table_ids = Vec::with_capacity(entries.len());
-        let mut table_names = Vec::with_capacity(entries.len());
-        let mut namespaces = Vec::with_capacity(entries.len());
-        let mut table_types = Vec::with_capacity(entries.len());
-        let mut created_ats = Vec::with_capacity(entries.len());
-        let mut schema_versions = Vec::with_capacity(entries.len());
-        let mut columns_json = Vec::with_capacity(entries.len());
-        let mut table_comments = Vec::with_capacity(entries.len());
-        let mut updated_ats = Vec::with_capacity(entries.len());
-        let mut options_json = Vec::with_capacity(entries.len());
-        let mut access_levels = Vec::with_capacity(entries.len());
-        let mut is_latest_flags = Vec::with_capacity(entries.len());
-        let mut storage_ids = Vec::with_capacity(entries.len());
-        let mut use_user_storage_flags = Vec::with_capacity(entries.len());
-
-        for (table_def, is_latest) in entries {
-            let table_id_str =
-                format!("{}:{}", table_def.namespace_id.as_str(), table_def.table_name.as_str());
-            table_ids.push(Some(table_id_str));
-            table_names.push(Some(table_def.table_name.as_str().to_string()));
-            namespaces.push(Some(table_def.namespace_id.as_str().to_string()));
-            table_types.push(Some(table_def.table_type.as_str().to_string()));
-            created_ats.push(Some(table_def.created_at.timestamp_millis()));
-            schema_versions.push(Some(table_def.schema_version as i32));
-
-            let col_json = match serde_json::to_string(&table_def.columns) {
-                Ok(json) => json,
-                Err(e) => format!("{{\"error\":\"failed to serialize columns: {}\"}}", e),
-            };
-            columns_json.push(Some(col_json));
-
-            table_comments.push(table_def.table_comment);
-            updated_ats.push(Some(table_def.updated_at.timestamp_millis()));
-
-            let opt_json = match serde_json::to_string(&table_def.table_options) {
-                Ok(json) => json,
-                Err(e) => format!("{{\"error\":\"failed to serialize options: {}\"}}", e),
-            };
-            options_json.push(Some(opt_json));
-
-            use kalamdb_commons::schemas::TableOptions;
-            let access_level = if let TableOptions::Shared(opts) = &table_def.table_options {
-                opts.access_level.as_ref().map(|a| a.as_str().to_string())
-            } else {
-                None
-            };
-            access_levels.push(access_level);
-            is_latest_flags.push(Some(is_latest));
-
-            let storage_id = match &table_def.table_options {
-                TableOptions::User(opts) => Some(opts.storage_id.as_str().to_string()),
-                TableOptions::Shared(opts) => Some(opts.storage_id.as_str().to_string()),
-                TableOptions::Stream(_) => Some("local".to_string()),
-                TableOptions::System(_) => Some("local".to_string()),
-            };
-            storage_ids.push(storage_id);
-
-            let use_user_storage = match &table_def.table_options {
-                TableOptions::User(opts) => Some(opts.use_user_storage),
-                _ => None,
-            };
-            use_user_storage_flags.push(use_user_storage);
-        }
-
-        let mut builder = RecordBatchBuilder::new(SchemasTableSchema::schema());
-        builder
-            .add_string_column_owned(table_ids)
-            .add_string_column_owned(table_names)
-            .add_string_column_owned(namespaces)
-            .add_string_column_owned(table_types)
-            .add_timestamp_micros_column(created_ats)
-            .add_int32_column(schema_versions)
-            .add_string_column_owned(columns_json)
-            .add_string_column_owned(table_comments)
-            .add_timestamp_micros_column(updated_ats)
-            .add_string_column_owned(options_json)
-            .add_string_column_owned(access_levels)
-            .add_boolean_column(is_latest_flags)
-            .add_string_column_owned(storage_ids)
-            .add_boolean_column(use_user_storage_flags);
-
-        builder.build().into_arrow_error("Failed to create RecordBatch")
+        crate::build_record_batch!(
+            schema: SchemasTableSchema::schema(),
+            entries: entries,
+            columns: [
+                table_ids => OptionalString(|entry| Some(format!(
+                    "{}:{}",
+                    entry.0.namespace_id.as_str(),
+                    entry.0.table_name.as_str()
+                ))),
+                table_names => OptionalString(|entry| Some(entry.0.table_name.as_str())),
+                namespaces => OptionalString(|entry| Some(entry.0.namespace_id.as_str())),
+                table_types => OptionalString(|entry| Some(entry.0.table_type.as_str())),
+                created_ats => Timestamp(|entry| Some(entry.0.created_at.timestamp_millis())),
+                schema_versions => OptionalInt32(|entry| Some(entry.0.schema_version as i32)),
+                columns_json => OptionalString(|entry| Some(match serde_json::to_string(&entry.0.columns) {
+                    Ok(json) => json,
+                    Err(e) => format!("{{\"error\":\"failed to serialize columns: {}\"}}", e),
+                })),
+                table_comments => OptionalString(|entry| entry.0.table_comment.as_deref()),
+                updated_ats => Timestamp(|entry| Some(entry.0.updated_at.timestamp_millis())),
+                options_json => OptionalString(|entry| Some(match serde_json::to_string(&entry.0.table_options) {
+                    Ok(json) => json,
+                    Err(e) => format!("{{\"error\":\"failed to serialize options: {}\"}}", e),
+                })),
+                access_levels => OptionalString(|entry| match &entry.0.table_options {
+                    TableOptions::Shared(opts) => opts.access_level.as_ref().map(|a| a.as_str()),
+                    _ => None,
+                }),
+                is_latest_flags => OptionalBoolean(|entry| Some(entry.1)),
+                storage_ids => OptionalString(|entry| match &entry.0.table_options {
+                    TableOptions::User(opts) => Some(opts.storage_id.as_str()),
+                    TableOptions::Shared(opts) => Some(opts.storage_id.as_str()),
+                    TableOptions::Stream(_) => Some("local"),
+                    TableOptions::System(_) => Some("local"),
+                }),
+                use_user_storage_flags => OptionalBoolean(|entry| match &entry.0.table_options {
+                    TableOptions::User(opts) => Some(opts.use_user_storage),
+                    _ => None,
+                })
+            ]
+        )
+        .into_arrow_error("Failed to create RecordBatch")
     }
-}
-
-impl SimpleSystemTableScan<TableId, TableDefinition> for SchemasTableProvider {
-    fn table_name(&self) -> &str {
-        SchemasTableSchema::table_name()
-    }
-
-    fn arrow_schema(&self) -> SchemaRef {
-        SchemasTableSchema::schema()
-    }
-
-    fn scan_all_to_batch(&self) -> Result<RecordBatch, SystemError> {
-        self.scan_all_tables()
-    }
-
-    fn scan_to_batch(
+    fn scan_to_batch_filtered(
         &self,
         filters: &[Expr],
         _limit: Option<usize>,
@@ -495,51 +339,28 @@ impl SimpleSystemTableScan<TableId, TableDefinition> for SchemasTableProvider {
         // Fall back to full scan (for LIMIT-only queries, DataFusion will truncate)
         self.scan_all_tables()
     }
-}
 
-#[async_trait]
-impl TableProvider for SchemasTableProvider {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn schema(&self) -> SchemaRef {
-        SchemasTableSchema::schema()
-    }
-
-    fn table_type(&self) -> TableType {
-        TableType::Base
-    }
-
-    async fn scan(
-        &self,
-        state: &dyn datafusion::catalog::Session,
-        projection: Option<&Vec<usize>>,
-        filters: &[Expr],
-        limit: Option<usize>,
-    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        // Use the common SimpleSystemTableScan implementation
-        self.base_simple_scan(state, projection, filters, limit).await
+    fn provider_definition() -> SimpleProviderDefinition {
+        SimpleProviderDefinition {
+            table_name: SchemasTableSchema::table_name(),
+            schema: SchemasTableSchema::schema,
+        }
     }
 }
 
-impl SystemTableProviderExt for SchemasTableProvider {
-    fn table_name(&self) -> &str {
-        SchemasTableSchema::table_name()
-    }
-
-    fn schema_ref(&self) -> SchemaRef {
-        SchemasTableSchema::schema()
-    }
-
-    fn load_batch(&self) -> Result<RecordBatch, SystemError> {
-        self.scan_all_tables()
-    }
-}
+crate::impl_simple_system_table_provider!(
+    provider = SchemasTableProvider,
+    key = TableId,
+    value = TableDefinition,
+    definition = provider_definition,
+    scan_all = scan_all_tables,
+    scan_filtered = scan_to_batch_filtered
+);
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use datafusion::datasource::TableProvider;
     use kalamdb_commons::datatypes::KalamDataType;
     use kalamdb_commons::schemas::{
         ColumnDefinition, TableDefinition, TableOptions, TableType as KalamTableType,

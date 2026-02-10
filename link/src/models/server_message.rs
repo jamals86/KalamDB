@@ -15,9 +15,9 @@ pub enum ServerMessage {
     /// Authentication successful response (browser clients only)
     AuthSuccess {
         /// Authenticated user ID
-        user_id: String,
+        user_id: String, //TODO: Use UserId type instead
         /// User role
-        role: String,
+        role: String, //TODO: Use UserRole type instead
     },
 
     /// Authentication failed response (browser clients only)

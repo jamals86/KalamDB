@@ -228,16 +228,13 @@ async fn test_topic_consume_update_events() {
         .expect("Failed to build consumer");
 
     let records = poll_records_until(&mut consumer, 3, Duration::from_secs(20)).await;
-    assert!(!records.is_empty(), "Should receive at least one event");
+
+    assert_eq!(records.len(), 3, "Should receive 1 INSERT + 2 UPDATE events");
 
     let inserts = records.iter().filter(|r| r.op == TopicOp::Insert).count();
     let updates = records.iter().filter(|r| r.op == TopicOp::Update).count();
-    if updates > 0 {
-        assert_eq!(inserts, 1);
-        assert_eq!(updates, 2);
-    } else {
-        assert!(records.len() >= 1);
-    }
+    assert_eq!(inserts, 1, "Should have exactly 1 INSERT event");
+    assert_eq!(updates, 2, "Should have exactly 2 UPDATE events");
 
     for record in &records {
         consumer.mark_processed(record);

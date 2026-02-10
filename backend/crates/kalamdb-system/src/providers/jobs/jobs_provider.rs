@@ -20,23 +20,16 @@
 use super::jobs_indexes::{create_jobs_indexes, status_to_u8};
 use super::JobsTableSchema;
 use crate::error::{SystemError, SystemResultExt};
-use crate::providers::base::SystemTableScan;
-use crate::system_table_trait::SystemTableProviderExt;
+use crate::providers::base::IndexedProviderDefinition;
 use crate::JobStatus;
-use async_trait::async_trait;
 use datafusion::arrow::array::RecordBatch;
-use datafusion::arrow::datatypes::SchemaRef;
-use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::Expr;
 use datafusion::logical_expr::TableProviderFilterPushDown;
-use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::JobId;
-use kalamdb_commons::RecordBatchBuilder;
 use kalamdb_commons::SystemTable;
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_store::{IndexedEntityStore, StorageBackend};
-use std::any::Any;
 use std::sync::Arc;
 
 use super::models::{Job, JobFilter, JobSortField, SortOrder};
@@ -502,64 +495,28 @@ impl JobsTableProvider {
 
     /// Helper to create RecordBatch from jobs
     fn create_batch(&self, jobs: Vec<(JobId, Job)>) -> Result<RecordBatch, SystemError> {
-        // Extract data into vectors
-        let mut job_ids = Vec::with_capacity(jobs.len());
-        let mut job_types = Vec::with_capacity(jobs.len());
-        let mut statuses = Vec::with_capacity(jobs.len());
-        let mut parameters = Vec::with_capacity(jobs.len());
-        let mut results = Vec::with_capacity(jobs.len());
-        let mut traces = Vec::with_capacity(jobs.len());
-        let mut memory_useds = Vec::with_capacity(jobs.len());
-        let mut cpu_useds = Vec::with_capacity(jobs.len());
-        let mut created_ats = Vec::with_capacity(jobs.len());
-        let mut started_ats = Vec::with_capacity(jobs.len());
-        let mut finished_ats = Vec::with_capacity(jobs.len());
-        let mut node_ids = Vec::with_capacity(jobs.len());
-        let mut leader_node_ids = Vec::with_capacity(jobs.len());
-        let mut leader_statuses = Vec::with_capacity(jobs.len());
-        let mut error_messages = Vec::with_capacity(jobs.len());
-
-        for (_key, job) in jobs {
-            job_ids.push(Some(job.job_id.as_str().to_string()));
-            job_types.push(Some(job.job_type.as_str().to_string()));
-            statuses.push(Some(job.status.as_str().to_string()));
-            parameters.push(job.parameters);
-            // Note: Job struct uses 'message' and 'exception_trace' instead of 'result'/'trace'/'error_message'
-            results.push(job.message.clone());
-            traces.push(job.exception_trace);
-            memory_useds.push(job.memory_used);
-            cpu_useds.push(job.cpu_used);
-            created_ats.push(Some(job.created_at));
-            started_ats.push(job.started_at);
-            finished_ats.push(job.finished_at);
-            node_ids.push(Some(job.node_id.to_string()));
-            leader_node_ids.push(job.leader_node_id.map(|n| n.to_string()));
-            leader_statuses.push(job.leader_status.map(|s| s.as_str().to_string()));
-            error_messages.push(job.message); // message field contains error messages for failed jobs
-        }
-
-        // Build batch using RecordBatchBuilder
-        let mut builder = RecordBatchBuilder::new(JobsTableSchema::schema());
-        builder
-            .add_string_column_owned(job_ids)
-            .add_string_column_owned(job_types)
-            .add_string_column_owned(statuses)
-            .add_string_column_owned(parameters)
-            .add_string_column_owned(results)
-            .add_string_column_owned(traces)
-            .add_int64_column(memory_useds)
-            .add_int64_column(cpu_useds)
-            .add_timestamp_micros_column(created_ats)
-            .add_timestamp_micros_column(started_ats)
-            .add_timestamp_micros_column(finished_ats)
-            .add_string_column_owned(node_ids)
-            .add_string_column_owned(leader_node_ids)
-            .add_string_column_owned(leader_statuses)
-            .add_string_column_owned(error_messages);
-
-        let batch = builder.build().into_arrow_error("Failed to create RecordBatch")?;
-
-        Ok(batch)
+        crate::build_record_batch!(
+            schema: JobsTableSchema::schema(),
+            entries: jobs,
+            columns: [
+                job_ids => OptionalString(|entry| Some(entry.1.job_id.as_str())),
+                job_types => OptionalString(|entry| Some(entry.1.job_type.as_str())),
+                statuses => OptionalString(|entry| Some(entry.1.status.as_str())),
+                parameters => OptionalString(|entry| entry.1.parameters.as_deref()),
+                results => OptionalString(|entry| entry.1.message.as_deref()),
+                traces => OptionalString(|entry| entry.1.exception_trace.as_deref()),
+                memory_useds => OptionalInt64(|entry| entry.1.memory_used),
+                cpu_useds => OptionalInt64(|entry| entry.1.cpu_used),
+                created_ats => Timestamp(|entry| Some(entry.1.created_at)),
+                started_ats => OptionalTimestamp(|entry| entry.1.started_at),
+                finished_ats => OptionalTimestamp(|entry| entry.1.finished_at),
+                node_ids => OptionalString(|entry| Some(entry.1.node_id.to_string())),
+                leader_node_ids => OptionalString(|entry| entry.1.leader_node_id.as_ref().map(|n| n.to_string())),
+                leader_statuses => OptionalString(|entry| entry.1.leader_status.as_ref().map(|s| s.as_str())),
+                error_messages => OptionalString(|entry| entry.1.message.as_deref())
+            ]
+        )
+        .into_arrow_error("Failed to create RecordBatch")
     }
 
     /// Scan all jobs and return as RecordBatch
@@ -651,53 +608,17 @@ fn matches_filter_sync(job: &Job, filter: &JobFilter) -> bool {
     true
 }
 
-impl SystemTableScan<JobId, Job> for JobsTableProvider {
-    fn store(&self) -> &IndexedEntityStore<JobId, Job> {
-        &self.store
+impl JobsTableProvider {
+    fn provider_definition() -> IndexedProviderDefinition<JobId> {
+        IndexedProviderDefinition {
+            table_name: JobsTableSchema::table_name(),
+            primary_key_column: "job_id",
+            schema: JobsTableSchema::schema,
+            parse_key: |value| Some(JobId::new(value)),
+        }
     }
 
-    fn table_name(&self) -> &str {
-        "system.jobs"
-    }
-
-    fn primary_key_column(&self) -> &str {
-        "job_id"
-    }
-
-    fn arrow_schema(&self) -> SchemaRef {
-        JobsTableSchema::schema()
-    }
-
-    fn parse_key(&self, value: &str) -> Option<JobId> {
-        Some(JobId::new(value))
-    }
-
-    fn create_batch_from_pairs(
-        &self,
-        pairs: Vec<(JobId, Job)>,
-    ) -> Result<RecordBatch, SystemError> {
-        self.create_batch(pairs)
-    }
-}
-
-#[async_trait]
-impl TableProvider for JobsTableProvider {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn schema(&self) -> SchemaRef {
-        JobsTableSchema::schema()
-    }
-
-    fn table_type(&self) -> TableType {
-        TableType::Base
-    }
-
-    fn supports_filters_pushdown(
-        &self,
-        filters: &[&Expr],
-    ) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
+    fn filter_pushdown(filters: &[&Expr]) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
         // Only push down exact equality filters we can leverage for indexes.
         Ok(filters
             .iter()
@@ -711,37 +632,24 @@ impl TableProvider for JobsTableProvider {
             })
             .collect())
     }
-
-    async fn scan(
-        &self,
-        state: &dyn datafusion::catalog::Session,
-        projection: Option<&Vec<usize>>,
-        filters: &[Expr],
-        limit: Option<usize>,
-    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        // Use the common SystemTableScan implementation
-        self.base_system_scan(state, projection, filters, limit).await
-    }
 }
 
-impl SystemTableProviderExt for JobsTableProvider {
-    fn table_name(&self) -> &str {
-        "system.jobs"
-    }
-
-    fn schema_ref(&self) -> SchemaRef {
-        JobsTableSchema::schema()
-    }
-
-    fn load_batch(&self) -> Result<RecordBatch, SystemError> {
-        self.scan_all_jobs()
-    }
-}
+crate::impl_indexed_system_table_provider!(
+    provider = JobsTableProvider,
+    key = JobId,
+    value = Job,
+    store = store,
+    definition = provider_definition,
+    build_batch = create_batch,
+    load_batch = scan_all_jobs,
+    pushdown = JobsTableProvider::filter_pushdown
+);
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{JobStatus, JobType};
+    use datafusion::datasource::TableProvider;
     use kalamdb_commons::NodeId;
     use kalamdb_store::test_utils::InMemoryBackend;
 

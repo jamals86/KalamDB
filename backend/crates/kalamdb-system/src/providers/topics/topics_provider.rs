@@ -5,21 +5,15 @@
 
 use super::TopicsTableSchema;
 use crate::error::{SystemError, SystemResultExt};
-use crate::providers::base::SystemTableScan;
-use crate::system_table_trait::SystemTableProviderExt;
-use async_trait::async_trait;
+use crate::providers::base::IndexedProviderDefinition;
 use datafusion::arrow::array::RecordBatch;
-use datafusion::arrow::datatypes::SchemaRef;
-use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::Expr;
 use datafusion::logical_expr::TableProviderFilterPushDown;
-use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::models::TopicId;
-use kalamdb_commons::{RecordBatchBuilder, SystemTable};
+use kalamdb_commons::SystemTable;
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_store::{IndexedEntityStore, StorageBackend};
-use std::any::Any;
 use std::sync::Arc;
 
 use super::models::Topic;
@@ -176,125 +170,57 @@ impl TopicsTableProvider {
         &self,
         pairs: Vec<(TopicId, Topic)>,
     ) -> Result<RecordBatch, SystemError> {
-        let mut topic_ids = Vec::with_capacity(pairs.len());
-        let mut names = Vec::with_capacity(pairs.len());
-        let mut aliases = Vec::with_capacity(pairs.len());
-        let mut partitions = Vec::with_capacity(pairs.len());
-        let mut retention_seconds = Vec::with_capacity(pairs.len());
-        let mut retention_max_bytes = Vec::with_capacity(pairs.len());
-        let mut routes = Vec::with_capacity(pairs.len());
-        let mut created_ats = Vec::with_capacity(pairs.len());
-        let mut updated_ats = Vec::with_capacity(pairs.len());
-
-        for (topic_id, topic) in pairs {
-            topic_ids.push(Some(topic_id.as_str().to_string()));
-            names.push(Some(topic.name));
-            aliases.push(topic.alias);
-            partitions.push(Some(topic.partitions as i32));
-            retention_seconds.push(topic.retention_seconds);
-            retention_max_bytes.push(topic.retention_max_bytes);
-            let routes_json =
-                serde_json::to_string(&topic.routes).unwrap_or_else(|_| "[]".to_string());
-            routes.push(Some(routes_json));
-            created_ats.push(Some(topic.created_at));
-            updated_ats.push(Some(topic.updated_at));
-        }
-
-        let mut builder = RecordBatchBuilder::new(TopicsTableSchema::schema());
-        builder
-            .add_string_column_owned(topic_ids)
-            .add_string_column_owned(names)
-            .add_string_column_owned(aliases)
-            .add_int32_column(partitions)
-            .add_int64_column(retention_seconds)
-            .add_int64_column(retention_max_bytes)
-            .add_string_column_owned(routes)
-            .add_timestamp_micros_column(created_ats)
-            .add_timestamp_micros_column(updated_ats);
-
-        let batch = builder.build().into_arrow_error("Failed to create RecordBatch")?;
-        Ok(batch)
+        crate::build_record_batch!(
+            schema: TopicsTableSchema::schema(),
+            entries: pairs,
+            columns: [
+                topic_ids => OptionalString(|entry| Some(entry.0.as_str())),
+                names => OptionalString(|entry| Some(entry.1.name.as_str())),
+                aliases => OptionalString(|entry| entry.1.alias.as_deref()),
+                partitions => OptionalInt32(|entry| Some(entry.1.partitions as i32)),
+                retention_seconds => OptionalInt64(|entry| entry.1.retention_seconds),
+                retention_max_bytes => OptionalInt64(|entry| entry.1.retention_max_bytes),
+                routes => OptionalString(|entry| Some(
+                    serde_json::to_string(&entry.1.routes).unwrap_or_else(|_| "[]".to_string())
+                )),
+                created_ats => Timestamp(|entry| Some(entry.1.created_at)),
+                updated_ats => Timestamp(|entry| Some(entry.1.updated_at))
+            ]
+        )
+        .into_arrow_error("Failed to create RecordBatch")
     }
-}
-
-impl SystemTableProviderExt for TopicsTableProvider {
-    fn table_name(&self) -> &str {
-        TopicsTableSchema::table_name()
-    }
-
-    fn schema_ref(&self) -> SchemaRef {
-        TopicsTableSchema::schema()
-    }
-
-    fn load_batch(&self) -> Result<RecordBatch, SystemError> {
+    fn scan_all_topics_batch(&self) -> Result<RecordBatch, SystemError> {
         let pairs = self
             .store
             .scan_all_typed(None, None, None)
             .into_system_error("scan_all_typed error")?;
         self.build_batch_from_pairs(pairs)
     }
-}
 
-impl SystemTableScan<TopicId, Topic> for TopicsTableProvider {
-    fn store(&self) -> &IndexedEntityStore<TopicId, Topic> {
-        &self.store
+    fn provider_definition() -> IndexedProviderDefinition<TopicId> {
+        IndexedProviderDefinition {
+            table_name: TopicsTableSchema::table_name(),
+            primary_key_column: "topic_id",
+            schema: TopicsTableSchema::schema,
+            parse_key: |value| Some(TopicId::new(value)),
+        }
     }
 
-    fn table_name(&self) -> &str {
-        TopicsTableSchema::table_name()
-    }
-
-    fn primary_key_column(&self) -> &str {
-        "topic_id"
-    }
-
-    fn arrow_schema(&self) -> SchemaRef {
-        TopicsTableSchema::schema()
-    }
-
-    fn parse_key(&self, value: &str) -> Option<TopicId> {
-        Some(TopicId::new(value))
-    }
-
-    fn create_batch_from_pairs(
-        &self,
-        pairs: Vec<(TopicId, Topic)>,
-    ) -> Result<RecordBatch, SystemError> {
-        self.build_batch_from_pairs(pairs)
-    }
-}
-
-#[async_trait]
-impl TableProvider for TopicsTableProvider {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn schema(&self) -> SchemaRef {
-        TopicsTableSchema::schema()
-    }
-
-    fn table_type(&self) -> TableType {
-        TableType::Base
-    }
-
-    fn supports_filters_pushdown(
-        &self,
-        filters: &[&Expr],
-    ) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
+    fn filter_pushdown(filters: &[&Expr]) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
         Ok(vec![TableProviderFilterPushDown::Inexact; filters.len()])
     }
-
-    async fn scan(
-        &self,
-        state: &dyn datafusion::catalog::Session,
-        projection: Option<&Vec<usize>>,
-        filters: &[Expr],
-        limit: Option<usize>,
-    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        self.base_system_scan(state, projection, filters, limit).await
-    }
 }
+
+crate::impl_indexed_system_table_provider!(
+    provider = TopicsTableProvider,
+    key = TopicId,
+    value = Topic,
+    store = store,
+    definition = provider_definition,
+    build_batch = build_batch_from_pairs,
+    load_batch = scan_all_topics_batch,
+    pushdown = TopicsTableProvider::filter_pushdown
+);
 
 #[cfg(test)]
 mod tests {
