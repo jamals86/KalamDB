@@ -416,16 +416,22 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
 
         log::debug!("Inserted user table row for user {} with _seq {}", user_id.as_str(), seq_id);
 
-        // Fire live query notification (INSERT)
+        // Fire live query + topic notification (INSERT)
         let notification_service = self.core.services.notification_service.clone();
         let table_id = self.core.table_id().clone();
 
-        if notification_service.has_subscribers(Some(&user_id), &table_id) {
+        let has_topics = self.core.has_topic_routes(&table_id);
+        let has_live_subs = notification_service.has_subscribers(Some(&user_id), &table_id);
+        if has_topics || has_live_subs {
             // Build complete row including system columns (_seq, _deleted)
             let row = Self::build_notification_row(&entity);
-
-            let notification = ChangeNotification::insert(table_id.clone(), row);
-            notification_service.notify_table_change(Some(user_id.clone()), table_id, notification);
+            if has_topics {
+                self.core.publish_to_topics(&table_id, kalamdb_commons::models::TopicOp::Insert, &row, Some(&user_id)).await;
+            }
+            if has_live_subs {
+                let notification = ChangeNotification::insert(table_id.clone(), row);
+                notification_service.notify_table_change(Some(user_id.clone()), table_id, notification);
+            }
         }
 
         Ok(row_key)
@@ -570,7 +576,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             row_keys.last().map(|k| k.seq.as_i64()).unwrap_or(0)
         );
 
-        // Fire live query notifications (one per row - async fire-and-forget)
+        // Fire live query + topic notifications (one per row)
         let notification_service = self.core.services.notification_service.clone();
         let table_id = self.core.table_id().clone();
         log::debug!(
@@ -580,16 +586,23 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             table_id
         );
 
-        if notification_service.has_subscribers(Some(&user_id), &table_id) {
+        let has_topics = self.core.has_topic_routes(&table_id);
+        let has_live_subs = notification_service.has_subscribers(Some(&user_id), &table_id);
+        if has_topics || has_live_subs {
             for (_row_key, entity) in entries.iter() {
                 // Build complete row including system columns (_seq, _deleted)
                 let row = Self::build_notification_row(entity);
-                let notification = ChangeNotification::insert(table_id.clone(), row);
-                notification_service.notify_table_change(
-                    Some(user_id.clone()),
-                    table_id.clone(),
-                    notification,
-                );
+                if has_topics {
+                    self.core.publish_to_topics(&table_id, kalamdb_commons::models::TopicOp::Insert, &row, Some(&user_id)).await;
+                }
+                if has_live_subs {
+                    let notification = ChangeNotification::insert(table_id.clone(), row);
+                    notification_service.notify_table_change(
+                        Some(user_id.clone()),
+                        table_id.clone(),
+                        notification,
+                    );
+                }
             }
         }
 
@@ -727,15 +740,22 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             );
         }
 
-        // Fire live query notification (UPDATE)
+        // Fire live query + topic notification (UPDATE)
         let notification_service = self.core.services.notification_service.clone();
         let table_id = self.core.table_id().clone();
 
-        if notification_service.has_subscribers(Some(&user_id), &table_id) {
-            let old_row = Self::build_notification_row(&latest_row);
+        let has_topics = self.core.has_topic_routes(&table_id);
+        let has_live_subs = notification_service.has_subscribers(Some(&user_id), &table_id);
+        if has_topics || has_live_subs {
             let new_row = Self::build_notification_row(&entity);
-            let notification = ChangeNotification::update(table_id.clone(), old_row, new_row);
-            notification_service.notify_table_change(Some(user_id.clone()), table_id, notification);
+            if has_topics {
+                self.core.publish_to_topics(&table_id, kalamdb_commons::models::TopicOp::Update, &new_row, Some(&user_id)).await;
+            }
+            if has_live_subs {
+                let old_row = Self::build_notification_row(&latest_row);
+                let notification = ChangeNotification::update(table_id.clone(), old_row, new_row);
+                notification_service.notify_table_change(Some(user_id.clone()), table_id, notification);
+            }
         }
         Ok(row_key)
     }
@@ -848,16 +868,22 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             );
         }
 
-        // Fire live query notification (DELETE soft)
+        // Fire live query + topic notification (DELETE soft)
         let notification_service = self.core.services.notification_service.clone();
         let table_id = self.core.table_id().clone();
 
-        if notification_service.has_subscribers(Some(&user_id), &table_id) {
+        let has_topics = self.core.has_topic_routes(&table_id);
+        let has_live_subs = notification_service.has_subscribers(Some(&user_id), &table_id);
+        if has_topics || has_live_subs {
             // Provide tombstone entity with system columns for filter matching
             let row = Self::build_notification_row(&entity);
-
-            let notification = ChangeNotification::delete_soft(table_id.clone(), row);
-            notification_service.notify_table_change(Some(user_id.clone()), table_id, notification);
+            if has_topics {
+                self.core.publish_to_topics(&table_id, kalamdb_commons::models::TopicOp::Delete, &row, Some(&user_id)).await;
+            }
+            if has_live_subs {
+                let notification = ChangeNotification::delete_soft(table_id.clone(), row);
+                notification_service.notify_table_change(Some(user_id.clone()), table_id, notification);
+            }
         }
         Ok(true)
     }

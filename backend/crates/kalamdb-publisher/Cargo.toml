@@ -1,0 +1,40 @@
+[package]
+name = "kalamdb-publisher"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Topic publisher service for KalamDB pub/sub infrastructure"
+keywords = ["kalamdb", "database", "topics", "pubsub", "publisher"]
+categories = ["database"]
+
+[dependencies]
+# Internal crates
+kalamdb-commons = { path = "../kalamdb-commons", features = ["full"] }
+kalamdb-store = { path = "../kalamdb-store" }
+kalamdb-system = { path = "../kalamdb-system" }
+kalamdb-tables = { path = "../kalamdb-tables" }
+
+# Concurrent data structures
+dashmap = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Time handling
+chrono = { workspace = true }
+
+# Logging
+log = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+datafusion = { workspace = true }
+
+[lib]
+name = "kalamdb_publisher"
+path = "src/lib.rs"

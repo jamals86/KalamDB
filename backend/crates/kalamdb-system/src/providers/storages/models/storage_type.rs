@@ -19,14 +19,20 @@ pub enum StorageType {
     Azure,
 }
 
+impl StorageType {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            StorageType::Filesystem => "filesystem",
+            StorageType::S3 => "s3",
+            StorageType::Gcs => "gcs",
+            StorageType::Azure => "azure",
+        }
+    }
+}
+
 impl fmt::Display for StorageType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            StorageType::Filesystem => write!(f, "filesystem"),
-            StorageType::S3 => write!(f, "s3"),
-            StorageType::Gcs => write!(f, "gcs"),
-            StorageType::Azure => write!(f, "azure"),
-        }
+        write!(f, "{}", self.as_str())
     }
 }
 

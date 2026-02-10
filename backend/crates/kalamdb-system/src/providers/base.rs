@@ -15,7 +15,7 @@ use arrow::array::RecordBatch;
 use datafusion::catalog::Session;
 use datafusion::common::DataFusionError;
 use datafusion::datasource::{MemTable, TableProvider};
-use datafusion::logical_expr::Expr;
+use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::{KSerializable, StorageKey};
 use kalamdb_store::{EntityStore, IndexedEntityStore};
@@ -25,6 +25,34 @@ use crate::error::SystemError;
 
 /// Result type for DataFusion operations
 pub type DataFusionResult<T> = Result<T, DataFusionError>;
+
+/// Shared static metadata for indexed system table providers.
+///
+/// Providers build this once and reuse it across:
+/// - `SystemTableScan` implementation (table_name, schema, key parsing)
+/// - `TableProvider` implementation (schema)
+/// - `SystemTableProviderExt` implementation (table_name, schema)
+#[derive(Clone, Copy)]
+pub struct IndexedProviderDefinition<K> {
+    pub table_name: &'static str,
+    pub primary_key_column: &'static str,
+    pub schema: fn() -> arrow::datatypes::SchemaRef,
+    pub parse_key: fn(&str) -> Option<K>,
+}
+
+/// Shared static metadata for non-indexed/simple system table providers.
+#[derive(Clone, Copy)]
+pub struct SimpleProviderDefinition {
+    pub table_name: &'static str,
+    pub schema: fn() -> arrow::datatypes::SchemaRef,
+}
+
+/// Default pushdown strategy for providers that do not implement pushdown.
+pub fn unsupported_filter_pushdown(
+    filters: &[&Expr],
+) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
+    Ok(vec![TableProviderFilterPushDown::Unsupported; filters.len()])
+}
 
 /// Trait for system table providers with unified scan logic.
 ///
@@ -139,15 +167,15 @@ where
                     index_idx,
                     filters
                 );
-                let iter = store.scan_by_index_iter(index_idx, Some(&index_prefix), limit).map_err(
-                    |e| {
+                let iter = store
+                    .scan_by_index_iter(index_idx, Some(&index_prefix), limit)
+                    .map_err(|e| {
                         DataFusionError::Execution(format!(
                             "Failed to scan {} by index: {}",
                             self.table_name(),
                             e
                         ))
-                    },
-                )?;
+                    })?;
 
                 let effective_limit = limit.unwrap_or(100_000);
                 for result in iter {
@@ -169,13 +197,14 @@ where
                     self.table_name(),
                     filters
                 );
-                let iter = store.scan_iterator(prefix.as_ref(), start_key.as_ref()).map_err(|e| {
-                    DataFusionError::Execution(format!(
-                        "Failed to create iterator for {}: {}",
-                        self.table_name(),
-                        e
-                    ))
-                })?;
+                let iter =
+                    store.scan_iterator(prefix.as_ref(), start_key.as_ref()).map_err(|e| {
+                        DataFusionError::Execution(format!(
+                            "Failed to create iterator for {}: {}",
+                            self.table_name(),
+                            e
+                        ))
+                    })?;
 
                 let effective_limit = limit.unwrap_or(100_000);
                 for result in iter {

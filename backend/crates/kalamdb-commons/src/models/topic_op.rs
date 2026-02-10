@@ -55,6 +55,12 @@ impl TopicOp {
     }
 }
 
+impl Default for TopicOp {
+    fn default() -> Self {
+        TopicOp::Insert
+    }
+}
+
 impl FromStr for TopicOp {
     type Err = String;
 

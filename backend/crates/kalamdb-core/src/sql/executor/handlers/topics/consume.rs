@@ -86,6 +86,7 @@ impl TypedStatementHandler<ConsumeStatement> for ConsumeHandler {
         let mut keys_builder = StringBuilder::new();
         let mut payloads_builder = BinaryBuilder::new();
         let mut timestamps = Vec::with_capacity(num_messages);
+        let mut ops_builder = StringBuilder::new();
 
         for msg in &messages {
             topics_builder.append_value(topic.topic_id.as_str());
@@ -99,6 +100,7 @@ impl TypedStatementHandler<ConsumeStatement> for ConsumeHandler {
 
             payloads_builder.append_value(&msg.payload);
             timestamps.push(msg.timestamp_ms);
+            ops_builder.append_value(msg.op.as_str());
         }
 
         let batch = RecordBatch::try_new(
@@ -110,6 +112,7 @@ impl TypedStatementHandler<ConsumeStatement> for ConsumeHandler {
                 Arc::new(keys_builder.finish()) as ArrayRef,
                 Arc::new(payloads_builder.finish()) as ArrayRef,
                 Arc::new(Int64Array::from(timestamps)) as ArrayRef,
+                Arc::new(ops_builder.finish()) as ArrayRef,
             ],
         )
         .map_err(|e| {

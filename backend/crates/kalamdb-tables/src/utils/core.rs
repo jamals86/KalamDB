@@ -8,6 +8,7 @@ use kalamdb_filestore::StorageRegistry;
 use kalamdb_system::{
     ClusterCoordinator as ClusterCoordinatorTrait, ManifestService as ManifestServiceTrait,
     NotificationService as NotificationServiceTrait, SchemaRegistry as SchemaRegistryTrait,
+    TopicPublisher as TopicPublisherTrait,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -35,6 +36,9 @@ pub struct TableServices {
 
     /// Cluster coordinator for leader checks
     pub cluster_coordinator: Arc<dyn ClusterCoordinatorTrait>,
+
+    /// Topic publisher for synchronous CDC publishing (optional, None when topics are not configured)
+    pub topic_publisher: Option<Arc<dyn TopicPublisherTrait>>,
 }
 
 impl TableServices {
@@ -46,6 +50,7 @@ impl TableServices {
         manifest_service: Arc<dyn ManifestServiceTrait>,
         notification_service: Arc<dyn NotificationServiceTrait<Notification = ChangeNotification>>,
         cluster_coordinator: Arc<dyn ClusterCoordinatorTrait>,
+        topic_publisher: Option<Arc<dyn TopicPublisherTrait>>,
     ) -> Self {
         Self {
             schema_registry,
@@ -54,6 +59,7 @@ impl TableServices {
             manifest_service,
             notification_service,
             cluster_coordinator,
+            topic_publisher,
         }
     }
 }
@@ -167,6 +173,7 @@ impl TableProviderCore {
             manifest_service: self.services.manifest_service.clone(),
             notification_service: self.services.notification_service.clone(),
             cluster_coordinator: self.services.cluster_coordinator.clone(),
+            topic_publisher: self.services.topic_publisher.clone(),
         });
         Self {
             services: new_services,
@@ -270,5 +277,46 @@ impl TableProviderCore {
     /// TableType accessor
     pub fn table_type(&self) -> TableType {
         self.table_def.table_type
+    }
+
+    /// Check if any topic routes are configured for this table's ID.
+    #[inline]
+    pub fn has_topic_routes(&self, table_id: &TableId) -> bool {
+        self.services
+            .topic_publisher
+            .as_ref()
+            .map_or(false, |tp| tp.has_topics_for_table(table_id))
+    }
+
+    /// Publish a row change to matching topics synchronously.
+    ///
+    /// Only publishes if the current node is the leader (in cluster mode).
+    /// This ensures topic messages are persisted before the write is acknowledged,
+    /// replacing the previous async notification-queue approach that dropped events.
+    pub async fn publish_to_topics(
+        &self,
+        table_id: &TableId,
+        op: kalamdb_commons::models::TopicOp,
+        row: &kalamdb_commons::models::rows::Row,
+        user_id: Option<&kalamdb_commons::models::UserId>,
+    ) {
+        let topic_pub = match self.services.topic_publisher.as_ref() {
+            Some(tp) if tp.has_topics_for_table(table_id) => tp,
+            _ => return,
+        };
+
+        // Leadership check: only leader publishes to avoid duplicates in cluster mode.
+        // In standalone mode, is_leader_for_* always returns true.
+        let is_leader = match user_id {
+            Some(uid) => self.services.cluster_coordinator.is_leader_for_user(uid).await,
+            None => self.services.cluster_coordinator.is_leader_for_shared().await,
+        };
+        if !is_leader {
+            return;
+        }
+
+        if let Err(e) = topic_pub.publish_for_table(table_id, op, row, user_id) {
+            log::warn!("Topic publish failed for table {}: {}", table_id, e);
+        }
     }
 }

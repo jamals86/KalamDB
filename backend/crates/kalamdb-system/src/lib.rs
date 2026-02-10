@@ -46,7 +46,7 @@ pub mod system_table_trait;
 
 // Re-export main types
 pub use error::{Result, SystemError};
-pub use impls::{ClusterCoordinator, ManifestService, NotificationService, SchemaRegistry};
+pub use impls::{ClusterCoordinator, ManifestService, NotificationService, SchemaRegistry, TopicPublisher};
 pub use initialization::initialize_system_tables;
 pub use registry::SystemTablesRegistry;
 pub use services::SystemColumnsService;

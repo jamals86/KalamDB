@@ -510,6 +510,19 @@ fn smoke_as_user_chat_update_flow() {
         AuthSubscriptionListener::start(&fixture.regular_user, &fixture.password, &message_query)
             .expect("Failed to start message subscription before update");
 
+    // Give the subscription handshake time to complete and confirm initial rows are flowing.
+    // Without this warm-up, the UPDATE can race with registration and delay update events.
+    thread::sleep(Duration::from_millis(350));
+    message_listener
+        .wait_for_any_event(
+            &[
+                &flow.assistant_message_id.to_string(),
+                "service response via as user",
+            ],
+            Duration::from_secs(6),
+        )
+        .expect("Regular user update listener should receive initial message snapshot before update");
+
     execute_sql_via_client_as(
         &fixture.service_user,
         &fixture.password,

@@ -18,25 +18,17 @@
 use super::users_indexes::create_users_indexes;
 use super::UsersTableSchema;
 use crate::error::{SystemError, SystemResultExt};
+use crate::providers::base::IndexedProviderDefinition;
 use crate::providers::users::models::User;
-use crate::system_table_trait::SystemTableProviderExt;
 use crate::{StoragePartition, SystemTable};
-use async_trait::async_trait;
 use datafusion::arrow::array::RecordBatch;
-use datafusion::arrow::datatypes::SchemaRef;
-use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::Expr;
 use datafusion::logical_expr::TableProviderFilterPushDown;
-use datafusion::physical_plan::ExecutionPlan;
-use kalamdb_commons::RecordBatchBuilder;
 use kalamdb_commons::UserId;
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_store::{IndexedEntityStore, StorageBackend};
-use std::any::Any;
 use std::sync::Arc;
-
-use crate::providers::base::SystemTableScan;
 
 /// Type alias for the indexed users store
 pub type UsersStore = IndexedEntityStore<UserId, User>;
@@ -224,66 +216,29 @@ impl UsersTableProvider {
 
     /// Helper to create RecordBatch from users
     fn create_batch(&self, users: Vec<(UserId, User)>) -> Result<RecordBatch, SystemError> {
-        // Extract data into vectors
-        let mut user_ids = Vec::with_capacity(users.len());
-        let mut usernames = Vec::with_capacity(users.len());
-        let mut password_hashes = Vec::with_capacity(users.len());
-        let mut roles = Vec::with_capacity(users.len());
-        let mut emails = Vec::with_capacity(users.len());
-        let mut auth_types = Vec::with_capacity(users.len());
-        let mut auth_datas = Vec::with_capacity(users.len());
-        let mut storage_modes = Vec::with_capacity(users.len());
-        let mut storage_ids = Vec::with_capacity(users.len());
-        let mut created_ats = Vec::with_capacity(users.len());
-        let mut updated_ats = Vec::with_capacity(users.len());
-        let mut last_seens = Vec::with_capacity(users.len());
-        let mut deleted_ats = Vec::with_capacity(users.len());
-        let mut failed_attempts = Vec::with_capacity(users.len());
-        let mut locked_untils = Vec::with_capacity(users.len());
-        let mut last_login_ats = Vec::with_capacity(users.len());
-
-        for (_key, user) in users {
-            user_ids.push(Some(user.user_id.as_str().to_string()));
-            usernames.push(Some(user.username.as_str().to_string()));
-            password_hashes.push(Some(user.password_hash));
-            roles.push(Some(user.role.as_str().to_string()));
-            emails.push(user.email);
-            auth_types.push(Some(user.auth_type.as_str().to_string()));
-            auth_datas.push(user.auth_data);
-            storage_modes.push(Some(user.storage_mode.as_str().to_string()));
-            storage_ids.push(user.storage_id.map(|s| s.as_str().to_string()));
-            created_ats.push(Some(user.created_at));
-            updated_ats.push(Some(user.updated_at));
-            last_seens.push(user.last_seen);
-            deleted_ats.push(user.deleted_at);
-            failed_attempts.push(Some(user.failed_login_attempts));
-            locked_untils.push(user.locked_until);
-            last_login_ats.push(user.last_login_at);
-        }
-
-        // Build batch using RecordBatchBuilder
-        let mut builder = RecordBatchBuilder::new(UsersTableSchema::schema());
-        builder
-            .add_string_column_owned(user_ids)
-            .add_string_column_owned(usernames)
-            .add_string_column_owned(password_hashes)
-            .add_string_column_owned(roles)
-            .add_string_column_owned(emails)
-            .add_string_column_owned(auth_types)
-            .add_string_column_owned(auth_datas)
-            .add_string_column_owned(storage_modes)
-            .add_string_column_owned(storage_ids)
-            .add_timestamp_micros_column(created_ats)
-            .add_timestamp_micros_column(updated_ats)
-            .add_timestamp_micros_column(last_seens)
-            .add_timestamp_micros_column(deleted_ats)
-            .add_int32_column(failed_attempts)
-            .add_timestamp_micros_column(locked_untils)
-            .add_timestamp_micros_column(last_login_ats);
-
-        let batch = builder.build().into_arrow_error("Failed to create RecordBatch")?;
-
-        Ok(batch)
+        crate::build_record_batch!(
+            schema: UsersTableSchema::schema(),
+            entries: users,
+            columns: [
+                user_ids => OptionalString(|entry| Some(entry.1.user_id.as_str())),
+                usernames => OptionalString(|entry| Some(entry.1.username.as_str())),
+                password_hashes => OptionalString(|entry| Some(entry.1.password_hash.as_str())),
+                roles => OptionalString(|entry| Some(entry.1.role.as_str())),
+                emails => OptionalString(|entry| entry.1.email.as_deref()),
+                auth_types => OptionalString(|entry| Some(entry.1.auth_type.as_str())),
+                auth_datas => OptionalString(|entry| entry.1.auth_data.as_deref()),
+                storage_modes => OptionalString(|entry| Some(entry.1.storage_mode.as_str())),
+                storage_ids => OptionalString(|entry| entry.1.storage_id.as_ref().map(|s| s.as_str())),
+                created_ats => Timestamp(|entry| Some(entry.1.created_at)),
+                updated_ats => Timestamp(|entry| Some(entry.1.updated_at)),
+                last_seens => OptionalTimestamp(|entry| entry.1.last_seen),
+                deleted_ats => OptionalTimestamp(|entry| entry.1.deleted_at),
+                failed_attempts => OptionalInt32(|entry| Some(entry.1.failed_login_attempts)),
+                locked_untils => OptionalTimestamp(|entry| entry.1.locked_until),
+                last_login_ats => OptionalTimestamp(|entry| entry.1.last_login_at)
+            ]
+        )
+        .into_arrow_error("Failed to create RecordBatch")
     }
 
     /// Scan all users and return as RecordBatch
@@ -291,89 +246,37 @@ impl UsersTableProvider {
         let users = self.store.scan_all_typed(None, None, None)?;
         self.create_batch(users)
     }
-}
-
-impl SystemTableProviderExt for UsersTableProvider {
-    fn table_name(&self) -> &str {
-        UsersTableSchema::table_name()
+    fn provider_definition() -> IndexedProviderDefinition<UserId> {
+        IndexedProviderDefinition {
+            table_name: UsersTableSchema::table_name(),
+            primary_key_column: "user_id",
+            schema: UsersTableSchema::schema,
+            parse_key: |value| Some(UserId::new(value)),
+        }
     }
 
-    fn schema_ref(&self) -> SchemaRef {
-        UsersTableSchema::schema()
-    }
-
-    fn load_batch(&self) -> Result<RecordBatch, SystemError> {
-        self.scan_all_users()
-    }
-}
-
-impl SystemTableScan<UserId, User> for UsersTableProvider {
-    fn store(&self) -> &IndexedEntityStore<UserId, User> {
-        &self.store
-    }
-
-    fn table_name(&self) -> &str {
-        UsersTableSchema::table_name()
-    }
-
-    fn primary_key_column(&self) -> &str {
-        "user_id"
-    }
-
-    fn arrow_schema(&self) -> SchemaRef {
-        UsersTableSchema::schema()
-    }
-
-    fn parse_key(&self, value: &str) -> Option<UserId> {
-        Some(UserId::new(value))
-    }
-
-    fn create_batch_from_pairs(
-        &self,
-        pairs: Vec<(UserId, User)>,
-    ) -> Result<RecordBatch, SystemError> {
-        self.create_batch(pairs)
-    }
-}
-
-#[async_trait]
-impl TableProvider for UsersTableProvider {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn schema(&self) -> SchemaRef {
-        UsersTableSchema::schema()
-    }
-
-    fn table_type(&self) -> TableType {
-        TableType::Base
-    }
-
-    fn supports_filters_pushdown(
-        &self,
-        filters: &[&Expr],
-    ) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
+    fn filter_pushdown(filters: &[&Expr]) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
         // Inexact pushdown: we may use filters for index/prefix scans,
         // but DataFusion must still apply them for correctness.
         Ok(vec![TableProviderFilterPushDown::Inexact; filters.len()])
     }
-
-    async fn scan(
-        &self,
-        state: &dyn datafusion::catalog::Session,
-        projection: Option<&Vec<usize>>,
-        filters: &[Expr],
-        limit: Option<usize>,
-    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        // Use the common SystemTableScan implementation
-        self.base_system_scan(state, projection, filters, limit).await
-    }
 }
+
+crate::impl_indexed_system_table_provider!(
+    provider = UsersTableProvider,
+    key = UserId,
+    value = User,
+    store = store,
+    definition = provider_definition,
+    build_batch = create_batch,
+    load_batch = scan_all_users,
+    pushdown = UsersTableProvider::filter_pushdown
+);
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use datafusion::datasource::TableProvider;
     use kalamdb_commons::{AuthType, Role, StorageId, UserName};
     use kalamdb_store::test_utils::InMemoryBackend;
 

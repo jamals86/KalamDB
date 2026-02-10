@@ -6,20 +6,12 @@
 use super::{new_audit_logs_store, AuditLogsStore, AuditLogsTableSchema};
 use crate::error::{SystemError, SystemResultExt};
 use crate::providers::audit_logs::models::AuditLogEntry;
-use crate::providers::base::{extract_filter_value, SimpleSystemTableScan};
-use crate::system_table_trait::SystemTableProviderExt;
-use async_trait::async_trait;
+use crate::providers::base::{extract_filter_value, SimpleProviderDefinition};
 use datafusion::arrow::array::RecordBatch;
-use datafusion::arrow::datatypes::SchemaRef;
-use datafusion::datasource::{TableProvider, TableType};
-use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::Expr;
-use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::models::AuditLogId;
-use kalamdb_commons::RecordBatchBuilder;
 use kalamdb_store::entity_store::{EntityStore, EntityStoreAsync};
 use kalamdb_store::StorageBackend;
-use std::any::Any;
 use std::sync::Arc;
 
 /// System.audit_log table provider using EntityStore architecture
@@ -96,45 +88,22 @@ impl AuditLogsTableProvider {
         &self,
         entries: Vec<(AuditLogId, AuditLogEntry)>,
     ) -> Result<RecordBatch, SystemError> {
-        // Extract data into vectors
-        let mut audit_ids = Vec::with_capacity(entries.len());
-        let mut timestamps = Vec::with_capacity(entries.len());
-        let mut actor_user_ids = Vec::with_capacity(entries.len());
-        let mut actor_usernames = Vec::with_capacity(entries.len());
-        let mut actions = Vec::with_capacity(entries.len());
-        let mut targets = Vec::with_capacity(entries.len());
-        let mut details_list = Vec::with_capacity(entries.len());
-        let mut ip_addresses = Vec::with_capacity(entries.len());
-        let mut subject_user_ids = Vec::with_capacity(entries.len());
-
-        for (_key, entry) in entries {
-            audit_ids.push(Some(entry.audit_id.as_str().to_string()));
-            timestamps.push(Some(entry.timestamp));
-            actor_user_ids.push(Some(entry.actor_user_id.as_str().to_string()));
-            actor_usernames.push(Some(entry.actor_username.as_str().to_string()));
-            actions.push(Some(entry.action));
-            targets.push(Some(entry.target));
-            details_list.push(entry.details);
-            ip_addresses.push(entry.ip_address);
-            subject_user_ids.push(entry.subject_user_id.map(|id| id.as_str().to_string()));
-        }
-
-        // Build batch using RecordBatchBuilder
-        let mut builder = RecordBatchBuilder::new(AuditLogsTableSchema::schema());
-        builder
-            .add_string_column_owned(audit_ids)
-            .add_timestamp_micros_column(timestamps)
-            .add_string_column_owned(actor_user_ids)
-            .add_string_column_owned(actor_usernames)
-            .add_string_column_owned(actions)
-            .add_string_column_owned(targets)
-            .add_string_column_owned(details_list)
-            .add_string_column_owned(ip_addresses)
-            .add_string_column_owned(subject_user_ids);
-
-        let batch = builder.build().into_arrow_error("Failed to create RecordBatch")?;
-
-        Ok(batch)
+        crate::build_record_batch!(
+            schema: AuditLogsTableSchema::schema(),
+            entries: entries,
+            columns: [
+                audit_ids => OptionalString(|entry| Some(entry.1.audit_id.as_str())),
+                timestamps => Timestamp(|entry| Some(entry.1.timestamp)),
+                actor_user_ids => OptionalString(|entry| Some(entry.1.actor_user_id.as_str())),
+                actor_usernames => OptionalString(|entry| Some(entry.1.actor_username.as_str())),
+                actions => OptionalString(|entry| Some(entry.1.action.as_str())),
+                targets => OptionalString(|entry| Some(entry.1.target.as_str())),
+                details_list => OptionalString(|entry| entry.1.details.as_deref()),
+                ip_addresses => OptionalString(|entry| entry.1.ip_address.as_deref()),
+                subject_user_ids => OptionalString(|entry| entry.1.subject_user_id.as_ref().map(|id| id.as_str()))
+            ]
+        )
+        .into_arrow_error("Failed to create RecordBatch")
     }
 
     /// Scan all audit log entries and return as RecordBatch
@@ -175,36 +144,7 @@ impl AuditLogsTableProvider {
             .into_system_error("scan_all_async error")?;
         Ok(results.into_iter().map(|(_, entry)| entry).collect())
     }
-}
-
-impl SystemTableProviderExt for AuditLogsTableProvider {
-    fn table_name(&self) -> &str {
-        AuditLogsTableSchema::table_name()
-    }
-
-    fn schema_ref(&self) -> SchemaRef {
-        AuditLogsTableSchema::schema()
-    }
-
-    fn load_batch(&self) -> Result<RecordBatch, SystemError> {
-        self.scan_all_entries()
-    }
-}
-
-impl SimpleSystemTableScan<AuditLogId, AuditLogEntry> for AuditLogsTableProvider {
-    fn table_name(&self) -> &str {
-        AuditLogsTableSchema::table_name()
-    }
-
-    fn arrow_schema(&self) -> SchemaRef {
-        AuditLogsTableSchema::schema()
-    }
-
-    fn scan_all_to_batch(&self) -> Result<RecordBatch, SystemError> {
-        self.scan_all_entries()
-    }
-
-    fn scan_to_batch(
+    fn scan_to_batch_filtered(
         &self,
         filters: &[Expr],
         limit: Option<usize>,
@@ -234,39 +174,31 @@ impl SimpleSystemTableScan<AuditLogId, AuditLogEntry> for AuditLogsTableProvider
         // No filters/limit: full scan
         self.scan_all_entries()
     }
-}
 
-#[async_trait]
-impl TableProvider for AuditLogsTableProvider {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn schema(&self) -> SchemaRef {
-        AuditLogsTableSchema::schema()
-    }
-
-    fn table_type(&self) -> TableType {
-        TableType::Base
-    }
-
-    async fn scan(
-        &self,
-        state: &dyn datafusion::catalog::Session,
-        projection: Option<&Vec<usize>>,
-        filters: &[Expr],
-        limit: Option<usize>,
-    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        // Use the common SimpleSystemTableScan implementation
-        self.base_simple_scan(state, projection, filters, limit).await
+    fn provider_definition() -> SimpleProviderDefinition {
+        SimpleProviderDefinition {
+            table_name: AuditLogsTableSchema::table_name(),
+            schema: AuditLogsTableSchema::schema,
+        }
     }
 }
+
+crate::impl_simple_system_table_provider!(
+    provider = AuditLogsTableProvider,
+    key = AuditLogId,
+    value = AuditLogEntry,
+    definition = provider_definition,
+    scan_all = scan_all_entries,
+    scan_filtered = scan_to_batch_filtered
+);
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::system_table_trait::SystemTableProviderExt;
     use arrow::array::Array;
     use datafusion::arrow::array::TimestampMicrosecondArray;
+    use datafusion::datasource::TableProvider;
     use kalamdb_commons::{UserId, UserName};
     use kalamdb_store::test_utils::InMemoryBackend;
     use serde_json::json;

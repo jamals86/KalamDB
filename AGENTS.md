@@ -90,13 +90,14 @@ backend/crates/
 - kalamdb-core: Core orchestration (DDL/DML handlers, jobs, live queries, schema registry).
 - kalamdb-filestore: Filesystem + object-store (S3/GCS/Azure/local) Parquet segment lifecycle.
 - kalamdb-observability: Metrics/telemetry helpers and system stats.
+- kalamdb-publisher: Durable topic publishing (route matching, offset allocation, payload extraction), synchronous write-path integration.
 - kalamdb-raft: Raft consensus, replication, and cluster coordination.
 - kalamdb-session: Session context + permission-aware table provider abstraction.
 - kalamdb-sharding: Shard models and routing logic.
 - kalamdb-sql: SQL parsing and query planning helpers.
 - kalamdb-store: RocksDB backend and storage abstractions; provides `EntityStore` and `IndexedEntityStore` (indexed store) with automatic secondary indexes.
 - kalamdb-streams: Stream storage and commit log utilities.
-- kalamdb-system: System tables + metadata providers (EntityStore/IndexedEntityStore-based).
+- kalamdb-system: System tables + metadata providers (EntityStore/IndexedEntityStore-based), `TopicPublisher` trait.
 - kalamdb-tables: User/shared/stream table providers built on `EntityStore`/`IndexedEntityStore`.
 
 ## Code Style

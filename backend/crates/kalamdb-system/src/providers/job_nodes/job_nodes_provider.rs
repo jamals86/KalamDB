@@ -2,24 +2,15 @@
 
 use super::JobNodesTableSchema;
 use crate::error::{SystemError, SystemResultExt};
-use crate::providers::base::SystemTableScan;
+use crate::providers::base::IndexedProviderDefinition;
 use crate::providers::job_nodes::models::JobNode;
 use crate::JobStatus;
-use async_trait::async_trait;
 use chrono::Utc;
 use datafusion::arrow::array::RecordBatch;
-use datafusion::arrow::datatypes::SchemaRef;
-use datafusion::datasource::{TableProvider, TableType};
-use datafusion::error::Result as DataFusionResult;
-use datafusion::logical_expr::Expr;
-use datafusion::logical_expr::TableProviderFilterPushDown;
-use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::models::JobNodeId;
-use kalamdb_commons::RecordBatchBuilder;
 use kalamdb_commons::{JobId, NodeId, SystemTable};
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_store::{IndexedEntityStore, StorageBackend};
-use std::any::Any;
 use std::sync::Arc;
 
 pub type JobNodesStore = IndexedEntityStore<JobNodeId, JobNode>;
@@ -165,39 +156,21 @@ impl JobNodesTableProvider {
     }
 
     fn create_batch(&self, nodes: Vec<(JobNodeId, JobNode)>) -> Result<RecordBatch, SystemError> {
-        let mut job_ids = Vec::with_capacity(nodes.len());
-        let mut node_ids = Vec::with_capacity(nodes.len());
-        let mut statuses = Vec::with_capacity(nodes.len());
-        let mut error_messages = Vec::with_capacity(nodes.len());
-        let mut created_ats = Vec::with_capacity(nodes.len());
-        let mut started_ats = Vec::with_capacity(nodes.len());
-        let mut finished_ats = Vec::with_capacity(nodes.len());
-        let mut updated_ats = Vec::with_capacity(nodes.len());
-
-        for (_key, node) in nodes {
-            job_ids.push(Some(node.job_id.as_str().to_string()));
-            node_ids.push(Some(node.node_id.to_string()));
-            statuses.push(Some(node.status.as_str().to_string()));
-            error_messages.push(node.error_message);
-            created_ats.push(Some(node.created_at));
-            started_ats.push(node.started_at);
-            finished_ats.push(node.finished_at);
-            updated_ats.push(Some(node.updated_at));
-        }
-
-        let mut builder = RecordBatchBuilder::new(JobNodesTableSchema::schema());
-        builder
-            .add_string_column_owned(job_ids)
-            .add_string_column_owned(node_ids)
-            .add_string_column_owned(statuses)
-            .add_string_column_owned(error_messages)
-            .add_timestamp_micros_column(created_ats)
-            .add_timestamp_micros_column(started_ats)
-            .add_timestamp_micros_column(finished_ats)
-            .add_timestamp_micros_column(updated_ats);
-
-        let batch = builder.build().into_arrow_error("Failed to create RecordBatch")?;
-        Ok(batch)
+        crate::build_record_batch!(
+            schema: JobNodesTableSchema::schema(),
+            entries: nodes,
+            columns: [
+                job_ids => OptionalString(|entry| Some(entry.1.job_id.as_str())),
+                node_ids => OptionalString(|entry| Some(entry.1.node_id.to_string())),
+                statuses => OptionalString(|entry| Some(entry.1.status.as_str())),
+                error_messages => OptionalString(|entry| entry.1.error_message.as_deref()),
+                created_ats => Timestamp(|entry| Some(entry.1.created_at)),
+                started_ats => OptionalTimestamp(|entry| entry.1.started_at),
+                finished_ats => OptionalTimestamp(|entry| entry.1.finished_at),
+                updated_ats => Timestamp(|entry| Some(entry.1.updated_at))
+            ]
+        )
+        .into_arrow_error("Failed to create RecordBatch")
     }
 
     pub fn scan_all_job_nodes(&self) -> Result<RecordBatch, SystemError> {
@@ -242,66 +215,22 @@ impl JobNodesTableProvider {
 
         Ok(deleted)
     }
-}
-
-impl SystemTableScan<JobNodeId, JobNode> for JobNodesTableProvider {
-    fn store(&self) -> &kalamdb_store::IndexedEntityStore<JobNodeId, JobNode> {
-        &self.store
-    }
-
-    fn table_name(&self) -> &str {
-        JobNodesTableSchema::table_name()
-    }
-
-    fn primary_key_column(&self) -> &str {
-        "id"
-    }
-
-    fn arrow_schema(&self) -> SchemaRef {
-        JobNodesTableSchema::schema()
-    }
-
-    fn parse_key(&self, value: &str) -> Option<JobNodeId> {
-        JobNodeId::from_string(value).ok()
-    }
-
-    fn create_batch_from_pairs(
-        &self,
-        pairs: Vec<(JobNodeId, JobNode)>,
-    ) -> Result<RecordBatch, SystemError> {
-        self.create_batch(pairs)
+    fn provider_definition() -> IndexedProviderDefinition<JobNodeId> {
+        IndexedProviderDefinition {
+            table_name: JobNodesTableSchema::table_name(),
+            primary_key_column: "id",
+            schema: JobNodesTableSchema::schema,
+            parse_key: |value| JobNodeId::from_string(value).ok(),
+        }
     }
 }
 
-#[async_trait]
-impl TableProvider for JobNodesTableProvider {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn schema(&self) -> SchemaRef {
-        JobNodesTableSchema::schema()
-    }
-
-    fn table_type(&self) -> TableType {
-        TableType::Base
-    }
-
-    async fn scan(
-        &self,
-        state: &dyn datafusion::catalog::Session,
-        projection: Option<&Vec<usize>>,
-        filters: &[Expr],
-        limit: Option<usize>,
-    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        // Use the common SystemTableScan implementation
-        self.base_system_scan(state, projection, filters, limit).await
-    }
-
-    fn supports_filters_pushdown(
-        &self,
-        _filters: &[&Expr],
-    ) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
-        Ok(vec![TableProviderFilterPushDown::Unsupported; _filters.len()])
-    }
-}
+crate::impl_indexed_system_table_provider!(
+    provider = JobNodesTableProvider,
+    key = JobNodeId,
+    value = JobNode,
+    store = store,
+    definition = provider_definition,
+    build_batch = create_batch,
+    load_batch = scan_all_job_nodes
+);

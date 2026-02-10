@@ -431,7 +431,9 @@ impl AppContext {
             schema_registry.set_app_context(app_ctx.clone());
 
             // Wire topic publisher into notification service for CDC → topic routing
-            notification_service.set_topic_publisher(Arc::clone(&topic_publisher));
+            // (Topic publishing is now synchronous in table providers, but we keep the
+            //  notification service wired for backward compatibility with any code that
+            //  checks has_subscribers)
 
             // ── Restore topic cache from persisted topics ───────────────────────
             // On restart the TopicPublisherService starts with empty caches.
@@ -729,8 +731,8 @@ impl AppContext {
             server_start_time: Instant::now(),
         });
 
-        // Wire topic publisher into notification service for tests
-        notification_service.set_topic_publisher(topic_publisher);
+        // Topic publishing is now synchronous in table providers — no need to wire
+        // into notification service.
 
         // Wire AppContext into notification service for leadership checks (tests)
         notification_service.set_app_context(Arc::downgrade(&app_ctx));

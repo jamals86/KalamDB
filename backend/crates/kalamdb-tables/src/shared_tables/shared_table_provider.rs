@@ -285,10 +285,17 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         let notification_service = self.core.services.notification_service.clone();
         let table_id = self.core.table_id().clone();
 
-        if notification_service.has_subscribers(None, &table_id) {
+        let has_topics = self.core.has_topic_routes(&table_id);
+        let has_live_subs = notification_service.has_subscribers(None, &table_id);
+        if has_topics || has_live_subs {
             let row = Self::build_notification_row(&entity);
-            let notification = ChangeNotification::insert(table_id.clone(), row);
-            notification_service.notify_table_change(None, table_id, notification);
+            if has_topics {
+                self.core.publish_to_topics(&table_id, kalamdb_commons::models::TopicOp::Insert, &row, None).await;
+            }
+            if has_live_subs {
+                let notification = ChangeNotification::insert(table_id.clone(), row);
+                notification_service.notify_table_change(None, table_id, notification);
+            }
         }
 
         Ok(row_key)
@@ -465,11 +472,18 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         let notification_service = self.core.services.notification_service.clone();
         let table_id = self.core.table_id().clone();
 
-        if notification_service.has_subscribers(None, &table_id) {
+        let has_topics = self.core.has_topic_routes(&table_id);
+        let has_live_subs = notification_service.has_subscribers(None, &table_id);
+        if has_topics || has_live_subs {
             for (_row_key, entity) in entries.iter() {
                 let row = Self::build_notification_row(entity);
-                let notification = ChangeNotification::insert(table_id.clone(), row);
-                notification_service.notify_table_change(None, table_id.clone(), notification);
+                if has_topics {
+                    self.core.publish_to_topics(&table_id, kalamdb_commons::models::TopicOp::Insert, &row, None).await;
+                }
+                if has_live_subs {
+                    let notification = ChangeNotification::insert(table_id.clone(), row);
+                    notification_service.notify_table_change(None, table_id.clone(), notification);
+                }
             }
         }
 
@@ -593,6 +607,24 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
             );
         }
 
+        // Fire topic/CDC notification (UPDATE) - no user_id for shared tables
+        let notification_service = self.core.services.notification_service.clone();
+        let table_id = self.core.table_id().clone();
+
+        let has_topics = self.core.has_topic_routes(&table_id);
+        let has_live_subs = notification_service.has_subscribers(None, &table_id);
+        if has_topics || has_live_subs {
+            let new_row = Self::build_notification_row(&entity);
+            if has_topics {
+                self.core.publish_to_topics(&table_id, kalamdb_commons::models::TopicOp::Update, &new_row, None).await;
+            }
+            if has_live_subs {
+                let old_row = Self::build_notification_row(&latest_row);
+                let notification = ChangeNotification::update(table_id.clone(), old_row, new_row);
+                notification_service.notify_table_change(None, table_id, notification);
+            }
+        }
+
         Ok(row_key)
     }
 
@@ -707,10 +739,17 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         let notification_service = self.core.services.notification_service.clone();
         let table_id = self.core.table_id().clone();
 
-        if notification_service.has_subscribers(None, &table_id) {
+        let has_topics = self.core.has_topic_routes(&table_id);
+        let has_live_subs = notification_service.has_subscribers(None, &table_id);
+        if has_topics || has_live_subs {
             let row = Self::build_notification_row(&entity);
-            let notification = ChangeNotification::delete_soft(table_id.clone(), row);
-            notification_service.notify_table_change(None, table_id, notification);
+            if has_topics {
+                self.core.publish_to_topics(&table_id, kalamdb_commons::models::TopicOp::Delete, &row, None).await;
+            }
+            if has_live_subs {
+                let notification = ChangeNotification::delete_soft(table_id.clone(), row);
+                notification_service.notify_table_change(None, table_id, notification);
+            }
         }
 
         Ok(true)

@@ -5,20 +5,13 @@
 
 use super::{new_storages_store, StoragesStore, StoragesTableSchema};
 use crate::error::{SystemError, SystemResultExt};
-use crate::providers::base::{extract_filter_value, SimpleSystemTableScan};
+use crate::providers::base::{extract_filter_value, SimpleProviderDefinition};
 use crate::providers::storages::models::Storage;
-use crate::system_table_trait::SystemTableProviderExt;
-use async_trait::async_trait;
 use datafusion::arrow::array::RecordBatch;
-use datafusion::arrow::datatypes::SchemaRef;
-use datafusion::datasource::{TableProvider, TableType};
-use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::Expr;
-use datafusion::physical_plan::ExecutionPlan;
-use kalamdb_commons::{RecordBatchBuilder, StorageId};
+use kalamdb_commons::StorageId;
 use kalamdb_store::entity_store::{EntityStore, EntityStoreAsync};
 use kalamdb_store::StorageBackend;
-use std::any::Any;
 use std::sync::Arc;
 
 /// System.storages table provider using EntityStore architecture
@@ -179,48 +172,24 @@ impl StoragesTableProvider {
         &self,
         entries: Vec<(StorageId, Storage)>,
     ) -> Result<RecordBatch, SystemError> {
-        let mut storage_ids = Vec::with_capacity(entries.len());
-        let mut storage_names = Vec::with_capacity(entries.len());
-        let mut descriptions = Vec::with_capacity(entries.len());
-        let mut storage_types = Vec::with_capacity(entries.len());
-        let mut base_directories = Vec::with_capacity(entries.len());
-        let mut credentials = Vec::with_capacity(entries.len());
-        let mut config_jsons = Vec::with_capacity(entries.len());
-        let mut shared_templates = Vec::with_capacity(entries.len());
-        let mut user_templates = Vec::with_capacity(entries.len());
-        let mut created_ats = Vec::with_capacity(entries.len());
-        let mut updated_ats = Vec::with_capacity(entries.len());
-
-        for (_key, storage) in entries {
-            storage_ids.push(Some(storage.storage_id.to_string()));
-            storage_names.push(Some(storage.storage_name));
-            descriptions.push(storage.description);
-            storage_types.push(Some(storage.storage_type.to_string()));
-            base_directories.push(Some(storage.base_directory));
-            credentials.push(storage.credentials);
-            config_jsons.push(storage.config_json);
-            shared_templates.push(Some(storage.shared_tables_template));
-            user_templates.push(Some(storage.user_tables_template));
-            created_ats.push(Some(storage.created_at));
-            updated_ats.push(Some(storage.updated_at));
-        }
-
-        let mut builder = RecordBatchBuilder::new(StoragesTableSchema::schema());
-        builder
-            .add_string_column_owned(storage_ids)
-            .add_string_column_owned(storage_names)
-            .add_string_column_owned(descriptions)
-            .add_string_column_owned(storage_types)
-            .add_string_column_owned(base_directories)
-            .add_string_column_owned(credentials)
-            .add_string_column_owned(config_jsons)
-            .add_string_column_owned(shared_templates)
-            .add_string_column_owned(user_templates)
-            .add_timestamp_micros_column(created_ats)
-            .add_timestamp_micros_column(updated_ats);
-
-        let batch = builder.build().into_arrow_error("Failed to create RecordBatch")?;
-        Ok(batch)
+        crate::build_record_batch!(
+            schema: StoragesTableSchema::schema(),
+            entries: entries,
+            columns: [
+                storage_ids => OptionalString(|entry| Some(entry.1.storage_id.as_str())),
+                storage_names => OptionalString(|entry| Some(entry.1.storage_name.as_str())),
+                descriptions => OptionalString(|entry| entry.1.description.as_deref()),
+                storage_types => OptionalString(|entry| Some(entry.1.storage_type.as_str())),
+                base_directories => OptionalString(|entry| Some(entry.1.base_directory.as_str())),
+                credentials => OptionalString(|entry| entry.1.credentials.as_deref()),
+                config_jsons => OptionalString(|entry| entry.1.config_json.as_deref()),
+                shared_templates => OptionalString(|entry| Some(entry.1.shared_tables_template.as_str())),
+                user_templates => OptionalString(|entry| Some(entry.1.user_tables_template.as_str())),
+                created_ats => Timestamp(|entry| Some(entry.1.created_at)),
+                updated_ats => Timestamp(|entry| Some(entry.1.updated_at))
+            ]
+        )
+        .into_arrow_error("Failed to create RecordBatch")
     }
 
     /// Scan all storages and return as RecordBatch
@@ -244,22 +213,7 @@ impl StoragesTableProvider {
 
         self.build_storages_batch(entries)
     }
-}
-
-impl SimpleSystemTableScan<StorageId, Storage> for StoragesTableProvider {
-    fn table_name(&self) -> &str {
-        "system.storages"
-    }
-
-    fn arrow_schema(&self) -> SchemaRef {
-        StoragesTableSchema::schema()
-    }
-
-    fn scan_all_to_batch(&self) -> Result<RecordBatch, SystemError> {
-        self.scan_all_storages()
-    }
-
-    fn scan_to_batch(
+    fn scan_to_batch_filtered(
         &self,
         filters: &[Expr],
         limit: Option<usize>,
@@ -289,52 +243,29 @@ impl SimpleSystemTableScan<StorageId, Storage> for StoragesTableProvider {
         // No limit: full scan with sort (default behavior)
         self.scan_all_storages()
     }
-}
 
-#[async_trait]
-impl TableProvider for StoragesTableProvider {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn schema(&self) -> SchemaRef {
-        StoragesTableSchema::schema()
-    }
-
-    fn table_type(&self) -> TableType {
-        TableType::Base
-    }
-
-    async fn scan(
-        &self,
-        state: &dyn datafusion::catalog::Session,
-        projection: Option<&Vec<usize>>,
-        filters: &[Expr],
-        limit: Option<usize>,
-    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        // Use the common SimpleSystemTableScan implementation
-        self.base_simple_scan(state, projection, filters, limit).await
+    fn provider_definition() -> SimpleProviderDefinition {
+        SimpleProviderDefinition {
+            table_name: StoragesTableSchema::table_name(),
+            schema: StoragesTableSchema::schema,
+        }
     }
 }
 
-impl SystemTableProviderExt for StoragesTableProvider {
-    fn table_name(&self) -> &str {
-        StoragesTableSchema::table_name()
-    }
-
-    fn schema_ref(&self) -> SchemaRef {
-        StoragesTableSchema::schema()
-    }
-
-    fn load_batch(&self) -> Result<RecordBatch, SystemError> {
-        self.scan_all_storages()
-    }
-}
+crate::impl_simple_system_table_provider!(
+    provider = StoragesTableProvider,
+    key = StorageId,
+    value = Storage,
+    definition = provider_definition,
+    scan_all = scan_all_storages,
+    scan_filtered = scan_to_batch_filtered
+);
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::StorageType;
+    use datafusion::datasource::TableProvider;
     use kalamdb_store::test_utils::InMemoryBackend;
 
     fn create_test_provider() -> StoragesTableProvider {

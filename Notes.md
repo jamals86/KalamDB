@@ -1321,28 +1321,11 @@ Query OK, 0 rows affected
 174) When we implement the delivery_policy we mustc verify the user is subscribing to this tableid before calling out the insert
 
 
-175) add for span:
-- auth check
-- provider scan
-- jobs exeuction
-- manifest write
-- storage get
-- storage put
-- storage list
-- storage delete
-- parquet read
-- parquet write
-- Push to live query
-- publish to topic <topic name>
-
-176) Add jaeger
-
-
 
 
 Main Epics:
 ------------
-1) Add observability using otel + jaeger + prometheus + grafana
+1) Done - Add observability using otel + jaeger + prometheus + grafana
 2) Make cluster more stable and reliable
 3) Done - Add file storage FILE DataType
 4) Add embedding + vector search support
@@ -1350,9 +1333,10 @@ Main Epics:
 6) Service consumer - Subscription to shards
 7) Change the code to use FlatBuffers for: Raft/RocksDb storage
 8) Done - Add page for Server Initial Setup
-9) Check S3/WebDAV Storages
+9) In Progress - Check S3/WebDAV Storages
 10) Move permissions to Shared tables with policies
-11) A new option for STREAM table to only insert the row if the user is online option (delivery_policy = 'online_only'  -- or 'always')
+11) A new option for STREAM table to only insert the row if the user is online option (delivery_policy = 'online_only'  -- or 'always') also For STREAM tables, to avoid unbounded RAM growth, we can implement a disk-backed buffer (e.g., mmap-backed ring buffer). mmap reduces heap usage, but we still need TTL eviction + max-bytes limits + backpressure to prevent OOM. https://lib.rs/crates/mmap-io, drop policy: drop_oldest
+13) backend/crates/kalamdb-core/src/providers - need to be removed
 
 
 Target Usecase:

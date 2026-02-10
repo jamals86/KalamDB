@@ -119,6 +119,7 @@ pub async fn consume_handler(
 
     // Convert to response format (matching topic_message_schema fields)
     // Schema fields: topic, partition, offset, key, payload, timestamp_ms
+    // TODO: Why we need to construct new TopicMessage instead of reusing the one from topic_message_models? Because we need to resolve user_id to username, and format the op as a string for the API response. We can optimize this later if needed.
     let response_messages: Vec<TopicMessage> = messages
         .iter()
         .map(|msg| {
@@ -141,6 +142,7 @@ pub async fn consume_handler(
                 key: msg.key.clone(),
                 timestamp_ms: msg.timestamp_ms,
                 username,
+                op: format!("{:?}", msg.op),
             }
         })
         .collect();

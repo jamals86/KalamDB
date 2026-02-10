@@ -5,21 +5,13 @@
 
 use super::{create_manifest_indexes, ManifestTableSchema};
 use crate::error::{SystemError, SystemResultExt};
-use crate::providers::base::{extract_filter_value, SimpleSystemTableScan};
+use crate::providers::base::{extract_filter_value, SimpleProviderDefinition};
 use crate::providers::manifest::ManifestCacheEntry;
-use crate::system_table_trait::SystemTableProviderExt;
-use async_trait::async_trait;
 use datafusion::arrow::array::RecordBatch;
-use datafusion::arrow::datatypes::SchemaRef;
-use datafusion::datasource::{TableProvider, TableType};
-use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::Expr;
-use datafusion::physical_plan::ExecutionPlan;
-use kalamdb_commons::RecordBatchBuilder;
 use kalamdb_commons::{ManifestId, StorageKey, TableId};
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_store::{IndexedEntityStore, StorageBackend};
-use std::any::Any;
 use std::sync::{Arc, RwLock};
 
 /// Callback type for checking if a cache key is in hot memory
@@ -90,61 +82,55 @@ impl ManifestTableProvider {
     ///
     /// Uses schema-driven array building for optimal performance and correctness.
     pub fn scan_to_record_batch(&self) -> Result<RecordBatch, SystemError> {
+        let entries = self.scan_entries(None)?;
+        self.build_batch_from_entries(entries)
+    }
+
+    /// Collect manifest entries with optional early limit.
+    fn scan_entries(
+        &self,
+        limit: Option<usize>,
+    ) -> Result<Vec<(ManifestId, ManifestCacheEntry)>, SystemError> {
         let iter = self
             .store
             .scan_iterator(None, None)
             .map_err(|e| SystemError::Storage(e.to_string()))?;
 
-        // Extract data into vectors
-        let mut cache_keys = Vec::new();
-        let mut namespace_ids = Vec::new();
-        let mut table_names = Vec::new();
-        let mut scopes = Vec::new();
-        let mut etags = Vec::new();
-        let mut last_refreshed_vals = Vec::new();
-        let mut last_accessed_vals = Vec::new();
-        let mut in_memory_vals = Vec::new();
-        let mut sync_states = Vec::new();
-        let mut manifest_jsons = Vec::new();
-
-        // Build arrays by iterating entries once
-        for entry in iter {
-            let (manifest_id, entry) = entry.map_err(|e| SystemError::Storage(e.to_string()))?;
-            let cache_key_str = manifest_id.as_str();
-            let is_hot = self.is_in_memory(&cache_key_str);
-
-            // Serialize manifest_json before moving entry fields
-            let manifest_json_str = entry.manifest_json();
-
-            let last_refreshed_millis = entry.last_refreshed_millis();
-            cache_keys.push(Some(cache_key_str));
-            namespace_ids.push(Some(manifest_id.table_id().namespace_id().as_str().to_string()));
-            table_names.push(Some(manifest_id.table_id().table_name().as_str().to_string()));
-            scopes.push(Some(manifest_id.scope_str()));
-            etags.push(entry.etag.clone());
-            last_refreshed_vals.push(Some(last_refreshed_millis));
-            // last_accessed = last_refreshed (moka manages TTI internally, we can't get actual access time)
-            last_accessed_vals.push(Some(last_refreshed_millis));
-            in_memory_vals.push(Some(is_hot));
-            sync_states.push(Some(entry.sync_state.to_string()));
-            manifest_jsons.push(Some(manifest_json_str));
+        let mut entries = Vec::with_capacity(limit.unwrap_or(256));
+        let mut count = 0usize;
+        for row in iter {
+            if limit.is_some_and(|lim| count >= lim) {
+                break;
+            }
+            entries.push(row.map_err(|e| SystemError::Storage(e.to_string()))?);
+            count += 1;
         }
+        Ok(entries)
+    }
 
-        // Build batch using RecordBatchBuilder
-        let mut builder = RecordBatchBuilder::new(ManifestTableSchema::schema());
-        builder
-            .add_string_column_owned(cache_keys)
-            .add_string_column_owned(namespace_ids)
-            .add_string_column_owned(table_names)
-            .add_string_column_owned(scopes)
-            .add_string_column_owned(etags)
-            .add_timestamp_micros_column(last_refreshed_vals)
-            .add_timestamp_micros_column(last_accessed_vals)
-            .add_boolean_column(in_memory_vals)
-            .add_string_column_owned(sync_states)
-            .add_string_column_owned(manifest_jsons);
-
-        builder.build().into_arrow_error("Failed to create RecordBatch")
+    /// Build a RecordBatch from materialized manifest entries.
+    fn build_batch_from_entries(
+        &self,
+        entries: Vec<(ManifestId, ManifestCacheEntry)>,
+    ) -> Result<RecordBatch, SystemError> {
+        crate::build_record_batch!(
+            schema: ManifestTableSchema::schema(),
+            entries: entries,
+            columns: [
+                cache_keys => OptionalString(|entry| Some(entry.0.as_str())),
+                namespace_ids => OptionalString(|entry| Some(entry.0.table_id().namespace_id().as_str())),
+                table_names => OptionalString(|entry| Some(entry.0.table_id().table_name().as_str())),
+                scopes => OptionalString(|entry| Some(entry.0.scope_str())),
+                etags => OptionalString(|entry| entry.1.etag.as_deref()),
+                last_refreshed_vals => Timestamp(|entry| Some(entry.1.last_refreshed_millis())),
+                // last_accessed = last_refreshed (moka manages TTI internally).
+                last_accessed_vals => Timestamp(|entry| Some(entry.1.last_refreshed_millis())),
+                in_memory_vals => OptionalBoolean(|entry| Some(self.is_in_memory(&entry.0.as_str()))),
+                sync_states => OptionalString(|entry| Some(entry.1.sync_state.to_string())),
+                manifest_jsons => OptionalString(|entry| Some(entry.1.manifest_json()))
+            ]
+        )
+        .into_arrow_error("Failed to create RecordBatch")
     }
 
     /// Build a RecordBatch from a single manifest entry (point lookup result).
@@ -153,87 +139,13 @@ impl ManifestTableProvider {
         manifest_id: &ManifestId,
         entry: &ManifestCacheEntry,
     ) -> Result<RecordBatch, SystemError> {
-        let cache_key_str = manifest_id.as_str();
-        let is_hot = self.is_in_memory(&cache_key_str);
-        let manifest_json_str = entry.manifest_json();
-        let last_refreshed_millis = entry.last_refreshed_millis();
-
-        let mut builder = RecordBatchBuilder::new(ManifestTableSchema::schema());
-        builder
-            .add_string_column_owned(vec![Some(cache_key_str)])
-            .add_string_column_owned(vec![Some(
-                manifest_id.table_id().namespace_id().as_str().to_string(),
-            )])
-            .add_string_column_owned(vec![Some(
-                manifest_id.table_id().table_name().as_str().to_string(),
-            )])
-            .add_string_column_owned(vec![Some(manifest_id.scope_str())])
-            .add_string_column_owned(vec![entry.etag.clone()])
-            .add_timestamp_micros_column(vec![Some(last_refreshed_millis)])
-            .add_timestamp_micros_column(vec![Some(last_refreshed_millis)])
-            .add_boolean_column(vec![Some(is_hot)])
-            .add_string_column_owned(vec![Some(entry.sync_state.to_string())])
-            .add_string_column_owned(vec![Some(manifest_json_str)]);
-
-        builder.build().into_arrow_error("Failed to create RecordBatch")
+        self.build_batch_from_entries(vec![(manifest_id.clone(), entry.clone())])
     }
 
     /// Scan manifest entries with a limit (early termination).
     fn scan_to_record_batch_limited(&self, limit: usize) -> Result<RecordBatch, SystemError> {
-        let iter = self
-            .store
-            .scan_iterator(None, None)
-            .map_err(|e| SystemError::Storage(e.to_string()))?;
-
-        let mut cache_keys = Vec::with_capacity(limit);
-        let mut namespace_ids = Vec::with_capacity(limit);
-        let mut table_names = Vec::with_capacity(limit);
-        let mut scopes = Vec::with_capacity(limit);
-        let mut etags = Vec::with_capacity(limit);
-        let mut last_refreshed_vals = Vec::with_capacity(limit);
-        let mut last_accessed_vals = Vec::with_capacity(limit);
-        let mut in_memory_vals = Vec::with_capacity(limit);
-        let mut sync_states = Vec::with_capacity(limit);
-        let mut manifest_jsons = Vec::with_capacity(limit);
-
-        let mut count = 0usize;
-        for entry in iter {
-            if count >= limit {
-                break;
-            }
-            let (manifest_id, entry) = entry.map_err(|e| SystemError::Storage(e.to_string()))?;
-            let cache_key_str = manifest_id.as_str();
-            let is_hot = self.is_in_memory(&cache_key_str);
-            let manifest_json_str = entry.manifest_json();
-            let last_refreshed_millis = entry.last_refreshed_millis();
-
-            cache_keys.push(Some(cache_key_str));
-            namespace_ids.push(Some(manifest_id.table_id().namespace_id().as_str().to_string()));
-            table_names.push(Some(manifest_id.table_id().table_name().as_str().to_string()));
-            scopes.push(Some(manifest_id.scope_str()));
-            etags.push(entry.etag.clone());
-            last_refreshed_vals.push(Some(last_refreshed_millis));
-            last_accessed_vals.push(Some(last_refreshed_millis));
-            in_memory_vals.push(Some(is_hot));
-            sync_states.push(Some(entry.sync_state.to_string()));
-            manifest_jsons.push(Some(manifest_json_str));
-            count += 1;
-        }
-
-        let mut builder = RecordBatchBuilder::new(ManifestTableSchema::schema());
-        builder
-            .add_string_column_owned(cache_keys)
-            .add_string_column_owned(namespace_ids)
-            .add_string_column_owned(table_names)
-            .add_string_column_owned(scopes)
-            .add_string_column_owned(etags)
-            .add_timestamp_micros_column(last_refreshed_vals)
-            .add_timestamp_micros_column(last_accessed_vals)
-            .add_boolean_column(in_memory_vals)
-            .add_string_column_owned(sync_states)
-            .add_string_column_owned(manifest_jsons);
-
-        builder.build().into_arrow_error("Failed to create RecordBatch")
+        let entries = self.scan_entries(Some(limit))?;
+        self.build_batch_from_entries(entries)
     }
 
     /// Iterator over pending manifest IDs (from the pending-write index).
@@ -297,22 +209,7 @@ impl ManifestTableProvider {
 
         Ok(count)
     }
-}
-
-impl SimpleSystemTableScan<ManifestId, ManifestCacheEntry> for ManifestTableProvider {
-    fn table_name(&self) -> &str {
-        ManifestTableSchema::table_name()
-    }
-
-    fn arrow_schema(&self) -> SchemaRef {
-        ManifestTableSchema::schema()
-    }
-
-    fn scan_all_to_batch(&self) -> Result<RecordBatch, SystemError> {
-        self.scan_to_record_batch()
-    }
-
-    fn scan_to_batch(
+    fn scan_to_batch_filtered(
         &self,
         filters: &[Expr],
         limit: Option<usize>,
@@ -335,47 +232,23 @@ impl SimpleSystemTableScan<ManifestId, ManifestCacheEntry> for ManifestTableProv
         // No filters/limit: full scan
         self.scan_to_record_batch()
     }
-}
 
-#[async_trait]
-impl TableProvider for ManifestTableProvider {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn schema(&self) -> SchemaRef {
-        ManifestTableSchema::schema()
-    }
-
-    fn table_type(&self) -> TableType {
-        TableType::Base
-    }
-
-    async fn scan(
-        &self,
-        state: &dyn datafusion::catalog::Session,
-        projection: Option<&Vec<usize>>,
-        filters: &[Expr],
-        limit: Option<usize>,
-    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        // Use the common SimpleSystemTableScan implementation
-        self.base_simple_scan(state, projection, filters, limit).await
+    fn provider_definition() -> SimpleProviderDefinition {
+        SimpleProviderDefinition {
+            table_name: ManifestTableSchema::table_name(),
+            schema: ManifestTableSchema::schema,
+        }
     }
 }
 
-impl SystemTableProviderExt for ManifestTableProvider {
-    fn table_name(&self) -> &str {
-        ManifestTableSchema::table_name()
-    }
-
-    fn schema_ref(&self) -> SchemaRef {
-        ManifestTableSchema::schema()
-    }
-
-    fn load_batch(&self) -> Result<RecordBatch, SystemError> {
-        self.scan_to_record_batch()
-    }
-}
+crate::impl_simple_system_table_provider!(
+    provider = ManifestTableProvider,
+    key = ManifestId,
+    value = ManifestCacheEntry,
+    definition = provider_definition,
+    scan_all = scan_to_record_batch,
+    scan_filtered = scan_to_batch_filtered
+);
 
 #[cfg(test)]
 mod tests {

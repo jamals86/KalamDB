@@ -5,21 +5,13 @@
 
 use super::{new_namespaces_store, NamespacesStore, NamespacesTableSchema};
 use crate::error::{SystemError, SystemResultExt};
-use crate::providers::base::{extract_filter_value, SimpleSystemTableScan};
+use crate::providers::base::{extract_filter_value, SimpleProviderDefinition};
 use crate::providers::namespaces::models::Namespace;
-use crate::system_table_trait::SystemTableProviderExt;
-use async_trait::async_trait;
 use datafusion::arrow::array::RecordBatch;
-use datafusion::arrow::datatypes::SchemaRef;
-use datafusion::datasource::{TableProvider, TableType};
-use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::Expr;
-use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::NamespaceId;
-use kalamdb_commons::RecordBatchBuilder;
 use kalamdb_store::entity_store::{EntityStore, EntityStoreAsync};
 use kalamdb_store::StorageBackend;
-use std::any::Any;
 use std::sync::Arc;
 
 /// System.namespaces table provider using EntityStore architecture
@@ -193,30 +185,18 @@ impl NamespacesTableProvider {
         &self,
         entries: Vec<(NamespaceId, Namespace)>,
     ) -> Result<RecordBatch, SystemError> {
-        let mut namespace_ids = Vec::with_capacity(entries.len());
-        let mut names = Vec::with_capacity(entries.len());
-        let mut created_ats = Vec::with_capacity(entries.len());
-        let mut options = Vec::with_capacity(entries.len());
-        let mut table_counts = Vec::with_capacity(entries.len());
-
-        for (_key, ns) in entries {
-            namespace_ids.push(Some(ns.namespace_id.as_str().to_string()));
-            names.push(Some(ns.name));
-            created_ats.push(Some(ns.created_at));
-            options.push(ns.options);
-            table_counts.push(Some(ns.table_count));
-        }
-
-        let mut builder = RecordBatchBuilder::new(NamespacesTableSchema::schema());
-        builder
-            .add_string_column_owned(namespace_ids)
-            .add_string_column_owned(names)
-            .add_timestamp_micros_column(created_ats)
-            .add_string_column_owned(options)
-            .add_int32_column(table_counts);
-
-        let batch = builder.build().into_arrow_error("Failed to create RecordBatch")?;
-        Ok(batch)
+        crate::build_record_batch!(
+            schema: NamespacesTableSchema::schema(),
+            entries: entries,
+            columns: [
+                namespace_ids => OptionalString(|entry| Some(entry.1.namespace_id.as_str())),
+                names => OptionalString(|entry| Some(entry.1.name.as_str())),
+                created_ats => Timestamp(|entry| Some(entry.1.created_at)),
+                options => OptionalString(|entry| entry.1.options.as_deref()),
+                table_counts => OptionalInt32(|entry| Some(entry.1.table_count))
+            ]
+        )
+        .into_arrow_error("Failed to create RecordBatch")
     }
 
     /// Scan all namespaces and return as RecordBatch
@@ -228,22 +208,7 @@ impl NamespacesTableProvider {
         }
         self.build_namespaces_batch(entries)
     }
-}
-
-impl SimpleSystemTableScan<NamespaceId, Namespace> for NamespacesTableProvider {
-    fn table_name(&self) -> &str {
-        NamespacesTableSchema::table_name()
-    }
-
-    fn arrow_schema(&self) -> SchemaRef {
-        NamespacesTableSchema::schema()
-    }
-
-    fn scan_all_to_batch(&self) -> Result<RecordBatch, SystemError> {
-        self.scan_all_namespaces()
-    }
-
-    fn scan_to_batch(
+    fn scan_to_batch_filtered(
         &self,
         filters: &[Expr],
         limit: Option<usize>,
@@ -269,51 +234,28 @@ impl SimpleSystemTableScan<NamespaceId, Namespace> for NamespacesTableProvider {
         }
         self.build_namespaces_batch(entries)
     }
-}
 
-#[async_trait]
-impl TableProvider for NamespacesTableProvider {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn schema(&self) -> SchemaRef {
-        NamespacesTableSchema::schema()
-    }
-
-    fn table_type(&self) -> TableType {
-        TableType::Base
-    }
-
-    async fn scan(
-        &self,
-        state: &dyn datafusion::catalog::Session,
-        projection: Option<&Vec<usize>>,
-        filters: &[Expr],
-        limit: Option<usize>,
-    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        // Use the common SimpleSystemTableScan implementation
-        self.base_simple_scan(state, projection, filters, limit).await
+    fn provider_definition() -> SimpleProviderDefinition {
+        SimpleProviderDefinition {
+            table_name: NamespacesTableSchema::table_name(),
+            schema: NamespacesTableSchema::schema,
+        }
     }
 }
 
-impl SystemTableProviderExt for NamespacesTableProvider {
-    fn table_name(&self) -> &str {
-        NamespacesTableSchema::table_name()
-    }
-
-    fn schema_ref(&self) -> SchemaRef {
-        NamespacesTableSchema::schema()
-    }
-
-    fn load_batch(&self) -> Result<RecordBatch, SystemError> {
-        self.scan_all_namespaces()
-    }
-}
+crate::impl_simple_system_table_provider!(
+    provider = NamespacesTableProvider,
+    key = NamespaceId,
+    value = Namespace,
+    definition = provider_definition,
+    scan_all = scan_all_namespaces,
+    scan_filtered = scan_to_batch_filtered
+);
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use datafusion::datasource::TableProvider;
     use kalamdb_store::test_utils::InMemoryBackend;
 
     fn create_test_provider() -> NamespacesTableProvider {

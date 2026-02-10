@@ -1,23 +1,24 @@
-//! Notification service for live queries and consumers
+//! Notification service for live queries
 //!
-//! Handles dispatching change notifications to subscribed clients,
+//! Handles dispatching change notifications to subscribed live query clients,
 //! including filtering based on WHERE clauses stored in SubscriptionState.
+//!
+//! Topic pub/sub publishing is now handled synchronously in table providers
+//! via the TopicPublisher trait — see kalamdb-publisher crate.
 //!
 //! Used by:
 //! - WebSocket live query subscribers
-//! - Topic pub/sub routing (via TopicPublisherService)
 
 use super::helpers::filter_eval::matches as filter_matches;
 use super::manager::ConnectionsManager;
 use super::models::{ChangeNotification, ChangeType, SubscriptionHandle};
-use super::topic_publisher::TopicPublisherService;
 use crate::error::KalamDbError;
 use crate::providers::arrow_json_conversion::row_to_json_map;
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::rows::Row;
-use kalamdb_commons::models::{LiveQueryId, TableId, TopicOp, UserId};
+use kalamdb_commons::models::{LiveQueryId, TableId, UserId};
 use kalamdb_system::NotificationService as NotificationServiceTrait;
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -71,8 +72,6 @@ pub struct NotificationService {
     /// Manager uses DashMap internally for lock-free access
     registry: Arc<ConnectionsManager>,
     notify_tx: mpsc::Sender<NotificationTask>,
-    /// Topic publisher for CDC → topic routing (set after AppContext creation)
-    topic_publisher: OnceCell<Arc<TopicPublisherService>>,
     /// AppContext for leadership checks (set after initialization to avoid circular dependency)
     /// Required for Raft cluster mode to ensure only leader fires notifications
     app_context: OnceCell<std::sync::Weak<crate::app_context::AppContext>>,
@@ -82,20 +81,6 @@ impl NotificationService {
     /// Check if there are any subscribers for a given user and table
     pub fn has_subscribers(&self, user_id: &UserId, table_id: &TableId) -> bool {
         self.registry.has_subscriptions(user_id, table_id)
-    }
-
-    /// Set the topic publisher for CDC → topic routing
-    ///
-    /// Called after AppContext creation to break circular dependency.
-    pub fn set_topic_publisher(&self, topic_publisher: Arc<TopicPublisherService>) {
-        if self.topic_publisher.set(topic_publisher).is_err() {
-            log::warn!("TopicPublisher already set in NotificationService");
-        }
-    }
-
-    /// Get the topic publisher (if set)
-    fn topic_publisher(&self) -> Option<&Arc<TopicPublisherService>> {
-        self.topic_publisher.get()
     }
 
     /// Set the app context for leadership checks
@@ -113,7 +98,6 @@ impl NotificationService {
         let service = Arc::new(Self {
             registry,
             notify_tx,
-            topic_publisher: OnceCell::new(),
             app_context: OnceCell::new(),
         });
 
@@ -143,35 +127,9 @@ impl NotificationService {
                     }
                 }
 
-                // Step 1: Route to topic publisher if configured (CDC integration)
-                // Always check topics for both user and shared tables
-                if let Some(topic_publisher) = notify_service.topic_publisher() {
-                    // Check if any topics are subscribed to this table
-                    if topic_publisher.has_topics_for_table(&task.table_id) {
-                        // Map ChangeType to TopicOp
-                        let operation = match task.notification.change_type {
-                            ChangeType::Insert => TopicOp::Insert,
-                            ChangeType::Update => TopicOp::Update,
-                            ChangeType::Delete => TopicOp::Delete,
-                        };
-
-                        // Publish message directly with Row (no conversion overhead)
-                        if let Err(e) = topic_publisher.publish_message(
-                            &task.table_id,
-                            operation,
-                            &task.notification.row_data,
-                            task.user_id.as_ref(),
-                        ) {
-                            log::warn!(
-                                "Failed to publish to topics for table {}: {}",
-                                task.table_id,
-                                e
-                            );
-                        }
-                    }
-                }
-
-                // Step 2: Route to live query subscriptions (only if user_id is provided)
+                // Step 1: Route to live query subscriptions (only if user_id is provided)
+                // Topic publishing is now handled synchronously in table providers,
+                // so the notification worker only handles live query fan-out.
                 if let Some(ref user_id) = task.user_id {
                     let handles = notify_service
                         .registry
@@ -432,14 +390,9 @@ impl NotificationServiceTrait for NotificationService {
     type Notification = ChangeNotification;
 
     fn has_subscribers(&self, user_id: Option<&UserId>, table_id: &TableId) -> bool {
-        // Check topics first (applies to both user and shared tables)
-        if let Some(topic_publisher) = self.topic_publisher() {
-            if topic_publisher.has_topics_for_table(table_id) {
-                return true;
-            }
-        }
-
-        // Check live query subscriptions only if user_id is provided
+        // Only check live query subscriptions.
+        // Topic publishing is now handled synchronously in table providers via TopicPublisher trait,
+        // so we no longer need to check for topic subscribers here.
         if let Some(uid) = user_id {
             if self.registry.has_subscriptions(uid, table_id) {
                 return true;

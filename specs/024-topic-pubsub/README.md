@@ -2,6 +2,7 @@
 
 Date: 2026-01-28
 Owner: KalamDB
+Status: **Implemented** by [025-Publisher Crate Extraction](../025-publisher-crate/README.md) (Phase 1-4, 100% event coverage)
 
 ## Goals
 - Add durable, internal topics backed by RocksDB for change-event consumption.
