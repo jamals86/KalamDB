@@ -9,6 +9,10 @@ use std::sync::Arc;
 mod notification_service;
 pub use notification_service::NotificationService;
 
+// Topic publisher trait for synchronous CDC publishing from table providers
+mod topic_publisher;
+pub use topic_publisher::TopicPublisher;
+
 /// Interface for ManifestService implementations used by table providers.
 #[async_trait::async_trait]
 pub trait ManifestService: Send + Sync {

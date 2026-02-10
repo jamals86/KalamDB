@@ -15,7 +15,6 @@ pub mod manager;
 pub mod models; // Consolidated model definitions
 pub mod notification;
 pub mod subscription;
-pub mod topic_publisher;
 
 // Re-export types from kalamdb-commons (canonical source)
 pub use kalamdb_commons::models::{ConnectionId, LiveQueryId, TableId, UserId};
@@ -45,4 +44,6 @@ pub use helpers::{
 // Re-export from other modules
 pub use notification::NotificationService;
 pub use subscription::SubscriptionService;
-pub use topic_publisher::{TopicCacheStats, TopicPublisherService};
+
+// Re-export from kalamdb-publisher crate (extracted from former topic_publisher.rs)
+pub use kalamdb_publisher::{TopicCacheStats, TopicPublisherService};

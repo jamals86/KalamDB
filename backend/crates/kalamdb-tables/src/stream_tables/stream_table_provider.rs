@@ -183,24 +183,32 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
             user_id.as_str()
         );
 
-        // Fire live query notification (INSERT)
+        // Fire live query + topic notification (INSERT)
         let manager = self.core.services.notification_service.clone();
         let table_id = self.core.table_id().clone();
 
-        if manager.has_subscribers(Some(&user_id), &table_id) {
+        let has_topics = self.core.has_topic_routes(&table_id);
+        let has_live_subs = manager.has_subscribers(Some(&user_id), &table_id);
+        if has_topics || has_live_subs {
             let table_name = table_id.full_name();
 
             // Build complete row including system column (_seq)
             let row = Self::build_notification_row(&entity);
 
-            let notification = ChangeNotification::insert(table_id.clone(), row);
-            log::debug!(
-                "[StreamProvider] Notifying change: table={} type=INSERT user={} seq={}",
-                table_name,
-                user_id.as_str(),
-                seq_id.as_i64()
-            );
-            manager.notify_table_change(Some(user_id.clone()), table_id, notification);
+            if has_topics {
+                self.core.publish_to_topics(&table_id, kalamdb_commons::models::TopicOp::Insert, &row, Some(&user_id)).await;
+            }
+
+            if has_live_subs {
+                let notification = ChangeNotification::insert(table_id.clone(), row);
+                log::debug!(
+                    "[StreamProvider] Notifying change: table={} type=INSERT user={} seq={}",
+                    table_name,
+                    user_id.as_str(),
+                    seq_id.as_i64()
+                );
+                manager.notify_table_change(Some(user_id.clone()), table_id, notification);
+            }
         }
 
         Ok(row_key)

@@ -613,6 +613,7 @@ mod tests {
             Arc::clone(app_context.notification_service())
                 as Arc<dyn NotificationService<Notification = ChangeNotification>>,
             app_context.clone(),
+            Some(app_context.topic_publisher() as Arc<dyn kalamdb_system::TopicPublisher>),
         ));
         let arrow_schema = tables_schema_registry
             .get_arrow_schema(&table_id)
@@ -759,6 +760,7 @@ mod tests {
             Arc::clone(app_context.notification_service())
                 as Arc<dyn NotificationService<Notification = ChangeNotification>>,
             app_context.clone(),
+            Some(app_context.topic_publisher() as Arc<dyn kalamdb_system::TopicPublisher>),
         ));
         let arrow_schema = tables_schema_registry
             .get_arrow_schema(&table_id)
@@ -936,6 +938,7 @@ mod tests {
             Arc::clone(app_context.notification_service())
                 as Arc<dyn NotificationService<Notification = ChangeNotification>>,
             app_context.clone(),
+            Some(app_context.topic_publisher() as Arc<dyn kalamdb_system::TopicPublisher>),
         ));
         let arrow_schema = tables_schema_registry
             .get_arrow_schema(&table_id)

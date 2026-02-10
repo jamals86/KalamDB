@@ -337,6 +337,7 @@ mod tests {
             Arc::clone(app_ctx.notification_service())
                 as Arc<dyn NotificationService<Notification = ChangeNotification>>,
             app_ctx.clone(),
+            Some(app_ctx.topic_publisher() as Arc<dyn kalamdb_system::TopicPublisher>),
         ));
         let arrow_schema = tables_schema_registry
             .get_arrow_schema(&table_id)

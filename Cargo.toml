@@ -12,6 +12,7 @@ members = [
     "backend/crates/kalamdb-tables",
     "backend/crates/kalamdb-observability",
     "backend/crates/kalamdb-core",
+    "backend/crates/kalamdb-publisher",
     "backend/crates/kalamdb-sql",
     "backend/crates/kalamdb-store",
     "backend/crates/kalamdb-api",

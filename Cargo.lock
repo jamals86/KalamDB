@@ -3522,6 +3522,7 @@ dependencies = [
  "kalamdb-configs",
  "kalamdb-filestore",
  "kalamdb-observability",
+ "kalamdb-publisher",
  "kalamdb-raft",
  "kalamdb-session",
  "kalamdb-sharding",
@@ -3607,6 +3608,24 @@ dependencies = [
  "sysinfo",
  "thiserror 2.0.18",
  "tokio",
+]
+
+[[package]]
+name = "kalamdb-publisher"
+version = "0.3.0-alpha1"
+dependencies = [
+ "chrono",
+ "dashmap",
+ "datafusion",
+ "kalamdb-commons",
+ "kalamdb-store",
+ "kalamdb-system",
+ "kalamdb-tables",
+ "log",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

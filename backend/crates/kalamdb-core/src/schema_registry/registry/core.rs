@@ -334,6 +334,7 @@ impl SchemaRegistry {
             Arc::clone(app_ctx.notification_service())
                 as Arc<dyn NotificationService<Notification = ChangeNotification>>,
             app_ctx.clone(),
+            Some(app_ctx.topic_publisher() as Arc<dyn kalamdb_system::TopicPublisher>),
         ));
 
         // Get Arrow schema from registry (cached at core level)
