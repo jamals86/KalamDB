@@ -177,36 +177,60 @@ jobs:
         run: |
           curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C ${CARGO_HOME:-~/.cargo}/bin
 
-      - name: Run tests and generate badge
+      - name: Run tests (nextest)
         run: |
-          # Run tests with JSON output
-          NEXTEST_EXPERIMENTAL_LIBTEST_JSON=1 cargo nextest run \
-            --workspace \
-            --no-fail-fast \
-            --message-format libtest-json-plus > results.json 2>&1 || true
+          cargo nextest run --profile ci --workspace --no-fail-fast --failure-output immediate-final
+        continue-on-error: true
+
+      - name: Parse test results and generate badge
+        if: always()
+        run: |
+          JUNIT_FILE="target/nextest/ci/junit.xml"
           
-          # Parse JSON results to count tests
-          # Each suite event has "passed" and "failed" counts
-          # Example: {"type":"suite","event":"failed","passed":12,"failed":135,...}
-          PASSED=$(grep -o '"type":"suite".*"passed":[0-9]*' results.json | grep -o '"passed":[0-9]*' | grep -o '[0-9]*' | awk '{s+=$1} END {print s}')
-          FAILED=$(grep -o '"type":"suite".*"failed":[0-9]*' results.json | grep -o '"failed":[0-9]*' | grep -o '[0-9]*' | awk '{s+=$1} END {print s}')
-          
-          # Default to 0 if extraction failed
-          PASSED=${PASSED:-0}
-          FAILED=${FAILED:-0}
-          TOTAL=$((PASSED + FAILED))
-          
-          echo "Tests: $PASSED passed, $FAILED failed (total: $TOTAL)"
-          
-          # Skip badge generation if parsing failed (total is 0)
-          if [ "$TOTAL" -eq "0" ]; then
-            echo "Error: No tests found. Parsing likely failed."
-            echo "First 50 lines of results.json:"
-            head -50 results.json
+          if [ ! -f "$JUNIT_FILE" ]; then
+            echo "Error: JUnit XML report not found at $JUNIT_FILE"
             exit 1
           fi
           
-          # Determine badge color
+          # Parse JUnit XML using Python (available in ubuntu-latest)
+          eval $(python3 << 'PYTHON_SCRIPT'
+          import xml.etree.ElementTree as ET
+          import sys
+          
+          try:
+              tree = ET.parse("target/nextest/ci/junit.xml")
+              root = tree.getroot()
+              
+              total = 0
+              failures = 0
+              errors = 0
+              
+              # Sum up all testsuite elements
+              for testsuite in root.findall('.//testsuite'):
+                  total += int(testsuite.get('tests', 0))
+                  failures += int(testsuite.get('failures', 0))
+                  errors += int(testsuite.get('errors', 0))
+              
+              failed = failures + errors
+              passed = total - failed
+              
+              print(f"TOTAL={total}")
+              print(f"PASSED={passed}")
+              print(f"FAILED={failed}")
+              
+              if total == 0:
+                  print("Error: No tests found in JUnit report", file=sys.stderr)
+                  sys.exit(1)
+                  
+          except Exception as e:
+              print(f"Error parsing JUnit XML: {e}", file=sys.stderr)
+              sys.exit(1)
+          PYTHON_SCRIPT
+          )
+          
+          echo "Tests: $PASSED passed, $FAILED failed (total: $TOTAL)"
+          
+          # Determine badge color and message
           if [ "$FAILED" -eq "0" ]; then
             COLOR="brightgreen"
             MESSAGE="$PASSED/$TOTAL passed"
@@ -229,6 +253,19 @@ jobs:
           EOF
           
           cat .github/badges/tests.json
+          
+          # Fail the step if tests failed
+          if [ "$FAILED" -ne "0" ]; then
+            exit 1
+          fi
+
+      - name: Publish test report
+        if: always()
+        uses: dorny/test-reporter@v1
+        with:
+          name: nextest
+          path: target/nextest/ci/junit.xml
+          reporter: java-junit
 
       - name: Commit badge
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
