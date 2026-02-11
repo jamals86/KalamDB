@@ -8,12 +8,11 @@
 //! - CTEs with JOINs
 //! - CTEs with filtering
 
-use kalamdb_commons::{Role, UserId, UserName, NodeId};
+use kalamdb_commons::{Role, UserId, NodeId};
 use kalamdb_core::app_context::AppContext;
 use kalamdb_core::sql::context::{ExecutionContext, ExecutionResult};
 use kalamdb_core::sql::executor::SqlExecutor;
-use kalamdb_session::AuthSession;
-use kalamdb_store::RocksDBBackend;
+use kalamdb_store::{RocksDBBackend, RocksDbInit};
 use kalamdb_configs::ServerConfig;
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -24,8 +23,9 @@ async fn create_test_app_context() -> (Arc<AppContext>, TempDir) {
     let rocksdb_path = temp_dir.path().join("rocksdb");
     std::fs::create_dir_all(&rocksdb_path).expect("Failed to create rocksdb directory");
 
-    let db = rocksdb::DB::open_default(&rocksdb_path).expect("Failed to open RocksDB");
-    let backend = Arc::new(RocksDBBackend::new(Arc::new(db)));
+    let init = RocksDbInit::with_defaults(rocksdb_path.to_str().unwrap());
+    let db = init.open().expect("Failed to open RocksDB"); // Returns Arc<DB>
+    let backend = Arc::new(RocksDBBackend::new(db));
     let config = ServerConfig::default();
     let node_id = NodeId::new(1);
 
@@ -36,13 +36,18 @@ async fn create_test_app_context() -> (Arc<AppContext>, TempDir) {
         config,
     );
 
+    // Initialize Raft for single-node mode (required for DDL operations)
+    app_context.executor().start().await.expect("Failed to start Raft");
+    app_context.executor().initialize_cluster().await.expect("Failed to initialize Raft cluster");
+    app_context.wire_raft_appliers();
+
     (app_context, temp_dir)
 }
 
 /// Helper to create ExecutionContext with username
 fn create_exec_context_with_app_context(
     app_context: Arc<AppContext>,
-    username: &str,
+    _username: &str,
     user_id: &str,
     role: Role,
 ) -> ExecutionContext {
@@ -73,7 +78,7 @@ async fn setup_test_table(
     // Create a test table
     executor
         .execute(
-            "CREATE USER TABLE test_ns.employees (id INT, name TEXT, department TEXT, salary INT)",
+            "CREATE USER TABLE test_ns.employees (id INT PRIMARY KEY, name TEXT, department TEXT, salary INT)",
             exec_ctx,
             vec![],
         )
@@ -138,8 +143,8 @@ async fn test_simple_cte() {
     let exec_result = result.unwrap();
 
     match exec_result {
-        ExecutionResult::Query(batches) => {
-            let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+        ExecutionResult::Rows { batches, .. } => {
+            let total_rows: usize = batches.iter().map(|b: &arrow::array::RecordBatch| b.num_rows()).sum();
             assert_eq!(total_rows, 3, "Should return 3 high earners (Alice, Bob, Diana)");
         },
         _ => panic!("Expected Query result, got: {:?}", exec_result),
@@ -184,8 +189,8 @@ async fn test_cte_with_aggregation() {
     let exec_result = result.unwrap();
 
     match exec_result {
-        ExecutionResult::Query(batches) => {
-            let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+        ExecutionResult::Rows { batches, .. } => {
+            let total_rows: usize = batches.iter().map(|b: &arrow::array::RecordBatch| b.num_rows()).sum();
             assert_eq!(total_rows, 3, "Should return 3 departments");
         },
         _ => panic!("Expected Query result, got: {:?}", exec_result),
@@ -240,8 +245,8 @@ async fn test_multiple_ctes() {
     let exec_result = result.unwrap();
 
     match exec_result {
-        ExecutionResult::Query(batches) => {
-            let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+        ExecutionResult::Rows { batches, .. } => {
+            let total_rows: usize = batches.iter().map(|b: &arrow::array::RecordBatch| b.num_rows()).sum();
             assert_eq!(total_rows, 4, "Should return 4 employees (2 Engineering + 2 Sales)");
         },
         _ => panic!("Expected Query result, got: {:?}", exec_result),
@@ -287,8 +292,8 @@ async fn test_chained_ctes() {
     let exec_result = result.unwrap();
 
     match exec_result {
-        ExecutionResult::Query(batches) => {
-            let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+        ExecutionResult::Rows { batches, .. } => {
+            let total_rows: usize = batches.iter().map(|b: &arrow::array::RecordBatch| b.num_rows()).sum();
             assert_eq!(total_rows, 3, "Should return 3 high earners");
         },
         _ => panic!("Expected Query result, got: {:?}", exec_result),
@@ -298,6 +303,7 @@ async fn test_chained_ctes() {
 // ============================================================================
 // CTE WITH FILTERING AND ORDERING TESTS
 // ============================================================================
+
 
 #[tokio::test]
 #[ntest::timeout(60000)]
@@ -336,8 +342,8 @@ async fn test_cte_with_where_clause() {
     let exec_result = result.unwrap();
 
     match exec_result {
-        ExecutionResult::Query(batches) => {
-            let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+        ExecutionResult::Rows { batches, .. } => {
+            let total_rows: usize = batches.iter().map(|b: &arrow::array::RecordBatch| b.num_rows()).sum();
             assert_eq!(total_rows, 3, "Should return 3 employees (Alice, Bob, Diana)");
         },
         _ => panic!("Expected Query result, got: {:?}", exec_result),
@@ -379,8 +385,8 @@ async fn test_cte_with_limit() {
     let exec_result = result.unwrap();
 
     match exec_result {
-        ExecutionResult::Query(batches) => {
-            let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+        ExecutionResult::Rows { batches, .. } => {
+            let total_rows: usize = batches.iter().map(|b: &arrow::array::RecordBatch| b.num_rows()).sum();
             assert_eq!(total_rows, 2, "Should return top 2 earners");
         },
         _ => panic!("Expected Query result, got: {:?}", exec_result),
@@ -390,6 +396,7 @@ async fn test_cte_with_limit() {
 // ============================================================================
 // ERROR HANDLING TESTS
 // ============================================================================
+
 
 #[tokio::test]
 #[ntest::timeout(60000)]
