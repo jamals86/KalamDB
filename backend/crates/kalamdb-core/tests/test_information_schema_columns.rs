@@ -4,7 +4,7 @@
 //! registered and can be queried via SQL.
 
 use kalamdb_core::app_context::AppContext;
-use kalamdb_store::RocksDBBackend;
+use kalamdb_store::{RocksDBBackend, RocksDbInit};
 use kalamdb_configs::ServerConfig;
 use kalamdb_commons::NodeId;
 use std::sync::Arc;
@@ -16,7 +16,8 @@ async fn create_test_app_context() -> (Arc<AppContext>, TempDir) {
     let rocksdb_path = temp_dir.path().join("rocksdb");
     std::fs::create_dir_all(&rocksdb_path).expect("Failed to create rocksdb directory");
 
-    let db = rocksdb::DB::open_default(&rocksdb_path).expect("Failed to open RocksDB");
+    let init = RocksDbInit::with_defaults(rocksdb_path.to_str().unwrap());
+    let db = init.open().expect("Failed to open RocksDB"); // Returns Arc<DB>
     let backend = Arc::new(RocksDBBackend::new(db));
     let config = ServerConfig::default();
     let node_id = NodeId::new(1);
@@ -27,6 +28,11 @@ async fn create_test_app_context() -> (Arc<AppContext>, TempDir) {
         rocksdb_path.to_string_lossy().into_owned(),
         config,
     );
+
+    // Initialize Raft for single-node mode (required for DDL operations)
+    app_context.executor().start().await.expect("Failed to start Raft");
+    app_context.executor().initialize_cluster().await.expect("Failed to initialize Raft cluster");
+    app_context.wire_raft_appliers();
 
     (app_context, temp_dir)
 }

@@ -277,15 +277,15 @@ async fn test_cdc_insert_to_consume_workflow() {
 
     assert!(result.status == ResponseStatus::Success, "CONSUME failed: {:?}", result.error);
 
-    // 6. Verify we got results (schema: topic, partition, offset, key, payload, timestamp_ms)
+    // 6. Verify we got results (schema: topic, partition, offset, key, payload, timestamp_ms, op)
     assert!(!result.results.is_empty(), "CONSUME should return batches");
 
     if let Some(first_batch) = result.results.first() {
-        // Check we have the expected 6 columns from topic_message_schema
+        // Check we have the expected 7 columns from topic_message_schema
         assert_eq!(
             first_batch.schema.len(),
-            6,
-            "Should have 6 schema fields (topic, partition, offset, key, payload, timestamp_ms)"
+            7,
+            "Should have 7 schema fields (topic, partition, offset, key, payload, timestamp_ms, op)"
         );
 
         // Verify column names match schema
@@ -295,6 +295,7 @@ async fn test_cdc_insert_to_consume_workflow() {
         assert_eq!(first_batch.schema[3].name, "key");
         assert_eq!(first_batch.schema[4].name, "payload");
         assert_eq!(first_batch.schema[5].name, "timestamp_ms");
+        assert_eq!(first_batch.schema[6].name, "op");
 
         // Should have at least 2 rows (2 INSERTs)
         assert!(
@@ -329,8 +330,8 @@ async fn test_consume_schema_structure() {
     if !result.results.is_empty() {
         let batch = &result.results[0];
 
-        // Must have exactly 6 schema fields
-        assert_eq!(batch.schema.len(), 6, "Topic message schema must have 6 fields");
+        // Must have exactly 7 schema fields
+        assert_eq!(batch.schema.len(), 7, "Topic message schema must have 7 fields");
 
         // Verify field names and order
         let expected_fields = vec![
@@ -340,6 +341,7 @@ async fn test_consume_schema_structure() {
             "key",
             "payload",
             "timestamp_ms",
+            "op",
         ];
         for (i, expected_name) in expected_fields.iter().enumerate() {
             assert_eq!(

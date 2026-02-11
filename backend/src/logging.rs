@@ -17,7 +17,9 @@ use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::trace::SdkTracerProvider;
 use opentelemetry_sdk::Resource;
 use tracing_subscriber::filter::filter_fn;
-use tracing_subscriber::fmt::format::FmtSpan;
+use tracing_subscriber::fmt::format::{FmtSpan, Format};
+use tracing_subscriber::fmt::time::SystemTime;
+use tracing_subscriber::fmt;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Layer};
@@ -143,7 +145,10 @@ pub fn init_logging(
             tracing_subscriber::fmt::layer()
                 .with_ansi(true)
                 .with_target(true)
+                .with_level(true)
                 .with_thread_names(true)
+                .with_thread_ids(false)
+                .compact()
                 .with_span_events(FmtSpan::NONE) // Change to CLOSE to show span timing
                 .with_filter(build_env_filter(level, target_levels)?),
         )
@@ -169,7 +174,10 @@ pub fn init_logging(
             .with_ansi(false)
             .with_writer(log_file)
             .with_target(true)
+            .with_level(true)
             .with_thread_names(true)
+            .with_thread_ids(false)
+            .compact()
             .with_span_events(FmtSpan::NONE) // Change to CLOSE to show span timing
             .with_filter(build_env_filter(level, target_levels)?);
         layer.boxed()
