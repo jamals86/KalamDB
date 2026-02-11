@@ -17,7 +17,7 @@ async fn create_test_app_context() -> (Arc<AppContext>, TempDir) {
     std::fs::create_dir_all(&rocksdb_path).expect("Failed to create rocksdb directory");
 
     let db = rocksdb::DB::open_default(&rocksdb_path).expect("Failed to open RocksDB");
-    let backend = Arc::new(RocksDBBackend::new(db));
+    let backend = Arc::new(RocksDBBackend::new(Arc::new(db)));
     let config = ServerConfig::default();
     let node_id = NodeId::new(1);
 
