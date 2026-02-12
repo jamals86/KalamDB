@@ -111,12 +111,19 @@ impl FromArrowType for KalamDataType {
             ArrowDataType::Utf8 | ArrowDataType::LargeUtf8 => KalamDataType::Text,
             ArrowDataType::Timestamp(TimeUnit::Microsecond, None) => KalamDataType::Timestamp,
             ArrowDataType::Timestamp(TimeUnit::Millisecond, None) => KalamDataType::Timestamp, // accept legacy millisecond
+            ArrowDataType::Timestamp(TimeUnit::Nanosecond, None) => KalamDataType::Timestamp,
             ArrowDataType::Timestamp(TimeUnit::Microsecond, Some(_)) => KalamDataType::DateTime,
             ArrowDataType::Timestamp(TimeUnit::Millisecond, Some(_)) => KalamDataType::DateTime,
+            ArrowDataType::Timestamp(TimeUnit::Nanosecond, Some(_)) => KalamDataType::DateTime,
             ArrowDataType::Date32 => KalamDataType::Date,
+            ArrowDataType::Date64 => KalamDataType::Date,
+            ArrowDataType::Time32(TimeUnit::Second) => KalamDataType::Time,
+            ArrowDataType::Time32(TimeUnit::Millisecond) => KalamDataType::Time,
             ArrowDataType::Time64(TimeUnit::Microsecond) => KalamDataType::Time,
+            ArrowDataType::Time64(TimeUnit::Nanosecond) => KalamDataType::Time,
             ArrowDataType::Binary | ArrowDataType::LargeBinary => KalamDataType::Bytes,
             ArrowDataType::FixedSizeBinary(16) => KalamDataType::Uuid,
+            ArrowDataType::FixedSizeBinary(_) => KalamDataType::Bytes,
             ArrowDataType::Decimal128(precision, scale) => {
                 if *precision < 1 || *precision > 38 {
                     return Err(ArrowConversionError::ConversionFailed(format!(

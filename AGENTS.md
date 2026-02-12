@@ -45,6 +45,7 @@ use kalamdb_commons::models::UserId;
 
 13. **Smoke Tests Priority**: Always ensure smoke tests are passing before committing changes. If smoke tests fail, fix them or the underlying backend issue immediately. Run `cargo test --test smoke` in the `cli` directory to verify.
 14. **Tracing Table Field Convention**: In spans/events, log `table_id` (format `namespace.table`) instead of separate `table_namespace` and `table_name` fields.
+15. **No SQL Rewrite in Hot Paths**: Do not add SQL/DML/SELECT rewrite passes in execution hot paths. Prefer type-safe coercion at typed boundaries (parameter binding, scalar coercion, provider write path, DataFusion-native casts/UDFs explicitly invoked by query authors) to avoid extra parse/transform overhead.
 
 > **⚠️ IMPORTANT**: Smoke tests require a running KalamDB server! Start the server first with `cargo run` in the `backend` directory before running smoke tests. The tests will fail if no server is running.
 

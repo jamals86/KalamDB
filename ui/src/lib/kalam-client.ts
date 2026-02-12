@@ -164,13 +164,24 @@ export async function executeQuery(sql: string): Promise<QueryResponse> {
     await initializeClient(currentToken);
   }
   
-  console.log('[kalam-client] Executing query via SDK:', sql.substring(0, 50) + (sql.length > 50 ? '...' : ''));
+  console.log("[kalam-client] Executing query via SDK:", sql.substring(0, 120) + (sql.length > 120 ? "..." : ""));
   
   // Queue the query to prevent concurrent WASM access
   return queueQuery(async () => {
     try {
       const response = await client!.query(sql);
-      console.log('[kalam-client] Query response:', response);
+      if (response.status === "error") {
+        console.warn("[kalam-client] Query failed:", response.error?.message ?? "Unknown error");
+      } else {
+        const first = response.results?.[0];
+        const resultCount = response.results?.length ?? 0;
+        const rowCount = first?.row_count ?? first?.rows?.length ?? 0;
+        const columnCount = first?.schema?.length ?? 0;
+        console.log(
+          "[kalam-client] Query success:",
+          `${resultCount} result set(s), ${rowCount} row(s), ${columnCount} column(s), took ${response.took ?? 0}ms`,
+        );
+      }
       return response;
     } catch (err) {
       console.error('[kalam-client] Query execution error:', err);

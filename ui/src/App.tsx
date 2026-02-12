@@ -6,7 +6,7 @@ import SetupWizard from "./pages/SetupWizard";
 import Dashboard from "./pages/Dashboard";
 import SqlStudio from "./pages/SqlStudio";
 import Users from "./pages/Users";
-import Namespaces from "./pages/Namespaces";
+import Jobs from "./pages/Jobs";
 import LiveQueries from "./pages/LiveQueries";
 import Logging from "./pages/Logging";
 import Settings from "./pages/Settings";
@@ -35,7 +35,7 @@ function App() {
               <Route path="dashboard" element={<Dashboard />} />
               <Route path="sql" element={<SqlStudio />} />
               <Route path="users" element={<Users />} />
-              <Route path="namespaces" element={<Namespaces />} />
+              <Route path="jobs" element={<Jobs />} />
               <Route path="live-queries" element={<LiveQueries />} />
               <Route path="logging" element={<Logging />} />
               <Route path="logging/:tab" element={<Logging />} />

@@ -103,6 +103,14 @@ Protected shell includes:
 Default post-login route:
 - Informative reliability dashboard
 
+Header right-side requirements:
+- Avatar shows fallback initials:
+  - First + last name initials when available
+  - Otherwise first character of username
+- Avatar menu actions: `Profile`, `Settings`, `Logout`
+- Notifications bell appears left of avatar
+- Notifications dropdown must be modern and detailed (title/body/context/time/status), not a minimal list
+
 ## 5.2 Dashboard (Reliability-First)
 
 Top layer:
@@ -165,6 +173,9 @@ Three-pane workspace:
   - Create table and alter table workflows
   - Column add/edit/remove operations
   - Table metadata and DDL helpers
+  - Inspector with two tabs: `Details` and `History`
+    - `Details`: schema, columns, primary keys, table options, current version
+    - `History`: full version history in read-only mode
 
 ## 7.2 Tabs and Favorites
 
@@ -172,6 +183,10 @@ Three-pane workspace:
 - Dirty state indicators
 - Duplicate/close/reopen behavior
 - Favorites + recents + pinned templates
+- Data.world-inspired query tab UX:
+  - Query title displayed on the left side of each tab
+  - Top query actions include `Save` and `Run query`
+  - Overflow menu (`...`) includes `Rename`, `Save a copy`, `Delete`
 
 ## 7.3 Live Query Support
 
@@ -287,3 +302,129 @@ Phase 4:
 - Shared query collections and collaboration model
 - Advanced observability dashboards and custom saved views
 - Billing and usage controls for cloud productization
+
+## 14. High-Fidelity Screen Spec (shadcn)
+
+This section defines implementation-ready visual and interaction specs for the first two flagship screens.
+
+### 14.1 Global Shell Spec
+
+- Canvas:
+  - Desktop minimum width target: `1280px`
+  - Content max width: full-bleed in app shell; cards use internal padding
+- Spacing scale:
+  - Base unit: `4px`
+  - Primary spacing: `8 / 12 / 16 / 20 / 24`
+- Surface style:
+  - Page background: muted neutral
+  - Cards/panels: elevated but low-contrast borders
+  - Border radius: `10px` for cards, `8px` for controls
+- Typography:
+  - Compact operator density
+  - Clear emphasis hierarchy: page title > section title > metadata
+
+Header right cluster:
+- Order: `NotificationsBell` then `UserAvatarMenu`
+- Avatar fallback logic:
+  - if `first_name && last_name`: show initials (e.g. `AJ`)
+  - else: first character of `username`
+- Avatar dropdown menu items:
+  - `Profile`
+  - `Settings`
+  - `Logout`
+- Notifications dropdown:
+  - rich rows: title, body snippet, context label, relative timestamp, unread marker
+  - supports mark-read and mark-all-read
+  - includes connection status badge (`Live`, `Reconnecting`, `Offline`)
+
+### 14.2 Dashboard Screen Spec
+
+Layout grid:
+- Row 1: `HealthStrip` (full width, compact status pills)
+- Row 2: two-column split
+  - Left: `CriticalWorkQueueCard`
+  - Right: `PressureIndicatorsCard`
+- Row 3: `QuickActionsCard` (full width, button group)
+- Row 4: two-column split
+  - Left: `ErrorRetryTrendsCard`
+  - Right: `IncidentTimelineCard`
+- Row 5: `TopNoisyEntitiesTableCard` (full width)
+
+shadcn composition:
+- `Card`, `Badge`, `Button`, `Tooltip`, `DropdownMenu`, `Separator`, `Skeleton`, `Table`
+
+State behavior:
+- Loading: skeleton blocks per card
+- Degraded partial data: show per-card warning ribbon, do not block full page
+- Actionability:
+  - each high-severity metric has adjacent action (open logs / open jobs / open SQL template)
+
+### 14.3 SQL Studio Screen Spec
+
+Primary frame:
+- Left rail: explorer + favorites (collapsible sections)
+- Center: tabbed query workspace and results
+- Right slide inspector: schema/details/history
+
+Center top tab bar (data.world-inspired):
+- Each tab shows query icon + query title on left
+- Unsaved indicator dot for dirty tabs
+- Active tab has stronger contrast and bottom accent line
+- Tab close action at right edge
+
+Editor action row:
+- Left: current query title
+- Right: `Save` button, `Run query` primary button, overflow `...` menu
+- Overflow menu items:
+  - `Rename`
+  - `Save a copy`
+  - `Delete`
+
+Right slide inspector:
+- Triggered by table selection/context action
+- Fixed width panel with top tabs:
+  - `Details`: schema fields, primary key, options, current version
+  - `History`: full version timeline, read-only
+
+Results and editing:
+- Datatype-aware column headers and cell renderers
+- Multi-row selection
+- Cell context menu: view/copy/edit/delete row
+- Pending changes bar with `Commit` and `Discard`
+- Live mode row change highlights
+- Conflict banner when realtime updates touch uncommitted edited rows
+
+### 14.4 Mobile/Small View Rules
+
+- Below `1024px`:
+  - right inspector becomes drawer
+  - explorer/favorites collapse to switchable sheet
+  - tab bar becomes horizontal scroll with overflow menu
+- Header keeps notification + avatar actions intact via compact icon buttons
+
+## 15. UI Component Mapping (Required)
+
+Required shadcn primitives by feature:
+- Shell: `Avatar`, `DropdownMenu`, `Command`, `Sheet`, `Tooltip`
+- Dashboard: `Card`, `Badge`, `Progress`, `Table`, `Skeleton`
+- SQL Studio: `Tabs`, `ScrollArea`, `DropdownMenu`, `ContextMenu`, `Dialog`, `Sheet`, `Separator`, `Button`, `Input`
+- Notifications: `Popover` or `DropdownMenu`, `Badge`, `ScrollArea`, `Button`
+
+Custom composed components:
+- `AppHeaderRightCluster`
+- `NotificationsPanel`
+- `QueryTabsBar`
+- `SqlInspectorPanel`
+- `PendingChangesToolbar`
+- `VersionHistoryList`
+
+## 16. UX Acceptance Checklist (Must Pass)
+
+- Header shows bell + avatar with required fallback initials logic.
+- Avatar menu contains `Profile`, `Settings`, `Logout`.
+- Notifications dropdown is detailed (not plain text list) and includes status + timestamps.
+- SQL tab row matches required interactions (`Save`, `Run query`, `...` with `Rename/Save a copy/Delete`).
+- SQL right inspector has `Details` and `History` tabs.
+- History tab is read-only and displays version entries clearly.
+- Results grid supports multi-select, cell context actions, and commit/discard flow.
+- Live update conflicts surface explicit warning without silent overwrites.

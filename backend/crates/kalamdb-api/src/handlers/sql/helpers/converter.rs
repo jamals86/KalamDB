@@ -1,7 +1,9 @@
 //! Arrow to JSON conversion helpers
 
 use arrow::record_batch::RecordBatch;
-use kalamdb_commons::conversions::read_kalam_data_type_metadata;
+use kalamdb_commons::conversions::{
+    read_kalam_data_type_metadata, KALAM_DATA_TYPE_METADATA_KEY,
+};
 use kalamdb_commons::models::datatypes::{FromArrowType, KalamDataType};
 use kalamdb_commons::models::Role;
 use kalamdb_commons::schemas::SchemaField;
@@ -32,9 +34,31 @@ pub fn record_batch_to_query_result(
         .iter()
         .enumerate()
         .map(|(index, field)| {
-            let kalam_type = read_kalam_data_type_metadata(field)
-                .or_else(|| KalamDataType::from_arrow_type(field.data_type()).ok())
-                .unwrap_or(KalamDataType::Text);
+            let kalam_type = if let Some(metadata_type) = read_kalam_data_type_metadata(field) {
+                metadata_type
+            } else {
+                if field.metadata().contains_key(KALAM_DATA_TYPE_METADATA_KEY) {
+                    log::warn!(
+                        "Invalid '{}' metadata for column '{}'; falling back to Arrow type inference ({:?})",
+                        KALAM_DATA_TYPE_METADATA_KEY,
+                        field.name(),
+                        field.data_type()
+                    );
+                }
+
+                match KalamDataType::from_arrow_type(field.data_type()) {
+                    Ok(inferred_type) => inferred_type,
+                    Err(err) => {
+                        log::warn!(
+                            "Unsupported Arrow type {:?} for column '{}': {}. Defaulting schema type to Text",
+                            field.data_type(),
+                            field.name(),
+                            err
+                        );
+                        KalamDataType::Text
+                    },
+                }
+            };
 
             SchemaField::new(field.name().clone(), kalam_type, index)
         })

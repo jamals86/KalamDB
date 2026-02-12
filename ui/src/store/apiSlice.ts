@@ -15,7 +15,7 @@ const sqlBaseQuery = async ({ sql }: { sql: string }) => {
 export const apiSlice = createApi({
   reducerPath: "api",
   baseQuery: sqlBaseQuery,
-  tagTypes: ["Settings", "Users", "Jobs", "Namespaces", "Storages"],
+  tagTypes: ["Settings", "Users", "Jobs", "Storages"],
   endpoints: (builder) => ({
     getSettings: builder.query<any[], void>({
       query: () => ({

@@ -255,17 +255,21 @@ async fn test_scenario_09_drop_column() -> anyhow::Result<()> {
 
         // Verify insert referencing dropped column fails
         let resp = client
-                    .execute_query(
-                        &format!(
-                            "INSERT INTO {}.data (id, name, old_column, value) VALUES (100, 'new', 'should_fail', 100)",
-                            ns
-                        ), None,
-                        None,
-                        None,
-                    )
-                    .await?;
+            .execute_query(
+                &format!(
+                    "INSERT INTO {}.data (id, name, old_column, value) VALUES (100, 'new', 'should_fail', 100)",
+                    ns
+                ),
+                None,
+                None,
+                None,
+            )
+            .await;
         // This should fail or ignore the dropped column
-        println!("Insert with dropped column result: {}", resp.success());
+        match resp {
+            Ok(resp) => println!("Insert with dropped column result: {}", resp.success()),
+            Err(err) => println!("Insert with dropped column failed as expected: {}", err),
+        }
     } else {
         println!("DROP COLUMN not supported: {:?}", drop_resp.error);
     }
