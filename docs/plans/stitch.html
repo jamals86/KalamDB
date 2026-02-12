@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>SQL Studio Workspace V2 - KalamDB</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#137fec",
+                        "primary-dark": "#0f6cbd",
+                        "background-light": "#f6f7f8",
+                        "background-dark": "#101922",
+                        "surface-dark": "#151e29",
+                        "surface-darker": "#0d141c",
+                        "border-dark": "#1e293b",
+                    },
+                    fontFamily: {
+                        "display": ["Inter", "sans-serif"],
+                        "mono": ["JetBrains Mono", "monospace"],
+                    },
+                    borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+                },
+            },
+        }
+    </script>
+<style>
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #101922; 
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #334155; 
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #475569; 
+        }
+        .sql-keyword { color: #c084fc; }
+        .sql-function { color: #60a5fa; }
+        .sql-string { color: #a3e635; }
+        .sql-number { color: #facc15; }
+        .sql-comment { color: #64748b; font-style: italic; }.toggle-checkbox:checked {
+            right: 0;
+            border-color: #10b981;
+        }
+        .toggle-checkbox:checked + .toggle-label {
+            background-color: #10b981;
+        }
+    </style>
+</head>
+<body class="bg-background-light dark:bg-background-dark text-slate-800 dark:text-slate-300 font-display h-screen flex flex-col overflow-hidden w-full max-w-[2560px] mx-auto">
+<header class="h-14 bg-white dark:bg-surface-dark border-b border-gray-200 dark:border-border-dark flex items-center justify-between px-4 shrink-0 z-20">
+<div class="flex items-center gap-4">
+<div class="flex items-center gap-2 text-primary font-bold text-xl tracking-tight">
+<span class="material-icons">storage</span>
+                KalamDB
+            </div>
+</div>
+<div class="flex items-center gap-3">
+<div class="hidden md:flex items-center gap-2 bg-gray-100 dark:bg-surface-darker px-3 py-1.5 rounded border border-gray-200 dark:border-border-dark w-96">
+<span class="material-icons text-gray-400 text-sm">search</span>
+<input class="bg-transparent border-none text-sm w-full focus:ring-0 p-0 text-slate-700 dark:text-slate-200 placeholder-slate-400" placeholder="Search global objects..." type="text"/>
+<span class="text-xs text-gray-500 font-mono">⌘K</span>
+</div>
+<button class="p-1.5 rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-slate-500 dark:text-slate-400">
+<span class="material-icons">notifications</span>
+</button>
+<div class="h-8 w-8 rounded bg-gradient-to-tr from-primary to-purple-500 flex items-center justify-center text-white text-xs font-bold ring-2 ring-white dark:ring-surface-dark" title="User Profile">
+                JS
+            </div>
+</div>
+</header>
+<div class="flex-1 flex overflow-hidden">
+<aside class="w-12 bg-white dark:bg-surface-dark border-r border-gray-200 dark:border-border-dark flex flex-col items-center py-4 shrink-0 z-10">
+<div class="flex flex-col gap-4 w-full items-center flex-1">
+<button class="w-8 h-8 flex items-center justify-center rounded text-slate-400 hover:text-primary hover:bg-primary/10 transition-colors relative group" title="Dashboard">
+<span class="material-icons text-[20px]">dashboard</span>
+<span class="absolute left-10 bg-gray-800 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-50 pointer-events-none">Dashboard</span>
+</button>
+<button class="w-8 h-8 flex items-center justify-center rounded bg-primary/10 text-primary transition-colors relative group" title="SQL Studio">
+<span class="material-icons text-[20px]">code</span>
+<span class="absolute left-10 bg-gray-800 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-50 pointer-events-none">SQL Studio</span>
+</button>
+<button class="w-8 h-8 flex items-center justify-center rounded text-slate-400 hover:text-primary hover:bg-primary/10 transition-colors relative group" title="Logs">
+<span class="material-icons text-[20px]">description</span>
+<span class="absolute left-10 bg-gray-800 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-50 pointer-events-none">Logs</span>
+</button>
+<button class="w-8 h-8 flex items-center justify-center rounded text-slate-400 hover:text-primary hover:bg-primary/10 transition-colors relative group" title="Metrics">
+<span class="material-icons text-[20px]">bar_chart</span>
+<span class="absolute left-10 bg-gray-800 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-50 pointer-events-none">Metrics</span>
+</button>
+</div>
+<div class="mt-auto w-full flex flex-col items-center gap-2">
+<button class="w-8 h-8 flex items-center justify-center rounded text-slate-400 hover:text-primary hover:bg-primary/10 transition-colors relative group" title="Settings">
+<span class="material-icons text-[20px]">settings</span>
+<span class="absolute left-10 bg-gray-800 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-50 pointer-events-none">Settings</span>
+</button>
+<div class="h-px w-6 bg-gray-200 dark:bg-border-dark my-1"></div>
+<button class="w-8 h-8 flex items-center justify-center rounded text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors" title="Expand Menu">
+<span class="material-icons text-[20px]">keyboard_double_arrow_right</span>
+</button>
+</div>
+</aside>
+<aside class="w-72 bg-gray-50 dark:bg-surface-dark border-r border-gray-200 dark:border-border-dark flex flex-col shrink-0">
+<div class="p-3 border-b border-gray-200 dark:border-border-dark flex flex-col gap-2">
+<div class="flex items-center justify-between">
+<span class="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Explorer</span>
+<button class="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded text-slate-400">
+<span class="material-icons text-sm">filter_list</span>
+</button>
+</div>
+<div class="relative">
+<span class="material-icons text-gray-400 text-sm absolute left-2 top-1.5">search</span>
+<input class="w-full bg-white dark:bg-surface-darker border border-gray-200 dark:border-border-dark rounded text-xs py-1.5 pl-7 pr-2 focus:ring-1 focus:ring-primary focus:border-primary text-slate-700 dark:text-slate-300" placeholder="Search tables..." type="text"/>
+</div>
+</div>
+<div class="flex-1 overflow-y-auto p-2 space-y-4">
+<div>
+<div class="flex items-center gap-1 px-2 py-1 text-xs font-medium text-slate-500 mb-1 group cursor-pointer">
+<span class="material-icons text-[14px] transition-transform group-hover:text-primary">keyboard_arrow_down</span>
+<span>FAVORITES</span>
+</div>
+<ul class="space-y-0.5">
+<li>
+<button class="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-slate-700 dark:text-slate-300 hover:bg-primary/10 hover:text-primary rounded group">
+<span class="material-icons text-[16px] text-yellow-500">star</span>
+<span class="truncate">monthly_revenue_v2</span>
+</button>
+</li>
+<li>
+<button class="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-slate-700 dark:text-slate-300 hover:bg-primary/10 hover:text-primary rounded group">
+<span class="material-icons text-[16px] text-yellow-500">star</span>
+<span class="truncate">active_users_7d</span>
+</button>
+</li>
+</ul>
+</div>
+<div>
+<div class="flex items-center gap-1 px-2 py-1 text-xs font-medium text-slate-500 mb-1 group cursor-pointer">
+<span class="material-icons text-[14px] transition-transform group-hover:text-primary">keyboard_arrow_down</span>
+<span>prod_analytics_db</span>
+</div>
+<ul class="space-y-0.5 pl-2">
+<li>
+<div class="flex items-center gap-1.5 px-2 py-1.5 text-sm text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white cursor-pointer select-none">
+<span class="material-icons text-[16px] text-slate-500">folder</span>
+<span class="truncate">public</span>
+</div>
+</li>
+<li>
+<div class="flex items-center gap-1.5 px-2 py-1.5 text-sm text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white cursor-pointer select-none">
+<span class="material-icons text-[16px] text-slate-500">folder_open</span>
+<span class="truncate font-medium text-primary">transactions</span>
+</div>
+<ul class="pl-5 space-y-0.5 mt-0.5 border-l border-gray-200 dark:border-gray-700 ml-3">
+<li>
+<div class="group flex items-center justify-between px-2 py-1.5 text-sm bg-primary/10 text-primary rounded cursor-pointer">
+<div class="flex items-center gap-2 overflow-hidden">
+<span class="material-icons text-[14px]">table_chart</span>
+<span class="truncate">orders_main</span>
+</div>
+<span class="material-icons text-[14px] opacity-0 group-hover:opacity-100 text-slate-400 hover:text-primary">more_horiz</span>
+</div>
+<ul class="pl-4 mt-1 space-y-1">
+<li class="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-500 px-2 py-0.5">
+<span class="w-3 h-3 rounded-full bg-primary/20 text-primary flex items-center justify-center text-[8px] font-mono font-bold">K</span>
+<span class="truncate">order_id</span>
+<span class="text-[10px] text-slate-600 dark:text-slate-600 ml-auto font-mono">uuid</span>
+</li>
+<li class="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-500 px-2 py-0.5">
+<span class="material-icons text-[10px]">grid_3x3</span>
+<span class="truncate">amount</span>
+<span class="text-[10px] text-slate-600 dark:text-slate-600 ml-auto font-mono">numeric</span>
+</li>
+<li class="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-500 px-2 py-0.5">
+<span class="material-icons text-[10px]">text_fields</span>
+<span class="truncate">status</span>
+<span class="text-[10px] text-slate-600 dark:text-slate-600 ml-auto font-mono">varchar</span>
+</li>
+</ul>
+</li>
+<li>
+<div class="group flex items-center justify-between px-2 py-1.5 text-sm text-slate-600 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded cursor-pointer transition-colors">
+<div class="flex items-center gap-2 overflow-hidden">
+<span class="material-icons text-[14px]">table_chart</span>
+<span class="truncate">refunds</span>
+</div>
+</div>
+</li>
+<li>
+<div class="group flex items-center justify-between px-2 py-1.5 text-sm text-slate-600 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded cursor-pointer transition-colors">
+<div class="flex items-center gap-2 overflow-hidden">
+<span class="material-icons text-[14px] text-emerald-500">visibility</span>
+<span class="truncate">v_daily_summary</span>
+</div>
+</div>
+</li>
+</ul>
+</li>
+</ul>
+</div>
+</div>
+<div class="p-3 border-t border-gray-200 dark:border-border-dark bg-gray-100 dark:bg-surface-darker">
+<div class="flex items-center gap-2 text-xs">
+<span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+<span class="text-slate-600 dark:text-slate-400 font-medium">Connected</span>
+<span class="text-slate-400 ml-auto">14ms</span>
+</div>
+</div>
+</aside>
+<main class="flex-1 flex flex-col min-w-0 bg-white dark:bg-background-dark relative">
+<div class="flex items-end bg-gray-50 dark:bg-surface-dark border-b border-gray-200 dark:border-border-dark pt-1">
+<div class="flex-1 flex overflow-x-auto no-scrollbar">
+<div class="group flex items-center gap-2 px-4 py-2 bg-white dark:bg-background-dark border-t-2 border-primary text-sm font-medium text-slate-800 dark:text-slate-200 border-r border-gray-200 dark:border-border-dark min-w-[160px] cursor-default relative">
+<span class="material-icons text-[16px] text-primary">code</span>
+<span class="truncate">Q: High Value Orders</span>
+<button class="ml-auto opacity-0 group-hover:opacity-100 hover:bg-gray-100 dark:hover:bg-gray-700 rounded p-0.5 transition-all">
+<span class="material-icons text-[14px] text-slate-500">close</span>
+</button>
+</div>
+<div class="group flex items-center gap-2 px-4 py-2 border-t-2 border-transparent text-sm font-medium text-slate-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-gray-800/50 border-r border-gray-200 dark:border-border-dark min-w-[160px] cursor-pointer transition-colors">
+<span class="material-icons text-[16px]">code</span>
+<span class="truncate">User Cohorts</span>
+<button class="ml-auto opacity-0 group-hover:opacity-100 hover:bg-gray-200 dark:hover:bg-gray-600 rounded p-0.5">
+<span class="material-icons text-[14px]">close</span>
+</button>
+</div>
+<button class="px-3 py-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
+<span class="material-icons text-[18px]">add</span>
+</button>
+</div>
+</div>
+<div class="px-4 py-2 border-b border-gray-200 dark:border-border-dark flex items-center justify-between bg-white dark:bg-background-dark">
+<div class="flex items-center gap-4">
+<div class="flex flex-col">
+<span class="text-xs text-slate-400 font-mono">Draft</span>
+<div class="flex items-center gap-2">
+<h1 class="text-base font-semibold text-slate-800 dark:text-white">High Value Orders</h1>
+<span class="material-icons text-[14px] text-slate-400 cursor-pointer hover:text-primary">edit</span>
+</div>
+</div>
+</div>
+<div class="flex items-center gap-4">
+<div class="flex items-center gap-2">
+<div class="relative inline-block w-8 mr-1 align-middle select-none transition duration-200 ease-in">
+<input class="toggle-checkbox absolute block w-4 h-4 rounded-full bg-white border-4 border-slate-300 dark:border-slate-500 appearance-none cursor-pointer transition-all duration-300 ease-in-out" id="toggle" name="toggle" type="checkbox"/>
+<label class="toggle-label block overflow-hidden h-4 rounded-full bg-slate-300 dark:bg-slate-700 cursor-pointer" for="toggle"></label>
+</div>
+<span class="text-xs font-medium text-slate-500 dark:text-slate-400">Offline</span>
+</div>
+<div class="h-6 w-px bg-gray-200 dark:bg-border-dark"></div>
+<span class="text-xs text-slate-500 mr-2">Last saved 2m ago</span>
+<button class="btn-secondary px-3 py-1.5 rounded text-sm font-medium text-slate-600 dark:text-slate-300 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors">
+                        Save
+                    </button>
+<button class="btn-primary px-4 py-1.5 rounded text-sm font-medium text-white bg-primary hover:bg-primary/90 flex items-center gap-2 shadow-sm shadow-primary/20 transition-all">
+<span class="material-icons text-[16px]">play_arrow</span>
+                        Run <span class="hidden md:inline text-primary-100 opacity-70 font-normal ml-1 text-xs">⌘E</span>
+</button>
+<button class="p-1.5 rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-slate-500">
+<span class="material-icons text-[20px]">more_vert</span>
+</button>
+</div>
+</div>
+<div class="flex-1 flex flex-col h-full overflow-hidden">
+<div class="h-1/3 min-h-[250px] relative bg-[#0d141c] font-mono text-sm border-b border-gray-200 dark:border-border-dark flex">
+<div class="w-12 bg-[#0d141c] border-r border-gray-800 text-slate-600 text-right py-4 pr-3 select-none flex flex-col gap-[2px]">
+<span>1</span>
+<span>2</span>
+<span>3</span>
+<span>4</span>
+<span>5</span>
+<span>6</span>
+<span>7</span>
+<span>8</span>
+<span>9</span>
+<span>10</span>
+</div>
+<div class="flex-1 p-4 overflow-auto text-slate-300 leading-relaxed">
+<div class="whitespace-pre"><span class="sql-comment">-- Filter orders above threshold</span>
+<span class="sql-keyword">SELECT</span> 
+    t.order_id, 
+    t.user_id, 
+    u.email,
+    t.amount, 
+    t.status,
+    t.created_at
+<span class="sql-keyword">FROM</span> transactions t
+<span class="sql-keyword">JOIN</span> users u <span class="sql-keyword">ON</span> t.user_id = u.id
+<span class="sql-keyword">WHERE</span> t.amount &gt; <span class="sql-number">500</span>
+<span class="sql-keyword">AND</span> t.status = <span class="sql-string">'completed'</span>
+<span class="sql-keyword">ORDER BY</span> t.amount <span class="sql-keyword">DESC</span>
+<span class="sql-keyword">LIMIT</span> <span class="sql-number">100</span>;</div>
+</div>
+<div class="w-16 bg-[#0d141c]/50 border-l border-gray-800 hidden md:block opacity-50">
+<div class="w-8 h-2 bg-slate-600 mt-4 ml-2 rounded-full opacity-30"></div>
+<div class="w-10 h-1 bg-purple-500 mt-1 ml-2 rounded-full opacity-30"></div>
+<div class="w-6 h-1 bg-slate-600 mt-1 ml-4 rounded-full opacity-30"></div>
+</div>
+</div>
+<div class="flex-1 bg-white dark:bg-background-dark flex flex-col overflow-hidden relative">
+<div class="h-10 border-b border-gray-200 dark:border-border-dark flex items-center justify-between px-4 bg-gray-50 dark:bg-surface-dark/50">
+<div class="flex items-center gap-4 text-xs text-slate-500">
+<span class="font-medium text-slate-700 dark:text-slate-300">Results: 14 rows</span>
+<span>Duration: 230ms</span>
+</div>
+<div class="flex items-center gap-2">
+<button class="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded text-slate-500" title="Download CSV">
+<span class="material-icons text-[18px]">download</span>
+</button>
+<button class="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded text-slate-500" title="View as Chart">
+<span class="material-icons text-[18px]">bar_chart</span>
+</button>
+</div>
+</div>
+<div class="flex-1 overflow-auto">
+<table class="w-full text-left border-collapse">
+<thead class="bg-gray-50 dark:bg-surface-dark sticky top-0 z-10 shadow-sm">
+<tr>
+<th class="w-10 px-4 py-3 border-b border-r border-gray-200 dark:border-border-dark">
+<input class="rounded border-gray-300 text-primary focus:ring-offset-0 focus:ring-1 focus:ring-primary bg-transparent" type="checkbox"/>
+</th>
+<th class="px-4 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider border-b border-r border-gray-200 dark:border-border-dark group cursor-pointer hover:bg-gray-100 dark:hover:bg-surface-darker">
+<div class="flex items-center gap-1">
+<span class="material-icons text-[12px] text-slate-400">vpn_key</span>
+                                            order_id
+                                        </div>
+</th>
+<th class="px-4 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider border-b border-r border-gray-200 dark:border-border-dark cursor-pointer hover:bg-gray-100 dark:hover:bg-surface-darker">
+                                        user_id
+                                    </th>
+<th class="px-4 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider border-b border-r border-gray-200 dark:border-border-dark cursor-pointer hover:bg-gray-100 dark:hover:bg-surface-darker">
+                                        email
+                                    </th>
+<th class="px-4 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider border-b border-r border-gray-200 dark:border-border-dark text-right cursor-pointer hover:bg-gray-100 dark:hover:bg-surface-darker">
+                                        amount
+                                    </th>
+<th class="px-4 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider border-b border-r border-gray-200 dark:border-border-dark cursor-pointer hover:bg-gray-100 dark:hover:bg-surface-darker">
+                                        status
+                                    </th>
+<th class="px-4 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider border-b border-gray-200 dark:border-border-dark cursor-pointer hover:bg-gray-100 dark:hover:bg-surface-darker">
+                                        created_at
+                                    </th>
+</tr>
+</thead>
+<tbody class="divide-y divide-gray-200 dark:divide-border-dark font-mono text-sm text-slate-700 dark:text-slate-300">
+<tr class="hover:bg-gray-50 dark:hover:bg-surface-dark/40 transition-colors">
+<td class="px-4 py-2 border-r border-gray-200 dark:border-border-dark bg-gray-50 dark:bg-surface-dark/20 text-center">
+<input class="rounded border-gray-300 text-primary focus:ring-offset-0 focus:ring-1 focus:ring-primary bg-transparent" type="checkbox"/>
+</td>
+<td class="px-4 py-2 border-r border-gray-200 dark:border-border-dark text-slate-500">
+                                        ord_8x92nm...
+                                    </td>
+<td class="px-4 py-2 border-r border-gray-200 dark:border-border-dark text-primary cursor-pointer hover:underline">
+                                        usr_2910
+                                    </td>
+<td class="px-4 py-2 border-r border-gray-200 dark:border-border-dark truncate max-w-[200px]">
+                                        sarah.c@example.com
+                                    </td>
+<td class="px-4 py-2 border-r border-gray-200 dark:border-border-dark text-right font-medium text-emerald-500">
+                                        $1,240.50
+                                    </td>
+<td class="px-4 py-2 border-r border-gray-200 dark:border-border-dark">
+<span class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400">
+                                            completed
+                                        </span>
+</td>
+<td class="px-4 py-2 text-slate-500">
+                                        2023-10-24 14:30:00
+                                    </td>
+</tr>
+<tr class="hover:bg-gray-50 dark:hover:bg-surface-dark/40 transition-colors bg-primary/5 dark:bg-primary/5">
+<td class="px-4 py-2 border-r border-gray-200 dark:border-border-dark bg-primary/5 dark:bg-primary/10 text-center border-l-2 border-l-primary">
+<input checked="" class="rounded border-gray-300 text-primary focus:ring-offset-0 focus:ring-1 focus:ring-primary bg-transparent" type="checkbox"/>
+</td>
+<td class="px-4 py-2 border-r border-gray-200 dark:border-border-dark text-slate-500">
+                                        ord_7h12kp...
+                                    </td>
+<td class="px-4 py-2 border-r border-gray-200 dark:border-border-dark text-primary cursor-pointer hover:underline">
+                                        usr_5521
+                                    </td>
+<td class="px-4 py-2 border-r border-gray-200 dark:border-border-dark truncate max-w-[200px]">
+                                        mike.r@company.net
+                                    </td>
+<td class="px-4 py-2 border-r border-gray-200 dark:border-border-dark text-right font-medium text-emerald-500 bg-yellow-100 dark:bg-yellow-900/20 ring-1 ring-inset ring-yellow-400/30 rounded-sm">
+                                        $950.00
+                                    </td>
+<td class="px-4 py-2 border-r border-gray-200 dark:border-border-dark">
+<span class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400">
+                                            completed
+                                        </span>
+</td>
+<td class="px-4 py-2 text-slate-500">
+                                        2023-10-24 12:15:00
+                                    </td>
+</tr>
+<tr class="hover:bg-gray-50 dark:hover:bg-surface-dark/40 transition-colors">
+<td class="px-4 py-2 border-r border-gray-200 dark:border-border-dark bg-gray-50 dark:bg-surface-dark/20 text-center">
+<input class="rounded border-gray-300 text-primary focus:ring-offset-0 focus:ring-1 focus:ring-primary bg-transparent" type="checkbox"/>
+</td>
+<td class="px-4 py-2 border-r border-gray-200 dark:border-border-dark text-slate-500">
+                                        ord_9m33qq...
+                                    </td>
+<td class="px-4 py-2 border-r border-gray-200 dark:border-border-dark text-primary cursor-pointer hover:underline">
+                                        usr_8812
+                                    </td>
+<td class="px-4 py-2 border-r border-gray-200 dark:border-border-dark truncate max-w-[200px]">
+                                        jessica.w@studio.io
+                                    </td>
+<td class="px-4 py-2 border-r border-gray-200 dark:border-border-dark text-right font-medium text-emerald-500">
+                                        $2,100.00
+                                    </td>
+<td class="px-4 py-2 border-r border-gray-200 dark:border-border-dark">
+<span class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400">
+                                            pending
+                                        </span>
+</td>
+<td class="px-4 py-2 text-slate-500">
+                                        2023-10-23 09:45:00
+                                    </td>
+</tr>
+</tbody>
+</table>
+<div class="p-2 text-center text-xs text-slate-400 italic">
+                            Loading rows 15-50...
+                        </div>
+</div>
+</div>
+</div>
+</main>
+<aside class="w-80 bg-gray-50 dark:bg-surface-dark border-l border-gray-200 dark:border-border-dark flex flex-col shrink-0 relative">
+<div class="flex border-b border-gray-200 dark:border-border-dark">
+<button class="flex-1 py-3 text-sm font-medium text-primary border-b-2 border-primary bg-primary/5">Details</button>
+<button class="flex-1 py-3 text-sm font-medium text-slate-500 hover:text-slate-700 dark:hover:text-slate-300">History</button>
+</div>
+<div class="flex-1 overflow-y-auto p-4 space-y-6 pb-20">
+<div>
+<h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Table Information</h3>
+<div class="space-y-3">
+<div class="flex justify-between items-start">
+<span class="text-sm text-slate-500">Name</span>
+<span class="text-sm font-mono text-slate-800 dark:text-slate-200 bg-gray-200 dark:bg-gray-800 px-1.5 rounded">public.transactions</span>
+</div>
+<div class="flex justify-between items-start">
+<span class="text-sm text-slate-500">Created</span>
+<span class="text-sm text-slate-800 dark:text-slate-200">Oct 12, 2023</span>
+</div>
+</div>
+</div>
+<div>
+<div class="flex items-center justify-between mb-3">
+<h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wider">TABLE SCHEMA</h3>
+<div class="flex gap-1">
+<button class="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded text-primary transition-colors" title="Add Column">
+<span class="material-icons text-[16px]">add</span>
+</button>
+</div>
+</div>
+<div class="space-y-0.5 border border-gray-200 dark:border-border-dark rounded bg-white dark:bg-surface-darker overflow-hidden">
+<div class="grid grid-cols-12 gap-2 p-2 bg-gray-50 dark:bg-gray-800/50 border-b border-gray-200 dark:border-border-dark text-xs font-medium text-slate-500">
+<div class="col-span-5">Column</div>
+<div class="col-span-4">Type</div>
+<div class="col-span-3 text-right">Actions</div>
+</div>
+<div class="grid grid-cols-12 gap-2 p-2 items-center hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors group">
+<div class="col-span-5 flex items-center gap-1.5 overflow-hidden">
+<span class="material-icons text-[14px] text-yellow-500" title="Primary Key">vpn_key</span>
+<span class="text-sm font-mono text-slate-700 dark:text-slate-300 truncate" title="order_id">order_id</span>
+<span class="material-icons text-[12px] text-slate-400 cursor-help" title="Unique identifier for the order">info</span>
+</div>
+<div class="col-span-4">
+<span class="text-xs bg-slate-100 dark:bg-slate-800 text-slate-500 px-1.5 py-0.5 rounded font-mono">uuid</span>
+</div>
+<div class="col-span-3 flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+<button class="p-1 hover:text-primary"><span class="material-icons text-[14px]">edit</span></button>
+<button class="p-1 hover:text-red-500"><span class="material-icons text-[14px]">delete</span></button>
+</div>
+</div>
+<div class="grid grid-cols-12 gap-2 p-2 items-center hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors group border-t border-gray-100 dark:border-gray-800">
+<div class="col-span-5 flex items-center gap-1.5 overflow-hidden">
+<span class="material-icons text-[14px] text-slate-400" title="Foreign Key">link</span>
+<span class="text-sm font-mono text-slate-700 dark:text-slate-300 truncate" title="user_id">user_id</span>
+</div>
+<div class="col-span-4">
+<span class="text-xs bg-slate-100 dark:bg-slate-800 text-slate-500 px-1.5 py-0.5 rounded font-mono">uuid</span>
+</div>
+<div class="col-span-3 flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+<button class="p-1 hover:text-primary"><span class="material-icons text-[14px]">edit</span></button>
+<button class="p-1 hover:text-red-500"><span class="material-icons text-[14px]">delete</span></button>
+</div>
+</div>
+<div class="grid grid-cols-12 gap-2 p-2 items-center hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors group border-t border-gray-100 dark:border-gray-800">
+<div class="col-span-5 flex items-center gap-1.5 overflow-hidden">
+<span class="w-3.5"></span>
+<span class="text-sm font-mono text-slate-700 dark:text-slate-300 truncate" title="amount">amount</span>
+<span class="material-icons text-[12px] text-slate-400 cursor-help" title="Transaction amount in USD">info</span>
+</div>
+<div class="col-span-4">
+<span class="text-xs bg-slate-100 dark:bg-slate-800 text-slate-500 px-1.5 py-0.5 rounded font-mono">numeric</span>
+</div>
+<div class="col-span-3 flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+<button class="p-1 hover:text-primary"><span class="material-icons text-[14px]">edit</span></button>
+<button class="p-1 hover:text-red-500"><span class="material-icons text-[14px]">delete</span></button>
+</div>
+</div>
+<div class="grid grid-cols-12 gap-2 p-2 items-center hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors group border-t border-gray-100 dark:border-gray-800">
+<div class="col-span-5 flex items-center gap-1.5 overflow-hidden">
+<span class="w-3.5"></span>
+<span class="text-sm font-mono text-slate-700 dark:text-slate-300 truncate" title="status">status</span>
+</div>
+<div class="col-span-4">
+<span class="text-xs bg-slate-100 dark:bg-slate-800 text-slate-500 px-1.5 py-0.5 rounded font-mono">varchar</span>
+</div>
+<div class="col-span-3 flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+<button class="p-1 hover:text-primary"><span class="material-icons text-[14px]">edit</span></button>
+<button class="p-1 hover:text-red-500"><span class="material-icons text-[14px]">delete</span></button>
+</div>
+</div>
+<div class="grid grid-cols-12 gap-2 p-2 items-center hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors group border-t border-gray-100 dark:border-gray-800">
+<div class="col-span-5 flex items-center gap-1.5 overflow-hidden">
+<span class="w-3.5"></span>
+<span class="text-sm font-mono text-slate-700 dark:text-slate-300 truncate" title="created_at">created_at</span>
+</div>
+<div class="col-span-4">
+<span class="text-xs bg-slate-100 dark:bg-slate-800 text-slate-500 px-1.5 py-0.5 rounded font-mono">timestamp</span>
+</div>
+<div class="col-span-3 flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+<button class="p-1 hover:text-primary"><span class="material-icons text-[14px]">edit</span></button>
+<button class="p-1 hover:text-red-500"><span class="material-icons text-[14px]">delete</span></button>
+</div>
+</div>
+</div>
+<div class="mt-3 flex gap-2">
+<button class="text-xs flex items-center gap-1 text-primary hover:text-primary-dark">
+<span class="material-icons text-[14px]">add_circle_outline</span>
+                            Add Column
+                        </button>
+<button class="text-xs flex items-center gap-1 text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 ml-auto">
+<span class="material-icons text-[14px]">build</span>
+                            Alter Table
+                        </button>
+</div>
+</div>
+</div>
+<div class="p-4 border-t border-gray-200 dark:border-border-dark bg-white dark:bg-surface-darker absolute bottom-0 w-full">
+<div class="flex items-center gap-2 mb-3">
+<span class="w-2 h-2 rounded-full bg-yellow-500"></span>
+<span class="text-xs font-medium text-slate-600 dark:text-slate-400">1 pending edit</span>
+</div>
+<div class="flex items-center gap-2 w-full">
+<button class="flex-1 py-2 text-xs font-medium hover:bg-gray-100 dark:hover:bg-gray-800 rounded transition-colors text-slate-600 dark:text-slate-300 border border-gray-200 dark:border-gray-700">Discard</button>
+<button class="flex-1 py-2 text-xs font-medium bg-primary hover:bg-primary/90 text-white rounded transition-colors shadow-sm">Commit Changes</button>
+</div>
+</div>
+</aside>
+</div>
+
+</body></html>

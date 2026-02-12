@@ -8,12 +8,16 @@
 //! - CTEs with JOINs
 //! - CTEs with filtering
 
-use kalamdb_commons::{Role, UserId, NodeId};
+use kalamdb_commons::models::StorageId;
+use kalamdb_commons::{NodeId, Role, UserId};
 use kalamdb_core::app_context::AppContext;
 use kalamdb_core::sql::context::{ExecutionContext, ExecutionResult};
 use kalamdb_core::sql::executor::SqlExecutor;
+use kalamdb_system::providers::storages::models::StorageType;
+use kalamdb_system::Storage;
 use kalamdb_store::{RocksDBBackend, RocksDbInit};
 use kalamdb_configs::ServerConfig;
+use chrono::Utc;
 use std::sync::Arc;
 use tempfile::TempDir;
 
@@ -21,7 +25,9 @@ use tempfile::TempDir;
 async fn create_test_app_context() -> (Arc<AppContext>, TempDir) {
     let temp_dir = TempDir::new().expect("Failed to create temp directory");
     let rocksdb_path = temp_dir.path().join("rocksdb");
+    let storage_base_path = temp_dir.path().join("storage");
     std::fs::create_dir_all(&rocksdb_path).expect("Failed to create rocksdb directory");
+    std::fs::create_dir_all(&storage_base_path).expect("Failed to create storage directory");
 
     let init = RocksDbInit::with_defaults(rocksdb_path.to_str().unwrap());
     let db = init.open().expect("Failed to open RocksDB"); // Returns Arc<DB>
@@ -32,7 +38,7 @@ async fn create_test_app_context() -> (Arc<AppContext>, TempDir) {
     let app_context = AppContext::create_isolated(
         backend,
         node_id,
-        rocksdb_path.to_string_lossy().into_owned(),
+        storage_base_path.to_string_lossy().into_owned(),
         config,
     );
 
@@ -41,13 +47,33 @@ async fn create_test_app_context() -> (Arc<AppContext>, TempDir) {
     app_context.executor().initialize_cluster().await.expect("Failed to initialize Raft cluster");
     app_context.wire_raft_appliers();
 
+    // Ensure default local storage exists for table creation.
+    let storages = app_context.system_tables().storages();
+    let storage_id = StorageId::from("local");
+    if storages.get_storage_by_id(&storage_id).unwrap().is_none() {
+        storages
+            .create_storage(Storage {
+                storage_id,
+                storage_name: "Local Storage".to_string(),
+                description: Some("Default local storage for tests".to_string()),
+                storage_type: StorageType::Filesystem,
+                base_directory: storage_base_path.to_string_lossy().to_string(),
+                credentials: None,
+                config_json: None,
+                shared_tables_template: "shared/{namespace}/{table}".to_string(),
+                user_tables_template: "user/{namespace}/{table}/{userId}".to_string(),
+                created_at: Utc::now().timestamp_millis(),
+                updated_at: Utc::now().timestamp_millis(),
+            })
+            .expect("Failed to create default local storage");
+    }
+
     (app_context, temp_dir)
 }
 
-/// Helper to create ExecutionContext with username
+/// Helper to create ExecutionContext
 fn create_exec_context_with_app_context(
     app_context: Arc<AppContext>,
-    _username: &str,
     user_id: &str,
     role: Role,
 ) -> ExecutionContext {
@@ -114,7 +140,6 @@ async fn test_simple_cte() {
     let (app_context, _temp_dir) = create_test_app_context().await;
     let exec_ctx = create_exec_context_with_app_context(
         app_context.clone(),
-        "admin",
         "u_admin",
         Role::Dba,
     );
@@ -124,7 +149,7 @@ async fn test_simple_cte() {
     setup_test_table(&executor, &exec_ctx).await.unwrap();
 
     // Test simple CTE
-    let result: Result<ExecutionResult, _> = executor
+    let result = executor
         .execute(
             r#"
             WITH high_earners AS (
@@ -142,12 +167,13 @@ async fn test_simple_cte() {
     assert!(result.is_ok(), "CTE query should succeed: {:?}", result.err());
     let exec_result = result.unwrap();
 
+    // Verify result has rows
     match exec_result {
         ExecutionResult::Rows { batches, .. } => {
-            let total_rows: usize = batches.iter().map(|b: &arrow::array::RecordBatch| b.num_rows()).sum();
+            let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
             assert_eq!(total_rows, 3, "Should return 3 high earners (Alice, Bob, Diana)");
         },
-        _ => panic!("Expected Query result, got: {:?}", exec_result),
+        _ => panic!("Expected Rows result, got: {:?}", exec_result),
     }
 }
 
@@ -157,7 +183,6 @@ async fn test_cte_with_aggregation() {
     let (app_context, _temp_dir) = create_test_app_context().await;
     let exec_ctx = create_exec_context_with_app_context(
         app_context.clone(),
-        "admin",
         "u_admin",
         Role::Dba,
     );
@@ -167,7 +192,7 @@ async fn test_cte_with_aggregation() {
     setup_test_table(&executor, &exec_ctx).await.unwrap();
 
     // Test CTE with aggregation
-    let result: Result<ExecutionResult, _> = executor
+    let result = executor
         .execute(
             r#"
             WITH dept_stats AS (
@@ -188,12 +213,13 @@ async fn test_cte_with_aggregation() {
     assert!(result.is_ok(), "CTE with aggregation should succeed: {:?}", result.err());
     let exec_result = result.unwrap();
 
+    // Verify result has rows
     match exec_result {
         ExecutionResult::Rows { batches, .. } => {
-            let total_rows: usize = batches.iter().map(|b: &arrow::array::RecordBatch| b.num_rows()).sum();
+            let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
             assert_eq!(total_rows, 3, "Should return 3 departments");
         },
-        _ => panic!("Expected Query result, got: {:?}", exec_result),
+        _ => panic!("Expected Rows result, got: {:?}", exec_result),
     }
 }
 
@@ -207,7 +233,6 @@ async fn test_multiple_ctes() {
     let (app_context, _temp_dir) = create_test_app_context().await;
     let exec_ctx = create_exec_context_with_app_context(
         app_context.clone(),
-        "admin",
         "u_admin",
         Role::Dba,
     );
@@ -217,7 +242,7 @@ async fn test_multiple_ctes() {
     setup_test_table(&executor, &exec_ctx).await.unwrap();
 
     // Test multiple CTEs
-    let result: Result<ExecutionResult, _> = executor
+    let result = executor
         .execute(
             r#"
             WITH 
@@ -244,12 +269,13 @@ async fn test_multiple_ctes() {
     assert!(result.is_ok(), "Multiple CTEs should succeed: {:?}", result.err());
     let exec_result = result.unwrap();
 
+    // Verify result has rows
     match exec_result {
         ExecutionResult::Rows { batches, .. } => {
-            let total_rows: usize = batches.iter().map(|b: &arrow::array::RecordBatch| b.num_rows()).sum();
+            let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
             assert_eq!(total_rows, 4, "Should return 4 employees (2 Engineering + 2 Sales)");
         },
-        _ => panic!("Expected Query result, got: {:?}", exec_result),
+        _ => panic!("Expected Rows result, got: {:?}", exec_result),
     }
 }
 
@@ -259,7 +285,6 @@ async fn test_chained_ctes() {
     let (app_context, _temp_dir) = create_test_app_context().await;
     let exec_ctx = create_exec_context_with_app_context(
         app_context.clone(),
-        "admin",
         "u_admin",
         Role::Dba,
     );
@@ -269,7 +294,7 @@ async fn test_chained_ctes() {
     setup_test_table(&executor, &exec_ctx).await.unwrap();
 
     // Test chained CTEs (one CTE references another)
-    let result: Result<ExecutionResult, _> = executor
+    let result = executor
         .execute(
             r#"
             WITH 
@@ -291,12 +316,13 @@ async fn test_chained_ctes() {
     assert!(result.is_ok(), "Chained CTEs should succeed: {:?}", result.err());
     let exec_result = result.unwrap();
 
+    // Verify result has rows
     match exec_result {
         ExecutionResult::Rows { batches, .. } => {
-            let total_rows: usize = batches.iter().map(|b: &arrow::array::RecordBatch| b.num_rows()).sum();
+            let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
             assert_eq!(total_rows, 3, "Should return 3 high earners");
         },
-        _ => panic!("Expected Query result, got: {:?}", exec_result),
+        _ => panic!("Expected Rows result, got: {:?}", exec_result),
     }
 }
 
@@ -311,7 +337,6 @@ async fn test_cte_with_where_clause() {
     let (app_context, _temp_dir) = create_test_app_context().await;
     let exec_ctx = create_exec_context_with_app_context(
         app_context.clone(),
-        "admin",
         "u_admin",
         Role::Dba,
     );
@@ -321,7 +346,7 @@ async fn test_cte_with_where_clause() {
     setup_test_table(&executor, &exec_ctx).await.unwrap();
 
     // Test CTE with WHERE clause in both CTE and main query
-    let result: Result<ExecutionResult, _> = executor
+    let result = executor
         .execute(
             r#"
             WITH dept_employees AS (
@@ -341,12 +366,13 @@ async fn test_cte_with_where_clause() {
     assert!(result.is_ok(), "CTE with WHERE should succeed: {:?}", result.err());
     let exec_result = result.unwrap();
 
+    // Verify result has rows
     match exec_result {
         ExecutionResult::Rows { batches, .. } => {
-            let total_rows: usize = batches.iter().map(|b: &arrow::array::RecordBatch| b.num_rows()).sum();
+            let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
             assert_eq!(total_rows, 3, "Should return 3 employees (Alice, Bob, Diana)");
         },
-        _ => panic!("Expected Query result, got: {:?}", exec_result),
+        _ => panic!("Expected Rows result, got: {:?}", exec_result),
     }
 }
 
@@ -356,7 +382,6 @@ async fn test_cte_with_limit() {
     let (app_context, _temp_dir) = create_test_app_context().await;
     let exec_ctx = create_exec_context_with_app_context(
         app_context.clone(),
-        "admin",
         "u_admin",
         Role::Dba,
     );
@@ -366,7 +391,7 @@ async fn test_cte_with_limit() {
     setup_test_table(&executor, &exec_ctx).await.unwrap();
 
     // Test CTE with LIMIT
-    let result: Result<ExecutionResult, _> = executor
+    let result = executor
         .execute(
             r#"
             WITH all_salaries AS (
@@ -384,12 +409,13 @@ async fn test_cte_with_limit() {
     assert!(result.is_ok(), "CTE with LIMIT should succeed: {:?}", result.err());
     let exec_result = result.unwrap();
 
+    // Verify result has rows
     match exec_result {
         ExecutionResult::Rows { batches, .. } => {
-            let total_rows: usize = batches.iter().map(|b: &arrow::array::RecordBatch| b.num_rows()).sum();
+            let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
             assert_eq!(total_rows, 2, "Should return top 2 earners");
         },
-        _ => panic!("Expected Query result, got: {:?}", exec_result),
+        _ => panic!("Expected Rows result, got: {:?}", exec_result),
     }
 }
 
@@ -404,7 +430,6 @@ async fn test_cte_syntax_error() {
     let (app_context, _temp_dir) = create_test_app_context().await;
     let exec_ctx = create_exec_context_with_app_context(
         app_context.clone(),
-        "admin",
         "u_admin",
         Role::Dba,
     );
@@ -414,7 +439,7 @@ async fn test_cte_syntax_error() {
     setup_test_table(&executor, &exec_ctx).await.unwrap();
 
     // Test CTE with syntax error (missing AS keyword)
-    let result: Result<ExecutionResult, _> = executor
+    let result = executor
         .execute(
             r#"
             WITH high_earners (
@@ -438,7 +463,6 @@ async fn test_cte_undefined_table() {
     let (app_context, _temp_dir) = create_test_app_context().await;
     let exec_ctx = create_exec_context_with_app_context(
         app_context.clone(),
-        "admin",
         "u_admin",
         Role::Dba,
     );
@@ -447,7 +471,7 @@ async fn test_cte_undefined_table() {
     // No setup - testing undefined table
 
     // Test CTE referencing non-existent table
-    let result: Result<ExecutionResult, _> = executor
+    let result = executor
         .execute(
             r#"
             WITH data AS (

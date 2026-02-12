@@ -3,7 +3,6 @@ export { default as Login } from "./Login";
 export { default as SqlStudio } from "./SqlStudio";
 export { default as Users } from "./Users";
 export { default as Storages } from "./Storages";
-export { default as Namespaces } from "./Namespaces";
 export { default as Jobs } from "./Jobs";
 export { default as LiveQueries } from "./LiveQueries";
 export { default as AuditLogs } from "./AuditLogs";

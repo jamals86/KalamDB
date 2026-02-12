@@ -41,6 +41,7 @@ use serde_json::Value as JsonValue;
 use std::collections::BTreeMap;
 use std::convert::TryFrom;
 use std::sync::Arc;
+use uuid::Uuid;
 
 /// Type alias for Arc<dyn Array> to improve readability
 type ArrayRef = Arc<dyn datafusion::arrow::array::Array>;
@@ -190,6 +191,16 @@ pub fn coerce_scalar_to_field(value: ScalarValue, field: &Field) -> Result<Scala
         return Ok(value);
     }
 
+    if matches!(field.data_type(), DataType::FixedSizeBinary(16)) {
+        return coerce_uuid_scalar(value, field)?.ok_or_else(|| {
+            format!(
+                "Unable to coerce value {:?} to UUID for column '{}'",
+                field.data_type(),
+                field.name()
+            )
+        });
+    }
+
     value.cast_to(field.data_type()).map_err(|e| {
         format!(
             "Unable to cast value {:?} to {:?} for column '{}': {}",
@@ -199,6 +210,41 @@ pub fn coerce_scalar_to_field(value: ScalarValue, field: &Field) -> Result<Scala
             e
         )
     })
+}
+
+fn coerce_uuid_scalar(value: ScalarValue, field: &Field) -> Result<Option<ScalarValue>, String> {
+    match value {
+        ScalarValue::Utf8(Some(raw)) | ScalarValue::LargeUtf8(Some(raw)) => {
+            let uuid = Uuid::parse_str(&raw)
+                .map_err(|e| format!("Invalid UUID literal '{}' for column '{}': {}", raw, field.name(), e))?;
+            Ok(Some(ScalarValue::FixedSizeBinary(
+                16,
+                Some(uuid.as_bytes().to_vec()),
+            )))
+        },
+        ScalarValue::Binary(Some(bytes)) => {
+            if bytes.len() != 16 {
+                return Err(format!(
+                    "UUID binary literal must be 16 bytes for column '{}', got {}",
+                    field.name(),
+                    bytes.len()
+                ));
+            }
+            Ok(Some(ScalarValue::FixedSizeBinary(16, Some(bytes))))
+        },
+        ScalarValue::FixedSizeBinary(size, Some(bytes)) => {
+            if size != 16 || bytes.len() != 16 {
+                return Err(format!(
+                    "UUID fixed binary literal must be 16 bytes for column '{}', got size {} and len {}",
+                    field.name(),
+                    size,
+                    bytes.len()
+                ));
+            }
+            Ok(Some(ScalarValue::FixedSizeBinary(16, Some(bytes))))
+        },
+        _ => Ok(None),
+    }
 }
 
 #[cfg(test)]

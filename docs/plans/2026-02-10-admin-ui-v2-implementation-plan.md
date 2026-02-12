@@ -211,6 +211,11 @@ Expected: FAIL.
 - Desktop and mobile layouts
 - Tokenized spacing/typography in `globals.css`
 - Route-aware active nav states
+- Header right area requirements:
+  - Notifications bell left of avatar
+  - Avatar fallback initials (first+last initials, else username first char)
+  - Avatar dropdown with `Profile`, `Settings`, `Logout`
+  - Modern detailed notifications dropdown UI
 
 **Step 4: Re-run tests**
 
@@ -358,6 +363,10 @@ Expected: FAIL.
 - Left: Explorer + Favorites
 - Center: tabs + monaco editor
 - command shortcuts for run actions
+- Data.world-like tab interaction:
+  - Query title visible on left side of tab
+  - Header actions: `Save`, `Run query`
+  - Overflow menu (`...`): `Rename`, `Save a copy`, `Delete`
 
 **Step 4: Re-run tests**
 
@@ -432,6 +441,9 @@ Expected: FAIL.
 - per-tab live query toggle
 - row/cell change indicators
 - right drawer for create/alter table
+- right drawer inspector tabs:
+  - `Details`: columns, primary key, options, current version
+  - `History`: full read-only version history
 - commit/discard with SQL preview
 
 **Step 4: Re-run tests**

@@ -1,0 +1,62 @@
+import { AlertCircle, CheckCircle2 } from "lucide-react";
+import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
+import { cn } from "@/lib/utils";
+import type { QueryLogEntry } from "./types";
+
+interface StudioExecutionLogProps {
+  logs: QueryLogEntry[];
+  status: "success" | "error";
+}
+
+function formatLogTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return date.toLocaleTimeString();
+}
+
+export function StudioExecutionLog({ logs, status }: StudioExecutionLogProps) {
+  if (logs.length === 0) {
+    return (
+      <div className="flex h-full items-center justify-center px-4 text-sm text-slate-500 dark:text-slate-400">
+        No execution logs yet.
+      </div>
+    );
+  }
+
+  return (
+    <ScrollArea className="min-h-0 flex-1">
+      <div className="min-w-max p-2">
+        {logs.map((entry, index) => (
+          <div
+            key={entry.id}
+            className={cn(
+              "mb-1.5 grid min-w-[720px] grid-cols-[24px_76px_1fr] items-start gap-2 rounded border border-[#1f334d] bg-[#0f1a2a] px-2 py-1.5 text-xs text-slate-200",
+              entry.level === "error" && "border-red-500/40 bg-red-950/20",
+            )}
+          >
+            <span className="mt-0.5 flex h-4 w-4 items-center justify-center">
+              {entry.level === "error" ? (
+                <AlertCircle className="h-3.5 w-3.5 text-red-400" />
+              ) : (
+                <CheckCircle2 className={cn("h-3.5 w-3.5", status === "success" ? "text-emerald-400" : "text-slate-400")} />
+              )}
+            </span>
+            <span className="font-mono text-[11px] text-slate-400">{formatLogTime(entry.createdAt)}</span>
+            <div className="min-w-0 space-y-1">
+              <div className="font-mono text-[12px] leading-5 text-slate-100">{entry.message}</div>
+              <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-400">
+                <span>#{index + 1}</span>
+                {typeof entry.rowCount === "number" && <span>{entry.rowCount} rows</span>}
+                {entry.asUser && <span>as {entry.asUser}</span>}
+                {typeof entry.statementIndex === "number" && <span>statement {entry.statementIndex + 1}</span>}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+      <ScrollBar orientation="horizontal" />
+    </ScrollArea>
+  );
+}

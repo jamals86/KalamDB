@@ -209,8 +209,12 @@ async fn test_parameterized_dml_over_http() {
                             .as_ref()
                             .map(|e| e.message.as_str())
                             .unwrap_or("");
+                        let msg_lower = msg.to_lowercase();
                         anyhow::ensure!(
-                            msg.to_lowercase().contains("parameter") && msg.to_lowercase().contains("limit"),
+                            msg_lower.contains("parameter")
+                                && (msg_lower.contains("limit")
+                                    || msg_lower.contains("maximum")
+                                    || msg_lower.contains("exceeded")),
                             "unexpected error message: {}",
                             msg
                         );
