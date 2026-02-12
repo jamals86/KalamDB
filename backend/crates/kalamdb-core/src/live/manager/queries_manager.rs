@@ -27,7 +27,7 @@ use datafusion::execution::context::SessionContext;
 use datafusion::sql::sqlparser::ast::Expr;
 use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::{ConnectionId, LiveQueryId, NamespaceId, TableId, TableName, UserId};
-use kalamdb_commons::schemas::SchemaField;
+use kalamdb_commons::schemas::{SchemaField, TableDefinition};
 use kalamdb_commons::websocket::SubscriptionRequest;
 use kalamdb_commons::NodeId;
 use kalamdb_system::providers::live_queries::models::LiveQuery as SystemLiveQuery;
@@ -48,6 +48,50 @@ pub struct LiveQueryManager {
 }
 
 impl LiveQueryManager {
+    pub(crate) fn build_subscription_schema(
+        table_def: &TableDefinition,
+        projections: Option<&[String]>,
+    ) -> Vec<SchemaField> {
+        if let Some(proj_cols) = projections {
+            proj_cols
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, col_name)| {
+                    table_def
+                        .columns
+                        .iter()
+                        .find(|c| c.column_name.eq_ignore_ascii_case(col_name))
+                        .map(|col| {
+                            let mut schema_field =
+                                SchemaField::new(col.column_name.clone(), col.data_type.clone(), idx);
+                            if col.is_primary_key {
+                                schema_field = schema_field.with_def("pk,nonnull,unique");
+                            } else if !col.is_nullable {
+                                schema_field = schema_field.with_def("nonnull");
+                            }
+                            schema_field
+                        })
+                })
+                .collect()
+        } else {
+            let mut cols: Vec<_> = table_def.columns.iter().collect();
+            cols.sort_by_key(|c| c.ordinal_position);
+            cols.iter()
+                .enumerate()
+                .map(|(idx, col)| {
+                    let mut schema_field =
+                        SchemaField::new(col.column_name.clone(), col.data_type.clone(), idx);
+                    if col.is_primary_key {
+                        schema_field = schema_field.with_def("pk,nonnull,unique");
+                    } else if !col.is_nullable {
+                        schema_field = schema_field.with_def("nonnull");
+                    }
+                    schema_field
+                })
+                .collect()
+        }
+    }
+
     /// Create a new live query manager with an external ConnectionsManager
     ///
     /// The ConnectionsManager is shared across all WebSocket handlers for
@@ -282,32 +326,7 @@ impl LiveQueryManager {
         };
 
         // Build schema from table definition, respecting projections if specified
-        let schema: Vec<SchemaField> = if let Some(ref proj_cols) = projections {
-            // When projections specified, only include those columns in order
-            proj_cols
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, col_name)| {
-                    table_def
-                        .columns
-                        .iter()
-                        .find(|c| c.column_name.eq_ignore_ascii_case(col_name))
-                        .map(|col| {
-                            SchemaField::new(col.column_name.clone(), col.data_type.clone(), idx)
-                        })
-                })
-                .collect()
-        } else {
-            // SELECT * - include all columns in ordinal order
-            let mut cols: Vec<_> = table_def.columns.iter().collect();
-            cols.sort_by_key(|c| c.ordinal_position);
-            cols.iter()
-                .enumerate()
-                .map(|(idx, col)| {
-                    SchemaField::new(col.column_name.clone(), col.data_type.clone(), idx)
-                })
-                .collect()
-        };
+        let schema = Self::build_subscription_schema(&table_def, projections.as_deref());
 
         Ok(SubscriptionResult {
             live_id,

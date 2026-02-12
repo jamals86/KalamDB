@@ -1,16 +1,13 @@
 import { JobList } from "@/components/jobs/JobList";
+import { PageLayout } from "@/components/layout/PageLayout";
 
 export default function Jobs() {
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold">Jobs</h1>
-        <p className="text-muted-foreground">
-          View and monitor background jobs in the system
-        </p>
-      </div>
-
+    <PageLayout
+      title="Jobs"
+      description="View and monitor background jobs in the system"
+    >
       <JobList />
-    </div>
+    </PageLayout>
   );
 }

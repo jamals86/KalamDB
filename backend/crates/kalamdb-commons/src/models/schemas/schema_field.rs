@@ -17,7 +17,8 @@ use serde::{Deserialize, Serialize};
 /// {
 ///   "name": "user_id",
 ///   "data_type": "BigInt",
-///   "index": 0
+///   "index": 0,
+///   "def": "pk,nonnull,unique"
 /// }
 /// ```
 ///
@@ -40,6 +41,12 @@ pub struct SchemaField {
 
     /// Column position (0-indexed) in the result set
     pub index: usize,
+
+    /// Compact definition flags (e.g. "pk,nonnull,unique").
+    ///
+    /// Omitted when there are no notable constraints to reduce response size.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub def: Option<String>,
 }
 
 impl SchemaField {
@@ -49,7 +56,14 @@ impl SchemaField {
             name: name.into(),
             data_type,
             index,
+            def: None,
         }
+    }
+
+    /// Attach compact definition flags to this field.
+    pub fn with_def(mut self, def: impl Into<String>) -> Self {
+        self.def = Some(def.into());
+        self
     }
 }
 
@@ -65,6 +79,7 @@ mod tests {
         assert!(json.contains("\"name\":\"user_id\""));
         assert!(json.contains("\"data_type\":\"BigInt\""));
         assert!(json.contains("\"index\":0"));
+        assert!(!json.contains("\"def\":"));
     }
 
     #[test]
@@ -74,6 +89,14 @@ mod tests {
         assert_eq!(field.name, "email");
         assert_eq!(field.data_type, KalamDataType::Text);
         assert_eq!(field.index, 1);
+        assert_eq!(field.def, None);
+    }
+
+    #[test]
+    fn test_schema_field_with_def() {
+        let field = SchemaField::new("id", KalamDataType::Uuid, 0).with_def("pk,nonnull,unique");
+        let json = serde_json::to_string(&field).unwrap();
+        assert!(json.contains("\"def\":\"pk,nonnull,unique\""));
     }
 
     #[test]

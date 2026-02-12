@@ -1,6 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { CheckCircle2, XCircle, Activity, Crown, Server } from 'lucide-react';
-import { ClusterHealth as ClusterHealthType } from '@/hooks/useCluster';
+import type { ClusterHealth as ClusterHealthType } from '@/services/clusterService';
 
 interface ClusterHealthProps {
   health: ClusterHealthType;

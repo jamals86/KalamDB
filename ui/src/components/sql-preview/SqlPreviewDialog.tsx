@@ -73,6 +73,20 @@ interface SqlPreviewDialogProps {
   onClose: () => void;
 }
 
+function formatAuditErrorMessage(message: string): string {
+  const trimmed = message.trim();
+  if (!trimmed) {
+    return "Unknown error";
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    return JSON.stringify(parsed, null, 2);
+  } catch {
+    return trimmed;
+  }
+}
+
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export function SqlPreviewDialog({ open, options, onClose }: SqlPreviewDialogProps) {
@@ -218,12 +232,13 @@ export function SqlPreviewDialog({ open, options, onClose }: SqlPreviewDialogPro
         const endTime = performance.now();
         const timeTook = Math.round(endTime - startTime);
         const errorMsg = err instanceof Error ? err.message : 'Unknown error';
+        const formattedError = formatAuditErrorMessage(errorMsg);
 
         // Update audit: mark as failed
         setAuditLog((prev) =>
           prev.map((item) =>
             item.id === i + 1
-              ? { ...item, status: 'failed' as StatementStatus, timeTook, error: errorMsg }
+              ? { ...item, status: 'failed' as StatementStatus, timeTook, error: formattedError }
               : item
           )
         );
@@ -412,8 +427,13 @@ export function SqlPreviewDialog({ open, options, onClose }: SqlPreviewDialogPro
                           {truncateStatement(item.statement, 60)}
                         </span>
                         {item.error && (
-                          <div className="text-red-600 text-xs mt-0.5" title={item.error}>
-                            Error: {truncateStatement(item.error, 50)}
+                          <div className="mt-1 rounded-sm border border-red-200 bg-red-50 px-2 py-1">
+                            <div className="text-[11px] font-medium uppercase tracking-wide text-red-700">
+                              Error
+                            </div>
+                            <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-[11px] leading-4 text-red-700">
+                              {item.error}
+                            </pre>
                           </div>
                         )}
                       </td>

@@ -180,6 +180,120 @@ fn test_admin_detection_matches_sys_root() {
     // This test is a placeholder.
 }
 
+#[test]
+fn test_build_subscription_schema_includes_def_for_all_cases() {
+    let table_def = TableDefinition::new(
+        NamespaceId::new("user1"),
+        TableName::new("messages"),
+        TableType::User,
+        vec![
+            ColumnDefinition::new(
+                1,
+                "id",
+                1,
+                KalamDataType::Int,
+                false,
+                true,
+                false,
+                kalamdb_commons::schemas::ColumnDefault::None,
+                None,
+            ),
+            ColumnDefinition::new(
+                2,
+                "tenant_id",
+                2,
+                KalamDataType::Text,
+                false,
+                false,
+                false,
+                kalamdb_commons::schemas::ColumnDefault::None,
+                None,
+            ),
+            ColumnDefinition::new(
+                3,
+                "payload",
+                3,
+                KalamDataType::Json,
+                true,
+                false,
+                false,
+                kalamdb_commons::schemas::ColumnDefault::None,
+                None,
+            ),
+        ],
+        TableOptions::user(),
+        None,
+    )
+    .unwrap();
+
+    let schema = LiveQueryManager::build_subscription_schema(&table_def, None);
+    assert_eq!(schema.len(), 3);
+    assert_eq!(schema[0].name, "id");
+    assert_eq!(schema[0].def.as_deref(), Some("pk,nonnull,unique"));
+    assert_eq!(schema[1].name, "tenant_id");
+    assert_eq!(schema[1].def.as_deref(), Some("nonnull"));
+    assert_eq!(schema[2].name, "payload");
+    assert!(schema[2].def.is_none());
+}
+
+#[test]
+fn test_build_subscription_schema_projection_keeps_defs_and_order() {
+    let table_def = TableDefinition::new(
+        NamespaceId::new("user1"),
+        TableName::new("messages"),
+        TableType::User,
+        vec![
+            ColumnDefinition::new(
+                1,
+                "id",
+                1,
+                KalamDataType::Int,
+                false,
+                true,
+                false,
+                kalamdb_commons::schemas::ColumnDefault::None,
+                None,
+            ),
+            ColumnDefinition::new(
+                2,
+                "tenant_id",
+                2,
+                KalamDataType::Text,
+                false,
+                false,
+                false,
+                kalamdb_commons::schemas::ColumnDefault::None,
+                None,
+            ),
+            ColumnDefinition::new(
+                3,
+                "payload",
+                3,
+                KalamDataType::Json,
+                true,
+                false,
+                false,
+                kalamdb_commons::schemas::ColumnDefault::None,
+                None,
+            ),
+        ],
+        TableOptions::user(),
+        None,
+    )
+    .unwrap();
+
+    let projections = vec!["tenant_id".to_string(), "id".to_string(), "missing".to_string()];
+    let schema = LiveQueryManager::build_subscription_schema(&table_def, Some(&projections));
+
+    assert_eq!(schema.len(), 2);
+    assert_eq!(schema[0].name, "tenant_id");
+    assert_eq!(schema[0].index, 0);
+    assert_eq!(schema[0].def.as_deref(), Some("nonnull"));
+    assert_eq!(schema[1].name, "id");
+    assert_eq!(schema[1].index, 1);
+    assert_eq!(schema[1].def.as_deref(), Some("pk,nonnull,unique"));
+}
+
 #[tokio::test]
 async fn test_register_connection() {
     let (registry, _manager, _temp_dir) = create_test_manager().await;

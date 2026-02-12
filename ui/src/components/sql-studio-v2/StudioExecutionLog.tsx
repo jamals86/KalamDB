@@ -1,5 +1,9 @@
-import { AlertCircle, CheckCircle2 } from "lucide-react";
+import { useState } from "react";
+import { AlertCircle, CheckCircle2, Eye } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { CodeBlock } from "@/components/ui/code-block";
 import { cn } from "@/lib/utils";
 import type { QueryLogEntry } from "./types";
 
@@ -17,6 +21,16 @@ function formatLogTime(value: string): string {
 }
 
 export function StudioExecutionLog({ logs, status }: StudioExecutionLogProps) {
+  const [responseViewer, setResponseViewer] = useState<{
+    open: boolean;
+    title: string;
+    response: unknown;
+  }>({
+    open: false,
+    title: "",
+    response: null,
+  });
+
   if (logs.length === 0) {
     return (
       <div className="flex h-full items-center justify-center px-4 text-sm text-slate-500 dark:text-slate-400">
@@ -26,13 +40,20 @@ export function StudioExecutionLog({ logs, status }: StudioExecutionLogProps) {
   }
 
   return (
+    <>
     <ScrollArea className="min-h-0 flex-1">
       <div className="min-w-max p-2">
+        <div className="mb-1.5 grid min-w-[820px] grid-cols-[24px_88px_1fr_96px] items-center gap-2 px-2 py-1 text-[11px] uppercase tracking-wide text-slate-400 dark:text-slate-500">
+          <span />
+          <span>Time</span>
+          <span>Message</span>
+          <span className="text-right">Response</span>
+        </div>
         {logs.map((entry, index) => (
           <div
             key={entry.id}
             className={cn(
-              "mb-1.5 grid min-w-[720px] grid-cols-[24px_76px_1fr] items-start gap-2 rounded border border-[#1f334d] bg-[#0f1a2a] px-2 py-1.5 text-xs text-slate-200",
+              "mb-1.5 grid min-w-[820px] grid-cols-[24px_88px_1fr_96px] items-start gap-2 rounded border border-[#1f334d] bg-[#0f1a2a] px-2 py-1.5 text-xs text-slate-200",
               entry.level === "error" && "border-red-500/40 bg-red-950/20",
             )}
           >
@@ -53,10 +74,43 @@ export function StudioExecutionLog({ logs, status }: StudioExecutionLogProps) {
                 {typeof entry.statementIndex === "number" && <span>statement {entry.statementIndex + 1}</span>}
               </div>
             </div>
+            <div className="flex items-start justify-end">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 gap-1.5 border-slate-600 bg-transparent text-slate-200 hover:bg-slate-800"
+                disabled={entry.response === undefined}
+                onClick={() => {
+                  if (entry.response === undefined) {
+                    return;
+                  }
+                  setResponseViewer({
+                    open: true,
+                    title: `Response · Statement ${typeof entry.statementIndex === "number" ? entry.statementIndex + 1 : index + 1}`,
+                    response: entry.response,
+                  });
+                }}
+              >
+                <Eye className="h-3.5 w-3.5" />
+                View
+              </Button>
+            </div>
           </div>
         ))}
       </div>
       <ScrollBar orientation="horizontal" />
     </ScrollArea>
+    <Dialog
+      open={responseViewer.open}
+      onOpenChange={(open) => setResponseViewer((previous) => ({ ...previous, open }))}
+    >
+      <DialogContent className="max-w-3xl">
+        <DialogHeader>
+          <DialogTitle>{responseViewer.title}</DialogTitle>
+        </DialogHeader>
+        <CodeBlock value={responseViewer.response} jsonPreferred maxHeightClassName="max-h-[70vh]" />
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }

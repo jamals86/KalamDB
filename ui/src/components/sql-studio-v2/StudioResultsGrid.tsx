@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
   ArrowUp,
@@ -6,11 +6,14 @@ import {
   ChevronsRight,
   ChevronLeft,
   ChevronRight,
+  KeyRound,
   Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { CodeBlock } from "@/components/ui/code-block";
 import {
   Dialog,
   DialogContent,
@@ -23,6 +26,7 @@ import { InlineCellEditor, type InlineEditContext } from "@/components/sql-studi
 import { generateSqlStatements } from "@/components/sql-studio/utils/sqlGenerator";
 import { extractTableContext } from "@/components/sql-studio/utils/sqlParser";
 import { useSqlPreview } from "@/components/sql-preview";
+import { CellDisplay } from "@/components/datatype-display";
 import { executeSql } from "@/lib/kalam-client";
 import { cn } from "@/lib/utils";
 import { StudioExecutionLog } from "./StudioExecutionLog";
@@ -31,6 +35,7 @@ import type { QueryResultData, SqlStudioResultView, StudioTable } from "./types"
 interface StudioResultsGridProps {
   result: QueryResultData | null;
   isRunning: boolean;
+  isLiveMode: boolean;
   activeSql: string;
   selectedTable: StudioTable | null;
   currentUsername: string;
@@ -47,43 +52,12 @@ type SelectedCell = { rowIndex: number; columnName: string } | null;
 interface CellViewerState {
   open: boolean;
   title: string;
-  content: string;
+  content: unknown;
+  dataType?: string;
 }
 
 const PAGE_SIZE = 50;
 const MAX_RENDERED_ROWS = 1000;
-const CELL_PREVIEW_MAX_LENGTH = 120;
-
-function previewCellValue(value: unknown): string {
-  if (value === null || value === undefined) {
-    return "null";
-  }
-
-  if (typeof value === "string") {
-    return value.length > CELL_PREVIEW_MAX_LENGTH
-      ? `${value.slice(0, CELL_PREVIEW_MAX_LENGTH)}...`
-      : value;
-  }
-
-  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
-    return String(value);
-  }
-
-  if (Array.isArray(value)) {
-    return `[${value.length} item${value.length === 1 ? "" : "s"}]`;
-  }
-
-  if (typeof value === "object") {
-    const keys = Object.keys(value as Record<string, unknown>);
-    if (keys.length === 0) {
-      return "{}";
-    }
-    const previewKeys = keys.slice(0, 3).join(", ");
-    return `{${previewKeys}${keys.length > 3 ? ", ..." : ""}}`;
-  }
-
-  return String(value);
-}
 
 function stringifyCellValue(value: unknown): string {
   if (value === null || value === undefined) {
@@ -127,43 +101,10 @@ function compareValues(left: unknown, right: unknown): number {
   return String(left).localeCompare(String(right), undefined, { numeric: true, sensitivity: "base" });
 }
 
-function formatValueForViewer(value: unknown, dataType?: string): string {
-  const normalizedType = dataType?.toLowerCase() ?? "";
-  const isJsonType = normalizedType.includes("json");
-
-  if (value === null || value === undefined) {
-    return "null";
-  }
-
-  if (isJsonType) {
-    if (typeof value === "string") {
-      try {
-        return JSON.stringify(JSON.parse(value), null, 2);
-      } catch {
-        return value;
-      }
-    }
-    try {
-      return JSON.stringify(value, null, 2);
-    } catch {
-      return stringifyCellValue(value);
-    }
-  }
-
-  if (typeof value === "object") {
-    try {
-      return JSON.stringify(value, null, 2);
-    } catch {
-      return stringifyCellValue(value);
-    }
-  }
-
-  return stringifyCellValue(value);
-}
-
 export function StudioResultsGrid({
   result,
   isRunning,
+  isLiveMode,
   activeSql,
   selectedTable,
   currentUsername,
@@ -181,7 +122,11 @@ export function StudioResultsGrid({
     open: false,
     title: "",
     content: "",
+    dataType: undefined,
   });
+  const [hasUnseenResults, setHasUnseenResults] = useState(false);
+  const [hasUnseenLogs, setHasUnseenLogs] = useState(false);
+  const previousResultRef = useRef<QueryResultData | null>(null);
 
   const {
     edits,
@@ -210,14 +155,47 @@ export function StudioResultsGrid({
       open: false,
       title: "",
       content: "",
+      dataType: undefined,
     });
   }, [result, discardAll]);
+
+  useEffect(() => {
+    if (resultView === "results") {
+      setHasUnseenResults(false);
+    }
+    if (resultView === "log") {
+      setHasUnseenLogs(false);
+    }
+  }, [resultView]);
+
+  useEffect(() => {
+    const previous = previousResultRef.current;
+    if (result) {
+      const rowsChanged =
+        !previous ||
+        previous.rows !== result.rows ||
+        previous.schema !== result.schema ||
+        previous.rowCount !== result.rowCount;
+      const logsChanged = !previous || previous.logs.length !== result.logs.length;
+
+      if (rowsChanged && resultView !== "results" && (result.rows.length > 0 || result.schema.length > 0)) {
+        setHasUnseenResults(true);
+      }
+      if (logsChanged && resultView !== "log" && result.logs.length > 0) {
+        setHasUnseenLogs(true);
+      }
+    }
+    previousResultRef.current = result;
+  }, [result, resultView]);
 
   const schema = result?.schema ?? [];
   const sourceRows =
     result?.status === "success"
       ? result.rows.slice(0, MAX_RENDERED_ROWS)
       : [];
+  const parsedTableContext = useMemo(() => extractTableContext(activeSql), [activeSql]);
+  const cellNamespace = parsedTableContext?.namespace ?? selectedTable?.namespace;
+  const cellTableName = parsedTableContext?.tableName ?? selectedTable?.name;
 
   const sortedRowIndices = useMemo(() => {
     const indices = sourceRows.map((_, rowIndex) => rowIndex);
@@ -257,6 +235,13 @@ export function StudioResultsGrid({
     }
   }, [selectedCell, currentPageRows]);
 
+  useEffect(() => {
+    if (!isLiveMode) {
+      return;
+    }
+    setSelectedRows(new Set());
+  }, [isLiveMode]);
+
   const selectedVisibleRowCount = currentPageRows.filter((rowIndex) => selectedRows.has(rowIndex)).length;
   const allVisibleRowsSelected =
     currentPageRows.length > 0 && selectedVisibleRowCount === currentPageRows.length;
@@ -267,16 +252,23 @@ export function StudioResultsGrid({
       return {};
     }
 
+    const schemaPkColumns = schema
+      .filter((field) => field.isPrimaryKey)
+      .sort((left, right) => left.index - right.index)
+      .map((field) => field.name);
+
     const selectedPkColumns = (selectedTable?.columns ?? [])
       .filter((column) => column.isPrimaryKey)
       .map((column) => column.name);
 
     const pkColumns =
-      selectedPkColumns.length > 0
-        ? selectedPkColumns
-        : schema
-            .map((field) => field.name)
-            .filter((name) => name.toLowerCase() === "id" || name.endsWith("_id"));
+      schemaPkColumns.length > 0
+        ? schemaPkColumns
+        : selectedPkColumns.length > 0
+          ? selectedPkColumns
+          : schema
+              .map((field) => field.name)
+              .filter((name) => name.toLowerCase() === "id" || name.endsWith("_id"));
 
     const fallbackColumn = schema[0]?.name;
     const keyColumns = pkColumns.length > 0 ? pkColumns : fallbackColumn ? [fallbackColumn] : [];
@@ -362,7 +354,8 @@ export function StudioResultsGrid({
       setCellViewer({
         open: true,
         title: `${columnName} · Row ${rowIndex + 1}${dataType ? ` (${dataType})` : ""}`,
-        content: formatValueForViewer(value, dataType),
+        content: value,
+        dataType,
       });
     },
     [schema],
@@ -437,8 +430,8 @@ export function StudioResultsGrid({
 
   const handleReviewChanges = () => {
     const parsed = extractTableContext(activeSql);
-    const namespace = selectedTable?.namespace ?? parsed?.namespace;
-    const tableName = selectedTable?.name ?? parsed?.tableName;
+    const namespace = parsed?.namespace ?? selectedTable?.namespace;
+    const tableName = parsed?.tableName ?? selectedTable?.name;
 
     if (!namespace || !tableName) {
       alert("Unable to determine target table for commit. Select a table and run a simple SELECT ... FROM namespace.table query.");
@@ -476,24 +469,30 @@ export function StudioResultsGrid({
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-white dark:bg-[#101922]">
-      <div className="flex h-10 items-center justify-between gap-2 border-b border-slate-200 px-3 text-xs dark:border-[#1e293b]">
+      <div className="flex h-11 items-end justify-between gap-3 border-b border-slate-200 px-3 dark:border-[#1e293b]">
         <Tabs
           value={resultView}
           onValueChange={(value) => onResultViewChange(value as SqlStudioResultView)}
-          className="shrink-0"
+          className="h-full shrink-0"
         >
-          <TabsList className="h-7 rounded-md bg-slate-100 p-0.5 dark:bg-[#16283d]">
+          <TabsList className="h-full gap-5 rounded-none bg-transparent p-0">
             <TabsTrigger
               value="results"
-              className="h-6 rounded px-2.5 text-[11px] data-[state=active]:bg-white dark:data-[state=active]:bg-[#101922]"
+              className="relative h-full rounded-none border-b-2 border-transparent px-0 pt-0 text-xs font-medium text-slate-500 shadow-none data-[state=active]:border-sky-500 data-[state=active]:bg-transparent data-[state=active]:text-slate-900 dark:text-slate-400 dark:data-[state=active]:bg-transparent dark:data-[state=active]:text-slate-100"
             >
-              Results
+              <span>Results</span>
+              {hasUnseenResults && (
+                <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-sky-500" />
+              )}
             </TabsTrigger>
             <TabsTrigger
               value="log"
-              className="h-6 rounded px-2.5 text-[11px] data-[state=active]:bg-white dark:data-[state=active]:bg-[#101922]"
+              className="relative h-full rounded-none border-b-2 border-transparent px-0 pt-0 text-xs font-medium text-slate-500 shadow-none data-[state=active]:border-sky-500 data-[state=active]:bg-transparent data-[state=active]:text-slate-900 dark:text-slate-400 dark:data-[state=active]:bg-transparent dark:data-[state=active]:text-slate-100"
             >
-              Log ({logCount})
+              <span>Log ({logCount})</span>
+              {hasUnseenLogs && (
+                <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-sky-500" />
+              )}
             </TabsTrigger>
           </TabsList>
         </Tabs>
@@ -520,9 +519,9 @@ export function StudioResultsGrid({
             <Button
               size="sm"
               variant="destructive"
-              className={cn("h-7 gap-1.5", (resultView !== "results" || selectedRows.size === 0) && "invisible pointer-events-none")}
+              className={cn("h-7 gap-1.5", (resultView !== "results" || selectedRows.size === 0 || isLiveMode) && "invisible pointer-events-none")}
               onClick={handleDeleteSelectedRows}
-              disabled={resultView !== "results" || selectedRows.size === 0}
+              disabled={resultView !== "results" || selectedRows.size === 0 || isLiveMode}
             >
               <Trash2 className="h-3.5 w-3.5" />
               Delete selected
@@ -544,9 +543,12 @@ export function StudioResultsGrid({
       )}
 
       {!isRunning && result?.status === "error" && resultView === "results" && (
-        <div className="m-3 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
-          {result.errorMessage ?? "Query failed"}
-        </div>
+        <Alert variant="destructive" className="m-3">
+          <AlertTitle>Execution failed</AlertTitle>
+          <AlertDescription>
+            {result.errorMessage ?? "The query could not be completed. Open the Log tab for statement-level details."}
+          </AlertDescription>
+        </Alert>
       )}
 
       {!isRunning && result?.status === "error" && resultView === "log" && (
@@ -602,7 +604,11 @@ export function StudioResultsGrid({
                       <input
                         type="checkbox"
                         checked={allVisibleRowsSelected}
+                        disabled={isLiveMode}
                         onChange={(event) => {
+                          if (isLiveMode) {
+                            return;
+                          }
                           setSelectedRows((previous) => {
                             const next = new Set(previous);
                             if (event.target.checked) {
@@ -613,7 +619,7 @@ export function StudioResultsGrid({
                             return next;
                           });
                         }}
-                        className="h-3.5 w-3.5 rounded border-slate-500 bg-transparent"
+                        className="h-3.5 w-3.5 rounded border-slate-500 bg-transparent disabled:opacity-40"
                       />
                     </div>
                   </th>
@@ -630,7 +636,18 @@ export function StudioResultsGrid({
                           onClick={() => handleSortColumn(field.name)}
                         >
                           <span>
-                            <span className="block text-[11px] uppercase tracking-wide">{field.name}</span>
+                            <span className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide">
+                              <span>{field.name}</span>
+                              {field.isPrimaryKey && (
+                                <span
+                                  className="inline-flex items-center gap-1 rounded bg-amber-400/20 px-1 py-0.5 text-[9px] font-semibold tracking-normal text-amber-300"
+                                  title="Primary key column"
+                                >
+                                  <KeyRound className="h-2.5 w-2.5" />
+                                  PK
+                                </span>
+                              )}
+                            </span>
                             <span className="block text-[10px] font-normal uppercase text-slate-500 dark:text-slate-400">
                               {field.dataType}
                             </span>
@@ -672,7 +689,11 @@ export function StudioResultsGrid({
                           <input
                             type="checkbox"
                             checked={rowSelected}
+                            disabled={isLiveMode}
                             onChange={(event) => {
+                              if (isLiveMode) {
+                                return;
+                              }
                               setSelectedRows((previous) => {
                                 const next = new Set(previous);
                                 if (event.target.checked) {
@@ -683,7 +704,7 @@ export function StudioResultsGrid({
                                 return next;
                               });
                             }}
-                            className="h-3.5 w-3.5 rounded border-slate-500 bg-transparent"
+                            className="h-3.5 w-3.5 rounded border-slate-500 bg-transparent disabled:opacity-40"
                           />
                         </div>
                       </td>
@@ -692,7 +713,6 @@ export function StudioResultsGrid({
                         const value = getCellEditedValue(rowIndex, field.name) ?? row[field.name];
                         const cellEdited = isCellEdited(rowIndex, field.name);
                         const cellKey = `${rowIndex}:${field.name}`;
-                        const preview = previewCellValue(value);
 
                         return (
                           <td key={`${rowIndex}-${field.name}`} className="border-r border-slate-200 px-1 py-1 dark:border-[#1e293b]">
@@ -725,14 +745,19 @@ export function StudioResultsGrid({
                                 });
                               }}
                               className={cn(
-                                "min-h-6 truncate px-1 py-0.5 font-mono text-xs outline-none",
+                                "min-h-6 px-1 py-0.5 font-mono text-xs outline-none",
                                 value === null && "italic text-slate-500",
                                 cellEdited && "bg-amber-500/20",
                                 selectedCellKey === cellKey && "ring-1 ring-sky-400",
                               )}
                               tabIndex={0}
                             >
-                              {preview}
+                              <CellDisplay
+                                value={value}
+                                dataType={field.dataType}
+                                namespace={cellNamespace}
+                                tableName={cellTableName}
+                              />
                             </div>
                           </td>
                         );
@@ -818,16 +843,17 @@ export function StudioResultsGrid({
             open={cellViewer.open}
             onOpenChange={(open) => setCellViewer((previous) => ({ ...previous, open }))}
           >
-            <DialogContent className="max-w-3xl">
+            <DialogContent className="max-h-[85vh] max-w-4xl overflow-hidden">
               <DialogHeader>
                 <DialogTitle>{cellViewer.title}</DialogTitle>
               </DialogHeader>
-              <ScrollArea className="max-h-[60vh] rounded border border-slate-200 dark:border-[#1e293b]">
-                <pre className="whitespace-pre-wrap p-3 font-mono text-xs text-slate-800 dark:text-slate-100">
-                  {cellViewer.content}
-                </pre>
-                <ScrollBar orientation="horizontal" />
-              </ScrollArea>
+              <div className="max-h-[70vh] overflow-auto">
+                <CodeBlock
+                  value={cellViewer.content}
+                  jsonPreferred={(cellViewer.dataType?.toLowerCase() ?? "").includes("json")}
+                  maxHeightClassName="max-h-[68vh]"
+                />
+              </div>
             </DialogContent>
           </Dialog>
         </>

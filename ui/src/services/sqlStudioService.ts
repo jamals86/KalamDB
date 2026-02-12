@@ -10,15 +10,33 @@ import type {
 const MAX_SQL_STUDIO_RENDER_ROWS = 1000;
 
 interface RawSqlStatementResult {
-  schema?: { name: string; data_type: string; index: number }[];
+  schema?: { name: string; data_type: string; index: number; def?: string }[];
   rows?: unknown[][];
   row_count?: number;
   message?: string;
   as_user?: string;
 }
 
-function normalizeSchema(
-  rawSchema: { name: string; data_type: string; index: number }[] | undefined,
+export type RawQuerySchemaField = { name: string; data_type: string; index: number; def?: string };
+
+function parseSchemaDefTokens(def: string | undefined): string[] {
+  if (!def) {
+    return [];
+  }
+
+  return def
+    .split(",")
+    .map((token) => token.trim().toLowerCase())
+    .filter((token) => token.length > 0);
+}
+
+function isPrimaryKeyDef(def: string | undefined): boolean {
+  const tokens = parseSchemaDefTokens(def);
+  return tokens.includes("pk") || tokens.includes("primary_key") || tokens.includes("primary key");
+}
+
+export function normalizeSchema(
+  rawSchema: RawQuerySchemaField[] | undefined,
 ): QueryResultSchemaField[] {
   if (!rawSchema) {
     return [];
@@ -28,6 +46,8 @@ function normalizeSchema(
     name: field.name,
     dataType: field.data_type,
     index: field.index,
+    def: field.def,
+    isPrimaryKey: isPrimaryKeyDef(field.def),
   }));
 }
 
@@ -72,6 +92,7 @@ function toQueryLogEntry(
     id: `${createdAt}-stmt-${statementIndex}`,
     level: "info",
     message,
+    response: result,
     asUser,
     rowCount,
     statementIndex,
@@ -194,6 +215,7 @@ export async function executeSqlStudioQuery(sql: string): Promise<QueryResultDat
         id: `${createdAt}-error`,
         level: "error",
         message: response.error.message,
+        response: response.error,
         createdAt,
       }],
       errorMessage: response.error.message,

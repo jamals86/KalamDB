@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useMemo } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -16,7 +16,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useAuth } from "@/lib/auth";
-import { useStats } from "@/hooks/useStats";
+import { useGetStatsQuery } from "@/store/apiSlice";
+import { PageLayout } from "@/components/layout/PageLayout";
 
 function parseInteger(value: string | undefined): number {
   if (!value) {
@@ -47,11 +48,12 @@ function formatUptime(seconds: string | undefined): string {
 
 export default function Dashboard() {
   const { user } = useAuth();
-  const { stats, isLoading, error, fetchStats } = useStats();
-
-  useEffect(() => {
-    fetchStats().catch(console.error);
-  }, [fetchStats]);
+  const {
+    data: stats = {},
+    isFetching: isLoading,
+    error,
+    refetch,
+  } = useGetStatsQuery();
 
   const criticalQueue = useMemo(() => {
     const totalJobs = parseInteger(stats.total_jobs);
@@ -117,18 +119,16 @@ export default function Dashboard() {
   ];
 
   return (
-    <div className="space-y-4 p-4 lg:p-6">
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
-          <p className="text-sm text-muted-foreground">Welcome back, {user?.username ?? "admin"}</p>
-        </div>
-        <Button variant="outline" size="sm" onClick={() => fetchStats().catch(console.error)} disabled={isLoading}>
+    <PageLayout
+      title="Dashboard"
+      description={`Welcome back, ${user?.username ?? "admin"}`}
+      actions={(
+        <Button variant="outline" size="sm" onClick={() => void refetch()} disabled={isLoading}>
           <RefreshCw className={`mr-1.5 h-4 w-4 ${isLoading ? "animate-spin" : ""}`} />
           Refresh
         </Button>
-      </div>
-
+      )}
+    >
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-sm uppercase tracking-[0.18em] text-muted-foreground">Health Strip</CardTitle>
@@ -198,9 +198,11 @@ export default function Dashboard() {
 
       {error && (
         <Card className="border-destructive/30 bg-destructive/5">
-          <CardContent className="pt-4 text-sm text-destructive">{error}</CardContent>
+          <CardContent className="pt-4 text-sm text-destructive">
+            {"error" in error ? error.error : "Failed to fetch dashboard stats"}
+          </CardContent>
         </Card>
       )}
-    </div>
+    </PageLayout>
   );
 }

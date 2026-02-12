@@ -29,9 +29,23 @@ export function toMilliseconds(
   value: number | string,
   unit: 'microsecond' | 'millisecond' | 'nanosecond' | 'second' | null = null
 ): number {
-  const num = typeof value === 'string' ? parseInt(value, 10) : value;
-  
+  const normalizedValue = typeof value === 'string' ? value.trim() : value;
+  const isNumericString =
+    typeof normalizedValue === 'string' && /^-?\d+(\.\d+)?$/.test(normalizedValue);
+  const num =
+    typeof normalizedValue === 'number'
+      ? normalizedValue
+      : isNumericString
+        ? Number(normalizedValue)
+        : NaN;
+
   if (isNaN(num)) {
+    if (typeof normalizedValue === 'string') {
+      const parsedDate = Date.parse(normalizedValue);
+      if (!Number.isNaN(parsedDate)) {
+        return parsedDate;
+      }
+    }
     return NaN;
   }
   

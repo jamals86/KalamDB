@@ -2,7 +2,7 @@
 
 use arrow::record_batch::RecordBatch;
 use kalamdb_commons::conversions::{
-    read_kalam_data_type_metadata, KALAM_DATA_TYPE_METADATA_KEY,
+    read_kalam_column_def_metadata, read_kalam_data_type_metadata, KALAM_DATA_TYPE_METADATA_KEY,
 };
 use kalamdb_commons::models::datatypes::{FromArrowType, KalamDataType};
 use kalamdb_commons::models::Role;
@@ -60,7 +60,15 @@ pub fn record_batch_to_query_result(
                 }
             };
 
-            SchemaField::new(field.name().clone(), kalam_type, index)
+            let mut schema_field = SchemaField::new(field.name().clone(), kalam_type, index);
+
+            if let Some(def) = read_kalam_column_def_metadata(field)
+                .filter(|value| !value.trim().is_empty())
+            {
+                schema_field = schema_field.with_def(def);
+            }
+
+            schema_field
         })
         .collect();
 
@@ -109,4 +117,60 @@ fn mask_sensitive_column_array(
 /// Check if user has admin privileges for viewing sensitive data.
 fn is_admin_role(role: Option<Role>) -> bool {
     matches!(role, Some(Role::Dba) | Some(Role::System))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arrow::array::RecordBatch;
+    use arrow::datatypes::{DataType, Field, Schema};
+    use kalamdb_commons::conversions::{
+        with_kalam_column_def_metadata, with_kalam_data_type_metadata,
+    };
+    use std::sync::Arc;
+
+    #[test]
+    fn test_record_batch_to_query_result_includes_def_flags_and_omits_empty() {
+        let id_field = with_kalam_column_def_metadata(
+            with_kalam_data_type_metadata(
+                Field::new("id", DataType::FixedSizeBinary(16), false),
+                &KalamDataType::Uuid,
+            ),
+            "pk,nonnull,unique",
+        );
+        let tenant_field = with_kalam_column_def_metadata(
+            with_kalam_data_type_metadata(
+                Field::new("tenant_id", DataType::Utf8, false),
+                &KalamDataType::Text,
+            ),
+            "nonnull",
+        );
+        let payload_field = with_kalam_data_type_metadata(
+            Field::new("payload", DataType::Utf8, true),
+            &KalamDataType::Text,
+        );
+
+        let schema = Arc::new(Schema::new(vec![id_field, tenant_field, payload_field]));
+
+        let result = record_batch_to_query_result(vec![], Some(schema), None).unwrap();
+
+        assert_eq!(result.schema.len(), 3);
+        assert_eq!(result.schema[0].name, "id");
+        assert_eq!(result.schema[0].def.as_deref(), Some("pk,nonnull,unique"));
+        assert_eq!(result.schema[1].name, "tenant_id");
+        assert_eq!(result.schema[1].def.as_deref(), Some("nonnull"));
+        assert_eq!(result.schema[2].name, "payload");
+        assert!(result.schema[2].def.is_none());
+    }
+
+    #[test]
+    fn test_record_batch_to_query_result_without_column_def_metadata() {
+        let schema = Arc::new(Schema::new(vec![Field::new("name", DataType::Utf8, true)]));
+        let empty_batch = RecordBatch::new_empty(schema);
+
+        let result = record_batch_to_query_result(vec![empty_batch], None, None).unwrap();
+        assert_eq!(result.schema.len(), 1);
+        assert_eq!(result.schema[0].name, "name");
+        assert!(result.schema[0].def.is_none());
+    }
 }

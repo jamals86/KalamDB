@@ -1,56 +1,90 @@
-import { useState } from 'react';
-import { ChevronRight, ChevronDown } from 'lucide-react';
+import { useMemo, useState } from "react";
+import { Braces, Expand } from "lucide-react";
+import { CodeBlock } from "@/components/ui/code-block";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 interface JsonDisplayProps {
-  value: any;
-  expanded?: boolean;
+  value: unknown;
+  maxPreviewLength?: number;
 }
 
-export function JsonDisplay({ value, expanded = false }: JsonDisplayProps) {
-  const [isExpanded, setIsExpanded] = useState(expanded);
+function normalizeJsonValue(value: unknown): unknown {
+  if (typeof value !== "string") {
+    return value;
+  }
+
+  const trimmed = value.trim();
+  if (
+    (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+    (trimmed.startsWith("[") && trimmed.endsWith("]"))
+  ) {
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return value;
+    }
+  }
+
+  return value;
+}
+
+function buildPreview(value: unknown, maxPreviewLength: number): string {
+  try {
+    const compact = typeof value === "string" ? value : JSON.stringify(value);
+    if (!compact) {
+      return "{}";
+    }
+    return compact.length > maxPreviewLength
+      ? `${compact.slice(0, maxPreviewLength)}...`
+      : compact;
+  } catch {
+    const fallback = String(value);
+    return fallback.length > maxPreviewLength
+      ? `${fallback.slice(0, maxPreviewLength)}...`
+      : fallback;
+  }
+}
+
+export function JsonDisplay({ value, maxPreviewLength = 30 }: JsonDisplayProps) {
+  const [isOpen, setIsOpen] = useState(false);
+  const normalizedValue = useMemo(() => normalizeJsonValue(value), [value]);
+  const preview = useMemo(
+    () => buildPreview(normalizedValue, maxPreviewLength),
+    [normalizedValue, maxPreviewLength],
+  );
 
   if (value === null || value === undefined) {
     return <span className="text-muted-foreground italic">null</span>;
   }
 
-  if (typeof value !== 'object') {
-    return <span className="font-mono text-sm">{JSON.stringify(value)}</span>;
-  }
-
-  const jsonString = JSON.stringify(value, null, 2);
-  const preview = JSON.stringify(value).slice(0, 50);
-
-  if (isExpanded) {
-    return (
-      <div className="max-w-full">
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            setIsExpanded(false);
-          }}
-          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground mb-1"
-        >
-          <ChevronDown className="h-3 w-3" />
-          Collapse
-        </button>
-        <pre className="text-xs bg-muted p-2 rounded overflow-x-auto max-h-[200px] overflow-y-auto">
-          {jsonString}
-        </pre>
-      </div>
-    );
-  }
-
   return (
-    <button
-      onClick={(e) => {
-        e.stopPropagation();
-        setIsExpanded(true);
-      }}
-      className="flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400 hover:underline max-w-full"
-      title={jsonString}
-    >
-      <ChevronRight className="h-3 w-3 shrink-0" />
-      <span className="font-mono truncate">{preview}{preview.length >= 50 ? '...' : ''}</span>
-    </button>
+    <>
+      <button
+        type="button"
+        onClick={(event) => {
+          event.stopPropagation();
+          setIsOpen(true);
+        }}
+        className="inline-flex max-w-full items-center gap-1.5 rounded px-1 py-0.5 text-xs text-sky-500 hover:bg-sky-500/10 hover:text-sky-400"
+        title="View JSON data"
+      >
+        <Braces className="h-3.5 w-3.5 shrink-0" />
+        <span className="truncate font-mono">{preview}</span>
+      </button>
+
+      <Dialog open={isOpen} onOpenChange={setIsOpen}>
+        <DialogContent className="max-w-4xl overflow-hidden">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Expand className="h-4 w-4" />
+              JSON Data
+            </DialogTitle>
+          </DialogHeader>
+          <div className="max-h-[70vh] overflow-auto">
+            <CodeBlock value={normalizedValue} jsonPreferred maxHeightClassName="max-h-[68vh]" />
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useNotifications } from '@/hooks/useNotifications';
-import { Job } from '@/hooks/useJobs';
-import { AuditLog } from '@/hooks/useAuditLogs';
+import type { Job } from '@/services/jobService';
+import type { AuditLog } from '@/services/auditLogService';
+import { useGetNotificationsQuery } from '@/store/apiSlice';
 import { Button } from '@/components/ui/button';
+import { CodeBlock } from '@/components/ui/code-block';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -24,19 +25,19 @@ import { Bell, Play, CheckCircle, Clock, ScrollText, RefreshCw, ExternalLink } f
 import { cn } from '@/lib/utils';
 
 const STATUS_COLORS: Record<string, string> = {
-  'New': 'bg-gray-100 text-gray-800',
-  'Queued': 'bg-blue-100 text-blue-800',
-  'Running': 'bg-yellow-100 text-yellow-800',
-  'Completed': 'bg-green-100 text-green-800',
-  'Failed': 'bg-red-100 text-red-800',
+  'New': 'bg-muted text-muted-foreground',
+  'Queued': 'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-200',
+  'Running': 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-200',
+  'Completed': 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-200',
+  'Failed': 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200',
 };
 
 const ACTION_COLORS: Record<string, string> = {
-  'CREATE': 'text-green-600',
-  'INSERT': 'text-green-600',
-  'UPDATE': 'text-blue-600',
-  'DELETE': 'text-red-600',
-  'DROP': 'text-red-600',
+  'CREATE': 'text-green-600 dark:text-green-300',
+  'INSERT': 'text-green-600 dark:text-green-300',
+  'UPDATE': 'text-blue-600 dark:text-blue-300',
+  'DELETE': 'text-red-600 dark:text-red-300',
+  'DROP': 'text-red-600 dark:text-red-300',
 };
 
 // Helper to extract namespace_id and table_name from parameters JSON
@@ -55,7 +56,7 @@ function getActionColor(action: string): string {
       return color;
     }
   }
-  return 'text-gray-600';
+  return 'text-muted-foreground';
 }
 
 function formatTimestamp(timestamp: string | number | null): string {
@@ -78,12 +79,21 @@ function formatTimestamp(timestamp: string | number | null): string {
 
 export function NotificationsDropdown() {
   const navigate = useNavigate();
-  const { notifications, isLoading, refresh, lastFetchTime } = useNotifications();
+  const {
+    data: notifications,
+    isFetching: isLoading,
+    refetch,
+  } = useGetNotificationsQuery(undefined, {
+    pollingInterval: 10000,
+  });
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   const [selectedAuditLog, setSelectedAuditLog] = useState<AuditLog | null>(null);
   const [isOpen, setIsOpen] = useState(false);
 
-  const { runningJobs, recentAuditLogs, runningJobsCount } = notifications;
+  const runningJobs = notifications?.runningJobs ?? [];
+  const recentAuditLogs = notifications?.recentAuditLogs ?? [];
+  const runningJobsCount = notifications?.runningJobsCount ?? 0;
+  const lastFetchTime = notifications?.fetchedAt ? new Date(notifications.fetchedAt) : null;
 
   return (
     <>
@@ -110,13 +120,13 @@ export function NotificationsDropdown() {
                   {formatTimestamp(lastFetchTime.toISOString())}
                 </span>
               )}
-              <Button 
+                <Button 
                 variant="ghost" 
                 size="icon" 
                 className="h-6 w-6" 
                 onClick={(e) => {
                   e.preventDefault();
-                  refresh();
+                  void refetch();
                 }}
               >
                 <RefreshCw className={cn("h-3 w-3", isLoading && "animate-spin")} />
@@ -236,7 +246,7 @@ export function NotificationsDropdown() {
               <DropdownMenuItem
                 className="justify-center text-sm text-primary"
                 onClick={() => {
-                  navigate('/audit-logs');
+                  navigate('/logging/audit');
                   setIsOpen(false);
                 }}
               >
@@ -349,16 +359,8 @@ export function NotificationsDropdown() {
               {selectedAuditLog.details && (
                 <div>
                   <label className="text-muted-foreground">Details</label>
-                  <div className="mt-1 p-3 bg-muted rounded-md overflow-auto max-h-[200px]">
-                    <pre className="text-xs whitespace-pre-wrap font-mono">
-                      {(() => {
-                        try {
-                          return JSON.stringify(JSON.parse(selectedAuditLog.details), null, 2);
-                        } catch {
-                          return selectedAuditLog.details;
-                        }
-                      })()}
-                    </pre>
+                  <div className="mt-1">
+                    <CodeBlock value={selectedAuditLog.details} jsonPreferred maxHeightClassName="max-h-[240px]" />
                   </div>
                 </div>
               )}
@@ -367,7 +369,7 @@ export function NotificationsDropdown() {
                   variant="outline"
                   className="w-full"
                   onClick={() => {
-                    navigate('/audit-logs');
+                    navigate('/logging/audit');
                     setSelectedAuditLog(null);
                   }}
                 >

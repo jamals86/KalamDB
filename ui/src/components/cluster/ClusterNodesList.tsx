@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ClusterNode } from '@/hooks/useCluster';
+import type { ClusterNode } from '@/services/clusterService';
 import {
   Table,
   TableBody,

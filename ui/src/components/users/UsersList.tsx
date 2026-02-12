@@ -1,5 +1,7 @@
-import { useState, useEffect } from 'react';
-import { User, useUsers } from '@/hooks/useUsers';
+import { useMemo, useState } from 'react';
+import { useAuth } from '@/lib/auth';
+import { useDeleteUserMutation, useGetUsersListQuery } from '@/store/apiSlice';
+import type { User } from '@/services/userService';
 import {
   Table,
   TableBody,
@@ -10,30 +12,38 @@ import {
 } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { TimestampDisplay } from '@/components/datatype-display/TimestampDisplay';
 import { UserForm } from './UserForm';
 import { DeleteUserDialog } from './DeleteUserDialog';
 import { Search, Plus, Pencil, Trash2, Loader2, RefreshCw } from 'lucide-react';
 
 export function UsersList() {
-  const { users, isLoading, error, fetchUsers, deleteUser, canDeleteUser } = useUsers();
+  const { user: currentUser } = useAuth();
+  const {
+    data: users = [],
+    isFetching: isLoading,
+    error,
+    refetch,
+  } = useGetUsersListQuery();
+  const [deleteUserMutation] = useDeleteUserMutation();
   const [searchQuery, setSearchQuery] = useState('');
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [deletingUser, setDeletingUser] = useState<User | null>(null);
 
-  useEffect(() => {
-    fetchUsers();
-  }, [fetchUsers]);
-
-  const filteredUsers = users.filter(user => {
-    if (!searchQuery.trim()) return true;
-    const query = searchQuery.toLowerCase();
-    return (
-      user.username.toLowerCase().includes(query) ||
-      user.email?.toLowerCase().includes(query) ||
-      user.role.toLowerCase().includes(query)
-    );
-  });
+  const filteredUsers = useMemo(
+    () =>
+      users.filter((user) => {
+        if (!searchQuery.trim()) return true;
+        const query = searchQuery.toLowerCase();
+        return (
+          user.username.toLowerCase().includes(query) ||
+          user.email?.toLowerCase().includes(query) ||
+          user.role.toLowerCase().includes(query)
+        );
+      }),
+    [searchQuery, users],
+  );
 
   const getRoleBadgeColor = (role: string) => {
     switch (role) {
@@ -51,8 +61,8 @@ export function UsersList() {
   if (error) {
     return (
       <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
-        <p className="text-red-700">{error}</p>
-        <Button variant="outline" onClick={fetchUsers} className="mt-2">
+        <p className="text-red-700">{"error" in error ? error.error : "Failed to fetch users"}</p>
+        <Button variant="outline" onClick={() => void refetch()} className="mt-2">
           Retry
         </Button>
       </div>
@@ -73,7 +83,7 @@ export function UsersList() {
           />
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="icon" onClick={fetchUsers} disabled={isLoading}>
+          <Button variant="outline" size="icon" onClick={() => void refetch()} disabled={isLoading}>
             <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
           </Button>
           <Button onClick={() => setIsCreateOpen(true)}>
@@ -120,7 +130,11 @@ export function UsersList() {
                       {user.email || '—'}
                     </TableCell>
                     <TableCell className="text-muted-foreground">
-                      {new Date(user.created_at).toLocaleDateString()}
+                      {user.created_at ? (
+                        <TimestampDisplay value={user.created_at} />
+                      ) : (
+                        '—'
+                      )}
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-1">
@@ -135,7 +149,7 @@ export function UsersList() {
                           variant="ghost"
                           size="icon"
                           onClick={() => setDeletingUser(user)}
-                          disabled={!canDeleteUser(user.user_id)}
+                          disabled={currentUser?.username === user.username}
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
@@ -155,7 +169,7 @@ export function UsersList() {
         onOpenChange={setIsCreateOpen}
         onSuccess={() => {
           setIsCreateOpen(false);
-          fetchUsers();
+          void refetch();
         }}
       />
 
@@ -167,7 +181,7 @@ export function UsersList() {
           user={editingUser}
           onSuccess={() => {
             setEditingUser(null);
-            fetchUsers();
+            void refetch();
           }}
         />
       )}
@@ -179,8 +193,12 @@ export function UsersList() {
           onOpenChange={() => setDeletingUser(null)}
           user={deletingUser}
           onConfirm={async () => {
-            await deleteUser(deletingUser.user_id);
+            if (currentUser?.username === deletingUser.username) {
+              throw new Error("Cannot delete your own account");
+            }
+            await deleteUserMutation({ username: deletingUser.username }).unwrap();
             setDeletingUser(null);
+            void refetch();
           }}
         />
       )}

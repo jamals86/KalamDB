@@ -1,8 +1,10 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
+import { AlertCircle, KeyRound, User } from "lucide-react";
 import { useAuth } from "@/lib/auth";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 interface LoginFormProps {
   onSuccess?: () => void;
@@ -34,24 +36,31 @@ export default function LoginForm({ onSuccess }: LoginFormProps) {
   const displayError = localError || error;
 
   return (
-    <Card className="w-full max-w-md">
-      <CardHeader className="text-center">
-        <CardTitle className="text-2xl">KalamDB Admin</CardTitle>
-        <CardDescription>
-          Sign in to access the admin dashboard
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {displayError && (
-            <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
-              {displayError}
-            </div>
-          )}
-          <div className="space-y-2">
-            <label htmlFor="username" className="text-sm font-medium">
-              Username
-            </label>
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <Button type="button" variant="secondary" className="h-11 w-full" disabled>
+        Continue with Google (Soon)
+      </Button>
+
+      <div className="flex items-center gap-3 py-2">
+        <div className="h-px flex-1 bg-border" />
+        <span className="text-xs font-medium text-muted-foreground">OR</span>
+        <div className="h-px flex-1 bg-border" />
+      </div>
+
+      {displayError && (
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>{displayError}</AlertDescription>
+        </Alert>
+      )}
+
+      <div className="space-y-3">
+        <div className="space-y-2">
+          <label htmlFor="username" className="text-sm font-medium">
+            Username
+          </label>
+          <div className="relative">
+            <User className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               id="username"
               type="text"
@@ -61,12 +70,17 @@ export default function LoginForm({ onSuccess }: LoginFormProps) {
               disabled={isLoading}
               autoComplete="username"
               autoFocus
+              className="h-11 pl-10"
             />
           </div>
-          <div className="space-y-2">
-            <label htmlFor="password" className="text-sm font-medium">
-              Password
-            </label>
+        </div>
+
+        <div className="space-y-2">
+          <label htmlFor="password" className="text-sm font-medium">
+            Password
+          </label>
+          <div className="relative">
+            <KeyRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               id="password"
               type="password"
@@ -75,13 +89,22 @@ export default function LoginForm({ onSuccess }: LoginFormProps) {
               placeholder="Enter password"
               disabled={isLoading}
               autoComplete="current-password"
+              className="h-11 pl-10"
             />
           </div>
-          <Button type="submit" className="w-full" disabled={isLoading}>
-            {isLoading ? "Signing in..." : "Sign in"}
-          </Button>
-        </form>
-      </CardContent>
-    </Card>
+        </div>
+      </div>
+
+      <Button type="submit" className="h-11 w-full" disabled={isLoading}>
+        {isLoading ? "Signing in..." : "Log in"}
+      </Button>
+
+      <p className="text-center text-sm text-muted-foreground">
+        First time on this node?{" "}
+        <Link to="/setup" className="font-medium text-primary hover:underline">
+          Run setup
+        </Link>
+      </p>
+    </form>
   );
 }

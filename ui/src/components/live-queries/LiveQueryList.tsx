@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   Table,
   TableBody,
@@ -18,45 +18,38 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Card } from '@/components/ui/card';
-import { LiveQuery, useLiveQueries } from '@/hooks/useLiveQueries';
+import type { LiveQuery, LiveQueryFilters } from '@/services/liveQueryService';
+import { useGetLiveQueriesQuery, useKillLiveQueryMutation } from '@/store/apiSlice';
 import { Loader2, RefreshCw, XCircle, Activity, Clock, Database, CheckCircle } from 'lucide-react';
 
 export function LiveQueryList() {
-  const { liveQueries, isLoading, error, fetchLiveQueries, killLiveQuery } = useLiveQueries();
   const [filters, setFilters] = useState({
     user_id: '',
     namespace_id: '',
     table_name: '',
     status: 'all',
   });
+  const [appliedFilters, setAppliedFilters] = useState<LiveQueryFilters>({});
+  const {
+    data: liveQueries = [],
+    isFetching: isLoading,
+    error,
+    refetch,
+  } = useGetLiveQueriesQuery(appliedFilters, { pollingInterval: 5000 });
+  const [killLiveQueryMutation] = useKillLiveQueryMutation();
   const [killingIds, setKillingIds] = useState<Set<string>>(new Set());
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [killError, setKillError] = useState<string | null>(null);
 
-  useEffect(() => {
-    loadLiveQueries();
-    
-    // Auto-refresh every 5 seconds
-    const interval = setInterval(() => {
-      loadLiveQueries();
-    }, 5000);
-    
-    return () => clearInterval(interval);
-  }, []);
-
-  const loadLiveQueries = async () => {
-    try {
-      const filterParams = {
-        ...(filters.user_id && { user_id: filters.user_id }),
-        ...(filters.namespace_id && { namespace_id: filters.namespace_id }),
-        ...(filters.table_name && { table_name: filters.table_name }),
-        ...(filters.status && filters.status !== 'all' && { status: filters.status }),
-      };
-      await fetchLiveQueries(filterParams);
-    } catch (err) {
-      console.error('Failed to load live queries:', err);
-    }
-  };
+  const filterParams = useMemo<LiveQueryFilters>(
+    () => ({
+      ...(filters.user_id && { user_id: filters.user_id }),
+      ...(filters.namespace_id && { namespace_id: filters.namespace_id }),
+      ...(filters.table_name && { table_name: filters.table_name }),
+      ...(filters.status && filters.status !== 'all' && { status: filters.status }),
+    }),
+    [filters.namespace_id, filters.status, filters.table_name, filters.user_id],
+  );
 
   const handleKillQuery = async (liveQuery: LiveQuery) => {
     if (!confirm(`Kill live query for ${liveQuery.user_id} on ${liveQuery.namespace_id}.${liveQuery.table_name}?`)) {
@@ -68,10 +61,10 @@ export function LiveQueryList() {
     setSuccessMessage(null);
     
     try {
-      await killLiveQuery(liveQuery.live_id);
+      await killLiveQueryMutation(liveQuery.live_id).unwrap();
       setSuccessMessage(`Successfully killed query ${liveQuery.subscription_id}`);
       setTimeout(() => setSuccessMessage(null), 3000);
-      await loadLiveQueries();
+      await refetch();
     } catch (err) {
       setKillError(err instanceof Error ? err.message : 'Failed to kill query');
       setTimeout(() => setKillError(null), 5000);
@@ -85,11 +78,11 @@ export function LiveQueryList() {
   };
 
   const handleRefresh = () => {
-    loadLiveQueries();
+    void refetch();
   };
 
   const handleApplyFilters = () => {
-    loadLiveQueries();
+    setAppliedFilters(filterParams);
   };
 
   const formatDuration = (createdAt: number) => {
@@ -204,7 +197,7 @@ export function LiveQueryList() {
       {/* Error Display */}
       {error && (
         <div className="p-4 text-sm text-red-700 bg-red-50 border border-red-200 rounded">
-          {error}
+          {"error" in error ? error.error : "Failed to fetch live queries"}
         </div>
       )}
 

@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Editor, { type Monaco } from "@monaco-editor/react";
-import type { editor } from "monaco-editor";
+import type { IDisposable, Position, editor, languages } from "monaco-editor";
 import { MoreHorizontal, PenLine, Play, Save, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -10,8 +10,10 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import type { StudioNamespace } from "@/components/sql-studio-v2/types";
 
 interface StudioEditorPanelProps {
+  schema: StudioNamespace[];
   tabTitle: string;
   lastSavedAt: string | null;
   isLive: boolean;
@@ -28,6 +30,7 @@ interface StudioEditorPanelProps {
 }
 
 export function StudioEditorPanel({
+  schema,
   tabTitle,
   lastSavedAt,
   isLive,
@@ -44,6 +47,46 @@ export function StudioEditorPanel({
 }: StudioEditorPanelProps) {
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [draftTitle, setDraftTitle] = useState(tabTitle);
+  const completionProviderRef = useRef<IDisposable | null>(null);
+  const completionDataRef = useRef<{
+    namespaces: string[];
+    tablesByNamespace: Record<string, string[]>;
+    columnsByTable: Record<string, string[]>;
+    keywords: string[];
+  }>({
+    namespaces: [],
+    tablesByNamespace: {},
+    columnsByTable: {},
+    keywords: [],
+  });
+
+  const completionData = useMemo(() => {
+    const namespaces: string[] = [];
+    const tablesByNamespace: Record<string, string[]> = {};
+    const columnsByTable: Record<string, string[]> = {};
+
+    schema.forEach((namespace) => {
+      const namespaceKey = namespace.name.toLowerCase();
+      namespaces.push(namespace.name);
+      tablesByNamespace[namespaceKey] = namespace.tables.map((table) => table.name);
+      namespace.tables.forEach((table) => {
+        columnsByTable[`${namespaceKey}.${table.name.toLowerCase()}`] = table.columns.map((column) => column.name);
+      });
+    });
+
+    const keywords = [
+      "SELECT", "FROM", "WHERE", "JOIN", "LEFT", "RIGHT", "INNER", "OUTER",
+      "GROUP BY", "ORDER BY", "LIMIT", "INSERT", "UPDATE", "DELETE",
+      "CREATE", "ALTER", "DROP", "TABLE", "NAMESPACE", "VALUES", "SET",
+      "AND", "OR", "NOT", "IN", "AS", "ON",
+    ];
+
+    return { namespaces, tablesByNamespace, columnsByTable, keywords };
+  }, [schema]);
+
+  useEffect(() => {
+    completionDataRef.current = completionData;
+  }, [completionData]);
 
   useEffect(() => {
     if (!isEditingTitle) {
@@ -51,10 +94,125 @@ export function StudioEditorPanel({
     }
   }, [tabTitle, isEditingTitle]);
 
+  useEffect(() => {
+    return () => {
+      completionProviderRef.current?.dispose();
+    };
+  }, []);
+
+  const registerCompletionProvider = (monaco: Monaco) => {
+    completionProviderRef.current?.dispose();
+    completionProviderRef.current = monaco.languages.registerCompletionItemProvider("sql", {
+      triggerCharacters: [".", " ", ","],
+      provideCompletionItems: (model: editor.ITextModel, position: Position) => {
+        const data = completionDataRef.current;
+        const wordUntil = model.getWordUntilPosition(position);
+        const range = {
+          startLineNumber: position.lineNumber,
+          endLineNumber: position.lineNumber,
+          startColumn: wordUntil.startColumn,
+          endColumn: wordUntil.endColumn,
+        };
+
+        const textUntilPosition = model.getValueInRange({
+          startLineNumber: 1,
+          startColumn: 1,
+          endLineNumber: position.lineNumber,
+          endColumn: position.column,
+        });
+        const prefix = wordUntil.word.toLowerCase();
+        const suggestions: languages.CompletionItem[] = [];
+        const seen = new Set<string>();
+        const aliasToTable: Record<string, string> = {};
+
+        const aliasRegex = /\b(?:from|join)\s+([a-zA-Z_][\w]*)\.([a-zA-Z_][\w]*)(?:\s+(?:as\s+)?([a-zA-Z_][\w]*))?/gi;
+        let aliasMatch: RegExpExecArray | null = aliasRegex.exec(textUntilPosition);
+        while (aliasMatch) {
+          const namespaceName = aliasMatch[1]?.toLowerCase();
+          const tableName = aliasMatch[2]?.toLowerCase();
+          const alias = aliasMatch[3]?.toLowerCase();
+          if (namespaceName && tableName && alias) {
+            aliasToTable[alias] = `${namespaceName}.${tableName}`;
+          }
+          aliasMatch = aliasRegex.exec(textUntilPosition);
+        }
+
+        const pushSuggestion = (label: string, kind: languages.CompletionItemKind, detail: string, insertText = label) => {
+          const key = `${kind}-${label}-${insertText}`;
+          if (seen.has(key)) {
+            return;
+          }
+          if (prefix && !label.toLowerCase().includes(prefix)) {
+            return;
+          }
+          seen.add(key);
+          suggestions.push({ label, kind, detail, insertText, range });
+        };
+
+        const tableColumnMatch = /([a-zA-Z_][\w]*)\.([a-zA-Z_][\w]*)\.([a-zA-Z_][\w]*)?$/.exec(textUntilPosition);
+        if (tableColumnMatch) {
+          const namespaceKey = tableColumnMatch[1].toLowerCase();
+          const tableKey = tableColumnMatch[2].toLowerCase();
+          const columns = data.columnsByTable[`${namespaceKey}.${tableKey}`] ?? [];
+          columns.forEach((column) =>
+            pushSuggestion(column, monaco.languages.CompletionItemKind.Field, `${namespaceKey}.${tableKey} column`),
+          );
+          return { suggestions };
+        }
+
+        const aliasColumnMatch = /([a-zA-Z_][\w]*)\.([a-zA-Z_][\w]*)?$/.exec(textUntilPosition);
+        if (aliasColumnMatch) {
+          const aliasKey = aliasColumnMatch[1].toLowerCase();
+          const resolvedTable = aliasToTable[aliasKey];
+          if (resolvedTable) {
+            const columns = data.columnsByTable[resolvedTable] ?? [];
+            columns.forEach((column) =>
+              pushSuggestion(column, monaco.languages.CompletionItemKind.Field, `${aliasKey} alias column`),
+            );
+            return { suggestions };
+          }
+        }
+
+        const namespaceTableMatch = /([a-zA-Z_][\w]*)\.([a-zA-Z_][\w]*)?$/.exec(textUntilPosition);
+        if (namespaceTableMatch) {
+          const namespaceKey = namespaceTableMatch[1].toLowerCase();
+          const namespaceTables = data.tablesByNamespace[namespaceKey];
+          if (namespaceTables && namespaceTables.length > 0) {
+            namespaceTables.forEach((table) =>
+              pushSuggestion(table, monaco.languages.CompletionItemKind.Class, `${namespaceKey} table`),
+            );
+            return { suggestions };
+          }
+        }
+
+        data.keywords.forEach((keyword) =>
+          pushSuggestion(keyword, monaco.languages.CompletionItemKind.Keyword, "SQL keyword"),
+        );
+        data.namespaces.forEach((namespaceName) =>
+          pushSuggestion(namespaceName, monaco.languages.CompletionItemKind.Module, "Namespace"),
+        );
+        Object.entries(data.tablesByNamespace).forEach(([namespaceName, tables]) => {
+          tables.forEach((table) => {
+            pushSuggestion(`${namespaceName}.${table}`, monaco.languages.CompletionItemKind.Class, "Qualified table name");
+            pushSuggestion(table, monaco.languages.CompletionItemKind.Class, `Table in ${namespaceName}`);
+          });
+        });
+        Object.entries(data.columnsByTable).forEach(([qualifiedTable, columns]) => {
+          columns.forEach((column) => {
+            pushSuggestion(column, monaco.languages.CompletionItemKind.Field, `Column (${qualifiedTable})`);
+          });
+        });
+
+        return { suggestions };
+      },
+    });
+  };
+
   const handleEditorMount = (instance: editor.IStandaloneCodeEditor, monaco: Monaco) => {
     instance.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
       onRun();
     });
+    registerCompletionProvider(monaco);
   };
 
   const lastSavedLabel = useMemo(() => {
