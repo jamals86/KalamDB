@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react';
-import { useJobs, Job, JobFilters } from '@/hooks/useJobs';
+import { useState } from 'react';
+import type { Job } from '@/services/jobService';
+import type { JobFilters } from '@/services/sql/queries/jobQueries';
+import { useGetJobsFilteredQuery } from '@/store/apiSlice';
 import {
   Table,
   TableBody,
@@ -11,6 +13,8 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { CodeBlock } from '@/components/ui/code-block';
 import {
   Dialog,
   DialogContent,
@@ -107,30 +111,35 @@ interface JobListProps {
 }
 
 export function JobList({ initialFilters, compact = false, onJobClick }: JobListProps) {
-  const { jobs, isLoading, error, fetchJobs } = useJobs();
   const [showFilters, setShowFilters] = useState(false);
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
-  const [filters, setFilters] = useState<JobFilters>(initialFilters || {
+  const [draftFilters, setDraftFilters] = useState<JobFilters>(initialFilters || {
     limit: 100,
   });
-
-  useEffect(() => {
-    fetchJobs(filters);
-  }, []);
+  const [appliedFilters, setAppliedFilters] = useState<JobFilters>(initialFilters || {
+    limit: 100,
+  });
+  const { data: jobs = [], isLoading, error, refetch } = useGetJobsFilteredQuery(appliedFilters);
+  const errorMessage =
+    error && "error" in error && typeof error.error === "string"
+      ? error.error
+      : error
+        ? "Failed to fetch jobs"
+        : null;
 
   const handleApplyFilters = () => {
-    fetchJobs(filters);
+    setAppliedFilters(draftFilters);
     setShowFilters(false);
   };
 
   const handleClearFilters = () => {
     const clearedFilters = { limit: 100 };
-    setFilters(clearedFilters);
-    fetchJobs(clearedFilters);
+    setDraftFilters(clearedFilters);
+    setAppliedFilters(clearedFilters);
     setShowFilters(false);
   };
 
-  const hasActiveFilters = filters.status || filters.job_type;
+  const hasActiveFilters = appliedFilters.status || appliedFilters.job_type;
 
   const handleJobClick = (job: Job) => {
     if (onJobClick) {
@@ -140,16 +149,18 @@ export function JobList({ initialFilters, compact = false, onJobClick }: JobList
     }
   };
 
-  if (error) {
+  if (errorMessage) {
     return (
-      <Card className="border-red-200">
-        <CardContent className="py-6">
-          <p className="text-red-700">{error}</p>
-          <Button variant="outline" onClick={() => fetchJobs(filters)} className="mt-2">
+      <Alert variant="destructive">
+        <AlertCircle className="h-4 w-4" />
+        <AlertTitle>Unable to load jobs</AlertTitle>
+        <AlertDescription className="mt-2 space-y-3">
+          <p>{errorMessage}</p>
+          <Button variant="outline" onClick={() => refetch()}>
             Retry
           </Button>
-        </CardContent>
-      </Card>
+        </AlertDescription>
+      </Alert>
     );
   }
 
@@ -182,7 +193,7 @@ export function JobList({ initialFilters, compact = false, onJobClick }: JobList
             <span className="text-sm text-muted-foreground">
               {jobs.length} job{jobs.length !== 1 ? 's' : ''}
             </span>
-            <Button variant="outline" size="icon" onClick={() => fetchJobs(filters)} disabled={isLoading}>
+            <Button variant="outline" size="icon" onClick={() => refetch()} disabled={isLoading}>
               <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
             </Button>
           </div>
@@ -197,8 +208,8 @@ export function JobList({ initialFilters, compact = false, onJobClick }: JobList
               <div className="space-y-1">
                 <label className="text-sm font-medium">Status</label>
                 <Select
-                  value={filters.status || ''}
-                  onValueChange={(value) => setFilters({ ...filters, status: value || undefined })}
+                  value={draftFilters.status || ''}
+                  onValueChange={(value) => setDraftFilters({ ...draftFilters, status: value || undefined })}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="All statuses" />
@@ -219,8 +230,8 @@ export function JobList({ initialFilters, compact = false, onJobClick }: JobList
                 <label className="text-sm font-medium">Job Type</label>
                 <Input
                   placeholder="e.g., Flush, Cleanup"
-                  value={filters.job_type || ''}
-                  onChange={(e) => setFilters({ ...filters, job_type: e.target.value || undefined })}
+                  value={draftFilters.job_type || ''}
+                  onChange={(e) => setDraftFilters({ ...draftFilters, job_type: e.target.value || undefined })}
                 />
               </div>
               <div className="flex items-end">
@@ -381,47 +392,39 @@ export function JobList({ initialFilters, compact = false, onJobClick }: JobList
               
               {selectedJob.error_message && (
                 <div>
-                  <label className="text-sm font-medium text-red-600">Error Message</label>
-                  <div className="mt-1 p-3 bg-red-50 dark:bg-red-950/30 rounded-md">
-                    <pre className="text-sm whitespace-pre-wrap text-red-700 dark:text-red-300">{selectedJob.error_message}</pre>
-                  </div>
+                  <Alert variant="destructive">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertTitle>Execution error</AlertTitle>
+                    <AlertDescription className="mt-2">
+                      <CodeBlock
+                        value={selectedJob.error_message}
+                        jsonPreferred
+                        maxHeightClassName="max-h-[260px]"
+                        className="border-destructive/40 bg-destructive/5"
+                      />
+                    </AlertDescription>
+                  </Alert>
                 </div>
               )}
               
               {selectedJob.result && (
                 <div>
                   <label className="text-sm font-medium text-muted-foreground">Result</label>
-                  <div className="mt-1 p-3 bg-muted rounded-md">
-                    <pre className="text-sm whitespace-pre-wrap">{selectedJob.result}</pre>
-                  </div>
+                  <CodeBlock value={selectedJob.result} jsonPreferred maxHeightClassName="max-h-[260px]" />
                 </div>
               )}
               
               {selectedJob.parameters && (
                 <div>
                   <label className="text-sm font-medium text-muted-foreground">Parameters</label>
-                  <div className="mt-1 p-3 bg-muted rounded-md overflow-auto">
-                    <pre className="text-sm whitespace-pre-wrap font-mono">
-                      {(() => {
-                        try {
-                          return JSON.stringify(JSON.parse(selectedJob.parameters), null, 2);
-                        } catch {
-                          return selectedJob.parameters;
-                        }
-                      })()}
-                    </pre>
-                  </div>
+                  <CodeBlock value={selectedJob.parameters} jsonPreferred maxHeightClassName="max-h-[260px]" />
                 </div>
               )}
               
               {selectedJob.trace && (
                 <div>
-                  <label className="text-sm font-medium text-red-600">Stack Trace</label>
-                  <div className="mt-1 p-3 bg-red-50 dark:bg-red-950/30 rounded-md overflow-auto">
-                    <pre className="text-sm whitespace-pre-wrap font-mono text-red-700 dark:text-red-300">
-                      {selectedJob.trace}
-                    </pre>
-                  </div>
+                  <label className="text-sm font-medium text-muted-foreground">Stack Trace</label>
+                  <CodeBlock value={selectedJob.trace} maxHeightClassName="max-h-[260px]" />
                 </div>
               )}
             </div>

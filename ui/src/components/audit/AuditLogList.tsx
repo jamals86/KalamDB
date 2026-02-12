@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
-import { useAuditLogs, AuditLog, AuditLogFilters } from '@/hooks/useAuditLogs';
+import { useMemo, useState } from 'react';
+import { useGetAuditLogsQuery } from '@/store/apiSlice';
+import type { AuditLog, AuditLogFilters } from '@/services/auditLogService';
 import {
   Table,
   TableBody,
@@ -53,37 +54,52 @@ function formatTimestamp(timestamp: string): string {
 }
 
 export function AuditLogList() {
-  const { logs, isLoading, error, fetchLogs } = useAuditLogs();
   const [showFilters, setShowFilters] = useState(false);
   const [selectedLog, setSelectedLog] = useState<AuditLog | null>(null);
-  const [filters, setFilters] = useState<AuditLogFilters>({
+  const [draftFilters, setDraftFilters] = useState<AuditLogFilters>({
+    limit: 100,
+  });
+  const [appliedFilters, setAppliedFilters] = useState<AuditLogFilters>({
     limit: 100,
   });
 
-  useEffect(() => {
-    fetchLogs(filters);
-  }, []);
+  const {
+    data: logs = [],
+    isFetching: isLoading,
+    error,
+    refetch,
+  } = useGetAuditLogsQuery(appliedFilters);
 
   const handleApplyFilters = () => {
-    fetchLogs(filters);
+    setAppliedFilters({ ...draftFilters });
     setShowFilters(false);
   };
 
   const handleClearFilters = () => {
     const clearedFilters = { limit: 100 };
-    setFilters(clearedFilters);
-    fetchLogs(clearedFilters);
+    setDraftFilters(clearedFilters);
+    setAppliedFilters(clearedFilters);
     setShowFilters(false);
   };
 
-  const hasActiveFilters = filters.username || filters.action || filters.target || filters.startDate || filters.endDate;
+  const hasActiveFilters = useMemo(
+    () =>
+      Boolean(
+        appliedFilters.username ||
+          appliedFilters.action ||
+          appliedFilters.target ||
+          appliedFilters.startDate ||
+          appliedFilters.endDate,
+      ),
+    [appliedFilters],
+  );
 
   if (error) {
     return (
       <Card className="border-red-200">
         <CardContent className="py-6">
-          <p className="text-red-700">{error}</p>
-          <Button variant="outline" onClick={() => fetchLogs(filters)} className="mt-2">
+          <p className="text-red-700">{"error" in error ? error.error : "Failed to fetch audit logs"}</p>
+          <Button variant="outline" onClick={() => void refetch()} className="mt-2">
             Retry
           </Button>
         </CardContent>
@@ -119,7 +135,7 @@ export function AuditLogList() {
           <span className="text-sm text-muted-foreground">
             {logs.length} log{logs.length !== 1 ? 's' : ''}
           </span>
-          <Button variant="outline" size="icon" onClick={() => fetchLogs(filters)} disabled={isLoading}>
+          <Button variant="outline" size="icon" onClick={() => void refetch()} disabled={isLoading}>
             <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
           </Button>
         </div>
@@ -134,24 +150,24 @@ export function AuditLogList() {
                 <label className="text-sm font-medium">Username</label>
                 <Input
                   placeholder="Filter by username"
-                  value={filters.username || ''}
-                  onChange={(e) => setFilters({ ...filters, username: e.target.value || undefined })}
+                  value={draftFilters.username || ''}
+                  onChange={(e) => setDraftFilters({ ...draftFilters, username: e.target.value || undefined })}
                 />
               </div>
               <div className="space-y-1">
                 <label className="text-sm font-medium">Action</label>
                 <Input
                   placeholder="e.g., CREATE, DELETE"
-                  value={filters.action || ''}
-                  onChange={(e) => setFilters({ ...filters, action: e.target.value || undefined })}
+                  value={draftFilters.action || ''}
+                  onChange={(e) => setDraftFilters({ ...draftFilters, action: e.target.value || undefined })}
                 />
               </div>
               <div className="space-y-1">
                 <label className="text-sm font-medium">Target</label>
                 <Input
                   placeholder="Filter by target"
-                  value={filters.target || ''}
-                  onChange={(e) => setFilters({ ...filters, target: e.target.value || undefined })}
+                  value={draftFilters.target || ''}
+                  onChange={(e) => setDraftFilters({ ...draftFilters, target: e.target.value || undefined })}
                 />
               </div>
               <div className="space-y-1">
@@ -159,8 +175,8 @@ export function AuditLogList() {
                 <Input
                   type="number"
                   placeholder="100"
-                  value={filters.limit || ''}
-                  onChange={(e) => setFilters({ ...filters, limit: parseInt(e.target.value) || undefined })}
+                  value={draftFilters.limit || ''}
+                  onChange={(e) => setDraftFilters({ ...draftFilters, limit: parseInt(e.target.value, 10) || undefined })}
                 />
               </div>
               <div className="flex items-end">

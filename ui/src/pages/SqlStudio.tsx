@@ -7,147 +7,95 @@ import { StudioInspectorPanel } from "@/components/sql-studio-v2/StudioInspector
 import { StudioResultsGrid } from "@/components/sql-studio-v2/StudioResultsGrid";
 import { Button } from "@/components/ui/button";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
+import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { useAuth } from "@/lib/auth";
 import { subscribe, type Unsubscribe } from "@/lib/kalam-client";
 import type {
-  QueryLogEntry,
-  QueryResultData,
   QueryRunSummary,
-  SqlStudioResultView,
   QueryTab,
-  SavedQuery,
-  SqlStudioPanelLayout,
-  StudioNamespace,
   StudioTable,
 } from "@/components/sql-studio-v2/types";
 import {
   loadSqlStudioWorkspaceState,
   saveSqlStudioWorkspaceState,
-  type SqlStudioPersistedQueryTab,
 } from "@/components/sql-studio-v2/workspaceState";
 import {
   executeSqlStudioQuery,
-  fetchSqlStudioSchemaTree,
+  normalizeSchema,
+  type RawQuerySchemaField,
 } from "@/services/sqlStudioService";
+import {
+  addWorkspaceTab,
+  appendWorkspaceLiveRows,
+  appendWorkspaceResultLog,
+  closeWorkspaceTab,
+  hydrateSqlStudioWorkspace,
+  prependWorkspaceHistory,
+  setWorkspaceLiveSchema,
+  setWorkspaceActiveTabId,
+  setWorkspaceRunning,
+  setWorkspaceSavedQueries,
+  setWorkspaceTabResult,
+  setWorkspaceTabs,
+  updateWorkspaceTab,
+} from "@/features/sql-studio/state/sqlStudioWorkspaceSlice";
+import {
+  hydrateSqlStudioUi,
+  setHorizontalLayout,
+  setInspectorCollapsed,
+  setNamespaceExpanded,
+  setSchemaFilter,
+  setSelectedTableKey,
+  setTableExpanded,
+  setVerticalLayout,
+  toggleFavoritesExpanded,
+  toggleNamespaceExpanded,
+  toggleTableExpanded,
+} from "@/features/sql-studio/state/sqlStudioUiSlice";
+import {
+  selectExpandedNamespaces,
+  selectExpandedTables,
+  selectFavoritesExpanded,
+  selectHorizontalLayout,
+  selectIsInspectorCollapsed,
+  selectSchemaFilter,
+  selectSelectedTableKey,
+  selectVerticalLayout,
+  selectWorkspaceActiveTabId,
+  selectWorkspaceHistory,
+  selectWorkspaceIsRunning,
+  selectWorkspaceSavedQueries,
+  selectWorkspaceTabResults,
+  selectWorkspaceTabs,
+} from "@/features/sql-studio/state/selectors";
+import { useGetSqlStudioSchemaTreeQuery } from "@/store/apiSlice";
+import {
+  buildSelectFromTableSql,
+  createLogEntry,
+  createQueryTab,
+  createSavedQueryId,
+  createTabId,
+  resolveResultView,
+  toPersistedTab,
+} from "@/features/sql-studio/utils/workspaceHelpers";
+import { ExplorerTableContextMenu } from "@/features/sql-studio/components/ExplorerTableContextMenu";
 
-const DEFAULT_SQL = "SELECT * FROM system.namespaces LIMIT 100;";
 const FAVORITE_QUERIES = [
   "Top active users (24h)",
   "Jobs failed in last hour",
   "Namespace growth trend",
 ];
 
-function createSavedQueryId() {
-  return `saved-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-}
-
-function createTabId(index: number) {
-  return `tab-${Date.now()}-${index}`;
-}
-
-function createLogEntry(
-  message: string,
-  level: QueryLogEntry["level"] = "info",
-  asUser?: string,
-): QueryLogEntry {
-  const createdAt = new Date().toISOString();
-  return {
-    id: `${createdAt}-${Math.floor(Math.random() * 1000)}`,
-    message,
-    level,
-    asUser,
-    createdAt,
-  };
-}
-
-function resolveResultView(result: QueryResultData): SqlStudioResultView {
-  const hasTableData = result.status === "success" && result.schema.length > 0;
-  if (hasTableData) {
-    return "results";
-  }
-  return result.logs.length > 0 ? "log" : "results";
-}
-
-function appendLiveRowsToResult(
-  previous: QueryResultData | null,
-  rows: Record<string, unknown>[],
-  changeType: string,
-): QueryResultData {
-  const receivedAt = new Date().toLocaleTimeString();
-  const liveRows = rows.map((row) => ({
-    _received_at: receivedAt,
-    _change_type: changeType,
-    ...row,
-  }));
-
-  const existingRows = previous?.rows ?? [];
-  const mergedRows = [...existingRows, ...liveRows];
-  const orderedKeys = mergedRows.length > 0 ? Object.keys(mergedRows[0]) : [];
-  const schema = orderedKeys.map((name, index) => ({
-    name,
-    dataType: name === "_received_at" ? "timestamp" : "text",
-    index,
-  }));
-
-  return {
-    status: "success",
-    rows: mergedRows,
-    schema,
-    tookMs: previous?.tookMs ?? 0,
-    rowCount: mergedRows.length,
-    logs: previous?.logs ?? [],
-  };
-}
-
-function appendLogToResult(
-  previous: QueryResultData | null,
-  entry: QueryLogEntry,
-  statusOverride?: QueryResultData["status"],
-): QueryResultData {
-  const base: QueryResultData = previous ?? {
-    status: "success",
-    rows: [],
-    schema: [],
-    tookMs: 0,
-    rowCount: 0,
-    logs: [],
-  };
-
-  return {
-    ...base,
-    status: statusOverride ?? base.status,
-    logs: [...base.logs, entry],
-  };
-}
-
-function createQueryTab(index: number): QueryTab {
-  return {
-    id: createTabId(index),
-    title: index === 1 ? "Untitled query" : `Query ${index}`,
-    sql: DEFAULT_SQL,
-    isDirty: false,
-    isLive: false,
-    liveStatus: "idle",
-    resultView: "results",
-    lastSavedAt: null,
-    savedQueryId: null,
-  };
-}
-
-function toPersistedTab(tab: QueryTab): SqlStudioPersistedQueryTab {
-  return {
-    id: tab.id,
-    name: tab.title,
-    query: tab.sql,
-    settings: {
-      isDirty: tab.isDirty,
-      isLive: tab.isLive,
-      liveStatus: tab.liveStatus === "connected" ? "idle" : tab.liveStatus,
-      resultView: tab.resultView,
-      lastSavedAt: tab.lastSavedAt,
-      savedQueryId: tab.savedQueryId,
-    },
-  };
+function normalizeLiveRows(rows: unknown[]): Record<string, unknown>[] {
+  return rows.map((row) => {
+    if (row instanceof Map) {
+      return Object.fromEntries(row.entries()) as Record<string, unknown>;
+    }
+    if (typeof row === "object" && row !== null) {
+      return row as Record<string, unknown>;
+    }
+    return { value: row };
+  });
 }
 
 export default function SqlStudio() {
@@ -156,9 +104,52 @@ export default function SqlStudio() {
     return loadSqlStudioWorkspaceState(toPersistedTab(fallbackTab));
   }, []);
 
+  const dispatch = useAppDispatch();
   const { user } = useAuth();
-  const [tabs, setTabs] = useState<QueryTab[]>(
-    initialWorkspace.tabs.map((tab) => ({
+  const tabs = useAppSelector(selectWorkspaceTabs);
+  const savedQueries = useAppSelector(selectWorkspaceSavedQueries);
+  const activeTabId = useAppSelector(selectWorkspaceActiveTabId);
+  const { data: schema = [] } = useGetSqlStudioSchemaTreeQuery();
+  const schemaFilter = useAppSelector(selectSchemaFilter);
+  const favoritesExpanded = useAppSelector(selectFavoritesExpanded);
+  const expandedNamespaces = useAppSelector(selectExpandedNamespaces);
+  const expandedTables = useAppSelector(selectExpandedTables);
+  const selectedTableKey = useAppSelector(selectSelectedTableKey);
+  const isRunning = useAppSelector(selectWorkspaceIsRunning);
+  const tabResults = useAppSelector(selectWorkspaceTabResults);
+  const history = useAppSelector(selectWorkspaceHistory);
+  const isInspectorCollapsed = useAppSelector(selectIsInspectorCollapsed);
+  const horizontalLayout = useAppSelector(selectHorizontalLayout);
+  const verticalLayout = useAppSelector(selectVerticalLayout);
+  const [explorerContextMenu, setExplorerContextMenu] = useState<{
+    x: number;
+    y: number;
+    table: StudioTable;
+  } | null>(null);
+  const [isUiHydrated, setIsUiHydrated] = useState(false);
+  const liveUnsubscribeRef = useRef<Record<string, Unsubscribe>>({});
+
+  const activeTab = useMemo(
+    () => {
+      if (tabs.length === 0) {
+        return null;
+      }
+      return tabs.find((item) => item.id === activeTabId) ?? tabs[0];
+    },
+    [tabs, activeTabId],
+  );
+  const activeResult = activeTab ? (tabResults[activeTab.id] ?? null) : null;
+  const selectedTable = useMemo(() => {
+    if (!selectedTableKey) {
+      return null;
+    }
+    const [namespaceName, tableName] = selectedTableKey.split(".");
+    const namespace = schema.find((item) => item.name === namespaceName);
+    return namespace?.tables.find((item) => item.name === tableName) ?? null;
+  }, [schema, selectedTableKey]);
+
+  useEffect(() => {
+    const workspaceTabs = initialWorkspace.tabs.map((tab) => ({
       id: tab.id,
       title: tab.name,
       sql: tab.query,
@@ -168,83 +159,40 @@ export default function SqlStudio() {
       resultView: tab.settings.resultView,
       lastSavedAt: tab.settings.lastSavedAt,
       savedQueryId: tab.settings.savedQueryId,
-    })),
-  );
-  const [savedQueries, setSavedQueries] = useState<SavedQuery[]>(
-    initialWorkspace.savedQueries.map((item) => ({
+    }));
+    const workspaceSavedQueries = initialWorkspace.savedQueries.map((item) => ({
       id: item.id,
       title: item.title,
       sql: item.sql,
       lastSavedAt: item.lastSavedAt,
       isLive: item.isLive,
-    })),
-  );
-  const [activeTabId, setActiveTabId] = useState<string>(initialWorkspace.activeTabId);
-  const [schema, setSchema] = useState<StudioNamespace[]>([]);
-  const [schemaFilter, setSchemaFilter] = useState(initialWorkspace.explorerTree.filter);
-  const [favoritesExpanded, setFavoritesExpanded] = useState(
-    initialWorkspace.explorerTree.favoritesExpanded,
-  );
-  const [expandedNamespaces, setExpandedNamespaces] = useState<Record<string, boolean>>(
-    initialWorkspace.explorerTree.expandedNamespaces,
-  );
-  const [expandedTables, setExpandedTables] = useState<Record<string, boolean>>(
-    initialWorkspace.explorerTree.expandedTables,
-  );
-  const [selectedTable, setSelectedTable] = useState<StudioTable | null>(null);
-  const [isRunning, setIsRunning] = useState(false);
-  const [tabResults, setTabResults] = useState<Record<string, QueryResultData | null>>({});
-  const [history, setHistory] = useState<QueryRunSummary[]>([]);
-  const [isInspectorCollapsed, setIsInspectorCollapsed] = useState(initialWorkspace.inspectorCollapsed);
-  const [horizontalLayout, setHorizontalLayout] = useState<SqlStudioPanelLayout>(
-    initialWorkspace.sizes.explorerMain,
-  );
-  const [verticalLayout, setVerticalLayout] = useState<SqlStudioPanelLayout>(
-    initialWorkspace.sizes.editorResults,
-  );
-  const [explorerContextMenu, setExplorerContextMenu] = useState<{
-    x: number;
-    y: number;
-    table: StudioTable;
-  } | null>(null);
-  const liveUnsubscribeRef = useRef<Record<string, Unsubscribe>>({});
+    }));
 
-  const activeTab = useMemo(
-    () => tabs.find((item) => item.id === activeTabId) ?? tabs[0]!,
-    [tabs, activeTabId],
-  );
-  const activeResult = activeTab ? (tabResults[activeTab.id] ?? null) : null;
+    dispatch(hydrateSqlStudioWorkspace({
+      tabs: workspaceTabs,
+      savedQueries: workspaceSavedQueries,
+      activeTabId: initialWorkspace.activeTabId,
+    }));
 
-  const selectedTableKey = selectedTable
-    ? `${selectedTable.namespace}.${selectedTable.name}`
-    : null;
-
-  const loadSchema = async () => {
-    try {
-      const tree = await fetchSqlStudioSchemaTree();
-      setSchema(tree);
-      const persistedTableKey = initialWorkspace.selectedTableKey;
-      if (persistedTableKey) {
-        const [namespaceName, tableName] = persistedTableKey.split(".");
-        const namespace = tree.find((item) => item.name === namespaceName);
-        const table = namespace?.tables.find((item) => item.name === tableName);
-        if (table) {
-          setSelectedTable(table);
-          return;
-        }
-      }
-
-      if (tree.length > 0 && tree[0].tables.length > 0) {
-        setSelectedTable(tree[0].tables[0]);
-      }
-    } catch (error) {
-      console.error("Failed to load SQL Studio schema tree", error);
-    }
-  };
+    dispatch(hydrateSqlStudioUi({
+      schemaFilter: initialWorkspace.explorerTree.filter,
+      favoritesExpanded: initialWorkspace.explorerTree.favoritesExpanded,
+      expandedNamespaces: initialWorkspace.explorerTree.expandedNamespaces,
+      expandedTables: initialWorkspace.explorerTree.expandedTables,
+      selectedTableKey: initialWorkspace.selectedTableKey,
+      isInspectorCollapsed: initialWorkspace.inspectorCollapsed,
+      horizontalLayout: initialWorkspace.sizes.explorerMain,
+      verticalLayout: initialWorkspace.sizes.editorResults,
+    }));
+    setIsUiHydrated(true);
+  }, [dispatch, initialWorkspace]);
 
   useEffect(() => {
-    loadSchema().catch(console.error);
-  }, []);
+    if (!selectedTableKey && schema.length > 0 && schema[0].tables.length > 0) {
+      const firstTable = schema[0].tables[0];
+      dispatch(setSelectedTableKey(`${firstTable.namespace}.${firstTable.name}`));
+    }
+  }, [dispatch, schema, selectedTableKey]);
 
   useEffect(() => {
     if (schema.length === 0 || Object.keys(expandedNamespaces).length > 0) {
@@ -255,8 +203,8 @@ export default function SqlStudio() {
     schema.slice(0, 3).forEach((namespace) => {
       initialExpanded[namespace.name] = true;
     });
-    setExpandedNamespaces(initialExpanded);
-  }, [schema, expandedNamespaces]);
+    dispatch(hydrateSqlStudioUi({ expandedNamespaces: initialExpanded }));
+  }, [dispatch, schema, expandedNamespaces]);
 
   useEffect(() => {
     if (!selectedTableKey) {
@@ -264,15 +212,13 @@ export default function SqlStudio() {
     }
 
     const [namespaceName] = selectedTableKey.split(".");
-    setExpandedNamespaces((prev) => ({ ...prev, [namespaceName]: true }));
-    setExpandedTables((prev) => ({ ...prev, [selectedTableKey]: true }));
-  }, [selectedTableKey]);
+    dispatch(setNamespaceExpanded({ namespaceName, expanded: true }));
+    dispatch(setTableExpanded({ tableKey: selectedTableKey, expanded: true }));
+  }, [dispatch, selectedTableKey]);
 
   const updateTab = useCallback((tabId: string, updates: Partial<QueryTab>) => {
-    setTabs((previous) =>
-      previous.map((tab) => (tab.id === tabId ? { ...tab, ...updates } : tab)),
-    );
-  }, []);
+    dispatch(updateWorkspaceTab({ tabId, updates }));
+  }, [dispatch]);
 
   const updateActiveTab = useCallback((updates: Partial<QueryTab>) => {
     if (!activeTab) {
@@ -284,8 +230,8 @@ export default function SqlStudio() {
   const addTab = () => {
     const nextIndex = tabs.length + 1;
     const tab = createQueryTab(nextIndex);
-    setTabs((previous) => [...previous, tab]);
-    setActiveTabId(tab.id);
+    dispatch(addWorkspaceTab(tab));
+    dispatch(setWorkspaceActiveTabId(tab.id));
   };
 
   const closeTab = useCallback((tabId: string) => {
@@ -299,21 +245,8 @@ export default function SqlStudio() {
       delete liveUnsubscribeRef.current[tabId];
     }
 
-    const index = tabs.findIndex((tab) => tab.id === tabId);
-    const nextTabs = tabs.filter((tab) => tab.id !== tabId);
-
-    setTabs(nextTabs);
-    setTabResults((previous) => {
-      const next = { ...previous };
-      delete next[tabId];
-      return next;
-    });
-
-    if (activeTabId === tabId) {
-      const fallback = nextTabs[Math.max(0, index - 1)] ?? nextTabs[0];
-      setActiveTabId(fallback.id);
-    }
-  }, [tabs, activeTabId]);
+    dispatch(closeWorkspaceTab(tabId));
+  }, [dispatch, tabs]);
 
   const openQueryInNewTab = (query: string, title: string) => {
     const tab: QueryTab = {
@@ -327,8 +260,8 @@ export default function SqlStudio() {
       lastSavedAt: null,
       savedQueryId: null,
     };
-    setTabs((previous) => [...previous, tab]);
-    setActiveTabId(tab.id);
+    dispatch(addWorkspaceTab(tab));
+    dispatch(setWorkspaceActiveTabId(tab.id));
   };
 
   const executeQueryForTab = async (tabId: string, sql: string, tabTitle: string) => {
@@ -336,7 +269,7 @@ export default function SqlStudio() {
       return;
     }
 
-    setIsRunning(true);
+    dispatch(setWorkspaceRunning(true));
     const startedAt = Date.now();
 
     try {
@@ -354,8 +287,8 @@ export default function SqlStudio() {
       };
 
       startTransition(() => {
-        setTabResults((previous) => ({ ...previous, [tabId]: queryResult }));
-        setHistory((previous) => [historyEntry, ...previous].slice(0, 50));
+        dispatch(setWorkspaceTabResult({ tabId, result: queryResult }));
+        dispatch(prependWorkspaceHistory(historyEntry));
         updateTab(tabId, {
           isDirty: false,
           resultView: resolveResultView(queryResult),
@@ -363,18 +296,18 @@ export default function SqlStudio() {
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Query execution failed";
-      setTabResults((previous) => ({ ...previous, [tabId]: {
+      dispatch(setWorkspaceTabResult({ tabId, result: {
         status: "error",
         rows: [],
         schema: [],
         tookMs: 0,
         rowCount: 0,
-        logs: [createLogEntry(message, "error", user?.username)],
+        logs: [createLogEntry(message, "error", user?.username, error)],
         errorMessage: message,
       } }));
       updateTab(tabId, { resultView: "log" });
     } finally {
-      setIsRunning(false);
+      dispatch(setWorkspaceRunning(false));
     }
   };
 
@@ -392,6 +325,20 @@ export default function SqlStudio() {
       return;
     }
 
+    dispatch(setWorkspaceTabResult({
+      tabId: tab.id,
+      result: {
+        status: "success",
+        rows: [],
+        schema: [],
+        tookMs: 0,
+        rowCount: 0,
+        logs: [createLogEntry("Starting live subscription.", "info", user?.username, {
+          event: "live_start",
+          sql: tab.sql,
+        })],
+      },
+    }));
     updateTab(tab.id, { liveStatus: "connecting", isLive: true });
     try {
       const unsubscribe = await subscribe(tab.sql, (event) => {
@@ -401,48 +348,53 @@ export default function SqlStudio() {
           change_type?: string;
           message?: string;
           code?: string;
+          schema?: RawQuerySchemaField[];
         };
 
         if (serverMessage.type === "error") {
-          setTabResults((previous) => ({
-            ...previous,
-            [tab.id]: appendLogToResult(
-              previous[tab.id] ?? null,
-              createLogEntry(serverMessage.message ?? "Live query error", "error", user?.username),
-              "error",
-            ),
+          dispatch(appendWorkspaceResultLog({
+            tabId: tab.id,
+            entry: createLogEntry(serverMessage.message ?? "Live query error", "error", user?.username, serverMessage),
+            statusOverride: "error",
           }));
           updateTab(tab.id, { liveStatus: "error" });
           return;
         }
 
         if (serverMessage.type === "subscription_ack") {
-          setTabResults((previous) => ({
-            ...previous,
-            [tab.id]: appendLogToResult(
-              previous[tab.id] ?? null,
-              createLogEntry("Live subscription connected.", "info", user?.username),
-            ),
+          if (Array.isArray(serverMessage.schema) && serverMessage.schema.length > 0) {
+            dispatch(setWorkspaceLiveSchema({
+              tabId: tab.id,
+              schema: normalizeSchema(serverMessage.schema),
+            }));
+          }
+          dispatch(appendWorkspaceResultLog({
+            tabId: tab.id,
+            entry: createLogEntry("Live subscription connected.", "info", user?.username, serverMessage),
           }));
           updateTab(tab.id, { liveStatus: "connected", resultView: "results" });
           return;
         }
 
         if (Array.isArray(serverMessage.rows)) {
-          const receivedRows = serverMessage.rows;
+          const receivedRows = normalizeLiveRows(serverMessage.rows);
           const changeType = serverMessage.type === "change"
             ? (serverMessage.change_type ?? "change")
             : "initial";
 
-          setTabResults((previous) => ({
-            ...previous,
-            [tab.id]: appendLogToResult(
-              appendLiveRowsToResult(previous[tab.id] ?? null, receivedRows, changeType),
-              createLogEntry(
-                `Received ${receivedRows.length} row${receivedRows.length === 1 ? "" : "s"} (${changeType}).`,
-                "info",
-                user?.username,
-              ),
+          dispatch(appendWorkspaceLiveRows({
+            tabId: tab.id,
+            rows: receivedRows,
+            changeType,
+            schema: normalizeSchema(serverMessage.schema),
+          }));
+          dispatch(appendWorkspaceResultLog({
+            tabId: tab.id,
+            entry: createLogEntry(
+              `Received ${receivedRows.length} row${receivedRows.length === 1 ? "" : "s"} (${changeType}).`,
+              "info",
+              user?.username,
+              serverMessage,
             ),
           }));
           updateTab(tab.id, { liveStatus: "connected", resultView: "results" });
@@ -450,15 +402,19 @@ export default function SqlStudio() {
         }
 
         if (Array.isArray(event)) {
-          setTabResults((previous) => ({
-            ...previous,
-            [tab.id]: appendLogToResult(
-              appendLiveRowsToResult(previous[tab.id] ?? null, event as unknown as Record<string, unknown>[], "data"),
-              createLogEntry(
-                `Received ${event.length} row${event.length === 1 ? "" : "s"} (data).`,
-                "info",
-                user?.username,
-              ),
+          const receivedRows = normalizeLiveRows(event as unknown[]);
+          dispatch(appendWorkspaceLiveRows({
+            tabId: tab.id,
+            rows: receivedRows,
+            changeType: "data",
+          }));
+          dispatch(appendWorkspaceResultLog({
+            tabId: tab.id,
+            entry: createLogEntry(
+              `Received ${receivedRows.length} row${receivedRows.length === 1 ? "" : "s"} (data).`,
+              "info",
+              user?.username,
+              event,
             ),
           }));
           updateTab(tab.id, { liveStatus: "connected", resultView: "results" });
@@ -468,21 +424,19 @@ export default function SqlStudio() {
       liveUnsubscribeRef.current[tab.id] = unsubscribe;
     } catch (error) {
       console.error("Failed to subscribe to live query", error);
-      setTabResults((previous) => ({
-        ...previous,
-        [tab.id]: appendLogToResult(
-          previous[tab.id] ?? null,
-          createLogEntry(
-            error instanceof Error ? error.message : "Failed to subscribe to live query",
-            "error",
-            user?.username,
-          ),
+      dispatch(appendWorkspaceResultLog({
+        tabId: tab.id,
+        entry: createLogEntry(
+          error instanceof Error ? error.message : "Failed to subscribe to live query",
           "error",
+          user?.username,
+          error,
         ),
+        statusOverride: "error",
       }));
       updateTab(tab.id, { liveStatus: "error" });
     }
-  }, [updateTab, user?.username]);
+  }, [dispatch, updateTab, user?.username]);
 
   const runActiveQuery = async () => {
     if (!activeTab) {
@@ -511,7 +465,8 @@ export default function SqlStudio() {
     const saveId = openAsCopy || !tab.savedQueryId ? createSavedQueryId() : tab.savedQueryId;
     const saveTitle = openAsCopy ? `${tab.title} Copy` : tab.title;
 
-    setSavedQueries((previous) => {
+    const nextSavedQueries = (() => {
+      const previous = savedQueries;
       const existing = previous.find((item) => item.id === saveId);
       if (existing) {
         return previous.map((item) =>
@@ -530,7 +485,8 @@ export default function SqlStudio() {
         },
         ...previous,
       ];
-    });
+    })();
+    dispatch(setWorkspaceSavedQueries(nextSavedQueries));
 
     if (openAsCopy) {
       const copiedTab: QueryTab = {
@@ -543,10 +499,10 @@ export default function SqlStudio() {
         liveStatus: "idle",
         resultView: tab.resultView,
       };
-      setTabs((previous) => [...previous, copiedTab]);
-      setActiveTabId(copiedTab.id);
+      dispatch(addWorkspaceTab(copiedTab));
+      dispatch(setWorkspaceActiveTabId(copiedTab.id));
       if (tabResults[tab.id]) {
-        setTabResults((previous) => ({ ...previous, [copiedTab.id]: previous[tab.id] ?? null }));
+        dispatch(setWorkspaceTabResult({ tabId: copiedTab.id, result: tabResults[tab.id] ?? null }));
       }
       return;
     }
@@ -556,7 +512,7 @@ export default function SqlStudio() {
       lastSavedAt: nowIso,
       isDirty: false,
     });
-  }, [tabs, tabResults, updateTab]);
+  }, [dispatch, savedQueries, tabs, tabResults, updateTab]);
 
   const renameActiveTab = useCallback((title: string) => {
     if (!activeTab) {
@@ -565,13 +521,13 @@ export default function SqlStudio() {
 
     updateTab(activeTab.id, { title });
     if (activeTab.savedQueryId) {
-      setSavedQueries((previous) =>
-        previous.map((item) =>
+      dispatch(setWorkspaceSavedQueries(
+        savedQueries.map((item) =>
           item.id === activeTab.savedQueryId ? { ...item, title } : item,
         ),
-      );
+      ));
     }
-  }, [activeTab, updateTab]);
+  }, [activeTab, dispatch, savedQueries, updateTab]);
 
   const deleteActiveTab = useCallback(() => {
     if (!activeTab) {
@@ -581,18 +537,18 @@ export default function SqlStudio() {
     const deletedSavedQueryId = activeTab.savedQueryId;
     closeTab(activeTab.id);
     if (deletedSavedQueryId) {
-      setSavedQueries((previous) =>
-        previous.filter((item) => item.id !== deletedSavedQueryId),
-      );
-      setTabs((previous) =>
-        previous.map((item) =>
+      dispatch(setWorkspaceSavedQueries(
+        savedQueries.filter((item) => item.id !== deletedSavedQueryId),
+      ));
+      dispatch(setWorkspaceTabs(
+        tabs.map((item) =>
           item.savedQueryId === deletedSavedQueryId
             ? { ...item, savedQueryId: null }
             : item,
         ),
-      );
+      ));
     }
-  }, [activeTab, closeTab]);
+  }, [activeTab, closeTab, dispatch, savedQueries, tabs]);
 
   const openSavedQuery = useCallback((queryId: string) => {
     const savedQuery = savedQueries.find((item) => item.id === queryId);
@@ -602,7 +558,7 @@ export default function SqlStudio() {
 
     const existingTab = tabs.find((item) => item.savedQueryId === queryId);
     if (existingTab) {
-      setActiveTabId(existingTab.id);
+      dispatch(setWorkspaceActiveTabId(existingTab.id));
       return;
     }
 
@@ -617,16 +573,16 @@ export default function SqlStudio() {
       lastSavedAt: savedQuery.lastSavedAt,
       savedQueryId: savedQuery.id,
     };
-    setTabs((previous) => [...previous, tab]);
-    setActiveTabId(tab.id);
-  }, [savedQueries, tabs]);
+    dispatch(addWorkspaceTab(tab));
+    dispatch(setWorkspaceActiveTabId(tab.id));
+  }, [dispatch, savedQueries, tabs]);
 
   const toggleInspector = () => {
     if (isInspectorCollapsed) {
-      setIsInspectorCollapsed(false);
+      dispatch(setInspectorCollapsed(false));
       return;
     }
-    setIsInspectorCollapsed(true);
+    dispatch(setInspectorCollapsed(true));
   };
 
   useEffect(() => {
@@ -651,9 +607,11 @@ export default function SqlStudio() {
   }, []);
 
   useEffect(() => {
-    if (tabs.length === 0) {
+    if (tabs.length === 0 || !isUiHydrated) {
       return;
     }
+
+    const persistedActiveTabId = tabs.find((tab) => tab.id === activeTabId)?.id ?? tabs[0].id;
 
     saveSqlStudioWorkspaceState({
       version: 1,
@@ -665,7 +623,7 @@ export default function SqlStudio() {
         lastSavedAt: item.lastSavedAt,
         isLive: item.isLive,
       })),
-      activeTabId: tabs.some((tab) => tab.id === activeTabId) ? activeTabId : tabs[0].id,
+      activeTabId: persistedActiveTabId,
       selectedTableKey,
       inspectorCollapsed: isInspectorCollapsed,
       sizes: {
@@ -691,7 +649,16 @@ export default function SqlStudio() {
     expandedNamespaces,
     expandedTables,
     schemaFilter,
+    isUiHydrated,
   ]);
+
+  if (!activeTab) {
+    return (
+      <div className="flex h-full items-center justify-center bg-[#101922] text-sm text-slate-400">
+        Loading SQL workspace...
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-[#101922] text-slate-200">
@@ -708,7 +675,7 @@ export default function SqlStudio() {
                 return;
               }
               const safeSize = Math.max(12, Math.min(36, numericSize));
-              setHorizontalLayout([safeSize, 100 - safeSize]);
+              dispatch(setHorizontalLayout([safeSize, 100 - safeSize]));
             }}
           >
             <StudioExplorerPanel
@@ -720,22 +687,12 @@ export default function SqlStudio() {
               expandedNamespaces={expandedNamespaces}
               expandedTables={expandedTables}
               selectedTableKey={selectedTableKey}
-              onFilterChange={setSchemaFilter}
-              onToggleFavorites={() => setFavoritesExpanded((prev) => !prev)}
-              onToggleNamespace={(namespaceName) =>
-                setExpandedNamespaces((prev) => ({
-                  ...prev,
-                  [namespaceName]: !prev[namespaceName],
-                }))
-              }
-              onToggleTable={(tableKey) =>
-                setExpandedTables((prev) => ({
-                  ...prev,
-                  [tableKey]: !prev[tableKey],
-                }))
-              }
+              onFilterChange={(value) => dispatch(setSchemaFilter(value))}
+              onToggleFavorites={() => dispatch(toggleFavoritesExpanded())}
+              onToggleNamespace={(namespaceName) => dispatch(toggleNamespaceExpanded(namespaceName))}
+              onToggleTable={(tableKey) => dispatch(toggleTableExpanded(tableKey))}
               onOpenSavedQuery={openSavedQuery}
-              onSelectTable={setSelectedTable}
+              onSelectTable={(table) => dispatch(setSelectedTableKey(`${table.namespace}.${table.name}`))}
               onTableContextMenu={(table, position) => {
                 setExplorerContextMenu({
                   x: position.x,
@@ -769,7 +726,7 @@ export default function SqlStudio() {
               <QueryTabStrip
                 tabs={tabs}
                 activeTabId={activeTab.id}
-                onTabSelect={setActiveTabId}
+                onTabSelect={(tabId) => dispatch(setWorkspaceActiveTabId(tabId))}
                 onAddTab={addTab}
                 onCloseTab={closeTab}
               />
@@ -785,10 +742,11 @@ export default function SqlStudio() {
                       return;
                     }
                     const safeSize = Math.max(20, Math.min(80, numericSize));
-                    setVerticalLayout([safeSize, 100 - safeSize]);
+                    dispatch(setVerticalLayout([safeSize, 100 - safeSize]));
                   }}
                 >
                   <StudioEditorPanel
+                    schema={schema}
                     tabTitle={activeTab.title}
                     lastSavedAt={activeTab.lastSavedAt}
                     isLive={activeTab.isLive}
@@ -816,6 +774,7 @@ export default function SqlStudio() {
                   <StudioResultsGrid
                     result={activeResult}
                     isRunning={isRunning}
+                    isLiveMode={activeTab.isLive}
                     activeSql={activeTab.sql}
                     selectedTable={selectedTable}
                     currentUsername={user?.username ?? "admin"}
@@ -836,82 +795,40 @@ export default function SqlStudio() {
         )}
       </div>
 
-      {explorerContextMenu && (
-        <>
-          <div
-            className="fixed inset-0 z-40"
-            onClick={() => setExplorerContextMenu(null)}
-          />
-          <div
-            className="fixed z-50 min-w-[210px] rounded-md border border-[#1f334d] bg-[#0f1a2a] py-1 shadow-xl"
-            style={{ left: explorerContextMenu.x, top: explorerContextMenu.y }}
-          >
-            <div className="border-b border-[#1f334d] px-3 py-1.5 text-[11px] text-slate-400">
-              {explorerContextMenu.table.namespace}.{explorerContextMenu.table.name}
-            </div>
-            <button
-              type="button"
-              className="w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-[#133253]"
-              onClick={() => {
-                const sql = `SELECT * FROM ${explorerContextMenu.table.namespace}.${explorerContextMenu.table.name} LIMIT 100;`;
-                openQueryInNewTab(sql, explorerContextMenu.table.name);
-                setSelectedTable(explorerContextMenu.table);
-                setExplorerContextMenu(null);
-              }}
-            >
-              Open Query In New Tab
-            </button>
-            <button
-              type="button"
-              className="w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-[#133253]"
-              onClick={() => {
-                const sql = `SELECT * FROM ${explorerContextMenu.table.namespace}.${explorerContextMenu.table.name} LIMIT 100;`;
-                updateActiveTab({ sql, isDirty: true });
-                setSelectedTable(explorerContextMenu.table);
-                setExplorerContextMenu(null);
-                executeQueryForTab(activeTab.id, sql, activeTab.title).catch(console.error);
-              }}
-            >
-              Select * From Table
-            </button>
-            <button
-              type="button"
-              className="w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-[#133253]"
-              onClick={() => {
-                const sql = `SELECT * FROM ${explorerContextMenu.table.namespace}.${explorerContextMenu.table.name};`;
-                updateActiveTab({ sql, isDirty: true });
-                setSelectedTable(explorerContextMenu.table);
-                setExplorerContextMenu(null);
-              }}
-            >
-              Insert SELECT Query
-            </button>
-            <div className="my-1 border-t border-[#1f334d]" />
-            <button
-              type="button"
-              className="w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-[#133253]"
-              onClick={() => {
-                setSelectedTable(explorerContextMenu.table);
-                setIsInspectorCollapsed(false);
-                setExplorerContextMenu(null);
-              }}
-            >
-              View Properties
-            </button>
-            <button
-              type="button"
-              className="w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-[#133253]"
-              onClick={() => {
-                const qualifiedName = `${explorerContextMenu.table.namespace}.${explorerContextMenu.table.name}`;
-                navigator.clipboard.writeText(qualifiedName).catch(console.error);
-                setExplorerContextMenu(null);
-              }}
-            >
-              Copy Qualified Table Name
-            </button>
-          </div>
-        </>
-      )}
+      <ExplorerTableContextMenu
+        contextMenu={explorerContextMenu}
+        onClose={() => setExplorerContextMenu(null)}
+        onOpenQueryInNewTab={(table) => {
+          const sql = buildSelectFromTableSql(table.namespace, table.name, true);
+          openQueryInNewTab(sql, table.name);
+          dispatch(setSelectedTableKey(`${table.namespace}.${table.name}`));
+          setExplorerContextMenu(null);
+        }}
+        onSelectFromTable={(table) => {
+          const sql = buildSelectFromTableSql(table.namespace, table.name, true);
+          updateActiveTab({ sql, isDirty: true });
+          dispatch(setSelectedTableKey(`${table.namespace}.${table.name}`));
+          setExplorerContextMenu(null);
+          executeQueryForTab(activeTab.id, sql, activeTab.title).catch(console.error);
+        }}
+        onInsertSelectQuery={(table) => {
+          const sql = buildSelectFromTableSql(table.namespace, table.name, false);
+          updateActiveTab({ sql, isDirty: true });
+          dispatch(setSelectedTableKey(`${table.namespace}.${table.name}`));
+          setExplorerContextMenu(null);
+        }}
+        onViewProperties={(table) => {
+          dispatch(setSelectedTableKey(`${table.namespace}.${table.name}`));
+          dispatch(setInspectorCollapsed(false));
+          setExplorerContextMenu(null);
+        }}
+        onCopyQualifiedName={(table) => {
+          navigator.clipboard
+            .writeText(`${table.namespace}.${table.name}`)
+            .catch(console.error);
+          setExplorerContextMenu(null);
+        }}
+      />
     </div>
   );
 }

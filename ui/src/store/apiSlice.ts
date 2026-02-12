@@ -1,55 +1,305 @@
-import { createApi } from "@reduxjs/toolkit/query/react";
-import { executeSql } from "../lib/kalam-client";
+import { createApi, fakeBaseQuery } from "@reduxjs/toolkit/query/react";
+import { fetchSqlStudioSchemaTree } from "@/services/sqlStudioService";
+import { fetchJobs, type Job } from "@/services/jobService";
+import {
+  fetchAuditLogs,
+  type AuditLog,
+  type AuditLogFilters,
+} from "@/services/auditLogService";
+import {
+  fetchServerLogs,
+  type ServerLog,
+  type ServerLogFilters,
+} from "@/services/serverLogService";
+import {
+  fetchLiveQueries,
+  killLiveQuery,
+  type LiveQuery,
+  type LiveQueryFilters,
+} from "@/services/liveQueryService";
+import {
+  fetchNotifications,
+  type NotificationsPayload,
+} from "@/services/notificationService";
+import {
+  fetchClusterSnapshot,
+  type ClusterSnapshot,
+} from "@/services/clusterService";
+import {
+  checkStorageHealth,
+  createStorage,
+  fetchStorages,
+  type CreateStorageInput,
+  type Storage,
+  type StorageHealthResult,
+  type UpdateStorageInput,
+  updateStorage,
+} from "@/services/storageService";
+import {
+  fetchSystemSettings,
+  fetchSystemStats,
+  type SystemStatsMap,
+} from "@/services/systemTableService";
+import {
+  createUser,
+  deleteUser,
+  fetchUsers,
+  type CreateUserInput,
+  type UpdateUserInput,
+  type User,
+  updateUser,
+} from "@/services/userService";
+import type { JobFilters } from "@/services/sql/queries/jobQueries";
 
-// Define a common base for SQL-based queries
-// Since Kalam-link SDK uses internal fetch, we might want to wrap it or use custom baseQuery
-const sqlBaseQuery = async ({ sql }: { sql: string }) => {
-  try {
-    const result = await executeSql(sql);
-    return { data: result };
-  } catch (error: any) {
-    return { error: { status: 'CUSTOM_ERROR', error: error.message || 'SQL Execution failed' } };
-  }
-};
+interface CustomQueryError {
+  status: "CUSTOM_ERROR";
+  error: string;
+}
 
 export const apiSlice = createApi({
   reducerPath: "api",
-  baseQuery: sqlBaseQuery,
-  tagTypes: ["Settings", "Users", "Jobs", "Storages"],
+  baseQuery: fakeBaseQuery<CustomQueryError>(),
+  tagTypes: ["Settings", "Stats", "Users", "Jobs", "AuditLogs", "ServerLogs", "LiveQueries", "Notifications", "Cluster", "Storages", "SqlStudioSchema"],
   endpoints: (builder) => ({
-    getSettings: builder.query<any[], void>({
-      query: () => ({
-        sql: `
-          SELECT name, value, description, category
-          FROM system.settings
-          ORDER BY category, name
-        `,
-      }),
+    getSettings: builder.query<Record<string, unknown>[], void>({
+      async queryFn() {
+        try {
+          const data = await fetchSystemSettings();
+          return { data };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Failed to fetch settings";
+          return { error: { status: "CUSTOM_ERROR", error: message } };
+        }
+      },
       providesTags: ["Settings"],
     }),
-    getUsers: builder.query<any[], void>({
-      query: () => ({
-        sql: `
-          SELECT user_id, username, role, email, auth_type, storage_mode, storage_id, created_at, updated_at, deleted_at
-          FROM system.users
-          WHERE deleted_at IS NULL
-          ORDER BY username
-        `,
-      }),
+    getStats: builder.query<SystemStatsMap, void>({
+      async queryFn() {
+        try {
+          const data = await fetchSystemStats();
+          return { data };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Failed to fetch stats";
+          return { error: { status: "CUSTOM_ERROR", error: message } };
+        }
+      },
+      providesTags: ["Stats"],
+    }),
+    getUsersList: builder.query<User[], void>({
+      async queryFn() {
+        try {
+          const data = await fetchUsers();
+          return { data };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Failed to fetch users";
+          return { error: { status: "CUSTOM_ERROR", error: message } };
+        }
+      },
       providesTags: ["Users"],
     }),
-    getJobs: builder.query<any[], void>({
-      query: () => ({
-        sql: `
-          SELECT job_id, job_type, status, parameters, created_at, started_at, completed_at, error, node_id, progress
-          FROM system.jobs
-          ORDER BY created_at DESC
-          LIMIT 100
-        `,
-      }),
+    createUser: builder.mutation<void, CreateUserInput>({
+      async queryFn(input) {
+        try {
+          await createUser(input);
+          return { data: undefined };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Failed to create user";
+          return { error: { status: "CUSTOM_ERROR", error: message } };
+        }
+      },
+      invalidatesTags: ["Users"],
+    }),
+    updateUser: builder.mutation<void, { username: string; input: UpdateUserInput }>({
+      async queryFn({ username, input }) {
+        try {
+          await updateUser(username, input);
+          return { data: undefined };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Failed to update user";
+          return { error: { status: "CUSTOM_ERROR", error: message } };
+        }
+      },
+      invalidatesTags: ["Users"],
+    }),
+    deleteUser: builder.mutation<void, { username: string }>({
+      async queryFn({ username }) {
+        try {
+          await deleteUser(username);
+          return { data: undefined };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Failed to delete user";
+          return { error: { status: "CUSTOM_ERROR", error: message } };
+        }
+      },
+      invalidatesTags: ["Users"],
+    }),
+    getJobsFiltered: builder.query<Job[], JobFilters | void>({
+      async queryFn(filters) {
+        try {
+          const normalizedFilters = filters && typeof filters === "object" ? filters : undefined;
+          const data = await fetchJobs(normalizedFilters);
+          return { data };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Failed to fetch jobs";
+          return { error: { status: "CUSTOM_ERROR", error: message } };
+        }
+      },
       providesTags: ["Jobs"],
+    }),
+    getAuditLogs: builder.query<AuditLog[], AuditLogFilters | void>({
+      async queryFn(filters) {
+        try {
+          const normalizedFilters = filters && typeof filters === "object" ? filters : undefined;
+          const data = await fetchAuditLogs(normalizedFilters);
+          return { data };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Failed to fetch audit logs";
+          return { error: { status: "CUSTOM_ERROR", error: message } };
+        }
+      },
+      providesTags: ["AuditLogs"],
+    }),
+    getServerLogs: builder.query<ServerLog[], ServerLogFilters | void>({
+      async queryFn(filters) {
+        try {
+          const normalizedFilters = filters && typeof filters === "object" ? filters : undefined;
+          const data = await fetchServerLogs(normalizedFilters);
+          return { data };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Failed to fetch server logs";
+          return { error: { status: "CUSTOM_ERROR", error: message } };
+        }
+      },
+      providesTags: ["ServerLogs"],
+    }),
+    getLiveQueries: builder.query<LiveQuery[], LiveQueryFilters | void>({
+      async queryFn(filters) {
+        try {
+          const normalizedFilters = filters && typeof filters === "object" ? filters : undefined;
+          const data = await fetchLiveQueries(normalizedFilters);
+          return { data };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Failed to fetch live queries";
+          return { error: { status: "CUSTOM_ERROR", error: message } };
+        }
+      },
+      providesTags: ["LiveQueries"],
+    }),
+    killLiveQuery: builder.mutation<void, string>({
+      async queryFn(liveId) {
+        try {
+          await killLiveQuery(liveId);
+          return { data: undefined };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Failed to kill live query";
+          return { error: { status: "CUSTOM_ERROR", error: message } };
+        }
+      },
+      invalidatesTags: ["LiveQueries"],
+    }),
+    getNotifications: builder.query<NotificationsPayload, void>({
+      async queryFn() {
+        try {
+          const data = await fetchNotifications();
+          return { data };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Failed to fetch notifications";
+          return { error: { status: "CUSTOM_ERROR", error: message } };
+        }
+      },
+      providesTags: ["Notifications"],
+    }),
+    getClusterSnapshot: builder.query<ClusterSnapshot, void>({
+      async queryFn() {
+        try {
+          const data = await fetchClusterSnapshot();
+          return { data };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Failed to fetch cluster information";
+          return { error: { status: "CUSTOM_ERROR", error: message } };
+        }
+      },
+      providesTags: ["Cluster"],
+    }),
+    getStorages: builder.query<Storage[], void>({
+      async queryFn() {
+        try {
+          const data = await fetchStorages();
+          return { data };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Failed to fetch storages";
+          return { error: { status: "CUSTOM_ERROR", error: message } };
+        }
+      },
+      providesTags: ["Storages"],
+    }),
+    createStorage: builder.mutation<void, CreateStorageInput>({
+      async queryFn(input) {
+        try {
+          await createStorage(input);
+          return { data: undefined };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Failed to create storage";
+          return { error: { status: "CUSTOM_ERROR", error: message } };
+        }
+      },
+      invalidatesTags: ["Storages"],
+    }),
+    updateStorage: builder.mutation<void, { storageId: string; input: UpdateStorageInput }>({
+      async queryFn({ storageId, input }) {
+        try {
+          await updateStorage(storageId, input);
+          return { data: undefined };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Failed to update storage";
+          return { error: { status: "CUSTOM_ERROR", error: message } };
+        }
+      },
+      invalidatesTags: ["Storages"],
+    }),
+    checkStorageHealth: builder.mutation<StorageHealthResult, { storageId: string; extended?: boolean }>({
+      async queryFn({ storageId, extended }) {
+        try {
+          const data = await checkStorageHealth(storageId, extended ?? true);
+          return { data };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Failed to check storage health";
+          return { error: { status: "CUSTOM_ERROR", error: message } };
+        }
+      },
+    }),
+    getSqlStudioSchemaTree: builder.query<Awaited<ReturnType<typeof fetchSqlStudioSchemaTree>>, void>({
+      async queryFn() {
+        try {
+          const data = await fetchSqlStudioSchemaTree();
+          return { data };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Failed to fetch SQL Studio schema";
+          return { error: { status: "CUSTOM_ERROR", error: message } };
+        }
+      },
+      providesTags: ["SqlStudioSchema"],
     }),
   }),
 });
 
-export const { useGetSettingsQuery, useGetUsersQuery, useGetJobsQuery } = apiSlice;
+export const {
+  useGetSettingsQuery,
+  useGetStatsQuery,
+  useGetUsersListQuery,
+  useCreateUserMutation,
+  useUpdateUserMutation,
+  useDeleteUserMutation,
+  useGetJobsFilteredQuery,
+  useGetAuditLogsQuery,
+  useGetServerLogsQuery,
+  useGetLiveQueriesQuery,
+  useKillLiveQueryMutation,
+  useGetNotificationsQuery,
+  useGetClusterSnapshotQuery,
+  useGetStoragesQuery,
+  useCreateStorageMutation,
+  useUpdateStorageMutation,
+  useCheckStorageHealthMutation,
+  useGetSqlStudioSchemaTreeQuery,
+} = apiSlice;

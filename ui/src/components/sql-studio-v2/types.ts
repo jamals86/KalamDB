@@ -57,12 +57,15 @@ export interface QueryResultSchemaField {
   name: string;
   dataType: string;
   index: number;
+  def?: string;
+  isPrimaryKey?: boolean;
 }
 
 export interface QueryLogEntry {
   id: string;
   level: "info" | "error";
   message: string;
+  response?: unknown;
   asUser?: string;
   rowCount?: number;
   statementIndex?: number;

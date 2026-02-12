@@ -1,5 +1,9 @@
-import { useEffect, useState } from 'react';
-import { useStorages, Storage, StorageHealthResult } from '@/hooks/useStorages';
+import { useState } from 'react';
+import {
+  useCheckStorageHealthMutation,
+  useGetStoragesQuery,
+} from '@/store/apiSlice';
+import type { Storage, StorageHealthResult } from '@/services/storageService';
 import { StorageForm } from './StorageForm';
 import {
   Table,
@@ -25,17 +29,19 @@ interface StorageListProps {
 }
 
 export function StorageList({ onSelectStorage }: StorageListProps) {
-  const { storages, isLoading, error, fetchStorages, checkStorageHealth } = useStorages();
+  const {
+    data: storages = [],
+    isFetching: isLoading,
+    error,
+    refetch,
+  } = useGetStoragesQuery();
+  const [checkStorageHealthMutation] = useCheckStorageHealthMutation();
   const [showForm, setShowForm] = useState(false);
   const [editingStorage, setEditingStorage] = useState<Storage | undefined>(undefined);
   const [healthStorage, setHealthStorage] = useState<Storage | null>(null);
   const [healthResult, setHealthResult] = useState<StorageHealthResult | null>(null);
   const [healthError, setHealthError] = useState<string | null>(null);
   const [healthLoadingId, setHealthLoadingId] = useState<string | null>(null);
-
-  useEffect(() => {
-    fetchStorages();
-  }, [fetchStorages]);
 
   const handleCreateNew = () => {
     setEditingStorage(undefined);
@@ -55,7 +61,7 @@ export function StorageList({ onSelectStorage }: StorageListProps) {
     setHealthError(null);
     setHealthLoadingId(storage.storage_id);
     try {
-      const result = await checkStorageHealth(storage.storage_id, true);
+      const result = await checkStorageHealthMutation({ storageId: storage.storage_id, extended: true }).unwrap();
       setHealthResult(result);
     } catch (err) {
       setHealthError(err instanceof Error ? err.message : 'Failed to check storage health');
@@ -75,7 +81,7 @@ export function StorageList({ onSelectStorage }: StorageListProps) {
   const handleFormSuccess = () => {
     setShowForm(false);
     setEditingStorage(undefined);
-    fetchStorages();
+    void refetch();
   };
 
   const getStorageIcon = (type: string) => {
@@ -128,11 +134,15 @@ export function StorageList({ onSelectStorage }: StorageListProps) {
   };
 
   if (error) {
+    const errorMessage =
+      "error" in error && typeof error.error === "string"
+        ? error.error
+        : "Failed to fetch storages";
     return (
       <Card className="border-red-200">
         <CardContent className="py-6">
-          <p className="text-red-700">{error}</p>
-          <Button variant="outline" onClick={fetchStorages} className="mt-2">
+          <p className="text-red-700">{errorMessage}</p>
+          <Button variant="outline" onClick={() => void refetch()} className="mt-2">
             Retry
           </Button>
         </CardContent>
@@ -148,7 +158,7 @@ export function StorageList({ onSelectStorage }: StorageListProps) {
           <Plus className="h-4 w-4 mr-2" />
           Create Storage
         </Button>
-        <Button variant="outline" size="icon" onClick={fetchStorages} disabled={isLoading}>
+        <Button variant="outline" size="icon" onClick={() => void refetch()} disabled={isLoading}>
           <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
         </Button>
       </div>

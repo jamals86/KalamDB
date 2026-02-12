@@ -25,6 +25,7 @@
 
 import { useEffect, useRef } from 'react';
 import { Pencil, Trash2, Undo2, Eye, Copy } from 'lucide-react';
+import { cn } from "@/lib/utils";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -103,6 +104,8 @@ export function CellContextMenu({
     context.value !== null &&
     (typeof context.value === 'object' ||
       (typeof context.value === 'string' && context.value.length > 40));
+  const itemClassName =
+    "relative flex w-full cursor-default select-none items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-left outline-none transition-colors hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50";
 
   return (
     <>
@@ -112,24 +115,25 @@ export function CellContextMenu({
       {/* Menu */}
       <div
         ref={menuRef}
-        className="fixed z-50 bg-background border border-border rounded-md shadow-lg py-1 min-w-[180px] text-sm"
+        className="fixed z-50 min-w-[11rem] overflow-hidden rounded-md border bg-popover p-1 text-popover-foreground opacity-100 shadow-md antialiased backdrop-blur-none"
         style={{ left: context.x, top: context.y }}
       >
         {/* ── Header showing column name ─────────────────────────── */}
-        <div className="px-3 py-1.5 text-xs text-muted-foreground border-b mb-1 font-mono">
+        <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
           {context.columnName} · Row {context.rowIndex + 1}
         </div>
+        <div className="-mx-1 my-1 h-px bg-muted" />
 
         {/* ── Edit cell ──────────────────────────────────────────── */}
         {!isDeleted && (
           <button
-            className="w-full px-3 py-2 text-left hover:bg-muted flex items-center gap-2"
+            className={itemClassName}
             onClick={() => {
               onEdit(context.rowIndex, context.columnName, context.value);
               onClose();
             }}
           >
-            <Pencil className="h-3.5 w-3.5 text-amber-600" />
+            <Pencil className="h-3.5 w-3.5 text-foreground/80" />
             Edit Cell
           </button>
         )}
@@ -137,7 +141,7 @@ export function CellContextMenu({
         {/* ── Delete row ─────────────────────────────────────────── */}
         {!isDeleted && (
           <button
-            className="w-full px-3 py-2 text-left hover:bg-muted flex items-center gap-2 text-red-600"
+            className={cn(itemClassName, "text-destructive hover:bg-destructive/10 hover:text-destructive")}
             onClick={() => {
               onDelete(context.rowIndex);
               onClose();
@@ -151,7 +155,7 @@ export function CellContextMenu({
         {/* ── Undo delete ────────────────────────────────────────── */}
         {isDeleted && (
           <button
-            className="w-full px-3 py-2 text-left hover:bg-muted flex items-center gap-2 text-blue-600"
+            className={itemClassName}
             onClick={() => {
               onUndoDelete(context.rowIndex);
               onClose();
@@ -165,7 +169,7 @@ export function CellContextMenu({
         {/* ── Undo cell edits ────────────────────────────────────── */}
         {isEdited && !isDeleted && (
           <button
-            className="w-full px-3 py-2 text-left hover:bg-muted flex items-center gap-2 text-blue-600"
+            className={itemClassName}
             onClick={() => {
               onUndoEdit(context.rowIndex);
               onClose();
@@ -176,25 +180,27 @@ export function CellContextMenu({
           </button>
         )}
 
-        <div className="border-t my-1" />
+        <div className="-mx-1 my-1 h-px bg-muted" />
 
         {/* ── View data (for large/complex values) ───────────────── */}
-        {hasViewableData && (
-          <button
-            className="w-full px-3 py-2 text-left hover:bg-muted flex items-center gap-2"
-            onClick={() => {
-              onViewData(context.value);
-              onClose();
-            }}
-          >
-            <Eye className="h-3.5 w-3.5" />
-            View Data
-          </button>
-        )}
+        <button
+          className={itemClassName}
+          disabled={!hasViewableData}
+          onClick={() => {
+            if (!hasViewableData) {
+              return;
+            }
+            onViewData(context.value);
+            onClose();
+          }}
+        >
+          <Eye className="h-3.5 w-3.5" />
+          View Data
+        </button>
 
         {/* ── Copy value ─────────────────────────────────────────── */}
         <button
-          className="w-full px-3 py-2 text-left hover:bg-muted flex items-center gap-2"
+          className={itemClassName}
           onClick={() => {
             onCopyValue(context.value);
             onClose();

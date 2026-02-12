@@ -1,5 +1,6 @@
-import { useEffect } from 'react';
-import { useSettings, Setting } from '@/hooks/useSettings';
+import { useMemo } from 'react';
+import { useGetSettingsQuery } from '@/store/apiSlice';
+import { mapSettingsRows, type Setting } from '@/services/systemTableService';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Loader2, RefreshCw, Settings as SettingsIcon } from 'lucide-react';
@@ -9,18 +10,31 @@ interface SettingsViewProps {
 }
 
 export function SettingsView({ filterCategory }: SettingsViewProps) {
-  const { groupedSettings, isLoading, error, fetchSettings } = useSettings();
+  const {
+    data = [],
+    isFetching: isLoading,
+    error,
+    refetch,
+  } = useGetSettingsQuery();
 
-  useEffect(() => {
-    fetchSettings();
-  }, [fetchSettings]);
+  const settings = useMemo(() => mapSettingsRows(data), [data]);
+  const groupedSettings = useMemo(() => {
+    const groups: Record<string, Setting[]> = {};
+    settings.forEach((setting) => {
+      if (!groups[setting.category]) {
+        groups[setting.category] = [];
+      }
+      groups[setting.category].push(setting);
+    });
+    return groups;
+  }, [settings]);
 
   if (error) {
     return (
       <Card className="border-red-200">
         <CardContent className="py-6">
-          <p className="text-red-700">{error}</p>
-          <Button variant="outline" onClick={fetchSettings} className="mt-2">
+          <p className="text-red-700">{"error" in error ? error.error : "Failed to fetch settings"}</p>
+          <Button variant="outline" onClick={() => void refetch()} className="mt-2">
             Retry
           </Button>
         </CardContent>
@@ -56,7 +70,7 @@ export function SettingsView({ filterCategory }: SettingsViewProps) {
       {/* Toolbar - only show for full view */}
       {!filterCategory && (
       <div className="flex items-center justify-end">
-        <Button variant="outline" size="icon" onClick={fetchSettings} disabled={isLoading}>
+        <Button variant="outline" size="icon" onClick={() => void refetch()} disabled={isLoading}>
           <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
         </Button>
       </div>

@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
-import { useServerLogs, ServerLog, ServerLogFilters } from '@/hooks/useServerLogs';
+import { useMemo, useState } from 'react';
+import { useGetServerLogsQuery } from '@/store/apiSlice';
+import type { ServerLog, ServerLogFilters } from '@/services/serverLogService';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
@@ -33,42 +34,41 @@ function getLevelConfig(level: string) {
 }
 
 export function ServerLogList() {
-  const { logs, isLoading, error, fetchLogs } = useServerLogs();
   const [showFilters, setShowFilters] = useState(false);
   const [selectedLog, setSelectedLog] = useState<ServerLog | null>(null);
-  const [filters, setFilters] = useState<ServerLogFilters>({
+  const [draftFilters, setDraftFilters] = useState<ServerLogFilters>({
+    limit: 500,
+  });
+  const [appliedFilters, setAppliedFilters] = useState<ServerLogFilters>({
     limit: 500,
   });
   const [autoRefresh, setAutoRefresh] = useState(false);
 
-  useEffect(() => {
-    fetchLogs(filters);
-  }, []);
-
-  // Auto-refresh every 5 seconds if enabled
-  useEffect(() => {
-    if (!autoRefresh) return;
-    
-    const interval = setInterval(() => {
-      fetchLogs(filters);
-    }, 5000);
-    
-    return () => clearInterval(interval);
-  }, [autoRefresh, filters, fetchLogs]);
+  const {
+    data: logs = [],
+    isFetching: isLoading,
+    error,
+    refetch,
+  } = useGetServerLogsQuery(appliedFilters, {
+    pollingInterval: autoRefresh ? 5000 : 0,
+  });
 
   const handleApplyFilters = () => {
-    fetchLogs(filters);
+    setAppliedFilters({ ...draftFilters });
     setShowFilters(false);
   };
 
   const handleClearFilters = () => {
     const clearedFilters = { limit: 500 };
-    setFilters(clearedFilters);
-    fetchLogs(clearedFilters);
+    setDraftFilters(clearedFilters);
+    setAppliedFilters(clearedFilters);
     setShowFilters(false);
   };
 
-  const hasActiveFilters = filters.level || filters.target || filters.message;
+  const hasActiveFilters = useMemo(
+    () => Boolean(appliedFilters.level || appliedFilters.target || appliedFilters.message),
+    [appliedFilters],
+  );
 
   if (error) {
     return (
@@ -76,12 +76,12 @@ export function ServerLogList() {
         <CardContent className="py-6">
           <div className="flex items-center gap-2 text-red-700">
             <AlertCircle className="h-5 w-5" />
-            <p>{error}</p>
+            <p>{"error" in error ? error.error : "Failed to fetch server logs"}</p>
           </div>
           <p className="text-sm text-muted-foreground mt-2">
             Make sure logging format is set to "json" in server configuration.
           </p>
-          <Button variant="outline" onClick={() => fetchLogs(filters)} className="mt-4">
+          <Button variant="outline" onClick={() => void refetch()} className="mt-4">
             Retry
           </Button>
         </CardContent>
@@ -126,7 +126,7 @@ export function ServerLogList() {
           <span className="text-sm text-muted-foreground">
             {logs.length} log{logs.length !== 1 ? 's' : ''}
           </span>
-          <Button variant="outline" size="icon" onClick={() => fetchLogs(filters)} disabled={isLoading}>
+          <Button variant="outline" size="icon" onClick={() => void refetch()} disabled={isLoading}>
             <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
           </Button>
         </div>
@@ -140,8 +140,8 @@ export function ServerLogList() {
               <div className="space-y-1">
                 <label className="text-sm font-medium">Level</label>
                 <Select
-                  value={filters.level || 'all'}
-                  onValueChange={(value: string) => setFilters({ ...filters, level: value === 'all' ? undefined : value })}
+                  value={draftFilters.level || 'all'}
+                  onValueChange={(value: string) => setDraftFilters({ ...draftFilters, level: value === 'all' ? undefined : value })}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="All levels" />
@@ -160,23 +160,23 @@ export function ServerLogList() {
                 <label className="text-sm font-medium">Target/Module</label>
                 <Input
                   placeholder="e.g., kalamdb_core"
-                  value={filters.target || ''}
-                  onChange={(e) => setFilters({ ...filters, target: e.target.value || undefined })}
+                  value={draftFilters.target || ''}
+                  onChange={(e) => setDraftFilters({ ...draftFilters, target: e.target.value || undefined })}
                 />
               </div>
               <div className="space-y-1">
                 <label className="text-sm font-medium">Message Contains</label>
                 <Input
                   placeholder="Search in message"
-                  value={filters.message || ''}
-                  onChange={(e) => setFilters({ ...filters, message: e.target.value || undefined })}
+                  value={draftFilters.message || ''}
+                  onChange={(e) => setDraftFilters({ ...draftFilters, message: e.target.value || undefined })}
                 />
               </div>
               <div className="space-y-1">
                 <label className="text-sm font-medium">Limit</label>
                 <Select
-                  value={String(filters.limit || 500)}
-                  onValueChange={(value: string) => setFilters({ ...filters, limit: parseInt(value) })}
+                  value={String(draftFilters.limit || 500)}
+                  onValueChange={(value: string) => setDraftFilters({ ...draftFilters, limit: parseInt(value, 10) })}
                 >
                   <SelectTrigger>
                     <SelectValue />

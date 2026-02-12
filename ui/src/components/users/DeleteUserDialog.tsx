@@ -8,7 +8,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { User } from '@/hooks/useUsers';
+import type { User } from '@/services/userService';
 import { Loader2, AlertTriangle } from 'lucide-react';
 
 interface DeleteUserDialogProps {

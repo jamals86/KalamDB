@@ -20,7 +20,7 @@ export { TimestampDisplay, DateDisplay, FileDisplay, JsonDisplay, BooleanDisplay
  * based on the column's data type.
  */
 interface CellDisplayProps {
-  value: any;
+  value: unknown;
   dataType?: string;
   namespace?: string;
   tableName?: string;
@@ -38,17 +38,23 @@ export function CellDisplay({ value, dataType, namespace, tableName }: CellDispl
   // Route to appropriate display component based on dataType
   // Handle Timestamp types (including Arrow types)
   if (normalizedType.startsWith('TIMESTAMP') || normalizedType === 'DATETIME') {
-    return <TimestampDisplay value={value} />;
+    return <TimestampDisplay value={value as number | string} dataType={dataType} />;
   }
   
   // Handle Date types
   if (normalizedType === 'DATE' || normalizedType.startsWith('DATE32') || normalizedType.startsWith('DATE64')) {
-    return <DateDisplay value={value} />;
+    const dateValue = typeof value === 'number' || typeof value === 'string'
+      ? value
+      : String(value);
+    return <DateDisplay value={dateValue} />;
   }
   
   // Handle Boolean
   if (normalizedType === 'BOOLEAN' || normalizedType === 'BOOL') {
-    return <BooleanDisplay value={value} />;
+    const boolValue = typeof value === 'boolean'
+      ? value
+      : String(value).toLowerCase() === 'true';
+    return <BooleanDisplay value={boolValue} />;
   }
   
   // Handle Numeric types (including Arrow types)
@@ -79,7 +85,14 @@ export function CellDisplay({ value, dataType, namespace, tableName }: CellDispl
       displayType = 'SMALLINT';
     }
     
-    return <NumberDisplay value={value} dataType={displayType} />;
+    const numericValue =
+      typeof value === 'number'
+        ? value
+        : Number(value);
+    if (Number.isNaN(numericValue)) {
+      return <TextDisplay value={String(value)} />;
+    }
+    return <NumberDisplay value={numericValue} dataType={displayType} />;
   }
   
   // Handle File type
@@ -95,7 +108,7 @@ export function CellDisplay({ value, dataType, namespace, tableName }: CellDispl
   // Handle Text types
   if (normalizedType === 'TEXT' || normalizedType === 'STRING' || normalizedType === 'VARCHAR' || 
       normalizedType.startsWith('UTF8') || normalizedType === 'LARGESTRING') {
-    return <TextDisplay value={value} />;
+    return <TextDisplay value={String(value)} />;
   }
   
   // Fallback for unknown types

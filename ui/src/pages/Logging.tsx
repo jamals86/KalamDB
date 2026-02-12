@@ -3,6 +3,7 @@ import { AuditLogList } from "@/components/audit/AuditLogList";
 import { JobList } from "@/components/jobs/JobList";
 import { ServerLogList } from "@/components/logs/ServerLogList";
 import { cn } from "@/lib/utils";
+import { PageLayout } from "@/components/layout/PageLayout";
 
 type LogTab = "audit" | "jobs" | "server";
 
@@ -39,11 +40,10 @@ export default function Logging() {
   const activeTabData = tabs.find((t) => t.id === activeTab) || tabs[0];
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold">Logging</h1>
-        <p className="text-muted-foreground">{activeTabData.description}</p>
-      </div>
+    <PageLayout
+      title="Logging"
+      description={activeTabData.description}
+    >
 
       {/* Tab Navigation */}
       <div className="border-b">
@@ -67,6 +67,6 @@ export default function Logging() {
 
       {/* Tab Content */}
       <div>{renderContent()}</div>
-    </div>
+    </PageLayout>
   );
 }

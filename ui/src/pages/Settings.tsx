@@ -5,6 +5,7 @@ import { SettingsView } from "@/components/settings/SettingsView";
 import Cluster from "./Cluster";
 import Storages from "./Storages";
 import { cn } from "@/lib/utils";
+import { PageLayout } from "@/components/layout/PageLayout";
 import {
   Settings as SettingsIcon,
   Sliders,
@@ -92,38 +93,36 @@ export default function Settings() {
   };
 
   return (
-    <div className="flex h-full">
-      {/* Settings sidebar */}
-      <div className="w-56 border-r bg-muted/30 p-4 space-y-1">
-        {sections.map((section) => (
-          <button
-            key={section.id}
-            onClick={() => setActiveSection(section.id)}
-            className={cn(
-              "w-full flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors text-left",
-              activeSection === section.id
-                ? "bg-primary text-primary-foreground"
-                : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-            )}
-          >
-            <section.icon className="h-4 w-4" />
-            {section.name}
-          </button>
-        ))}
-      </div>
+    <PageLayout
+      title="Settings"
+      description="View and configure system settings"
+      className="flex h-full min-h-0 flex-col"
+      contentClassName="min-h-0 flex-1"
+    >
+      <div className="flex h-full min-h-0 overflow-hidden rounded-lg border bg-card">
+        {/* Settings sidebar */}
+        <div className="w-56 shrink-0 border-r bg-muted/20 p-4 space-y-1">
+          {sections.map((section) => (
+            <button
+              key={section.id}
+              onClick={() => setActiveSection(section.id)}
+              className={cn(
+                "w-full flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors text-left",
+                activeSection === section.id
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+              )}
+            >
+              <section.icon className="h-4 w-4" />
+              {section.name}
+            </button>
+          ))}
+        </div>
 
-      {/* Settings content */}
-      <div className="flex-1 overflow-auto">
-        {activeSection === "all" ? (
-          <div className="p-6">
+        {/* Settings content */}
+        <div className="flex-1 overflow-auto p-6">
+          {activeSection === "all" ? (
             <div className="space-y-6 max-w-4xl">
-              <div>
-                <h1 className="text-3xl font-bold">Settings</h1>
-                <p className="text-muted-foreground">
-                  View and configure system settings
-                </p>
-              </div>
-
               <Card>
                 <CardHeader>
                   <CardTitle>Current User</CardTitle>
@@ -145,13 +144,11 @@ export default function Settings() {
 
               {renderContent()}
             </div>
-          </div>
-        ) : (
-          <div className="p-6">
-            {renderContent()}
-          </div>
-        )}
+          ) : (
+            renderContent()
+          )}
+        </div>
       </div>
-    </div>
+    </PageLayout>
   );
 }
