@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { MessageInput, TypingDots, StreamingText, FileDisplay } from '@/components/chat';
+import { MessageInput, TypingDots, FileDisplay } from '@/components/chat';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useMessages, useTypingIndicator } from '@/hooks/use-kalamdb';
 import { cn, parseTimestamp } from '@/lib/utils';
@@ -16,7 +16,7 @@ interface ChatPanelProps {
 
 export function ChatPanel({ conversation, onRefreshConversations }: ChatPanelProps) {
   const { messages, loading, sending, uploadProgress, waitingForAI, sendMessage } = useMessages(conversation.id);
-  const { typingUsers, setTyping } = useTypingIndicator(conversation.id);
+  const { typingUsers, setTyping, aiStatus } = useTypingIndicator(conversation.id);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [newMessageIds, setNewMessageIds] = useState<Set<string>>(new Set());
   const prevCountRef = useRef(0);
@@ -50,7 +50,7 @@ export function ChatPanel({ conversation, onRefreshConversations }: ChatPanelPro
     onRefreshConversations();
   };
 
-  const aiTyping = typingUsers.some(u => u.includes('ai') || u.includes('assistant')) || waitingForAI;
+  const aiTyping = typingUsers.some(u => u.includes('ai') || u.includes('assistant')) || waitingForAI || !!aiStatus?.isTyping;
 
   return (
     <div className="flex flex-col h-[calc(100vh-3.5rem)]">
@@ -84,7 +84,7 @@ export function ChatPanel({ conversation, onRefreshConversations }: ChatPanelPro
                 <Sparkles className="h-3.5 w-3.5 text-white" />
               </div>
               <div className="bg-muted/60 backdrop-blur-sm rounded-2xl px-4 py-2.5 border border-border/50 shadow-sm">
-                <TypingDots />
+                <TypingDots statusText={aiStatus?.label} showThinkingText={!aiStatus} />
               </div>
             </div>
           )}
@@ -135,7 +135,7 @@ function MinimalMessage({ message, isNew }: { message: Message; isNew: boolean }
             </>
           ) : (
             <>
-              <StreamingText text={message.content} isNew={isNew} speed={22} />
+              {message.content}
               {message.files && <FileDisplay files={message.files} className="mt-2" />}
             </>
           )}

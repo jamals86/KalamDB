@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { MessageInput, TypingDots, StreamingText, FileDisplay } from '@/components/chat';
+import { MessageInput, TypingDots, FileDisplay } from '@/components/chat';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useMessages, useTypingIndicator } from '@/hooks/use-kalamdb';
@@ -18,7 +18,7 @@ interface ChatAreaProps {
 
 export function ChatArea({ conversation, onRefreshConversations }: ChatAreaProps) {
   const { messages, loading, sending, uploadProgress, waitingForAI, sendMessage } = useMessages(conversation.id);
-  const { typingUsers, setTyping } = useTypingIndicator(conversation.id);
+  const { typingUsers, setTyping, aiStatus } = useTypingIndicator(conversation.id);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [newMessageIds, setNewMessageIds] = useState<Set<string>>(new Set());
   const prevMessageCountRef = useRef(0);
@@ -57,7 +57,7 @@ export function ChatArea({ conversation, onRefreshConversations }: ChatAreaProps
     onRefreshConversations();
   };
 
-  const aiTyping = typingUsers.some(u => u.includes('ai') || u.includes('assistant')) || waitingForAI;
+  const aiTyping = typingUsers.some(u => u.includes('ai') || u.includes('assistant')) || waitingForAI || !!aiStatus?.isTyping;
 
   return (
     <div className="flex-1 flex flex-col">
@@ -102,7 +102,7 @@ export function ChatArea({ conversation, onRefreshConversations }: ChatAreaProps
                 </AvatarFallback>
               </Avatar>
               <div className="bg-muted rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm">
-                <TypingDots />
+                <TypingDots statusText={aiStatus?.label} showThinkingText={!aiStatus} />
               </div>
             </div>
           )}
@@ -163,11 +163,7 @@ function MessageBubble({ message, isNew }: { message: Message; isNew: boolean })
             </>
           ) : (
             <>
-              <StreamingText
-                text={message.content}
-                isNew={isNew}
-                speed={25}
-              />
+              {message.content}
               {message.files && <FileDisplay files={message.files} className="mt-2" />}
             </>
           )}

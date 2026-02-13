@@ -20,6 +20,7 @@
     "test:all": "npm run test:api && npm run test:wasm"
   },
   "dependencies": {
+    "@ai-sdk/google": "^3.0.29",
     "@radix-ui/react-avatar": "^1.0.4",
     "@radix-ui/react-dialog": "^1.0.5",
     "@radix-ui/react-dropdown-menu": "^2.0.6",
@@ -27,9 +28,11 @@
     "@radix-ui/react-separator": "^1.0.3",
     "@radix-ui/react-slot": "^1.0.2",
     "@radix-ui/react-tooltip": "^1.0.7",
+    "ai": "^6.0.85",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.0",
     "date-fns": "^3.6.0",
+    "dotenv": "^17.3.1",
     "emoji-picker-react": "^4.17.4",
     "kalam-link": "file:../../link/sdks/typescript",
     "lucide-react": "^0.400.0",

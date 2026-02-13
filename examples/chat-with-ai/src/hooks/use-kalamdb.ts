@@ -16,7 +16,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useKalamDB } from '@/providers/kalamdb-provider';
 import { KALAMDB_CONFIG } from '@/lib/config';
 import { parseTimestamp } from '@/lib/utils';
-import type { Conversation, Message, TypingIndicator, ConnectionStatus, FileRef, FileAttachment } from '@/types';
+import type { Conversation, Message, TypingIndicator, ConnectionStatus, FileRef, FileAttachment, AiTypingStatus } from '@/types';
 import type { ServerMessage, Unsubscribe, UploadProgress } from 'kalam-link';
 
 // ============================================================================
@@ -473,6 +473,7 @@ export function useMessages(conversationId: string | null) {
 export function useTypingIndicator(conversationId: string | null) {
   const { client, isReady } = useKalamDB();
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
+  const [aiStatus, setAiStatus] = useState<AiTypingStatus | null>(null);
   const unsubRef = useRef<Unsubscribe | null>(null);
 
   useEffect(() => {
@@ -480,6 +481,7 @@ export function useTypingIndicator(conversationId: string | null) {
     if (!client || !isReady || !conversationId) {
       console.log('[useTypingIndicator] Not ready or no conversation');
       setTypingUsers([]);
+      setAiStatus(null);
       return;
     }
 
@@ -522,6 +524,11 @@ export function useTypingIndicator(conversationId: string | null) {
                 const typingUsersList = Array.from(latestByUser.values())
                   .filter(ind => ind.is_typing)
                   .map(ind => ind.user_name);
+
+                const aiIndicator = Array.from(latestByUser.values()).find(ind =>
+                  ind.user_name.toLowerCase().includes('ai') || ind.user_name.toLowerCase().includes('assistant')
+                );
+                setAiStatus(aiIndicator ? parseAiTypingStatus(aiIndicator) : null);
                 
                 console.log('[useTypingIndicator] Typing users:', typingUsersList);
                 setTypingUsers(typingUsersList);
@@ -568,7 +575,7 @@ export function useTypingIndicator(conversationId: string | null) {
     }
   }, [client, conversationId]);
 
-  return { typingUsers, setTyping };
+  return { typingUsers, setTyping, aiStatus };
 }
 
 // ============================================================================
@@ -744,6 +751,50 @@ function createClientId(): string {
     return crypto.randomUUID();
   }
   return `client-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function parseAiTypingStatus(indicator: TypingIndicator): AiTypingStatus {
+  const rawState = (indicator.state || '').trim().toLowerCase();
+  const typingWithTokens = /^typing:(\d+)$/.exec(rawState);
+  if (typingWithTokens) {
+    const tokens = Number(typingWithTokens[1]);
+    return {
+      phase: 'typing',
+      isTyping: indicator.is_typing,
+      tokens: Number.isFinite(tokens) ? tokens : undefined,
+      label: Number.isFinite(tokens) ? `Typing • ${tokens} tok` : 'Typing',
+    };
+  }
+
+  if (rawState === 'thinking') {
+    return {
+      phase: 'thinking',
+      isTyping: indicator.is_typing,
+      label: 'Thinking',
+    };
+  }
+
+  if (rawState === 'typing') {
+    return {
+      phase: 'typing',
+      isTyping: indicator.is_typing,
+      label: 'Typing',
+    };
+  }
+
+  if (rawState === 'finished') {
+    return {
+      phase: 'finished',
+      isTyping: false,
+      label: 'Finished',
+    };
+  }
+
+  return {
+    phase: 'unknown',
+    isTyping: indicator.is_typing,
+    label: indicator.is_typing ? 'Working' : 'Idle',
+  };
 }
 
 /** Merge new rows into existing array, avoiding duplicates by id */

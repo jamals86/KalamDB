@@ -226,6 +226,17 @@ impl TopicPublisherService {
             .map_err(|e| CommonError::Internal(format!("Failed to fetch messages: {}", e)))
     }
 
+    /// Get the latest offset for a topic partition.
+    ///
+    /// Returns `None` when the partition is empty.
+    pub fn latest_offset(&self, topic_id: &TopicId, partition_id: u32) -> Result<Option<u64>> {
+        let next_offset = self
+            .offset_allocator
+            .peek_next_offset(topic_id.as_str(), partition_id);
+
+        Ok(next_offset.and_then(|next| next.checked_sub(1)))
+    }
+
     // ===== Offset Management Methods =====
 
     /// Acknowledge (commit) an offset for a consumer group.

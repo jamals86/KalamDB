@@ -88,6 +88,18 @@ impl TopicMessageStore {
         Ok(results.into_iter().map(|(_, msg)| msg).collect())
     }
 
+    /// Get the latest offset for a topic partition.
+    ///
+    /// Returns `None` when the partition has no messages.
+    pub fn latest_offset(
+        &self,
+        topic_id: &TopicId,
+        partition_id: u32,
+    ) -> kalamdb_store::storage_trait::Result<Option<u64>> {
+        let messages = self.fetch_messages(topic_id, partition_id, 0, usize::MAX)?;
+        Ok(messages.last().map(|message| message.offset))
+    }
+
     /// Delete all messages for a specific topic
     ///
     /// This method scans all messages for the topic and deletes them.

@@ -40,6 +40,16 @@ impl OffsetAllocator {
         self.counters.insert(key, Arc::new(AtomicU64::new(next_offset)));
     }
 
+    /// Peek the current next offset without incrementing.
+    ///
+    /// Returns `None` when the topic-partition counter is not initialized.
+    pub fn peek_next_offset(&self, topic_id: &str, partition_id: u32) -> Option<u64> {
+        let key = format!("{}:{}", topic_id, partition_id);
+        self.counters
+            .get(&key)
+            .map(|counter| counter.load(Ordering::SeqCst))
+    }
+
     /// Clear all counters.
     pub fn clear(&self) {
         self.counters.clear();
@@ -73,6 +83,18 @@ mod tests {
         alloc.seed("topic1", 0, 100);
         assert_eq!(alloc.next_offset("topic1", 0), 100);
         assert_eq!(alloc.next_offset("topic1", 0), 101);
+    }
+
+    #[test]
+    fn test_peek_next_offset() {
+        let alloc = OffsetAllocator::new();
+        assert_eq!(alloc.peek_next_offset("topic1", 0), None);
+
+        alloc.seed("topic1", 0, 7);
+        assert_eq!(alloc.peek_next_offset("topic1", 0), Some(7));
+
+        assert_eq!(alloc.next_offset("topic1", 0), 7);
+        assert_eq!(alloc.peek_next_offset("topic1", 0), Some(8));
     }
 
     #[test]

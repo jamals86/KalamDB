@@ -14,7 +14,7 @@ interface TerminalChatProps {
 
 export function TerminalChat({ conversation, onRefreshConversations }: TerminalChatProps) {
   const { messages, loading, sending, uploadProgress, waitingForAI, sendMessage } = useMessages(conversation.id);
-  const { typingUsers, setTyping } = useTypingIndicator(conversation.id);
+  const { typingUsers, setTyping, aiStatus } = useTypingIndicator(conversation.id);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [newIds, setNewIds] = useState<Set<string>>(new Set());
   const prevCount = useRef(0);
@@ -48,7 +48,7 @@ export function TerminalChat({ conversation, onRefreshConversations }: TerminalC
     onRefreshConversations();
   }, [sendMessage, onRefreshConversations]);
 
-  const aiTyping = typingUsers.some(u => u.includes('ai') || u.includes('assistant')) || waitingForAI;
+  const aiTyping = typingUsers.some(u => u.includes('ai') || u.includes('assistant')) || waitingForAI || !!aiStatus?.isTyping;
 
   return (
     <div className="flex-1 flex flex-col">
@@ -90,7 +90,9 @@ export function TerminalChat({ conversation, onRefreshConversations }: TerminalC
           {aiTyping && (
             <div className="flex items-center gap-2 animate-fade-in text-xs">
               <span className="text-cyan-500">[ai]</span>
-              <span className="text-cyan-400/90 font-medium animate-pulse-text">thinking</span>
+              <span className="text-cyan-400/90 font-medium animate-pulse-text">
+                {aiStatus?.label ?? 'thinking'}
+              </span>
               <span className="text-cyan-400/70 flex gap-0.5">
                 <span className="animate-typing-dot" style={{ animationDelay: '0ms' }}>.</span>
                 <span className="animate-typing-dot" style={{ animationDelay: '200ms' }}>.</span>
@@ -123,32 +125,8 @@ export function TerminalChat({ conversation, onRefreshConversations }: TerminalC
   );
 }
 
-function TerminalMessage({ message, isNew }: { message: Message; isNew: boolean }) {
+function TerminalMessage({ message }: { message: Message; isNew: boolean }) {
   const isUser = message.role === 'user';
-  const [displayedText, setDisplayedText] = useState(isNew ? '' : message.content);
-  const indexRef = useRef(0);
-
-  useEffect(() => {
-    if (!isNew || isUser) {
-      setDisplayedText(message.content);
-      return;
-    }
-
-    indexRef.current = 0;
-    setDisplayedText('');
-
-    const interval = setInterval(() => {
-      indexRef.current += 2;
-      if (indexRef.current >= message.content.length) {
-        setDisplayedText(message.content);
-        clearInterval(interval);
-      } else {
-        setDisplayedText(message.content.substring(0, indexRef.current));
-      }
-    }, 15);
-
-    return () => clearInterval(interval);
-  }, [message.content, isNew, isUser]);
 
   const createdAt = parseTimestamp(message.created_at);
 
@@ -166,10 +144,7 @@ function TerminalMessage({ message, isNew }: { message: Message; isNew: boolean 
             'leading-relaxed whitespace-pre-wrap',
             isUser ? 'text-emerald-200' : 'text-cyan-200'
           )}>
-            {isUser ? message.content : displayedText}
-            {isNew && !isUser && indexRef.current < message.content.length && (
-              <span className="text-cyan-400 animate-pulse">█</span>
-            )}
+            {message.content}
           </span>
           {message.files && message.files.length > 0 && (
             <div className="mt-2 p-2 border border-emerald-900/30 rounded bg-[#0d0d14]">

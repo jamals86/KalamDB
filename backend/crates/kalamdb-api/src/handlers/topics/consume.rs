@@ -77,13 +77,13 @@ pub async fn consume_handler(
 
     let topic_publisher = app_context.topic_publisher();
 
-    // Determine start offset based on position
+    // Determine start offset based on position.
     //
     // All positions first check the consumer group's committed offset.
     // If a committed offset exists, we resume from there (last_acked + 1).
     // The position only matters when no offset has been committed yet:
     //   - Earliest: start from offset 0 (replay all history)
-    //   - Latest: start from offset 0 (same as Earliest for now — new groups see all messages)
+    //   - Latest: start from high-water mark (last offset + 1)
     //   - Offset: start from the explicit offset
     let committed_offset =
         topic_publisher.get_group_offsets(topic_id, group_id).ok().and_then(|offsets| {
@@ -98,7 +98,20 @@ pub async fn consume_handler(
         None => match &body.start {
             StartPosition::Offset { offset } => *offset,
             StartPosition::Earliest => 0,
-            StartPosition::Latest => 0,
+            StartPosition::Latest => {
+                match topic_publisher.latest_offset(topic_id, body.partition_id) {
+                    Ok(Some(last_offset)) => last_offset + 1,
+                    Ok(None) => 0,
+                    Err(e) => {
+                        return HttpResponse::InternalServerError().json(
+                            TopicErrorResponse::internal_error(&format!(
+                                "Failed to resolve latest offset: {}",
+                                e
+                            )),
+                        );
+                    },
+                }
+            },
         },
     };
 
