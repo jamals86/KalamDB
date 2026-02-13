@@ -315,7 +315,7 @@ fn smoke_test_insert_throughput_summary() {
 
     println!("\n");
     println!("╔══════════════════════════════════════════════════════════════╗");
-    println!("║      KalamDB INSERT THROUGHPUT BENCHMARK SUMMARY            ║");
+    println!("║      KalamDB INSERT THROUGHPUT BENCHMARK SUMMARY             ║");
     println!("╚══════════════════════════════════════════════════════════════╝\n");
 
     let namespace = generate_unique_namespace("bench_summary");

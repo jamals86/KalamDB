@@ -191,8 +191,14 @@ NEXT_PUBLIC_KALAMDB_PASSWORD=$ROOT_PASSWORD
 
 # Service Credentials (for message-processor.ts backend service)
 KALAMDB_URL=$KALAMDB_URL
-KALAMDB_USERNAME=admin
-KALAMDB_PASSWORD=$ROOT_PASSWORD
+KALAMDB_USERNAME=ai-service
+KALAMDB_PASSWORD=service123
+
+# Gemini API (required for AI replies)
+# Set one key value below before running `npm run service`
+GEMINI_API_KEY=
+# GOOGLE_GENERATIVE_AI_API_KEY=
+GEMINI_MODEL=gemini-2.5-flash
 EOF
     
     log_success ".env.local file created"

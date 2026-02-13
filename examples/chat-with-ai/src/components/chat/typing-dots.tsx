@@ -6,16 +6,21 @@ interface TypingDotsProps {
   className?: string;
   label?: string;
   showThinkingText?: boolean;
+  statusText?: string;
 }
 
-export function TypingDots({ className, label, showThinkingText = true }: TypingDotsProps) {
+export function TypingDots({ className, label, showThinkingText = true, statusText }: TypingDotsProps) {
   return (
     <div className={cn('flex items-center gap-2', className)}>
       {label && (
         <span className="text-xs text-muted-foreground mr-1">{label}</span>
       )}
       
-      {showThinkingText && (
+      {statusText ? (
+        <span className="text-sm font-medium text-muted-foreground mr-1">
+          {statusText}
+        </span>
+      ) : showThinkingText && (
         <span className="text-sm font-medium text-muted-foreground animate-pulse-text mr-1">
           Thinking
         </span>

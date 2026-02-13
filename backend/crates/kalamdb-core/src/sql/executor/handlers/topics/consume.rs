@@ -53,8 +53,12 @@ impl TypedStatementHandler<ConsumeStatement> for ConsumeHandler {
             (ConsumePosition::Offset(o), _) => *o,
             // Earliest means from beginning
             (ConsumePosition::Earliest, None) => 0,
-            // Latest means only new messages (use HWM)
-            (ConsumePosition::Latest, _) => 0, // Would need HWM tracking
+            // Latest means only new messages (use high-water mark)
+            (ConsumePosition::Latest, _) => topic_publisher
+                .latest_offset(&topic_id, partition_id)
+                .map_err(|e| KalamDbError::InvalidOperation(e.to_string()))?
+                .map(|offset| offset + 1)
+                .unwrap_or(0),
             // Earliest with group: use committed offset if available, else 0
             (ConsumePosition::Earliest, Some(group_name)) => {
                 let group_id = ConsumerGroupId::new(group_name);

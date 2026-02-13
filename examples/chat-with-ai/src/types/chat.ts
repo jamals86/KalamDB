@@ -43,8 +43,15 @@ export interface TypingIndicator {
   conversation_id: string;
   user_name: string;
   is_typing: boolean;
-  state?: 'typing' | 'thinking' | 'finished';
+  state?: string;
   updated_at: string;
+}
+
+export interface AiTypingStatus {
+  phase: 'thinking' | 'typing' | 'finished' | 'unknown';
+  isTyping: boolean;
+  tokens?: number;
+  label: string;
 }
 
 export interface CreateConversationInput {

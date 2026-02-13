@@ -4,6 +4,7 @@ export type {
   FileRef,
   Message,
   TypingIndicator,
+  AiTypingStatus,
   CreateConversationInput,
   SendMessageInput,
   StreamToken,

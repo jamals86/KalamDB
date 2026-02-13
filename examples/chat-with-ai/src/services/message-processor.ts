@@ -11,7 +11,7 @@
  *   3. Type-safe topic consumption with auto-ack
  *   4. SQL queries through the WASM client (query, insert, queryAll)
  *   5. Graceful shutdown with consumer.stop()
- *   6. Idempotent message handling (duplicate detection)
+ *   6. Streaming AI replies with live typing status
  *
  * Architecture:
  *   ┌──────────────┐     CDC INSERT      ┌─────────────────────┐
@@ -29,9 +29,12 @@
  *                                         └─────────────────────┘
  *
  * Usage:
- *   npm run service                     # uses defaults (localhost:8080)
- *   KALAMDB_URL=http://host:port npm run service
+ *   npm run service
+ *
+ * Required env vars:
+ *   KALAMDB_USERNAME, KALAMDB_PASSWORD, GEMINI_API_KEY
  */
+import 'dotenv/config';
 
 // ─── Node.js polyfills for WASM browser APIs ─────────────────────────────────
 // The kalam-link WASM binary is compiled for the web platform and expects
@@ -59,17 +62,24 @@ import {
   type KalamDBClient,
   type ConsumeContext,
   type ConsumerHandle,
-  type QueryResponse,
-  Username,
+  type Username,
 } from 'kalam-link';
+import {
+  generateConversationTitle,
+  generateAIResponse,
+  generateAIResponseStream,
+  type ConversationTurn,
+} from './ai-agent';
+import { loadServiceConfig } from './service-config';
 
 // ─── Configuration ──────────────────────────────────────────────────────────
-const KALAMDB_URL     = process.env.KALAMDB_URL      || 'http://localhost:8080';
-const ADMIN_USERNAME  = process.env.KALAMDB_USERNAME  || 'admin';
-const ADMIN_PASSWORD  = process.env.KALAMDB_PASSWORD  || 'kalamdb123';
-const TOPIC_NAME      = 'chat.ai-processing';
-const CONSUMER_GROUP  = 'ai-processor-service';
-const BATCH_SIZE      = 10;
+const SERVICE_CONFIG = loadServiceConfig();
+const KALAMDB_URL = SERVICE_CONFIG.kalamdbUrl;
+const SERVICE_USERNAME = SERVICE_CONFIG.kalamdbUsername;
+const SERVICE_PASSWORD = SERVICE_CONFIG.kalamdbPassword;
+const TOPIC_NAME = SERVICE_CONFIG.topicName;
+const CONSUMER_GROUP = SERVICE_CONFIG.consumerGroup;
+const BATCH_SIZE = SERVICE_CONFIG.batchSize;
 
 // ─── Type-safe message interfaces ───────────────────────────────────────────
 
@@ -80,22 +90,6 @@ interface TopicMessage {
   conversation_id: string;
   sender: string;
   role: 'user' | 'assistant' | 'system';
-  content: string;
-  status: string;
-  created_at: string;
-}
-
-/** Row returned by `SELECT COUNT(*) as cnt ...` */
-interface CountRow extends Record<string, unknown> {
-  cnt: number;
-}
-
-/** Row returned from chat.messages table */
-interface ChatMessage {
-  id: string;
-  conversation_id: string;
-  sender: string;
-  role: string;
   content: string;
   status: string;
   created_at: string;
@@ -124,26 +118,20 @@ function resolveWasmPath(): string {
 }
 
 /**
- * Simulate an AI response. Replace this with a real LLM call (OpenAI, etc.)
- * when building a production service.
+ * Keep `window.location` aligned with the configured URL because the WASM
+ * runtime expects browser-like globals when running under Node.js.
  */
-async function generateAIResponse(userMessage: string): Promise<string> {
-  await new Promise(r => setTimeout(r, 600 + Math.random() * 400));
-
-  const replies = [
-    "That's a thoughtful question. Let me walk you through a fuller answer so it is clear and actionable. First, identify the goal and the constraints. Next, break the problem into smaller steps and validate assumptions early. Finally, iterate with a quick test and refine based on what you observe.",
-    "I understand. Here is a longer explanation with context and a concrete path forward. Start by outlining the core requirement, then map the data flow and where the bottlenecks are. After that, pick the smallest change that delivers the biggest improvement.",
-    "Great point. If we expand on it: consider tradeoffs, failure modes, and how you will verify the outcome. A simple checklist helps: input validation, timing, data consistency, and observability. Then you can scale the solution with confidence.",
-    "Thanks for sharing your thoughts. I would approach it in three phases: analyze the current behavior, introduce a small change with guardrails, and measure impact. That keeps the system stable while still moving quickly.",
-    "That makes sense. Let me elaborate a bit: identify the source of truth, make sure the metadata travels with the data, and ensure each step is idempotent. This reduces bugs and prevents duplicate processing.",
-    "I see where you're coming from. Another perspective is to prioritize clarity and traceability: log key events, use explicit identifiers, and keep the UI in sync with the backend state.",
-    "Excellent observation. This reminds me of a pattern that works well: optimistic UI updates with a server-side reconciliation step that merges by a stable client id.",
-    "I appreciate your question. The answer lies in balancing correctness and latency. You can start with a straightforward implementation, then tighten the loop with progress feedback and better state merging.",
-  ];
-
-  const reply = replies[Math.floor(Math.random() * replies.length)];
-  const preview = userMessage.length > 50 ? userMessage.slice(0, 50) + '…' : userMessage;
-  return `${reply} (responding to: "${preview}")`;
+function configureWasmWindow(kalamdbUrl: string): void {
+  const parsedUrl = new URL(kalamdbUrl);
+  (globalThis as any).window = {
+    location: {
+      protocol: parsedUrl.protocol,
+      hostname: parsedUrl.hostname,
+      port: parsedUrl.port,
+      href: parsedUrl.href,
+    },
+    fetch: globalThis.fetch,
+  };
 }
 
 /**
@@ -158,8 +146,21 @@ function sleep(ms: number): Promise<void> {
 }
 
 async function setAiTyping(client: KalamDBClient, conversationId: string, state: 'thinking' | 'typing' | 'finished', ownerUser: Username) {
+  await setAiTypingWithState(client, conversationId, state, ownerUser);
+}
+
+async function setAiTypingWithState(
+  client: KalamDBClient,
+  conversationId: string,
+  state: 'thinking' | 'typing' | 'finished',
+  ownerUser: Username,
+  tokenCount?: number,
+) {
   const isTyping = state !== 'finished';
-  const insertSql = `INSERT INTO chat.typing_indicators (conversation_id, user_name, is_typing, state) VALUES (${conversationId}, 'AI Assistant', ${isTyping}, '${state}')`;
+  const stateValue = state === 'typing' && typeof tokenCount === 'number'
+    ? `typing:${tokenCount}`
+    : state;
+  const insertSql = `INSERT INTO chat.typing_indicators (conversation_id, user_name, is_typing, state) VALUES (${conversationId}, 'AI Assistant', ${isTyping}, '${stateValue}')`;
   console.log(`   [DEBUG] Inserting typing indicator (${state}) for conversation ${conversationId} as '${ownerUser}'`);
   console.log(`   [SQL] ${insertSql}`);
   try {
@@ -172,16 +173,77 @@ async function setAiTyping(client: KalamDBClient, conversationId: string, state:
 }
 
 async function clearAiTyping(client: KalamDBClient, conversationId: string, ownerUser: Username) {
-  const insertSql = `INSERT INTO chat.typing_indicators (conversation_id, user_name, is_typing, state) VALUES (${conversationId}, 'AI Assistant', false, 'finished')`;
   console.log(`   [DEBUG] Clearing typing indicator for conversation ${conversationId} as '${ownerUser}'`);
-  console.log(`   [SQL] ${insertSql}`);
-  try {
-    const resp = await client.executeAsUser(insertSql, ownerUser);
-    console.log(`   ✓ clearAiTyping INSERT succeeded - response:`, resp.results?.[0]);
-  } catch (err) {
-    console.error(`   ❌ clearAiTyping INSERT failed:`, err);
-    console.error(`   [SQL] ${insertSql}`);
-  }
+  await setAiTypingWithState(client, conversationId, 'finished', ownerUser);
+}
+
+function createServiceClientId(): string {
+  return `ai-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+async function insertAssistantDraft(
+  client: KalamDBClient,
+  conversationId: string,
+  ownerUser: Username,
+  clientId: string,
+): Promise<void> {
+  const insertSql = `INSERT INTO chat.messages (client_id, conversation_id, sender, role, content, status)
+     VALUES ('${sqlEscape(clientId)}', ${conversationId}, 'AI Assistant', 'assistant', '', 'sent')`;
+  await client.executeAsUser(insertSql, ownerUser);
+}
+
+async function updateAssistantDraft(
+  client: KalamDBClient,
+  conversationId: string,
+  ownerUser: Username,
+  clientId: string,
+  content: string,
+): Promise<void> {
+  const updateSql = `UPDATE chat.messages
+     SET content = '${sqlEscape(content)}'
+     WHERE conversation_id = ${conversationId}
+       AND role = 'assistant'
+       AND client_id = '${sqlEscape(clientId)}'`;
+  await client.executeAsUser(updateSql, ownerUser);
+}
+
+async function fetchConversationHistory(
+  client: KalamDBClient,
+  conversationId: string,
+  ownerUser: Username,
+): Promise<ConversationTurn[]> {
+  const historySql = `SELECT role, content
+     FROM chat.messages
+     WHERE conversation_id = ${conversationId}
+     ORDER BY created_at DESC
+     LIMIT ${SERVICE_CONFIG.aiContextWindowMessages}`;
+
+  const historyResp = await client.executeAsUser(historySql, ownerUser);
+  const historyRows = parseRows<Record<string, unknown>>(historyResp);
+
+  return historyRows
+    .map((row) => ({
+      role: String(row.role),
+      content: String(row.content ?? ''),
+    }))
+    .filter(
+      (row): row is ConversationTurn =>
+        (row.role === 'user' || row.role === 'assistant' || row.role === 'system') &&
+        row.content.trim().length > 0,
+    )
+    .reverse();
+}
+
+async function updateConversationTitle(
+  client: KalamDBClient,
+  conversationId: string,
+  ownerUser: Username,
+  title: string,
+): Promise<void> {
+  const updateSql = `UPDATE chat.conversations
+     SET title = '${sqlEscape(title)}', updated_at = NOW()
+     WHERE id = ${conversationId}`;
+  await client.executeAsUser(updateSql, ownerUser);
 }
 
 // ─── Message handler ────────────────────────────────────────────────────────
@@ -192,9 +254,8 @@ async function clearAiTyping(client: KalamDBClient, conversationId: string, owne
  * Steps:
  *  1. Decode the topic payload into a typed `TopicMessage`
  *  2. Skip non-user messages (assistant/system)
- *  3. Check for duplicate AI responses (idempotency)
- *  4. Generate an AI reply
- *  5. Insert the reply into `chat.messages`
+ *  3. Generate an AI reply with streaming updates
+ *  4. Update conversation title
  */
 async function processMessage(
   client: KalamDBClient,
@@ -246,59 +307,120 @@ async function processMessage(
     console.log(`   👤 Conversation owner (from query): ${conversationOwner}`);
   }
 
-  // ── 4. Idempotency: skip if AI already replied ──────────────────────
-  if (data.client_id) {
-    const minResp = await client.executeAsUser(
-      `SELECT MIN(id) as min_id FROM chat.messages
-       WHERE conversation_id = ${data.conversation_id}
-         AND role = 'user'
-         AND client_id = '${sqlEscape(data.client_id)}'`,
-      conversationOwner,
-    );
-    const minRows = parseRows<Record<string, unknown>>(minResp);
-    const minId = minRows[0]?.min_id ? Number(minRows[0].min_id) : Number(data.id);
-    if (Number(data.id) !== minId) {
-      console.log(`   ⊘ Skipping duplicate file row for client_id ${data.client_id}`);
+  // ── 4. Generate AI reply ────────────────────────────────────────────
+  await setAiTyping(client, data.conversation_id, 'thinking', conversationOwner);
+  await sleep(350);
+  await setAiTyping(client, data.conversation_id, 'typing', conversationOwner);
+  let aiReply: string;
+  const assistantClientId = createServiceClientId();
+  let lastPersistedContent = '';
+  let lastPersistedAt = 0;
+  let lastTypingAt = 0;
+
+  const persistDraft = async (content: string, force: boolean = false): Promise<void> => {
+    if (!content && !force) {
       return;
     }
-  }
+    if (!force && content === lastPersistedContent) {
+      return;
+    }
+    const now = Date.now();
+    if (!force && now - lastPersistedAt < 140) {
+      return;
+    }
+    await updateAssistantDraft(
+      client,
+      data.conversation_id,
+      conversationOwner,
+      assistantClientId,
+      content,
+    );
+    lastPersistedContent = content;
+    lastPersistedAt = now;
+  };
 
-  const countResp = await client.executeAsUser(
-    `SELECT COUNT(*) as cnt FROM chat.messages
-     WHERE conversation_id = ${data.conversation_id}
-       AND role = 'assistant'
-       AND id > ${data.id}`,
+  const publishTypingProgress = async (tokenCount: number, force: boolean = false): Promise<void> => {
+    const now = Date.now();
+    if (!force && now - lastTypingAt < 400) {
+      return;
+    }
+    await setAiTypingWithState(
+      client,
+      data.conversation_id,
+      'typing',
+      conversationOwner,
+      tokenCount,
+    );
+    lastTypingAt = now;
+  };
+
+  await insertAssistantDraft(
+    client,
+    data.conversation_id,
     conversationOwner,
+    assistantClientId,
   );
-  const rows = parseRows<CountRow>(countResp);
-  if (rows.length > 0 && Number(rows[0].cnt) > 0) {
-    console.log(`   ⊘ AI response already exists for message ${data.id}`);
-    return;
-  }
 
-  // ── 5. Generate AI reply ────────────────────────────────────────────
-  await setAiTyping(client, data.conversation_id, 'thinking', conversationOwner);
-  await sleep(600 + Math.random() * 700);
-  await setAiTyping(client, data.conversation_id, 'typing', conversationOwner);
-  const aiReply = await generateAIResponse(data.content);
-  await sleep(Math.min(3500, 1000 + aiReply.length * 8));
-
-  // ── 6. Insert reply in conversation owner's scope ─────
-  const messageInsertSql = `INSERT INTO chat.messages (conversation_id, sender, role, content, status)
-     VALUES (${data.conversation_id}, 'AI Assistant', 'assistant', '${sqlEscape(aiReply)}', 'sent')
-     `;
-  console.log(`   [DEBUG] Inserting AI message reply for conversation ${data.conversation_id} as '${conversationOwner}'`);
-  console.log(`   [SQL] ${messageInsertSql}`);
-  console.log(`   [Content preview] ${aiReply.substring(0, 80)}...`);
   try {
-    const resp = await client.executeAsUser(messageInsertSql, conversationOwner);
-    console.log(`   ✓ AI message INSERT succeeded for message ${data.id} - response:`, resp.results?.[0]);
-  } catch (err) {
-    console.error(`   ❌ AI message INSERT FAILED for message ${data.id}:`, err);
-    console.error(`   [SQL] ${messageInsertSql}`);
-    console.error(`   [User context] conversationOwner='${conversationOwner}'`);
-    throw err;  // Re-throw to see it in consumer logs
+    const history = await fetchConversationHistory(
+      client,
+      data.conversation_id,
+      conversationOwner,
+    );
+    const streamedResponse = await generateAIResponseStream({
+      userMessage: data.content,
+      history,
+      config: SERVICE_CONFIG,
+      onTextDelta: async (_delta, aggregateText) => {
+        await persistDraft(aggregateText);
+      },
+      onTokenProgress: async (tokenCount) => {
+        await publishTypingProgress(tokenCount);
+      },
+    });
+    aiReply = streamedResponse.text;
+    await persistDraft(aiReply, true);
+    await publishTypingProgress(streamedResponse.tokenCount, true);
+  } catch (error) {
+    console.error(`   ❌ Gemini streaming failed for message ${data.id}:`, error);
+    try {
+      aiReply = await generateAIResponse({
+        userMessage: data.content,
+        history: await fetchConversationHistory(client, data.conversation_id, conversationOwner),
+        config: SERVICE_CONFIG,
+      });
+    } catch {
+      aiReply = 'I ran into a temporary AI service issue. Please try sending that again.';
+    }
+    await persistDraft(aiReply, true);
   }
+
+  try {
+    const latestHistory = await fetchConversationHistory(
+      client,
+      data.conversation_id,
+      conversationOwner,
+    );
+    const generatedTitle = await generateConversationTitle({
+      userMessage: data.content,
+      assistantReply: aiReply,
+      history: latestHistory,
+      config: SERVICE_CONFIG,
+    });
+    if (generatedTitle.trim().length > 0) {
+      await updateConversationTitle(
+        client,
+        data.conversation_id,
+        conversationOwner,
+        generatedTitle,
+      );
+      console.log(`   ✓ Updated conversation title: "${generatedTitle}"`);
+    }
+  } catch (titleError) {
+    console.warn(`   ⚠️ Title generation/update skipped for conversation ${data.conversation_id}:`, titleError);
+  }
+
+  // ── 5. Finalize typing status ─────
   await clearAiTyping(client, data.conversation_id, conversationOwner);
   console.log(`   ✓ AI response fully processed for message ${data.id}`);
 }
@@ -309,6 +431,7 @@ async function main(): Promise<void> {
   console.log('🤖 AI Message Processor Service');
   console.log('================================');
   console.log(`KalamDB URL:      ${KALAMDB_URL}`);
+  console.log(`Gemini model:     ${SERVICE_CONFIG.geminiModel}`);
   console.log(`Topic:            ${TOPIC_NAME}`);
   console.log(`Consumer Group:   ${CONSUMER_GROUP}`);
   console.log(`Batch Size:       ${BATCH_SIZE}`);
@@ -317,12 +440,13 @@ async function main(): Promise<void> {
   // ── Load WASM binary from disk ────────────────────────────────────────
   const wasmPath = resolveWasmPath();
   const wasmBytes = fs.readFileSync(wasmPath);
+  configureWasmWindow(KALAMDB_URL);
   console.log(`📦 WASM loaded: ${wasmPath} (${(wasmBytes.length / 1024).toFixed(0)} KB)`);
 
   // ── Create kalam-link client (WASM-based) ─────────────────────────────
   const client = createClient({
     url: KALAMDB_URL,
-    auth: Auth.basic(ADMIN_USERNAME, ADMIN_PASSWORD),
+    auth: Auth.basic(SERVICE_USERNAME, SERVICE_PASSWORD),
     wasmUrl: wasmBytes,  // Pass buffer so WASM init skips fetch()
   });
 
@@ -350,9 +474,9 @@ async function main(): Promise<void> {
   const consumer: ConsumerHandle = client.consumer({
     topic: TOPIC_NAME,
     group_id: CONSUMER_GROUP,
-    batch_size: BATCH_SIZE,
-    auto_ack: true,
-    start: 'earliest',
+    batch_size: 1,
+    auto_ack: false,
+    start: 'latest',
   });
 
   // Wire up graceful shutdown
@@ -365,6 +489,7 @@ async function main(): Promise<void> {
 
   // Run consumes messages in a loop until consumer.stop() is called
   await consumer.run(async (ctx) => {
+    await ctx.ack();
     await processMessage(client, ctx);
   });
 
