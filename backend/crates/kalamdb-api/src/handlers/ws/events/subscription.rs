@@ -85,12 +85,12 @@ pub async fn handle_subscribe(
         .await
     {
         Ok(result) => {
-            info!(
-                "Subscription registered: id={}, user_id={}, has_initial_data={}",
-                subscription_id,
-                user_id.as_str(),
-                result.initial_data.is_some()
-            );
+            // info!(
+            //     "Subscription registered: id={}, user_id={}, has_initial_data={}",
+            //     subscription_id,
+            //     user_id.as_str(),
+            //     result.initial_data.is_some()
+            // );
             if let Some(ref initial) = result.initial_data {
                 info!("Initial data: {} rows, has_more={}", initial.rows.len(), initial.has_more);
             }
@@ -157,7 +157,7 @@ pub async fn handle_subscribe(
                     }
                 }
             } else {
-                info!("No initial data to send for {}", subscription_id);
+                // info!("No initial data to send for {}", subscription_id);
                 let flushed =
                     connection_state.read().complete_initial_load(&subscription_id.clone());
                 if flushed > 0 {

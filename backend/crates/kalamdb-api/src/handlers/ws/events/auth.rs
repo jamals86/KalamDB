@@ -9,7 +9,6 @@
 use actix_ws::Session;
 use kalamdb_auth::{authenticate, extract_username_for_audit, AuthRequest, UserRepository};
 use kalamdb_commons::models::ConnectionInfo;
-use kalamdb_commons::models::UserId;
 use kalamdb_commons::websocket::WsAuthCredentials;
 use kalamdb_commons::WebSocketMessage;
 use kalamdb_core::app_context::AppContext;
@@ -72,7 +71,8 @@ async fn authenticate_with_request(
 
     debug!(
         "Authenticating WebSocket: connection_id={}, username={}",
-        connection_id, username_for_log
+        connection_id,
+        username_for_log.as_str()
     );
 
     // Authenticate using unified auth module
@@ -92,8 +92,8 @@ async fn authenticate_with_request(
         },
         Err(e) => {
             // Log failed authentication
-            let entry = audit::log_auth_event(
-                &UserId::new(username_for_log),
+            let entry = audit::log_auth_event_with_username(
+                &username_for_log,
                 "LOGIN_WS",
                 false,
                 Some(format!("{}", e)),
@@ -108,7 +108,9 @@ async fn authenticate_with_request(
     };
 
     // Mark authenticated in connection state
-    connection_state.write().mark_authenticated(auth_result.user_id.clone());
+    connection_state
+        .write()
+        .mark_authenticated(auth_result.user_id.clone(), auth_result.role);
     // Update registry's user index
     registry.on_authenticated(&connection_id, auth_result.user_id.clone());
 

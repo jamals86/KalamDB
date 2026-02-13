@@ -7,6 +7,7 @@ use crate::error::KalamDbError;
 use crate::sql::context::ExecutionContext;
 use chrono::Utc;
 use kalamdb_commons::models::AuditLogId;
+use kalamdb_commons::{UserId, UserName};
 use kalamdb_system::AuditLogEntry;
 
 /// Create an audit log entry for a SQL operation
@@ -139,6 +140,35 @@ pub fn log_auth_event(
         details: Some(details),
         ip_address,
         subject_user_id: None, // Authentication events don't involve impersonation
+    }
+}
+
+/// Create audit entry for authentication events when only username is known.
+/// Uses anonymous actor_user_id and preserves attempted username for security audits.
+pub fn log_auth_event_with_username(
+    username: &UserName,
+    action: &str,
+    success: bool,
+    ip_address: Option<String>,
+) -> AuditLogEntry {
+    let timestamp = Utc::now().timestamp_millis();
+    let audit_id = AuditLogId::from(format!("audit_{}", timestamp));
+
+    let details = serde_json::json!({
+        "success": success,
+    })
+    .to_string();
+
+    AuditLogEntry {
+        audit_id,
+        timestamp,
+        actor_user_id: UserId::anonymous(),
+        actor_username: username.clone(),
+        action: action.to_string(),
+        target: format!("username:{}", username.as_str()),
+        details: Some(details),
+        ip_address,
+        subject_user_id: None,
     }
 }
 

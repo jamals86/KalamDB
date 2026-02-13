@@ -1,6 +1,6 @@
 use super::test_support::{consolidated_helpers, TestServer};
 use kalam_link::models::ResponseStatus;
-use kalamdb_commons::models::{ConnectionId, ConnectionInfo, UserId};
+use kalamdb_commons::models::{ConnectionId, ConnectionInfo, Role, UserId};
 use kalamdb_commons::websocket::{SubscriptionOptions, SubscriptionRequest};
 
 #[tokio::test(flavor = "multi_thread")]
@@ -20,7 +20,9 @@ async fn test_live_queries_metadata() {
     let connection_state = registration.state;
 
     // Authenticate the connection
-    connection_state.write().mark_authenticated(user_id.clone());
+    connection_state
+        .write()
+        .mark_authenticated(user_id.clone(), Role::User);
     registry.on_authenticated(&conn_id, user_id.clone());
 
     let create_ns = format!("CREATE NAMESPACE IF NOT EXISTS {}", ns);

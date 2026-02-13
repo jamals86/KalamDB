@@ -6,6 +6,7 @@ use dashmap::DashMap;
 use datafusion::sql::sqlparser::ast::Expr;
 use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::{ConnectionId, ConnectionInfo, LiveQueryId, TableId, UserId};
+use kalamdb_commons::Role;
 use kalamdb_commons::Notification;
 use parking_lot::{Mutex, RwLock};
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
@@ -183,6 +184,8 @@ pub struct ConnectionState {
     pub connection_id: ConnectionId,
     /// User ID (None until authenticated)
     pub user_id: Option<UserId>,
+    /// User role (None until authenticated)
+    pub user_role: Option<Role>,
     /// Client IP address (for localhost bypass check)
     pub client_ip: ConnectionInfo,
 
@@ -224,11 +227,12 @@ impl ConnectionState {
         self.auth_started = true;
     }
 
-    /// Mark connection as authenticated with user ID
+    /// Mark connection as authenticated with user identity
     #[inline]
-    pub fn mark_authenticated(&mut self, user_id: UserId) {
+    pub fn mark_authenticated(&mut self, user_id: UserId, user_role: Role) {
         self.is_authenticated = true;
         self.user_id = Some(user_id);
+        self.user_role = Some(user_role);
     }
 
     /// Check if connection is authenticated
@@ -241,6 +245,12 @@ impl ConnectionState {
     #[inline]
     pub fn user_id(&self) -> Option<&UserId> {
         self.user_id.as_ref()
+    }
+
+    /// Get user role (None if not authenticated)
+    #[inline]
+    pub fn user_role(&self) -> Option<Role> {
+        self.user_role
     }
 
     /// Get connection ID

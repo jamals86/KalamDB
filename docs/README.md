@@ -44,6 +44,7 @@ Contributor guides for building and developing KalamDB.
 - **[macos.md](development/macos.md)** / **[linux.md](development/linux.md)** / **[windows.md](development/windows.md)** – Platform guides
 - **[testing-strategy.md](development/testing-strategy.md)** – Testing approach
 - **[how-to-add-sql-statement.md](development/how-to-add-sql-statement.md)** – Adding new SQL statements
+- **[docker-idle-resource-baseline.md](development/docker-idle-resource-baseline.md)** – Why idle Docker CPU/memory is non-zero and how to tune it
 
 ### [API-Kalam/](API-Kalam/)
 Bruno API collection for testing endpoints.

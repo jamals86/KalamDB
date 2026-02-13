@@ -165,25 +165,26 @@ impl InitialDataFetcher {
     pub async fn fetch_initial_data(
         &self,
         live_id: &kalamdb_commons::models::LiveQueryId,
+        role: Role,
         table_id: &TableId,
         table_type: TableType,
         options: InitialDataOptions,
         where_clause: Option<&str>,
         projections: Option<&[String]>,
     ) -> Result<InitialDataResult, KalamDbError> {
-        log::info!(
-            "fetch_initial_data called: table={}, type={:?}, limit={}, since={:?}, fetch_last={}, projections={:?}",
-            table_id,
-            table_type,
-            options.limit,
-            options.since_seq,
-            options.fetch_last,
-            projections
-        );
+        // log::info!(
+        //     "fetch_initial_data called: table={}, type={:?}, limit={}, since={:?}, fetch_last={}, projections={:?}",
+        //     table_id,
+        //     table_type,
+        //     options.limit,
+        //     options.since_seq,
+        //     options.fetch_last,
+        //     projections
+        // );
 
         let limit = options.limit;
         if limit == 0 {
-            log::debug!("Limit is 0, returning empty result");
+            // log::debug!("Limit is 0, returning empty result");
             return Ok(InitialDataResult {
                 rows: Vec::new(),
                 last_seq: None,
@@ -194,13 +195,6 @@ impl InitialDataFetcher {
 
         // Extract user_id from LiveId for RLS
         let user_id = UserId::new(live_id.user_id().to_string());
-
-        // Determine role based on user_id
-        let role = if user_id.is_admin() {
-            Role::System
-        } else {
-            Role::User
-        };
 
         let sql_executor = self.sql_executor.get().cloned().ok_or_else(|| {
             KalamDbError::InvalidOperation(
@@ -251,7 +245,7 @@ impl InitialDataFetcher {
         // Add LIMIT (fetch limit + 1 to check has_more)
         sql.push_str(&format!(" LIMIT {}", limit + 1));
 
-        log::debug!("Executing initial data SQL via SqlExecutor: {}", sql);
+        // log::debug!("Executing initial data SQL via SqlExecutor: {}", sql);
 
         let execution_result =
             sql_executor.execute(&sql, &exec_ctx, Vec::<ScalarValue>::new()).await?;
@@ -324,13 +318,13 @@ impl InitialDataFetcher {
 
         let rows: Vec<Row> = batch_rows.into_iter().map(|(_, row)| row).collect();
 
-        log::info!(
-            "fetch_initial_data complete: table={}, returned {} rows (has_more: {}, last_seq: {:?})",
-            table_id,
-            rows.len(),
-            has_more,
-            last_seq
-        );
+        // log::info!(
+        //     "fetch_initial_data complete: table={}, returned {} rows (has_more: {}, last_seq: {:?})",
+        //     table_id,
+        //     rows.len(),
+        //     has_more,
+        //     last_seq
+        // );
 
         Ok(InitialDataResult {
             rows,
@@ -346,6 +340,7 @@ impl InitialDataFetcher {
     pub async fn compute_snapshot_end_seq(
         &self,
         live_id: &kalamdb_commons::models::LiveQueryId,
+        role: Role,
         table_id: &TableId,
         table_type: TableType,
         options: &InitialDataOptions,
@@ -353,13 +348,6 @@ impl InitialDataFetcher {
     ) -> Result<Option<SeqId>, KalamDbError> {
         // Extract user_id from LiveId for RLS
         let user_id = live_id.user_id().clone();
-
-        // Determine role based on user_id
-        let role = if user_id.is_admin() {
-            Role::System
-        } else {
-            Role::User
-        };
 
         let sql_executor = self.sql_executor.get().cloned().ok_or_else(|| {
             KalamDbError::InvalidOperation(
@@ -648,6 +636,7 @@ mod tests {
         let res = fetcher
             .fetch_initial_data(
                 &live,
+                Role::User,
                 &table_id,
                 TableType::User,
                 InitialDataOptions::last(100),
@@ -792,6 +781,7 @@ mod tests {
         let res1 = fetcher
             .fetch_initial_data(
                 &live,
+                Role::User,
                 &table_id,
                 TableType::User,
                 InitialDataOptions::default().with_limit(1),
@@ -810,6 +800,7 @@ mod tests {
         let res2 = fetcher
             .fetch_initial_data(
                 &live,
+                Role::User,
                 &table_id,
                 TableType::User,
                 InitialDataOptions::since(res1.last_seq.unwrap()).with_limit(1),
@@ -828,6 +819,7 @@ mod tests {
         let res3 = fetcher
             .fetch_initial_data(
                 &live,
+                Role::User,
                 &table_id,
                 TableType::User,
                 InitialDataOptions::since(res2.last_seq.unwrap()).with_limit(1),
@@ -970,6 +962,7 @@ mod tests {
         let res = fetcher
             .fetch_initial_data(
                 &live,
+                Role::User,
                 &table_id,
                 TableType::User,
                 InitialDataOptions::last(3),

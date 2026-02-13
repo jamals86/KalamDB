@@ -544,27 +544,30 @@ async fn authenticate_bearer(
 ///
 /// This is useful when authentication fails but we still want to log
 /// the attempted username for security auditing.
-pub fn extract_username_for_audit(request: &AuthRequest) -> String {
+pub fn extract_username_for_audit(request: &AuthRequest) -> UserName {
     match request {
         AuthRequest::Header(header) => {
             if header.starts_with("Basic ") {
                 basic_auth::parse_basic_auth_header(header)
-                    .map(|(u, _)| u)
-                    .unwrap_or_else(|_| "unknown".to_string())
+                    .ok()
+                    .and_then(|(u, _)| UserName::try_new(u).ok())
+                    .unwrap_or_else(|| UserName::from("unknown"))
             } else if header.starts_with("Bearer ") {
                 // Try to extract username from JWT claims without validation
                 extract_jwt_username_unsafe(header.strip_prefix("Bearer ").unwrap_or(""))
             } else {
-                "unknown".to_string()
+                UserName::from("unknown")
             }
         },
-        AuthRequest::Credentials { username, .. } => username.clone(),
+        AuthRequest::Credentials { username, .. } => {
+            UserName::try_new(username.clone()).unwrap_or_else(|_| UserName::from("unknown"))
+        },
         AuthRequest::Jwt { token } => extract_jwt_username_unsafe(token),
     }
 }
 
 /// Extract username from JWT token without validation (for audit logging only)
-fn extract_jwt_username_unsafe(token: &str) -> String {
+fn extract_jwt_username_unsafe(token: &str) -> UserName {
     // JWT format: header.payload.signature
     // We decode the payload without verification for audit purposes only
     let mut parts = token.splitn(3, '.');
@@ -572,7 +575,7 @@ fn extract_jwt_username_unsafe(token: &str) -> String {
     let payload = parts.next();
     let signature = parts.next();
     if payload.is_none() || signature.is_none() {
-        return "unknown".to_string();
+        return UserName::from("unknown");
     }
 
     // Decode payload (base64url)
@@ -580,15 +583,17 @@ fn extract_jwt_username_unsafe(token: &str) -> String {
         if let Ok(payload_str) = String::from_utf8(payload_bytes) {
             if let Ok(claims) = serde_json::from_str::<serde_json::Value>(&payload_str) {
                 if let Some(username) = claims.get("username").and_then(|v| v.as_str()) {
-                    return username.to_string();
+                    return UserName::try_new(username.to_string())
+                        .unwrap_or_else(|_| UserName::from("unknown"));
                 }
                 if let Some(sub) = claims.get("sub").and_then(|v| v.as_str()) {
-                    return sub.to_string();
+                    return UserName::try_new(sub.to_string())
+                        .unwrap_or_else(|_| UserName::from("unknown"));
                 }
             }
         }
     }
-    "unknown".to_string()
+    UserName::from("unknown")
 }
 
 #[cfg(test)]
@@ -608,7 +613,7 @@ mod tests {
             username: "testuser".to_string(),
             password: "secret".to_string(),
         };
-        assert_eq!(extract_username_for_audit(&request), "testuser");
+        assert_eq!(extract_username_for_audit(&request), UserName::from("testuser"));
     }
 
     #[test]
@@ -617,13 +622,13 @@ mod tests {
         let encoded =
             base64::Engine::encode(&base64::engine::general_purpose::STANDARD, "testuser:password");
         let request = AuthRequest::Header(format!("Basic {}", encoded));
-        assert_eq!(extract_username_for_audit(&request), "testuser");
+        assert_eq!(extract_username_for_audit(&request), UserName::from("testuser"));
     }
 
     #[test]
     fn test_extract_username_from_bearer_header() {
         let request = AuthRequest::Header("Bearer some.jwt.token".to_string());
-        assert_eq!(extract_username_for_audit(&request), "unknown");
+        assert_eq!(extract_username_for_audit(&request), UserName::from("unknown"));
     }
 
     #[test]
@@ -640,7 +645,7 @@ mod tests {
 
         let token = format!("{}.{}.{}", header, payload, signature);
         let request = AuthRequest::Jwt { token };
-        assert_eq!(extract_username_for_audit(&request), "jwt_user");
+        assert_eq!(extract_username_for_audit(&request), UserName::from("jwt_user"));
     }
 
     #[test]
@@ -654,7 +659,7 @@ mod tests {
 
         let token = format!("{}.{}.{}", header, payload, signature);
         let request = AuthRequest::Jwt { token };
-        assert_eq!(extract_username_for_audit(&request), "user_from_sub");
+        assert_eq!(extract_username_for_audit(&request), UserName::from("user_from_sub"));
     }
 
     #[test]
@@ -662,7 +667,7 @@ mod tests {
         let request = AuthRequest::Jwt {
             token: "invalid_token".to_string(),
         };
-        assert_eq!(extract_username_for_audit(&request), "unknown");
+        assert_eq!(extract_username_for_audit(&request), UserName::from("unknown"));
     }
 
     #[test]
@@ -676,7 +681,7 @@ mod tests {
 
         let token = format!("{}.{}.{}", header, payload, signature);
         let request = AuthRequest::Header(format!("Bearer {}", token));
-        assert_eq!(extract_username_for_audit(&request), "bearer_user");
+        assert_eq!(extract_username_for_audit(&request), UserName::from("bearer_user"));
     }
 
     #[cfg(feature = "websocket")]

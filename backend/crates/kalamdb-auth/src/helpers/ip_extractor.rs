@@ -35,29 +35,37 @@ use log::warn;
 /// }
 /// ```
 pub fn extract_client_ip_secure(req: &HttpRequest) -> ConnectionInfo {
-    // Try X-Forwarded-For header first (standard proxy header)
-    if let Some(forwarded_for) = req.headers().get("X-Forwarded-For") {
-        if let Ok(header_value) = forwarded_for.to_str() {
-            // Take first IP in comma-separated list (original client)
-            let first_ip = header_value.split(',').next().unwrap_or("").trim();
+    let peer_addr = req.peer_addr().map(|addr| addr.ip());
 
-            // Security check: Reject localhost values in X-Forwarded-For
-            // This prevents bypass attempts like: X-Forwarded-For: 127.0.0.1
-            if is_localhost_address(first_ip) {
-                warn!(
-                    "Security: Rejected localhost value in X-Forwarded-For header (spoofing attempt): '{}'. Using peer_addr instead.",
-                    first_ip
-                );
-                // Fall through to peer_addr (real connection IP)
-            } else if !first_ip.is_empty() {
-                return ConnectionInfo::new(Some(first_ip.to_string()));
+    // Trust X-Forwarded-For only when the direct peer is loopback (trusted local reverse proxy).
+    if peer_addr.is_some_and(|ip| ip.is_loopback()) {
+        if let Some(forwarded_for) = req.headers().get("X-Forwarded-For") {
+            if let Ok(header_value) = forwarded_for.to_str() {
+                // Take first IP in comma-separated list (original client)
+                let first_ip = header_value.split(',').next().unwrap_or("").trim();
+
+                // Security check: Reject localhost values in X-Forwarded-For
+                // This prevents bypass attempts like: X-Forwarded-For: 127.0.0.1
+                if is_localhost_address(first_ip) {
+                    warn!(
+                        "Security: Rejected localhost value in trusted X-Forwarded-For header: '{}'. Using peer_addr instead.",
+                        first_ip
+                    );
+                } else if !first_ip.is_empty() {
+                    return ConnectionInfo::new(Some(first_ip.to_string()));
+                }
             }
         }
+    } else if req.headers().contains_key("X-Forwarded-For") {
+        warn!(
+            "Security: Ignoring X-Forwarded-For from non-loopback peer {:?}",
+            peer_addr
+        );
     }
 
     // Fallback to peer address (direct TCP connection)
-    req.peer_addr()
-        .map(|addr| ConnectionInfo::new(Some(addr.ip().to_string())))
+    peer_addr
+        .map(|ip| ConnectionInfo::new(Some(ip.to_string())))
         .unwrap_or_else(|| ConnectionInfo::new(None))
 }
 
