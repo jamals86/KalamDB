@@ -29,7 +29,7 @@ pub async fn wait_for_job_completion(
         }
 
         let query = format!(
-            "SELECT status, result, error_message FROM system.jobs WHERE job_id = '{}'",
+            "SELECT status, message FROM system.jobs WHERE job_id = '{}'",
             job_id
         );
         let resp = server.execute_sql(&query).await?;
@@ -53,14 +53,14 @@ pub async fn wait_for_job_completion(
             },
             "completed" => {
                 return Ok(row
-                    .get("result")
+                    .get("message")
                     .and_then(|v| v.as_str())
                     .unwrap_or("completed")
                     .to_string());
             },
             "failed" | "cancelled" => {
                 let error =
-                    row.get("error_message").and_then(|v| v.as_str()).unwrap_or("unknown error");
+                    row.get("message").and_then(|v| v.as_str()).unwrap_or("unknown error");
                 anyhow::bail!("Job {} {}: {}", job_id, status, error);
             },
             other => anyhow::bail!("Unknown job status for {}: {}", job_id, other),

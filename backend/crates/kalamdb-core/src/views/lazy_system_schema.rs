@@ -172,7 +172,7 @@ impl LazySystemSchemaProvider {
         // Fallback path: build secured provider from system registry and cache it.
         // This should be uncommon, mainly for recovery from partial initialization.
         let provider = self.system_tables.persisted_table_provider(system_table)?;
-        let _ = self.schema_registry.insert_provider(table_id, provider.clone());
+        let _ = table_id;
         Some(provider as Arc<dyn TableProvider>)
     }
 

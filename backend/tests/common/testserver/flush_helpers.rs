@@ -177,7 +177,7 @@ pub async fn wait_for_flush_job_completion(
         }
 
         let query = format!(
-            "SELECT status, result, error_message, started_at, completed_at FROM system.jobs WHERE job_id = '{}'",
+            "SELECT status, message, started_at, finished_at FROM system.jobs WHERE job_id = '{}'",
             job_id
         );
 
@@ -223,17 +223,13 @@ pub async fn wait_for_flush_job_completion(
                     "completed" => {
                         // Verify duration_ms is calculated (not 0)
                         let started_at = job_map.get("started_at").and_then(|v| v.as_i64());
-                        // Some providers use finished_at; fall back if completed_at is missing
-                        let completed_at = job_map
-                            .get("completed_at")
-                            .and_then(|v| v.as_i64())
-                            .or_else(|| job_map.get("finished_at").and_then(|v| v.as_i64()));
+                        let finished_at = job_map.get("finished_at").and_then(|v| v.as_i64());
 
-                        if let (Some(start), Some(end)) = (started_at, completed_at) {
+                        if let (Some(start), Some(end)) = (started_at, finished_at) {
                             let duration_ms = end - start;
                             if duration_ms == 0 {
                                 return Err(format!(
-                                    "Job {} completed but duration_ms = 0 (started_at: {}, completed_at: {}), which indicates a failure or instant completion bug",
+                                    "Job {} completed but duration_ms = 0 (started_at: {}, finished_at: {}), which indicates a failure or instant completion bug",
                                     job_id, start, end
                                 ));
                             }
@@ -244,7 +240,7 @@ pub async fn wait_for_flush_job_completion(
                         }
 
                         let result = job_map
-                            .get("result")
+                            .get("message")
                             .and_then(|v| v.as_str())
                             .unwrap_or("")
                             .to_string();
@@ -253,7 +249,7 @@ pub async fn wait_for_flush_job_completion(
                     },
                     "failed" => {
                         let error = job_map
-                            .get("error_message")
+                            .get("message")
                             .and_then(|v| v.as_str())
                             .unwrap_or("Unknown error");
                         return Err(format!("Job {} failed: {}", job_id, error));

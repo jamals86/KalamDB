@@ -222,6 +222,10 @@ pub struct LiveQuery {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kalamdb_commons::serialization::system_codec::{
+        decode_flex, decode_live_query_payload, encode_flex, encode_live_query_payload,
+    };
+    use serde_json::json;
 
     #[test]
     fn test_live_query_serialization() {
@@ -245,5 +249,64 @@ mod tests {
         let bytes = serde_json::to_vec(&live_query).unwrap();
         let deserialized: LiveQuery = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(live_query, deserialized);
+    }
+
+    #[test]
+    fn test_live_query_flatbuffers_flex_roundtrip() {
+        let live_query = LiveQuery {
+            live_id: "u_123-conn_456-events-sub_1".into(),
+            connection_id: "conn_456".to_string(),
+            subscription_id: "sub_1".to_string(),
+            namespace_id: NamespaceId::default(),
+            table_name: TableName::new("events"),
+            user_id: UserId::new("u_123"),
+            query: "SELECT * FROM events".to_string(),
+            options: Some(r#"{"include_initial": true}"#.to_string()),
+            status: LiveQueryStatus::Active,
+            created_at: 1730000000000,
+            last_update: 1730000300000,
+            last_ping_at: 1730000300000,
+            changes: 42,
+            node_id: NodeId::from(1u64),
+        };
+
+        let flex_payload = encode_flex(&live_query).expect("encode flex payload");
+        let wrapped =
+            encode_live_query_payload(&flex_payload).expect("encode live_query wrapper");
+        let unwrapped = decode_live_query_payload(&wrapped).expect("decode live_query wrapper");
+        let decoded: LiveQuery = decode_flex(&unwrapped).expect("decode flex payload");
+
+        assert_eq!(decoded, live_query);
+    }
+
+    #[test]
+    fn test_live_query_decode_rejects_string_node_id() {
+        let invalid_payload = json!({
+            "created_at": 1730000000000_i64,
+            "last_update": 1730000300000_i64,
+            "last_ping_at": 1730000300000_i64,
+            "changes": 42_i64,
+            "live_id": "u_123-conn_456-events-sub_1",
+            "connection_id": "conn_456",
+            "subscription_id": "sub_1",
+            "namespace_id": "default",
+            "table_name": "events",
+            "user_id": "u_123",
+            "query": "SELECT * FROM events",
+            "options": null,
+            "node_id": "1",
+            "status": "Active"
+        });
+
+        let flex_payload = encode_flex(&invalid_payload).expect("encode invalid flex payload");
+        let wrapped = encode_live_query_payload(&flex_payload).expect("encode live_query wrapper");
+        let unwrapped = decode_live_query_payload(&wrapped).expect("decode live_query wrapper");
+        let err =
+            decode_flex::<LiveQuery>(&unwrapped).expect_err("string node_id must fail");
+
+        assert!(
+            err.to_string().contains("expected u64"),
+            "unexpected error: {err}"
+        );
     }
 }

@@ -1,5 +1,6 @@
 use arrow::array::{Array, FixedSizeListArray, Float32Array};
 use datafusion::scalar::ScalarValue;
+use serde::de;
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::cmp::Ordering;
@@ -87,6 +88,11 @@ pub enum StoredScalarValue {
         timezone: Option<String>,
     },
     Decimal128 {
+        #[serde(
+            serialize_with = "serialize_decimal128_option",
+            deserialize_with = "deserialize_decimal128_option",
+            default
+        )]
         value: Option<i128>,
         precision: u8,
         scale: i8,
@@ -96,6 +102,41 @@ pub enum StoredScalarValue {
         values: Option<Vec<Option<f32>>>,
     },
     Fallback(String),
+}
+
+fn serialize_decimal128_option<S>(value: &Option<i128>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    match value {
+        Some(v) => serializer.serialize_some(&v.to_string()),
+        None => serializer.serialize_none(),
+    }
+}
+
+fn deserialize_decimal128_option<'de, D>(deserializer: D) -> Result<Option<i128>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Decimal128Value {
+        String(String),
+        I64(i64),
+        U64(u64),
+        I128(i128),
+    }
+
+    let maybe_value = Option::<Decimal128Value>::deserialize(deserializer)?;
+    match maybe_value {
+        None => Ok(None),
+        Some(Decimal128Value::String(v)) => {
+            v.parse::<i128>().map(Some).map_err(de::Error::custom)
+        },
+        Some(Decimal128Value::I64(v)) => Ok(Some(v as i128)),
+        Some(Decimal128Value::U64(v)) => Ok(Some(v as i128)),
+        Some(Decimal128Value::I128(v)) => Ok(Some(v)),
+    }
 }
 
 impl From<&ScalarValue> for StoredScalarValue {

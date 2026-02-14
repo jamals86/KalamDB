@@ -306,7 +306,7 @@ fn test_update_all_types_user_table() {
         Err(e) => {
             // Query job status for debugging
             if let Ok(status_out) = execute_sql_as_root_via_cli_json(&format!(
-                "SELECT job_id, status, error_message FROM system.jobs WHERE job_id = '{}'",
+                "SELECT job_id, status, message FROM system.jobs WHERE job_id = '{}'",
                 job_id
             )) {
                 eprintln!("[DEBUG] Job status query result: {}", status_out);

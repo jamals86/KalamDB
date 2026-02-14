@@ -42,7 +42,7 @@ fn latest_sst_mtime(root: &Path) -> Option<SystemTime> {
 }
 
 fn fetch_job_result(job_id: &str) -> Option<String> {
-    let sql = format!("SELECT result FROM system.jobs WHERE job_id = '{}'", job_id);
+    let sql = format!("SELECT message FROM system.jobs WHERE job_id = '{}'", job_id);
     let output = execute_sql_as_root_via_client_json(&sql).ok()?;
     let json: JsonValue = serde_json::from_str(&output).ok()?;
     let row = json

@@ -414,15 +414,39 @@ impl SystemTablesRegistry {
             log::error!(
                 "SystemTablesRegistry: failed reading persisted schemas from system.schemas"
             );
-            return HashSet::new();
+            return Self::default_persisted_system_tables();
         };
 
-        definitions
+        let tables: HashSet<SystemTable> = definitions
             .into_iter()
             .filter(|def| def.table_type == TableType::System)
             .filter(|def| def.namespace_id.as_str() == "system")
             .filter_map(|def| SystemTable::from_name(def.table_name.as_str()).ok())
             .filter(|table| !table.is_view())
-            .collect()
+            .collect();
+
+        if tables.is_empty() {
+            Self::default_persisted_system_tables()
+        } else {
+            tables
+        }
+    }
+
+    fn default_persisted_system_tables() -> HashSet<SystemTable> {
+        [
+            SystemTable::Users,
+            SystemTable::Jobs,
+            SystemTable::JobNodes,
+            SystemTable::Namespaces,
+            SystemTable::Storages,
+            SystemTable::LiveQueries,
+            SystemTable::Schemas,
+            SystemTable::AuditLog,
+            SystemTable::Manifest,
+            SystemTable::Topics,
+            SystemTable::TopicOffsets,
+        ]
+        .into_iter()
+        .collect()
     }
 }

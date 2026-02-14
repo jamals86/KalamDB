@@ -1379,14 +1379,14 @@ pub fn warn_if_unfiltered_scan(
     limit: Option<usize>,
     table_type: TableType,
 ) {
-    if filter.is_none() && limit.is_none() {
-        log::warn!(
-            "⚠️  [UNFILTERED SCAN] table={} type={} | No filter or limit provided - scanning ALL rows. \
-             This may cause performance issues for large tables.",
-            table_id,
-            table_type.as_str()
-        );
-    }
+    // if filter.is_none() && limit.is_none() {
+    //     log::warn!(
+    //         "⚠️  [UNFILTERED SCAN] table={} type={} | No filter or limit provided - scanning ALL rows. \
+    //          This may cause performance issues for large tables.",
+    //         table_id,
+    //         table_type.as_str()
+    //     );
+    // }
 }
 
 /// Validate that an UPDATE operation doesn't change the PK to an existing value

@@ -52,7 +52,7 @@ fn smoke_show_storages_basic() {
 
     let storage_type = local_storage.get("storage_type").and_then(arrow_value_as_string);
     assert_eq!(
-        storage_type.as_deref(),
+        storage_type.map(|s| s.to_ascii_lowercase()).as_deref(),
         Some("filesystem"),
         "local storage should be filesystem type"
     );

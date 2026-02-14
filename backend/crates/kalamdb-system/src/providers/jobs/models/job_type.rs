@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 /// Enum representing job types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Encode, Decode, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum JobType {
     Flush,
     Compact,

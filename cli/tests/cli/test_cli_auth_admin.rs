@@ -386,13 +386,13 @@ async fn test_cli_flush_table() {
     // Note: system.jobs stores namespace/table info inside the JSON `parameters` column.
     let jobs_query = if let Some(ref job_id) = job_id {
         format!(
-            "SELECT job_id, job_type, status, parameters, result FROM system.jobs \
+            "SELECT job_id, job_type, status, parameters, message FROM system.jobs \
              WHERE job_id = '{}' LIMIT 1",
             job_id
         )
     } else {
         // Fallback to querying by type and table name (from `parameters` JSON)
-        "SELECT job_id, job_type, status, parameters, result FROM system.jobs \
+        "SELECT job_id, job_type, status, parameters, message FROM system.jobs \
          WHERE job_type = 'flush' AND parameters LIKE '%\"table_name\":\"metrics\"%' \
          ORDER BY created_at DESC LIMIT 1"
             .to_string()
@@ -481,7 +481,11 @@ async fn test_cli_flush_table() {
         );
     }
 
-    assert_eq!(job["job_type"].as_str().unwrap(), "flush", "Job type should be 'flush'");
+    assert_eq!(
+        job["job_type"].as_str().unwrap().to_lowercase(),
+        "flush",
+        "Job type should be 'flush' (case-insensitive)"
+    );
 
     let params = job["parameters"].as_str().and_then(|s| {
         if s.is_empty() {
@@ -653,7 +657,7 @@ async fn test_cli_flush_all_tables() {
         let job_id_list =
             job_ids.iter().map(|id| format!("'{}'", id)).collect::<Vec<_>>().join(", ");
         format!(
-            "SELECT job_id, job_type, status, parameters, result FROM system.jobs \
+            "SELECT job_id, job_type, status, parameters, message FROM system.jobs \
              WHERE job_id IN ({}) \
              ORDER BY created_at DESC",
             job_id_list
@@ -661,7 +665,7 @@ async fn test_cli_flush_all_tables() {
     } else {
         // Fallback to querying by namespace
         format!(
-            "SELECT job_id, job_type, status, parameters, result FROM system.jobs \
+            "SELECT job_id, job_type, status, parameters, message FROM system.jobs \
          WHERE job_type = 'flush' AND parameters LIKE '%\"namespace_id\":\"{}\"%' \
          ORDER BY created_at DESC",
             namespace_name

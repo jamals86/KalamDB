@@ -199,11 +199,11 @@ impl KalamClient {
     ///
     /// Returns one of: "basic", "jwt", or "none"
     #[wasm_bindgen(js_name = getAuthType)]
-    pub fn get_auth_type(&self) -> &'static str {
+    pub fn get_auth_type(&self) -> String {
         match &self.auth {
-            WasmAuthProvider::Basic { .. } => "basic",
-            WasmAuthProvider::Jwt { .. } => "jwt",
-            WasmAuthProvider::None => "none",
+            WasmAuthProvider::Basic { .. } => "basic".to_string(),
+            WasmAuthProvider::Jwt { .. } => "jwt".to_string(),
+            WasmAuthProvider::None => "none".to_string(),
         }
     }
 

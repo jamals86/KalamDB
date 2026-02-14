@@ -1324,6 +1324,11 @@ Query OK, 0 rows affected
 
 176) insetad of holding: pub struct ManifestCacheEntry and manifest we can combine them together for the entitystore, then we wont be needing any custom schema for them, we can make the main object as the schema for the table
 
+177) check that we use zero-copy serdes using flatbuffers to the logic model we have for each system table, the main changes i guess should be in SystemTableRow, when we have something good we can copy it to SharedTableRow and UserTableRow as well and the inside Row -> ScalarValue
+
+
+
+
 
 
 

@@ -3569,7 +3569,7 @@ pub fn verify_job_completed(
 
         // Query system.jobs for this specific job
         let query = format!(
-            "SELECT job_id, status, error_message FROM system.jobs WHERE job_id = '{}'",
+            "SELECT job_id, status, message FROM system.jobs WHERE job_id = '{}'",
             job_id
         );
 
@@ -3594,9 +3594,9 @@ pub fn verify_job_completed(
                         let status = status_owned.as_str();
 
                         let error_value = row
-                            .get("error_message")
+                            .get("message")
                             .and_then(extract_arrow_value)
-                            .or_else(|| row.get("error_message").cloned())
+                            .or_else(|| row.get("message").cloned())
                             .unwrap_or(serde_json::Value::Null);
                         let error_message = error_value.as_str().unwrap_or("");
 
@@ -3662,7 +3662,7 @@ pub fn wait_for_job_finished(
         }
 
         let query = format!(
-            "SELECT job_id, status, error_message FROM system.jobs WHERE job_id = '{}'",
+            "SELECT job_id, status, message FROM system.jobs WHERE job_id = '{}'",
             job_id
         );
 

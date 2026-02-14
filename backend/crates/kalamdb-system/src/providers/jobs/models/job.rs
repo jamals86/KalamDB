@@ -481,6 +481,10 @@ impl Default for JobFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kalamdb_commons::serialization::system_codec::{
+        decode_flex, decode_job_payload, encode_flex, encode_job_payload,
+    };
+    use serde_json::json;
 
     #[test]
     #[allow(deprecated)]
@@ -541,5 +545,74 @@ mod tests {
         let cancelled = job.cancel();
         assert_eq!(cancelled.status, JobStatus::Cancelled);
         assert!(cancelled.finished_at.is_some());
+    }
+
+    #[test]
+    fn test_job_flatbuffers_flex_roundtrip() {
+        let job = Job {
+            job_id: JobId::new("job_fb_roundtrip"),
+            job_type: JobType::Cleanup,
+            status: JobStatus::Running,
+            leader_status: Some(JobStatus::Running),
+            parameters: Some(r#"{"namespace_id":"default","table_name":"events"}"#.to_string()),
+            message: Some("in progress".to_string()),
+            exception_trace: None,
+            idempotency_key: Some("cleanup:default:events:2026-02-14".to_string()),
+            retry_count: 1,
+            max_retries: 5,
+            memory_used: Some(1024),
+            cpu_used: Some(256),
+            created_at: 1730000000000,
+            updated_at: 1730000001234,
+            started_at: Some(1730000000100),
+            finished_at: None,
+            node_id: NodeId::from(1u64),
+            leader_node_id: Some(NodeId::from(2u64)),
+            queue: Some("maintenance".to_string()),
+            priority: Some(10),
+        };
+
+        let flex_payload = encode_flex(&job).expect("encode flex payload");
+        let wrapped = encode_job_payload(&flex_payload).expect("encode job flatbuffers wrapper");
+        let unwrapped = decode_job_payload(&wrapped).expect("decode job flatbuffers wrapper");
+        let decoded: Job = decode_flex(&unwrapped).expect("decode flex payload");
+
+        assert_eq!(decoded, job);
+    }
+
+    #[test]
+    fn test_job_decode_rejects_string_node_id() {
+        let invalid_payload = json!({
+            "created_at": 1730000000000_i64,
+            "updated_at": 1730000000000_i64,
+            "started_at": null,
+            "finished_at": null,
+            "memory_used": null,
+            "cpu_used": null,
+            "job_id": "job_invalid_node_id",
+            "node_id": "1",
+            "leader_node_id": null,
+            "parameters": null,
+            "message": null,
+            "exception_trace": null,
+            "idempotency_key": null,
+            "queue": null,
+            "priority": null,
+            "job_type": "Flush",
+            "status": "Running",
+            "leader_status": null,
+            "retry_count": 0,
+            "max_retries": 3
+        });
+
+        let flex_payload = encode_flex(&invalid_payload).expect("encode invalid flex payload");
+        let wrapped = encode_job_payload(&flex_payload).expect("encode job wrapper");
+        let unwrapped = decode_job_payload(&wrapped).expect("decode job wrapper");
+        let err = decode_flex::<Job>(&unwrapped).expect_err("string node_id must fail");
+
+        assert!(
+            err.to_string().contains("expected u64"),
+            "unexpected error: {err}"
+        );
     }
 }

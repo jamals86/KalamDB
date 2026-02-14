@@ -93,6 +93,30 @@ fn parse_payload(bytes: &[u8]) -> serde_json::Value {
     serde_json::from_slice(bytes).expect("Failed to parse payload")
 }
 
+fn extract_string_field(payload: &serde_json::Value, key: &str) -> Option<String> {
+    let raw = payload.get(key)?;
+    let untyped = common::extract_typed_value(raw);
+    match untyped {
+        serde_json::Value::String(s) => Some(s),
+        _ => None,
+    }
+}
+
+fn extract_i64_field(payload: &serde_json::Value, keys: &[&str]) -> Option<i64> {
+    for key in keys {
+        if let Some(raw) = payload.get(key) {
+            let untyped = common::extract_typed_value(raw);
+            if let Some(value) = untyped.as_i64() {
+                return Some(value);
+            }
+            if let Some(value) = untyped.as_str().and_then(|s| s.parse::<i64>().ok()) {
+                return Some(value);
+            }
+        }
+    }
+    None
+}
+
 /// Test high-load concurrent publishing to multiple tables with single topic consumer
 #[tokio::test]
 #[ntest::timeout(300000)]
@@ -290,11 +314,9 @@ async fn test_topic_high_load_concurrent_publishers() {
                             consecutive_all_dups = 0;
                         }
 
-                        // Commit periodically
-                        if all_records.len() % 50 == 0 {
-                            if let Err(e) = consumer.commit_sync().await {
-                                eprintln!("[CONSUMER] Commit error: {}", e);
-                            }
+                        // Commit each processed batch to reduce offset replay churn
+                        if let Err(e) = consumer.commit_sync().await {
+                            eprintln!("[CONSUMER] Commit error: {}", e);
                         }
                     },
                     Err(err) => {
@@ -622,27 +644,14 @@ async fn test_topic_high_load_concurrent_publishers() {
         let payload = parse_payload(&record.payload);
 
         // Extract table name from _table metadata (format: "namespace:table_name")
-        let table_name = if let Some(table) = payload.get("_table").and_then(|v| v.as_str()) {
-            table.rsplit(&[':', '.'][..]).next().unwrap_or("unknown")
-        } else {
-            "unknown"
-        };
+        let table_name = extract_string_field(&payload, "_table")
+            .and_then(|table| table.rsplit(&[':', '.'][..]).next().map(str::to_string))
+            .unwrap_or_else(|| "unknown".to_string());
 
         // Extract ID from payload
         // Note: BIGINT/Int64 values are serialized as JSON strings for JS precision safety
-        let id = if let Some(id_val) = payload
-            .get("id")
-            .or_else(|| payload.get("product_id"))
-            .or_else(|| payload.get("event_id"))
-            .or_else(|| payload.get("session_id"))
-        {
-            id_val
-                .as_i64()
-                .or_else(|| id_val.as_str().and_then(|s| s.parse::<i64>().ok()))
-                .unwrap_or(-1)
-        } else {
-            -1
-        };
+        let id = extract_i64_field(&payload, &["id", "product_id", "event_id", "session_id"])
+            .unwrap_or(-1);
 
         let op_str = match record.op {
             TopicOp::Insert => "insert",
