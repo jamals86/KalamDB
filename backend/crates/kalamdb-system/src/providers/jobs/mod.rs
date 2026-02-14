@@ -9,7 +9,6 @@
 
 pub mod jobs_indexes;
 pub mod jobs_provider;
-pub mod jobs_table;
 pub mod models;
 
 pub use jobs_indexes::{
@@ -17,5 +16,4 @@ pub use jobs_indexes::{
     JobStatusCreatedAtIndex,
 };
 pub use jobs_provider::{JobsStore, JobsTableProvider};
-pub use jobs_table::JobsTableSchema;
 pub use models::{Job, JobFilter, JobOptions, JobSortField, SortOrder};

@@ -7,7 +7,6 @@ use kalamdb_commons::models::{
     ids::{LiveQueryId, NamespaceId, UserId},
     NodeId, TableName,
 };
-use kalamdb_commons::KSerializable;
 use kalamdb_macros::table;
 use serde::{Deserialize, Serialize};
 
@@ -34,7 +33,7 @@ use serde::{Deserialize, Serialize};
 /// not persisted to system.live_queries table.
 ///
 /// ## Serialization
-/// - **RocksDB**: Bincode (compact binary format)
+/// - **RocksDB**: FlatBuffers envelope + FlexBuffers payload
 /// - **API**: JSON via Serde
 ///
 /// ## Example
@@ -243,13 +242,8 @@ mod tests {
             node_id: NodeId::from(1u64),
         };
 
-        // Test bincode serialization
-        let config = bincode::config::standard();
-        let bytes = bincode::encode_to_vec(&live_query, config).unwrap();
-        let (deserialized, _): (LiveQuery, _) = bincode::decode_from_slice(&bytes, config).unwrap();
+        let bytes = serde_json::to_vec(&live_query).unwrap();
+        let deserialized: LiveQuery = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(live_query, deserialized);
     }
 }
-
-// KSerializable implementation for EntityStore support
-impl KSerializable for LiveQuery {}

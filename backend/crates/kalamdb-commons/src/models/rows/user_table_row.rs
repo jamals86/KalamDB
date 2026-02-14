@@ -38,4 +38,15 @@ impl From<UserTableRow> for KTableRow {
 }
 
 // KSerializable implementation for EntityStore support
-impl crate::serialization::KSerializable for UserTableRow {}
+impl crate::serialization::KSerializable for UserTableRow {
+    fn encode(&self) -> Result<Vec<u8>, crate::storage::StorageError> {
+        crate::serialization::row_codec::encode_user_table_row(self)
+    }
+
+    fn decode(bytes: &[u8]) -> Result<Self, crate::storage::StorageError>
+    where
+        Self: Sized,
+    {
+        crate::serialization::row_codec::decode_user_table_row(bytes)
+    }
+}

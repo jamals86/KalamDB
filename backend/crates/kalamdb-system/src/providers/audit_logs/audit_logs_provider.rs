@@ -3,20 +3,24 @@
 //! This module provides a DataFusion TableProvider implementation for the system.audit_log table.
 //! Uses the EntityStore architecture with type-safe keys (AuditLogId).
 
-use super::{new_audit_logs_store, AuditLogsStore, AuditLogsTableSchema};
 use crate::error::{SystemError, SystemResultExt};
 use crate::providers::audit_logs::models::AuditLogEntry;
-use crate::providers::base::{extract_filter_value, SimpleProviderDefinition};
+use crate::providers::base::{extract_filter_value, system_rows_to_batch, SimpleProviderDefinition};
+use crate::system_row_mapper::{model_to_system_row, system_row_to_model};
 use datafusion::arrow::array::RecordBatch;
+use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::logical_expr::Expr;
 use kalamdb_commons::models::AuditLogId;
+use kalamdb_commons::models::rows::SystemTableRow;
+use kalamdb_commons::schemas::TableDefinition;
+use kalamdb_commons::SystemTable;
 use kalamdb_store::entity_store::{EntityStore, EntityStoreAsync};
-use kalamdb_store::StorageBackend;
-use std::sync::Arc;
+use kalamdb_store::{IndexedEntityStore, StorageBackend};
+use std::sync::{Arc, OnceLock};
 
 /// System.audit_log table provider using EntityStore architecture
 pub struct AuditLogsTableProvider {
-    store: AuditLogsStore,
+    store: IndexedEntityStore<AuditLogId, SystemTableRow>,
 }
 
 impl std::fmt::Debug for AuditLogsTableProvider {
@@ -34,8 +38,15 @@ impl AuditLogsTableProvider {
     /// # Returns
     /// A new AuditLogsTableProvider instance
     pub fn new(backend: Arc<dyn StorageBackend>) -> Self {
+        let store = IndexedEntityStore::new(
+            backend,
+            crate::SystemTable::AuditLog
+                .column_family_name()
+                .expect("AuditLog is a table"),
+            Vec::new(),
+        );
         Self {
-            store: new_audit_logs_store(backend),
+            store,
         }
     }
 
@@ -47,7 +58,8 @@ impl AuditLogsTableProvider {
     /// # Returns
     /// Result indicating success or failure
     pub fn append(&self, entry: AuditLogEntry) -> Result<(), SystemError> {
-        self.store.put(&entry.audit_id, &entry)?;
+        let row = Self::encode_audit_row(&entry)?;
+        self.store.put(&entry.audit_id, &row)?;
         Ok(())
     }
 
@@ -55,8 +67,9 @@ impl AuditLogsTableProvider {
     ///
     /// Use this in async contexts to avoid blocking the Tokio runtime.
     pub async fn append_async(&self, entry: AuditLogEntry) -> Result<(), SystemError> {
+        let row = Self::encode_audit_row(&entry)?;
         self.store
-            .put_async(&entry.audit_id, &entry)
+            .put_async(&entry.audit_id, &row)
             .await
             .into_system_error("put_async error")?;
         Ok(())
@@ -70,7 +83,8 @@ impl AuditLogsTableProvider {
     /// # Returns
     /// Option<AuditLogEntry> if found, None otherwise
     pub fn get_entry(&self, audit_id: &AuditLogId) -> Result<Option<AuditLogEntry>, SystemError> {
-        Ok(self.store.get(audit_id)?)
+        let row = self.store.get(audit_id)?;
+        row.map(|value| Self::decode_audit_row(&value)).transpose()
     }
 
     /// Async version of `get_entry()` - offloads to blocking thread pool.
@@ -80,44 +94,32 @@ impl AuditLogsTableProvider {
         &self,
         audit_id: &AuditLogId,
     ) -> Result<Option<AuditLogEntry>, SystemError> {
-        self.store.get_async(audit_id).await.into_system_error("get_async error")
-    }
-
-    /// Helper to create RecordBatch from entries
-    fn create_batch(
-        &self,
-        entries: Vec<(AuditLogId, AuditLogEntry)>,
-    ) -> Result<RecordBatch, SystemError> {
-        crate::build_record_batch!(
-            schema: AuditLogsTableSchema::schema(),
-            entries: entries,
-            columns: [
-                audit_ids => OptionalString(|entry| Some(entry.1.audit_id.as_str())),
-                timestamps => Timestamp(|entry| Some(entry.1.timestamp)),
-                actor_user_ids => OptionalString(|entry| Some(entry.1.actor_user_id.as_str())),
-                actor_usernames => OptionalString(|entry| Some(entry.1.actor_username.as_str())),
-                actions => OptionalString(|entry| Some(entry.1.action.as_str())),
-                targets => OptionalString(|entry| Some(entry.1.target.as_str())),
-                details_list => OptionalString(|entry| entry.1.details.as_deref()),
-                ip_addresses => OptionalString(|entry| entry.1.ip_address.as_deref()),
-                subject_user_ids => OptionalString(|entry| entry.1.subject_user_id.as_ref().map(|id| id.as_str()))
-            ]
-        )
-        .into_arrow_error("Failed to create RecordBatch")
+        let row = self
+            .store
+            .get_async(audit_id.clone())
+            .await
+            .into_system_error("get_async error")?;
+        row.map(|value| Self::decode_audit_row(&value)).transpose()
     }
 
     /// Scan all audit log entries and return as RecordBatch
     pub fn scan_all_entries(&self) -> Result<RecordBatch, SystemError> {
-        let entries = self.store.scan_all_typed(None, None, None)?;
-        self.create_batch(entries)
+        let rows = self
+            .store
+            .scan_all_typed(None, None, None)?
+            .into_iter()
+            .map(|(_, row)| row)
+            .collect();
+        system_rows_to_batch(&Self::schema(), rows)
     }
 
     /// Scan up to `limit` audit log entries and return as RecordBatch
     pub fn scan_entries_limited(&self, limit: usize) -> Result<RecordBatch, SystemError> {
         use kalamdb_store::entity_store::{EntityStore, ScanDirection};
         let iter = self.store.scan_directional(None, ScanDirection::Newer, limit)?;
-        let entries: Vec<(AuditLogId, AuditLogEntry)> = iter.collect::<Result<Vec<_>, _>>()?;
-        self.create_batch(entries)
+        let row_entries: Vec<(AuditLogId, SystemTableRow)> = iter.collect::<Result<Vec<_>, _>>()?;
+        let rows = row_entries.into_iter().map(|(_, row)| row).collect();
+        system_rows_to_batch(&Self::schema(), rows)
     }
 
     /// Scan all audit log entries and return as Vec<AuditLogEntry>
@@ -127,8 +129,8 @@ impl AuditLogsTableProvider {
         let iter = self.store.scan_iterator(None, None)?;
         let mut entries = Vec::new();
         for item in iter {
-            let (_, entry) = item?;
-            entries.push(entry);
+            let (_, row) = item?;
+            entries.push(Self::decode_audit_row(&row)?);
         }
         Ok(entries)
     }
@@ -137,12 +139,15 @@ impl AuditLogsTableProvider {
     ///
     /// Use this in async contexts to avoid blocking the Tokio runtime.
     pub async fn scan_all_async(&self) -> Result<Vec<AuditLogEntry>, SystemError> {
-        let results: Vec<(Vec<u8>, AuditLogEntry)> = self
+        let results: Vec<(Vec<u8>, SystemTableRow)> = self
             .store
             .scan_all_async(None, None, None)
             .await
             .into_system_error("scan_all_async error")?;
-        Ok(results.into_iter().map(|(_, entry)| entry).collect())
+        results
+            .into_iter()
+            .map(|(_, row)| Self::decode_audit_row(&row))
+            .collect()
     }
     fn scan_to_batch_filtered(
         &self,
@@ -152,10 +157,10 @@ impl AuditLogsTableProvider {
         // Check for primary key equality filter → O(1) point lookup
         if let Some(audit_id_str) = extract_filter_value(filters, "audit_id") {
             let audit_id = AuditLogId::new(&audit_id_str);
-            if let Some(entry) = self.store.get(&audit_id)? {
-                return self.create_batch(vec![(audit_id, entry)]);
+            if let Some(row) = self.store.get(&audit_id)? {
+                return system_rows_to_batch(&Self::schema(), vec![row]);
             }
-            return self.create_batch(vec![]);
+            return system_rows_to_batch(&Self::schema(), vec![]);
         }
 
         // Use iterator with early termination on limit
@@ -163,12 +168,14 @@ impl AuditLogsTableProvider {
             let iter = self.store.scan_iterator(None, None)?;
             let mut entries = Vec::with_capacity(lim.min(1000));
             for item in iter {
-                entries.push(item?);
+                let (audit_id, row) = item?;
+                entries.push((audit_id, row));
                 if entries.len() >= lim {
                     break;
                 }
             }
-            return self.create_batch(entries);
+            let rows = entries.into_iter().map(|(_, row)| row).collect();
+            return system_rows_to_batch(&Self::schema(), rows);
         }
 
         // No filters/limit: full scan
@@ -177,16 +184,43 @@ impl AuditLogsTableProvider {
 
     fn provider_definition() -> SimpleProviderDefinition {
         SimpleProviderDefinition {
-            table_name: AuditLogsTableSchema::table_name(),
-            schema: AuditLogsTableSchema::schema,
+            table_name: Self::table_name(),
+            schema: Self::schema,
         }
+    }
+
+    fn encode_audit_row(entry: &AuditLogEntry) -> Result<SystemTableRow, SystemError> {
+        model_to_system_row(entry, &Self::definition())
+    }
+
+    fn decode_audit_row(row: &SystemTableRow) -> Result<AuditLogEntry, SystemError> {
+        system_row_to_model(row, &Self::definition())
+    }
+
+    fn definition() -> TableDefinition {
+        AuditLogEntry::definition()
+    }
+
+    fn schema() -> SchemaRef {
+        static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
+        SCHEMA
+            .get_or_init(|| {
+                Self::definition()
+                    .to_arrow_schema()
+                    .expect("Failed to convert audit_log TableDefinition to Arrow schema")
+            })
+            .clone()
+    }
+
+    fn table_name() -> &'static str {
+        SystemTable::AuditLog.table_name()
     }
 }
 
 crate::impl_simple_system_table_provider!(
     provider = AuditLogsTableProvider,
     key = AuditLogId,
-    value = AuditLogEntry,
+    value = SystemTableRow,
     definition = provider_definition,
     scan_all = scan_all_entries,
     scan_filtered = scan_to_batch_filtered
@@ -195,7 +229,6 @@ crate::impl_simple_system_table_provider!(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::system_table_trait::SystemTableProviderExt;
     use arrow::array::Array;
     use datafusion::arrow::array::TimestampMicrosecondArray;
     use datafusion::datasource::TableProvider;
@@ -368,18 +401,15 @@ mod tests {
     }
 
     #[test]
-    fn test_system_table_provider_trait() {
+    fn test_scan_all_via_provider_api() {
         let provider = create_test_provider();
 
-        // Test SystemTableProviderExt trait methods
-        //assert_eq!(provider.table_name(), "audit_log");
-        assert_eq!(provider.schema_ref().fields().len(), 9);
+        assert_eq!(provider.schema().fields().len(), 9);
 
-        // Test load_batch
         provider
             .append(create_test_entry("audit_001", "test.action", 1730000000000))
             .unwrap();
-        let batch = provider.load_batch().unwrap();
+        let batch = provider.scan_all_entries().unwrap();
         assert_eq!(batch.num_rows(), 1);
     }
 }

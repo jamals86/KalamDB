@@ -4,7 +4,9 @@
 
 use crate::providers::users::models::User;
 use crate::StoragePartition;
+use crate::system_row_mapper::system_row_to_model;
 use kalamdb_commons::storage::Partition;
+use kalamdb_commons::models::rows::SystemTableRow;
 use kalamdb_commons::UserId;
 use kalamdb_store::IndexDefinition;
 use std::sync::Arc;
@@ -17,7 +19,7 @@ use std::sync::Arc;
 /// The username is stored in lowercase for case-insensitive lookups.
 pub struct UserUsernameIndex;
 
-impl IndexDefinition<UserId, User> for UserUsernameIndex {
+impl IndexDefinition<UserId, SystemTableRow> for UserUsernameIndex {
     fn partition(&self) -> Partition {
         Partition::new(StoragePartition::SystemUsersUsernameIdx.name())
     }
@@ -26,7 +28,8 @@ impl IndexDefinition<UserId, User> for UserUsernameIndex {
         vec!["username"]
     }
 
-    fn extract_key(&self, _primary_key: &UserId, user: &User) -> Option<Vec<u8>> {
+    fn extract_key(&self, _primary_key: &UserId, row: &SystemTableRow) -> Option<Vec<u8>> {
+        let user: User = system_row_to_model(row, &User::definition()).ok()?;
         // Store username in lowercase for case-insensitive lookups
         let username_lower = user.username.as_str().to_lowercase();
         Some(username_lower.into_bytes())
@@ -78,7 +81,7 @@ impl IndexDefinition<UserId, User> for UserUsernameIndex {
 /// - "All service accounts"
 pub struct UserRoleIndex;
 
-impl IndexDefinition<UserId, User> for UserRoleIndex {
+impl IndexDefinition<UserId, SystemTableRow> for UserRoleIndex {
     fn partition(&self) -> Partition {
         Partition::new(StoragePartition::SystemUsersRoleIdx.name())
     }
@@ -87,7 +90,8 @@ impl IndexDefinition<UserId, User> for UserRoleIndex {
         vec!["role"]
     }
 
-    fn extract_key(&self, _primary_key: &UserId, user: &User) -> Option<Vec<u8>> {
+    fn extract_key(&self, _primary_key: &UserId, row: &SystemTableRow) -> Option<Vec<u8>> {
+        let user: User = system_row_to_model(row, &User::definition()).ok()?;
         let key = format!("{}:{}", user.role.as_str(), user.user_id.as_str());
         Some(key.into_bytes())
     }
@@ -105,13 +109,14 @@ impl IndexDefinition<UserId, User> for UserRoleIndex {
 }
 
 /// Create the default set of indexes for the users table.
-pub fn create_users_indexes() -> Vec<Arc<dyn IndexDefinition<UserId, User>>> {
+pub fn create_users_indexes() -> Vec<Arc<dyn IndexDefinition<UserId, SystemTableRow>>> {
     vec![Arc::new(UserUsernameIndex), Arc::new(UserRoleIndex)]
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::system_row_mapper::model_to_system_row;
     use kalamdb_commons::models::UserName;
     use kalamdb_commons::{AuthType, Role, StorageId};
 
@@ -140,9 +145,10 @@ mod tests {
     fn test_username_index_key_format() {
         let user = create_test_user("user1", "Alice", Role::User);
         let user_id = user.user_id.clone();
+        let row = model_to_system_row(&user, &User::definition()).unwrap();
 
         let index = UserUsernameIndex;
-        let key = index.extract_key(&user_id, &user).unwrap();
+        let key = index.extract_key(&user_id, &row).unwrap();
 
         // Should be lowercase
         let key_str = String::from_utf8(key).unwrap();
@@ -153,9 +159,10 @@ mod tests {
     fn test_role_index_key_format() {
         let user = create_test_user("user1", "alice", Role::Dba);
         let user_id = user.user_id.clone();
+        let row = model_to_system_row(&user, &User::definition()).unwrap();
 
         let index = UserRoleIndex;
-        let key = index.extract_key(&user_id, &user).unwrap();
+        let key = index.extract_key(&user_id, &row).unwrap();
 
         let key_str = String::from_utf8(key).unwrap();
         assert_eq!(key_str, "dba:user1");

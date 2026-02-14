@@ -57,10 +57,7 @@ pub fn extract_client_ip_secure(req: &HttpRequest) -> ConnectionInfo {
             }
         }
     } else if req.headers().contains_key("X-Forwarded-For") {
-        warn!(
-            "Security: Ignoring X-Forwarded-For from non-loopback peer {:?}",
-            peer_addr
-        );
+        warn!("Security: Ignoring X-Forwarded-For from non-loopback peer {:?}", peer_addr);
     }
 
     // Fallback to peer address (direct TCP connection)

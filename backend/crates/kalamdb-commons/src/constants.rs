@@ -112,19 +112,12 @@ pub const RESERVED_NAMESPACE_NAMES: &[&str] = &[
     "datafusion",
 ];
 
-/// System schema versioning constants.
+/// Legacy system schema version constants.
 ///
-/// Used to track the version of system tables schema for future migrations.
-/// When new system tables are added or schema changes are required, increment
-/// the version number and implement migration logic in `initialize_system_tables()`.
-///
-/// ## Version History
-/// - v1 (2025-01-15): Initial schema with 7 system tables:
-///   - system.users, system.namespaces, system.tables, system.storages
-///   - system.live_queries, system.jobs, system.audit_logs
-///
-/// Current system schema version.
+/// System schema lifecycle now reconciles through `system.schemas` at startup
+/// (`SchemaRegistry::initialize_tables()`), so this key/version pair is kept
+/// only for backward compatibility during transition.
 pub const SYSTEM_SCHEMA_VERSION: u32 = 1;
 
-/// RocksDB key for storing system schema version in default column family.
+/// Legacy RocksDB key for system schema version in default column family.
 pub const SYSTEM_SCHEMA_VERSION_KEY: &str = "system:schema_version";

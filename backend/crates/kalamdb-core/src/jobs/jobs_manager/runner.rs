@@ -563,32 +563,69 @@ impl JobsManager {
                 job_type.has_leader_actions()
             );
 
-        // Mark job as Running if still Queued/New (leader coordination)
-        // Only leader should be executing jobs at this point due to creation constraints
-        if is_leader && matches!(job.status, JobStatus::Queued | JobStatus::New) {
-            self.mark_job_running(&job_id).await?;
-        }
+            // Mark job as Running if still Queued/New (leader coordination)
+            // Only leader should be executing jobs at this point due to creation constraints
+            if is_leader && matches!(job.status, JobStatus::Queued | JobStatus::New) {
+                self.mark_job_running(&job_id).await?;
+            }
 
-        self.log_job_event(&job_id, &Level::Debug, "Job started (local phase)");
+            self.log_job_event(&job_id, &Level::Debug, "Job started (local phase)");
 
-        let app_ctx = self.get_attached_app_context();
+            let app_ctx = self.get_attached_app_context();
 
-        // ============================================
-        // Phase 1: Execute LOCAL work (runs on ALL nodes)
-        // ============================================
-        let local_decision = if job_type.has_local_work() {
-            match self.job_registry.execute_local(app_ctx.clone(), &job).await {
-                Ok(d) => d,
-                Err(e) => {
-                    let error_msg = format!("Local executor error: {}", e);
-                    self.update_job_node_status(
+            // ============================================
+            // Phase 1: Execute LOCAL work (runs on ALL nodes)
+            // ============================================
+            let local_decision = if job_type.has_local_work() {
+                match self.job_registry.execute_local(app_ctx.clone(), &job).await {
+                    Ok(d) => d,
+                    Err(e) => {
+                        let error_msg = format!("Local executor error: {}", e);
+                        self.update_job_node_status(
+                            &job_id,
+                            JobStatus::Failed,
+                            Some(error_msg.clone()),
+                        )
+                        .await?;
+                        if is_leader {
+                            if let Err(err) = self.mark_job_failed(&job_id, error_msg.clone()).await
+                            {
+                                log::error!(
+                                    "[{}] Failed to mark job as failed via Raft: {}",
+                                    job_id,
+                                    err
+                                );
+                            }
+                        }
+                        self.log_job_event(
+                            &job_id,
+                            &Level::Error,
+                            &format!("Job failed in local phase: {}", e),
+                        );
+                        return Ok(());
+                    },
+                }
+            } else {
+                JobDecision::Completed {
+                    message: Some("No local work required".to_string()),
+                }
+            };
+
+            // Handle local phase result
+            match &local_decision {
+                JobDecision::Completed { message } => {
+                    self.update_job_node_status(&job_id, JobStatus::Completed, None).await?;
+                    self.log_job_event(
                         &job_id,
-                        JobStatus::Failed,
-                        Some(error_msg.clone()),
-                    )
-                    .await?;
+                        &Level::Debug,
+                        &format!("Local phase completed: {}", message.as_deref().unwrap_or("ok")),
+                    );
+                },
+                JobDecision::Failed { message, .. } => {
+                    self.update_job_node_status(&job_id, JobStatus::Failed, Some(message.clone()))
+                        .await?;
                     if is_leader {
-                        if let Err(err) = self.mark_job_failed(&job_id, error_msg.clone()).await {
+                        if let Err(err) = self.mark_job_failed(&job_id, message.clone()).await {
                             log::error!(
                                 "[{}] Failed to mark job as failed via Raft: {}",
                                 job_id,
@@ -599,219 +636,195 @@ impl JobsManager {
                     self.log_job_event(
                         &job_id,
                         &Level::Error,
-                        &format!("Job failed in local phase: {}", e),
+                        &format!("Job failed in local phase: {}", message),
                     );
                     return Ok(());
                 },
-            }
-        } else {
-            JobDecision::Completed {
-                message: Some("No local work required".to_string()),
-            }
-        };
-
-        // Handle local phase result
-        match &local_decision {
-            JobDecision::Completed { message } => {
-                self.update_job_node_status(&job_id, JobStatus::Completed, None).await?;
-                self.log_job_event(
-                    &job_id,
-                    &Level::Debug,
-                    &format!("Local phase completed: {}", message.as_deref().unwrap_or("ok")),
-                );
-            },
-            JobDecision::Failed { message, .. } => {
-                self.update_job_node_status(&job_id, JobStatus::Failed, Some(message.clone()))
-                    .await?;
-                if is_leader {
-                    if let Err(err) = self.mark_job_failed(&job_id, message.clone()).await {
-                        log::error!("[{}] Failed to mark job as failed via Raft: {}", job_id, err);
-                    }
-                }
-                self.log_job_event(
-                    &job_id,
-                    &Level::Error,
-                    &format!("Job failed in local phase: {}", message),
-                );
-                return Ok(());
-            },
-            JobDecision::Skipped { message } => {
-                self.update_job_node_status(&job_id, JobStatus::Completed, None).await?;
-                self.log_job_event(
-                    &job_id,
-                    &Level::Debug,
-                    &format!("Local phase skipped: {}", message),
-                );
-                // Continue to leader phase if applicable
-            },
-            JobDecision::Retry {
-                message,
-                exception_trace,
-                backoff_ms,
-            } => {
-                // Handle retry for local phase
-                return self
-                    .handle_job_retry(
-                        &job,
-                        message,
-                        exception_trace.clone(),
-                        *backoff_ms,
-                        is_leader,
-                    )
-                    .await;
-            },
-        }
-
-        // ============================================
-        // Phase 2: Execute LEADER actions (ONLY on leader)
-        // ============================================
-        if is_leader {
-            let node_ids = self.active_cluster_node_ids();
-            let quorum_result = self
-                .wait_for_job_nodes_quorum(
-                    &job_id,
-                    &node_ids,
-                    Duration::from_secs(JOB_NODE_QUORUM_TIMEOUT_SECS),
-                )
-                .await?;
-
-            match quorum_result {
-                JobNodeQuorumResult::Failed { failed_nodes } => {
-                    let reason = format!(
-                        "Local phase failed on nodes: {}",
-                        failed_nodes.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(", ")
-                    );
-                    self.mark_job_failed(&job_id, reason).await?;
-                    return Ok(());
-                },
-                JobNodeQuorumResult::TimedOut { completed, total } => {
-                    self.log_job_event(
-                        &job_id,
-                        &Level::Warn,
-                        &format!(
-                            "Quorum timeout (completed {}/{}); proceeding with leader actions",
-                            completed, total
-                        ),
-                    );
-                },
-                JobNodeQuorumResult::QuorumReached { completed, total } => {
+                JobDecision::Skipped { message } => {
+                    self.update_job_node_status(&job_id, JobStatus::Completed, None).await?;
                     self.log_job_event(
                         &job_id,
                         &Level::Debug,
-                        &format!("Quorum reached (completed {}/{})", completed, total),
+                        &format!("Local phase skipped: {}", message),
                     );
+                    // Continue to leader phase if applicable
+                },
+                JobDecision::Retry {
+                    message,
+                    exception_trace,
+                    backoff_ms,
+                } => {
+                    // Handle retry for local phase
+                    return self
+                        .handle_job_retry(
+                            &job,
+                            message,
+                            exception_trace.clone(),
+                            *backoff_ms,
+                            is_leader,
+                        )
+                        .await;
                 },
             }
 
-            if job_type.has_leader_actions() {
-                log::info!("[{}] Starting leader phase execution", job_id);
-                self.log_job_event(&job_id, &Level::Debug, "Executing leader phase");
+            // ============================================
+            // Phase 2: Execute LEADER actions (ONLY on leader)
+            // ============================================
+            if is_leader {
+                let node_ids = self.active_cluster_node_ids();
+                let quorum_result = self
+                    .wait_for_job_nodes_quorum(
+                        &job_id,
+                        &node_ids,
+                        Duration::from_secs(JOB_NODE_QUORUM_TIMEOUT_SECS),
+                    )
+                    .await?;
 
-                let leader_decision = match self.job_registry.execute_leader(app_ctx, &job).await {
-                    Ok(d) => d,
-                    Err(e) => {
-                        let error_msg = format!("Leader executor error: {}", e);
-                        if let Err(err) = self.mark_job_failed(&job_id, error_msg.clone()).await {
-                            log::error!(
-                                "[{}] Failed to mark job as failed via Raft: {}",
-                                job_id,
-                                err
-                            );
-                        }
-                        self.log_job_event(
-                            &job_id,
-                            &Level::Error,
-                            &format!("Job failed in leader phase: {}", e),
+                match quorum_result {
+                    JobNodeQuorumResult::Failed { failed_nodes } => {
+                        let reason = format!(
+                            "Local phase failed on nodes: {}",
+                            failed_nodes
+                                .iter()
+                                .map(|id| id.to_string())
+                                .collect::<Vec<_>>()
+                                .join(", ")
                         );
+                        self.mark_job_failed(&job_id, reason).await?;
                         return Ok(());
                     },
-                };
-
-                match leader_decision {
-                    JobDecision::Completed { message } => {
-                        if let Err(e) = self.mark_job_completed(&job_id, message.clone()).await {
-                            log::error!(
-                                "[{}] Failed to mark job as completed via Raft: {}",
-                                job_id,
-                                e
-                            );
-                            return Err(KalamDbError::Other(format!(
-                                "Failed to update job status to Completed: {}",
-                                e
-                            )));
-                        }
+                    JobNodeQuorumResult::TimedOut { completed, total } => {
                         self.log_job_event(
                             &job_id,
-                            &Level::Debug,
+                            &Level::Warn,
                             &format!(
-                                "Job completed (leader phase): {}",
-                                message.unwrap_or_default()
+                                "Quorum timeout (completed {}/{}); proceeding with leader actions",
+                                completed, total
                             ),
                         );
                     },
-                    JobDecision::Skipped { message } => {
-                        if let Err(e) = self.mark_job_skipped(&job_id, message.clone()).await {
-                            log::error!(
-                                "[{}] Failed to mark job as skipped via Raft: {}",
-                                job_id,
-                                e
-                            );
-                            return Err(KalamDbError::Other(format!(
-                                "Failed to update job status to Skipped: {}",
-                                e
-                            )));
-                        }
+                    JobNodeQuorumResult::QuorumReached { completed, total } => {
                         self.log_job_event(
                             &job_id,
-                            &Level::Info,
-                            &format!("Job skipped (leader phase): {}", message),
+                            &Level::Debug,
+                            &format!("Quorum reached (completed {}/{})", completed, total),
                         );
                     },
-                    JobDecision::Failed { message, .. } => {
-                        if let Err(err) = self.mark_job_failed(&job_id, message.clone()).await {
-                            log::error!(
-                                "[{}] Failed to mark job as failed via Raft: {}",
-                                job_id,
-                                err
+                }
+
+                if job_type.has_leader_actions() {
+                    log::info!("[{}] Starting leader phase execution", job_id);
+                    self.log_job_event(&job_id, &Level::Debug, "Executing leader phase");
+
+                    let leader_decision =
+                        match self.job_registry.execute_leader(app_ctx, &job).await {
+                            Ok(d) => d,
+                            Err(e) => {
+                                let error_msg = format!("Leader executor error: {}", e);
+                                if let Err(err) =
+                                    self.mark_job_failed(&job_id, error_msg.clone()).await
+                                {
+                                    log::error!(
+                                        "[{}] Failed to mark job as failed via Raft: {}",
+                                        job_id,
+                                        err
+                                    );
+                                }
+                                self.log_job_event(
+                                    &job_id,
+                                    &Level::Error,
+                                    &format!("Job failed in leader phase: {}", e),
+                                );
+                                return Ok(());
+                            },
+                        };
+
+                    match leader_decision {
+                        JobDecision::Completed { message } => {
+                            if let Err(e) = self.mark_job_completed(&job_id, message.clone()).await
+                            {
+                                log::error!(
+                                    "[{}] Failed to mark job as completed via Raft: {}",
+                                    job_id,
+                                    e
+                                );
+                                return Err(KalamDbError::Other(format!(
+                                    "Failed to update job status to Completed: {}",
+                                    e
+                                )));
+                            }
+                            self.log_job_event(
+                                &job_id,
+                                &Level::Debug,
+                                &format!(
+                                    "Job completed (leader phase): {}",
+                                    message.unwrap_or_default()
+                                ),
                             );
-                        }
-                        self.log_job_event(
-                            &job_id,
-                            &Level::Error,
-                            &format!("Job failed in leader phase: {}", message),
-                        );
-                    },
-                    JobDecision::Retry {
-                        message,
-                        exception_trace,
-                        backoff_ms,
-                    } => {
-                        return self
-                            .handle_job_retry(
-                                &job,
-                                &message,
-                                exception_trace,
-                                backoff_ms,
-                                is_leader,
-                            )
-                            .await;
-                    },
+                        },
+                        JobDecision::Skipped { message } => {
+                            if let Err(e) = self.mark_job_skipped(&job_id, message.clone()).await {
+                                log::error!(
+                                    "[{}] Failed to mark job as skipped via Raft: {}",
+                                    job_id,
+                                    e
+                                );
+                                return Err(KalamDbError::Other(format!(
+                                    "Failed to update job status to Skipped: {}",
+                                    e
+                                )));
+                            }
+                            self.log_job_event(
+                                &job_id,
+                                &Level::Info,
+                                &format!("Job skipped (leader phase): {}", message),
+                            );
+                        },
+                        JobDecision::Failed { message, .. } => {
+                            if let Err(err) = self.mark_job_failed(&job_id, message.clone()).await {
+                                log::error!(
+                                    "[{}] Failed to mark job as failed via Raft: {}",
+                                    job_id,
+                                    err
+                                );
+                            }
+                            self.log_job_event(
+                                &job_id,
+                                &Level::Error,
+                                &format!("Job failed in leader phase: {}", message),
+                            );
+                        },
+                        JobDecision::Retry {
+                            message,
+                            exception_trace,
+                            backoff_ms,
+                        } => {
+                            return self
+                                .handle_job_retry(
+                                    &job,
+                                    &message,
+                                    exception_trace,
+                                    backoff_ms,
+                                    is_leader,
+                                )
+                                .await;
+                        },
+                    }
+                } else if let JobDecision::Completed { message } = local_decision {
+                    if let Err(e) = self.mark_job_completed(&job_id, message.clone()).await {
+                        log::error!("[{}] Failed to mark job as completed via Raft: {}", job_id, e);
+                        return Err(KalamDbError::Other(format!(
+                            "Failed to update job status to Completed: {}",
+                            e
+                        )));
+                    }
+                    self.log_job_event(
+                        &job_id,
+                        &Level::Debug,
+                        &format!("Job completed: {}", message.unwrap_or_default()),
+                    );
                 }
-            } else if let JobDecision::Completed { message } = local_decision {
-                if let Err(e) = self.mark_job_completed(&job_id, message.clone()).await {
-                    log::error!("[{}] Failed to mark job as completed via Raft: {}", job_id, e);
-                    return Err(KalamDbError::Other(format!(
-                        "Failed to update job status to Completed: {}",
-                        e
-                    )));
-                }
-                self.log_job_event(
-                    &job_id,
-                    &Level::Debug,
-                    &format!("Job completed: {}", message.unwrap_or_default()),
-                );
             }
-        }
 
             Ok(())
         }

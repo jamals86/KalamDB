@@ -4,7 +4,6 @@ use crate::JobStatus;
 use bincode::{Decode, Encode};
 use kalamdb_commons::datatypes::KalamDataType;
 use kalamdb_commons::models::ids::{JobId, JobNodeId, NodeId};
-use kalamdb_commons::KSerializable;
 use kalamdb_macros::table;
 use serde::{Deserialize, Serialize};
 
@@ -99,6 +98,3 @@ impl JobNode {
         JobNodeId::new(&self.job_id, &self.node_id)
     }
 }
-
-// KSerializable implementation for EntityStore support
-impl KSerializable for JobNode {}

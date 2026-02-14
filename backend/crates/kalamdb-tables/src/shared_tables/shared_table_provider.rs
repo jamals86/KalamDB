@@ -67,10 +67,7 @@ impl SharedTableProvider {
     /// # Arguments
     /// * `core` - Shared core with services, schema, pk_name, table_def, etc.
     /// * `store` - SharedTableIndexedStore for this table
-    pub fn new(
-        core: Arc<TableProviderCore>,
-        store: Arc<SharedTableIndexedStore>,
-    ) -> Self {
+    pub fn new(core: Arc<TableProviderCore>, store: Arc<SharedTableIndexedStore>) -> Self {
         let pk_index = SharedTablePkIndex::new(core.table_id(), core.primary_key_field_name());
 
         Self {
@@ -290,7 +287,14 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         if has_topics || has_live_subs {
             let row = Self::build_notification_row(&entity);
             if has_topics {
-                self.core.publish_to_topics(&table_id, kalamdb_commons::models::TopicOp::Insert, &row, None).await;
+                self.core
+                    .publish_to_topics(
+                        &table_id,
+                        kalamdb_commons::models::TopicOp::Insert,
+                        &row,
+                        None,
+                    )
+                    .await;
             }
             if has_live_subs {
                 let notification = ChangeNotification::insert(table_id.clone(), row);
@@ -332,8 +336,11 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         })?;
 
         // VALIDATE NOT NULL CONSTRAINTS (per ADR-016: must occur before any RocksDB write)
-        crate::utils::datafusion_dml::validate_not_null_with_set(self.core.non_null_columns(), &coerced_rows)
-            .map_err(|e| KalamDbError::ConstraintViolation(e.to_string()))?;
+        crate::utils::datafusion_dml::validate_not_null_with_set(
+            self.core.non_null_columns(),
+            &coerced_rows,
+        )
+        .map_err(|e| KalamDbError::ConstraintViolation(e.to_string()))?;
 
         let row_count = coerced_rows.len();
 
@@ -478,7 +485,14 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
             for (_row_key, entity) in entries.iter() {
                 let row = Self::build_notification_row(entity);
                 if has_topics {
-                    self.core.publish_to_topics(&table_id, kalamdb_commons::models::TopicOp::Insert, &row, None).await;
+                    self.core
+                        .publish_to_topics(
+                            &table_id,
+                            kalamdb_commons::models::TopicOp::Insert,
+                            &row,
+                            None,
+                        )
+                        .await;
                 }
                 if has_live_subs {
                     let notification = ChangeNotification::insert(table_id.clone(), row);
@@ -616,7 +630,14 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         if has_topics || has_live_subs {
             let new_row = Self::build_notification_row(&entity);
             if has_topics {
-                self.core.publish_to_topics(&table_id, kalamdb_commons::models::TopicOp::Update, &new_row, None).await;
+                self.core
+                    .publish_to_topics(
+                        &table_id,
+                        kalamdb_commons::models::TopicOp::Update,
+                        &new_row,
+                        None,
+                    )
+                    .await;
             }
             if has_live_subs {
                 let old_row = Self::build_notification_row(&latest_row);
@@ -744,7 +765,14 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         if has_topics || has_live_subs {
             let row = Self::build_notification_row(&entity);
             if has_topics {
-                self.core.publish_to_topics(&table_id, kalamdb_commons::models::TopicOp::Delete, &row, None).await;
+                self.core
+                    .publish_to_topics(
+                        &table_id,
+                        kalamdb_commons::models::TopicOp::Delete,
+                        &row,
+                        None,
+                    )
+                    .await;
             }
             if has_live_subs {
                 let notification = ChangeNotification::delete_soft(table_id.clone(), row);
@@ -914,7 +942,9 @@ impl TableProvider for SharedTableProvider {
 
         // Check if this is a client read that requires leader (shared data shard)
         // Skip check for internal reads (jobs, live query notifications, etc.)
-        if read_context.requires_leader() && self.core.services.cluster_coordinator.is_cluster_mode().await {
+        if read_context.requires_leader()
+            && self.core.services.cluster_coordinator.is_cluster_mode().await
+        {
             let is_leader = self.core.services.cluster_coordinator.is_leader_for_shared().await;
             if !is_leader {
                 // For shared tables, redirect to leader
@@ -934,7 +964,8 @@ impl TableProvider for SharedTableProvider {
         input: Arc<dyn ExecutionPlan>,
         insert_op: InsertOp,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        check_shared_table_write_access(state, self.core.table_def()).map_err(DataFusionError::from)?;
+        check_shared_table_write_access(state, self.core.table_def())
+            .map_err(DataFusionError::from)?;
 
         if insert_op != InsertOp::Append {
             return Err(DataFusionError::Plan(format!(
@@ -957,7 +988,8 @@ impl TableProvider for SharedTableProvider {
         state: &dyn Session,
         filters: Vec<Expr>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        check_shared_table_write_access(state, self.core.table_def()).map_err(DataFusionError::from)?;
+        check_shared_table_write_access(state, self.core.table_def())
+            .map_err(DataFusionError::from)?;
         crate::utils::datafusion_dml::validate_where_clause(&filters, "DELETE")?;
 
         let rows =
@@ -994,7 +1026,8 @@ impl TableProvider for SharedTableProvider {
         assignments: Vec<(String, Expr)>,
         filters: Vec<Expr>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        check_shared_table_write_access(state, self.core.table_def()).map_err(DataFusionError::from)?;
+        check_shared_table_write_access(state, self.core.table_def())
+            .map_err(DataFusionError::from)?;
         crate::utils::datafusion_dml::validate_where_clause(&filters, "UPDATE")?;
 
         let pk_column = self.primary_key_field_name().to_string();

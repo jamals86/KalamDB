@@ -1320,6 +1320,10 @@ Query OK, 0 rows affected
 
 174) When we implement the delivery_policy we mustc verify the user is subscribing to this tableid before calling out the insert
 
+175) why fetching the table again here? it should be already passed to there: backend/crates/kalamdb-tables/src/manifest/manifest_helpers.rs
+
+176) insetad of holding: pub struct ManifestCacheEntry and manifest we can combine them together for the entitystore, then we wont be needing any custom schema for them, we can make the main object as the schema for the table
+
 
 
 

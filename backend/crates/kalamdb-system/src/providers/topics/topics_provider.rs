@@ -3,23 +3,25 @@
 //! This module provides a DataFusion TableProvider implementation for the system.topics table.
 //! Uses `IndexedEntityStore` for automatic secondary index management.
 
-use super::TopicsTableSchema;
 use crate::error::{SystemError, SystemResultExt};
-use crate::providers::base::IndexedProviderDefinition;
+use crate::providers::base::{system_rows_to_batch, IndexedProviderDefinition};
+use crate::system_row_mapper::{model_to_system_row, system_row_to_model};
 use datafusion::arrow::array::RecordBatch;
+use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::Expr;
 use datafusion::logical_expr::TableProviderFilterPushDown;
+use kalamdb_commons::models::rows::SystemTableRow;
 use kalamdb_commons::models::TopicId;
 use kalamdb_commons::SystemTable;
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_store::{IndexedEntityStore, StorageBackend};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use super::models::Topic;
 
 /// Type alias for the indexed topics store
-pub type TopicsStore = IndexedEntityStore<TopicId, Topic>;
+pub type TopicsStore = IndexedEntityStore<TopicId, SystemTableRow>;
 
 /// System.topics table provider using IndexedEntityStore for automatic index management.
 ///
@@ -60,8 +62,9 @@ impl TopicsTableProvider {
     /// # Returns
     /// Success message or error
     pub fn create_topic(&self, topic: Topic) -> Result<String, SystemError> {
+        let row = Self::encode_topic_row(&topic)?;
         self.store
-            .insert(&topic.topic_id, &topic)
+            .insert(&topic.topic_id, &row)
             .into_system_error("insert topic error")?;
         Ok(format!("Topic {} created", topic.name))
     }
@@ -69,15 +72,17 @@ impl TopicsTableProvider {
     /// Async version of `create_topic()`.
     pub async fn create_topic_async(&self, topic: Topic) -> Result<(), SystemError> {
         let topic_id = topic.topic_id.clone();
+        let row = Self::encode_topic_row(&topic)?;
         self.store
-            .insert_async(topic_id, topic)
+            .insert_async(topic_id, row)
             .await
             .into_system_error("insert_async topic error")
     }
 
     /// Get a topic by ID
     pub fn get_topic_by_id(&self, topic_id: &TopicId) -> Result<Option<Topic>, SystemError> {
-        Ok(self.store.get(topic_id)?)
+        let row = self.store.get(topic_id)?;
+        row.map(|value| Self::decode_topic_row(&value)).transpose()
     }
 
     /// Async version of `get_topic_by_id()`.
@@ -85,10 +90,12 @@ impl TopicsTableProvider {
         &self,
         topic_id: &TopicId,
     ) -> Result<Option<Topic>, SystemError> {
-        self.store
+        let row = self
+            .store
             .get_async(topic_id.clone())
             .await
-            .into_system_error("get_async error")
+            .into_system_error("get_async error")?;
+        row.map(|value| Self::decode_topic_row(&value)).transpose()
     }
 
     /// Get a topic by name (requires full scan for MVP)
@@ -97,7 +104,8 @@ impl TopicsTableProvider {
     pub fn get_topic_by_name(&self, name: &str) -> Result<Option<Topic>, SystemError> {
         let iter = self.store.scan_iterator(None, None)?;
         for item in iter {
-            let (_, topic) = item?;
+            let (_, row) = item?;
+            let topic = Self::decode_topic_row(&row)?;
             if topic.name == name {
                 return Ok(Some(topic));
             }
@@ -114,11 +122,12 @@ impl TopicsTableProvider {
         if old_topic.is_none() {
             return Err(SystemError::NotFound(format!("Topic not found: {}", topic.topic_id)));
         }
-        let old_topic = old_topic.unwrap();
+        let old_topic = Self::decode_topic_row(&old_topic.unwrap())?;
+        let row = Self::encode_topic_row(&topic)?;
 
-        // Use update_with_old for efficiency
+        // No secondary indexes configured for topics in this phase.
         self.store
-            .update_with_old(&topic.topic_id, Some(&old_topic), &topic)
+            .update_with_old(&topic.topic_id, Some(&Self::encode_topic_row(&old_topic)?), &row)
             .into_system_error("update topic error")
     }
 
@@ -135,9 +144,9 @@ impl TopicsTableProvider {
             return Err(SystemError::NotFound(format!("Topic not found: {}", topic.topic_id)));
         }
 
-        // Use insert for update (IndexedEntityStore handles indexes automatically)
+        let row = Self::encode_topic_row(&topic)?;
         self.store
-            .insert_async(topic.topic_id.clone(), topic)
+            .insert_async(topic.topic_id.clone(), row)
             .await
             .into_system_error("insert_async topic error")
     }
@@ -157,8 +166,10 @@ impl TopicsTableProvider {
 
     /// List all topics
     pub fn list_topics(&self) -> Result<Vec<Topic>, SystemError> {
-        let topics = self.store.scan_all_typed(None, None, None)?;
-        Ok(topics.iter().map(|(_, t)| t.clone()).collect())
+        let rows = self.store.scan_all_typed(None, None, None)?;
+        rows.into_iter()
+            .map(|(_, row)| Self::decode_topic_row(&row))
+            .collect()
     }
 
     /// Get reference to the underlying store for advanced operations
@@ -168,28 +179,12 @@ impl TopicsTableProvider {
 
     fn build_batch_from_pairs(
         &self,
-        pairs: Vec<(TopicId, Topic)>,
+        pairs: Vec<(TopicId, SystemTableRow)>,
     ) -> Result<RecordBatch, SystemError> {
-        crate::build_record_batch!(
-            schema: TopicsTableSchema::schema(),
-            entries: pairs,
-            columns: [
-                topic_ids => OptionalString(|entry| Some(entry.0.as_str())),
-                names => OptionalString(|entry| Some(entry.1.name.as_str())),
-                aliases => OptionalString(|entry| entry.1.alias.as_deref()),
-                partitions => OptionalInt32(|entry| Some(entry.1.partitions as i32)),
-                retention_seconds => OptionalInt64(|entry| entry.1.retention_seconds),
-                retention_max_bytes => OptionalInt64(|entry| entry.1.retention_max_bytes),
-                routes => OptionalString(|entry| Some(
-                    serde_json::to_string(&entry.1.routes).unwrap_or_else(|_| "[]".to_string())
-                )),
-                created_ats => Timestamp(|entry| Some(entry.1.created_at)),
-                updated_ats => Timestamp(|entry| Some(entry.1.updated_at))
-            ]
-        )
-        .into_arrow_error("Failed to create RecordBatch")
+        let rows = pairs.into_iter().map(|(_, row)| row).collect();
+        system_rows_to_batch(&Self::schema(), rows)
     }
-    fn scan_all_topics_batch(&self) -> Result<RecordBatch, SystemError> {
+    pub fn scan_all_topics_batch(&self) -> Result<RecordBatch, SystemError> {
         let pairs = self
             .store
             .scan_all_typed(None, None, None)
@@ -197,11 +192,19 @@ impl TopicsTableProvider {
         self.build_batch_from_pairs(pairs)
     }
 
+    fn encode_topic_row(topic: &Topic) -> Result<SystemTableRow, SystemError> {
+        model_to_system_row(topic, &Topic::definition())
+    }
+
+    fn decode_topic_row(row: &SystemTableRow) -> Result<Topic, SystemError> {
+        system_row_to_model(row, &Topic::definition())
+    }
+
     fn provider_definition() -> IndexedProviderDefinition<TopicId> {
         IndexedProviderDefinition {
-            table_name: TopicsTableSchema::table_name(),
+            table_name: SystemTable::Topics.table_name(),
             primary_key_column: "topic_id",
-            schema: TopicsTableSchema::schema,
+            schema: Self::schema,
             parse_key: |value| Some(TopicId::new(value)),
         }
     }
@@ -209,12 +212,23 @@ impl TopicsTableProvider {
     fn filter_pushdown(filters: &[&Expr]) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
         Ok(vec![TableProviderFilterPushDown::Inexact; filters.len()])
     }
+
+    fn schema() -> SchemaRef {
+        static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
+        SCHEMA
+            .get_or_init(|| {
+                Topic::definition()
+                    .to_arrow_schema()
+                    .expect("failed to build topics schema")
+            })
+            .clone()
+    }
 }
 
 crate::impl_indexed_system_table_provider!(
     provider = TopicsTableProvider,
     key = TopicId,
-    value = Topic,
+    value = SystemTableRow,
     store = store,
     definition = provider_definition,
     build_batch = build_batch_from_pairs,

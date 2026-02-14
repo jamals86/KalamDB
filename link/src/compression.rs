@@ -77,15 +77,18 @@ pub fn decompress_gzip(data: &[u8]) -> Result<Vec<u8>, DecompressError> {
         .map_err(|_| DecompressError::DecompressFailed)
 }
 
-/// Decompress if gzip, otherwise return as-is
+/// Decompress gzip data, or return the input unchanged.
 ///
-/// This is the main function to use for processing WebSocket messages.
-/// It automatically detects if the data is compressed and handles accordingly.
-pub fn decompress_if_gzip(data: &[u8]) -> Vec<u8> {
+/// Returns `Cow::Borrowed` when no decompression is needed, avoiding an
+/// allocation on the hot path for uncompressed messages.
+pub fn decompress_if_gzip(data: &[u8]) -> std::borrow::Cow<'_, [u8]> {
     if is_gzip(data) {
-        decompress_gzip(data).unwrap_or_else(|_| data.to_vec())
+        match decompress_gzip(data) {
+            Ok(decompressed) => std::borrow::Cow::Owned(decompressed),
+            Err(_) => std::borrow::Cow::Borrowed(data),
+        }
     } else {
-        data.to_vec()
+        std::borrow::Cow::Borrowed(data)
     }
 }
 
@@ -131,6 +134,6 @@ mod tests {
     fn test_decompress_if_gzip_plain() {
         let plain = b"Hello, World!";
         let result = decompress_if_gzip(plain);
-        assert_eq!(result, plain);
+        assert_eq!(&*result, plain);
     }
 }

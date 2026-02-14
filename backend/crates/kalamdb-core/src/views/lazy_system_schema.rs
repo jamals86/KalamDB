@@ -19,6 +19,7 @@ use datafusion::error::Result as DataFusionResult;
 use kalamdb_configs::ServerConfig;
 use kalamdb_raft::CommandExecutor;
 use kalamdb_session::secure_provider;
+use kalamdb_commons::TableId;
 use kalamdb_system::{SystemTable, SystemTablesRegistry};
 use parking_lot::RwLock;
 use std::any::Any;
@@ -35,6 +36,7 @@ use super::settings::{SettingsTableProvider, SettingsView};
 use super::stats::{StatsTableProvider, StatsView};
 use super::tables_view::create_tables_view_provider;
 use super::view_base::ViewTableProvider;
+use crate::schema_registry::SchemaRegistry;
 
 /// Configuration for lazy view initialization
 pub struct LazyViewConfig {
@@ -75,6 +77,8 @@ impl std::fmt::Debug for LazyViewConfig {
 pub struct LazySystemSchemaProvider {
     /// Registry of persisted system tables
     system_tables: Arc<SystemTablesRegistry>,
+    /// Canonical schema/provider cache for all table types.
+    schema_registry: Arc<SchemaRegistry>,
     /// Configuration for lazy view initialization
     view_config: Arc<LazyViewConfig>,
     /// Cache for lazily-loaded view providers
@@ -85,11 +89,13 @@ impl LazySystemSchemaProvider {
     /// Create a new lazy system schema provider
     pub fn new(
         system_tables: Arc<SystemTablesRegistry>,
+        schema_registry: Arc<SchemaRegistry>,
         config: Arc<ServerConfig>,
         logs_path: PathBuf,
     ) -> Self {
         Self {
             system_tables,
+            schema_registry,
             view_config: Arc::new(LazyViewConfig {
                 config,
                 logs_path,
@@ -144,7 +150,7 @@ impl LazySystemSchemaProvider {
         names
     }
 
-    /// Get persisted table provider (fast path - already created in SystemTablesRegistry)
+    /// Get persisted table provider from SchemaRegistry cache.
     fn get_persisted_table(&self, name: &str) -> Option<Arc<dyn TableProvider>> {
         // Parse table name to SystemTable enum
         let system_table = SystemTable::from_name(name).ok()?;
@@ -154,12 +160,20 @@ impl LazySystemSchemaProvider {
             return None;
         }
 
-        // Use registry's all_system_providers to find the provider
-        self.system_tables
-            .all_system_providers()
-            .into_iter()
-            .find(|(table, _)| table == &system_table)
-            .map(|(_, provider)| provider)
+        let table_id = TableId::from_strings("system", name);
+
+        // Canonical path: get provider attached to CachedTableData.
+        if let Some(cached) = self.schema_registry.get(&table_id) {
+            if let Some(provider) = cached.get_provider() {
+                return Some(provider as Arc<dyn TableProvider>);
+            }
+        }
+
+        // Fallback path: build secured provider from system registry and cache it.
+        // This should be uncommon, mainly for recovery from partial initialization.
+        let provider = self.system_tables.persisted_table_provider(system_table)?;
+        let _ = self.schema_registry.insert_provider(table_id, provider.clone());
+        Some(provider as Arc<dyn TableProvider>)
     }
 
     /// Get or create virtual view provider (lazy path - cached after first access)
@@ -303,11 +317,12 @@ mod tests {
     fn create_test_provider() -> LazySystemSchemaProvider {
         let backend: Arc<dyn kalamdb_store::StorageBackend> = Arc::new(InMemoryBackend::new());
         let system_tables = Arc::new(SystemTablesRegistry::new(backend));
+        let schema_registry = Arc::new(crate::schema_registry::SchemaRegistry::new(100));
         let config = Arc::new(ServerConfig::default());
         let logs_path = std::path::PathBuf::from("/tmp/kalamdb-test/logs");
         std::fs::create_dir_all(&logs_path).ok();
 
-        LazySystemSchemaProvider::new(system_tables, config, logs_path)
+        LazySystemSchemaProvider::new(system_tables, schema_registry, config, logs_path)
     }
 
     #[test]

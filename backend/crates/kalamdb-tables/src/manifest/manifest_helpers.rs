@@ -42,18 +42,19 @@ pub fn ensure_manifest_ready(
     let manifest = manifest_service.ensure_manifest_initialized(table_id, user_id)?;
 
     // Get cached table data for path resolution using storage templates
-    let _cached =
-        core.services.schema_registry
-            .get_table_if_exists(table_id)
-            .ok()
-            .flatten()
-            .ok_or_else(|| {
-                KalamDbError::TableNotFound(format!(
-                    "Table {}.{} not found in schema registry",
-                    namespace.as_str(),
-                    table.as_str()
-                ))
-            })?;
+    let _cached = core
+        .services
+        .schema_registry
+        .get_table_if_exists(table_id)
+        .ok()
+        .flatten()
+        .ok_or_else(|| {
+            KalamDbError::TableNotFound(format!(
+                "Table {}.{} not found in schema registry",
+                namespace.as_str(),
+                table.as_str()
+            ))
+        })?;
 
     manifest_service.stage_before_flush(table_id, user_id, &manifest)?;
 

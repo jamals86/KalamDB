@@ -14,6 +14,7 @@ use crate::common;
 use kalam_link::consumer::{AutoOffsetReset, ConsumerRecord, TopicOp};
 use kalam_link::KalamLinkTimeouts;
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex as TokioMutex;
@@ -39,9 +40,7 @@ async fn create_test_client() -> kalam_link::KalamLinkClient {
 
 /// Execute SQL via HTTP helper with error handling
 async fn execute_sql(sql: &str) -> Result<(), String> {
-    let response = common::execute_sql_via_http_as_root(sql)
-        .await
-        .map_err(|e| e.to_string())?;
+    let response = common::execute_sql_via_http_as_root(sql).await.map_err(|e| e.to_string())?;
     let status = response.get("status").and_then(|s| s.as_str()).unwrap_or("");
     if status.eq_ignore_ascii_case("success") {
         Ok(())
@@ -186,10 +185,12 @@ async fn test_topic_high_load_concurrent_publishers() {
     // Track expected events
     let expected_events = Arc::new(TokioMutex::new(HashMap::<String, EventInfo>::new()));
     let expected_events_clone = expected_events.clone();
+    let publishers_done = Arc::new(AtomicBool::new(false));
 
     // Spawn consumer first
     let consumer_handle = {
         let topic = topic.clone();
+        let publishers_done = publishers_done.clone();
         tokio::spawn(async move {
             eprintln!("[CONSUMER] Starting consumer for topic: {}", topic);
 
@@ -227,7 +228,8 @@ async fn test_topic_high_load_concurrent_publishers() {
                         if batch.is_empty() {
                             consecutive_empty += 1;
                             // Stop if no new records for 10 seconds
-                            if last_new_record_time.elapsed() > Duration::from_secs(10)
+                            if publishers_done.load(Ordering::Relaxed)
+                                && last_new_record_time.elapsed() > Duration::from_secs(10)
                                 && !all_records.is_empty()
                             {
                                 eprintln!(
@@ -273,8 +275,9 @@ async fn test_topic_high_load_concurrent_publishers() {
                         // Stop early if we're only getting duplicates
                         if new_in_batch == 0 {
                             consecutive_all_dups += 1;
-                            if consecutive_all_dups >= 3
-                                || last_new_record_time.elapsed() > Duration::from_secs(10)
+                            if publishers_done.load(Ordering::Relaxed)
+                                && (consecutive_all_dups >= 3
+                                    || last_new_record_time.elapsed() > Duration::from_secs(10))
                             {
                                 eprintln!(
                                     "[CONSUMER] No new records, stopping (unique: {}, time_since_new: {}s)",
@@ -293,7 +296,7 @@ async fn test_topic_high_load_concurrent_publishers() {
                                 eprintln!("[CONSUMER] Commit error: {}", e);
                             }
                         }
-                    }
+                    },
                     Err(err) => {
                         let msg = err.to_string();
                         if msg.contains("error decoding") || msg.contains("network") {
@@ -302,7 +305,7 @@ async fn test_topic_high_load_concurrent_publishers() {
                         }
                         eprintln!("[CONSUMER] Poll error: {}", msg);
                         tokio::time::sleep(Duration::from_millis(200)).await;
-                    }
+                    },
                 }
             }
 
@@ -311,10 +314,7 @@ async fn test_topic_high_load_concurrent_publishers() {
                 eprintln!("[CONSUMER] Final commit error: {}", e);
             }
 
-            eprintln!(
-                "[CONSUMER] Finished, collected {} total records",
-                all_records.len()
-            );
+            eprintln!("[CONSUMER] Finished, collected {} total records", all_records.len());
             all_records
         })
     };
@@ -362,18 +362,16 @@ async fn test_topic_high_load_concurrent_publishers() {
                         );
                         if let Err(e) = execute_sql(&insert_sql).await {
                             eprintln!("[PUBLISHER-{}] Insert error: {}", publisher_id, e);
+                        } else {
+                            record_expected_event(
+                                &expected,
+                                format!("shared_metrics_insert_{}", record_id),
+                                "shared_metrics",
+                                TopicOp::Insert,
+                                record_id,
+                            )
+                            .await;
                         }
-
-                        let mut expected_lock = expected.lock().await;
-                        expected_lock.insert(
-                            format!("shared_metrics_insert_{}", record_id),
-                            EventInfo {
-                                table: "shared_metrics".to_string(),
-                                op: TopicOp::Insert,
-                                id: record_id,
-                            },
-                        );
-                        drop(expected_lock);
 
                         tokio::time::sleep(Duration::from_millis(50)).await;
 
@@ -386,19 +384,17 @@ async fn test_topic_high_load_concurrent_publishers() {
                         );
                         if let Err(e) = execute_sql(&update_sql).await {
                             eprintln!("[PUBLISHER-{}] Update error: {}", publisher_id, e);
+                        } else {
+                            record_expected_event(
+                                &expected,
+                                format!("shared_metrics_update_{}", record_id),
+                                "shared_metrics",
+                                TopicOp::Update,
+                                record_id,
+                            )
+                            .await;
                         }
-
-                        let mut expected_lock = expected.lock().await;
-                        expected_lock.insert(
-                            format!("shared_metrics_update_{}", record_id),
-                            EventInfo {
-                                table: "shared_metrics".to_string(),
-                                op: TopicOp::Update,
-                                id: record_id,
-                            },
-                        );
-                        drop(expected_lock);
-                    }
+                    },
                     1 => {
                         // User profiles: INSERT then UPDATE
                         let insert_sql = format!(
@@ -412,18 +408,16 @@ async fn test_topic_high_load_concurrent_publishers() {
                         );
                         if let Err(e) = execute_sql(&insert_sql).await {
                             eprintln!("[PUBLISHER-{}] Insert error: {}", publisher_id, e);
+                        } else {
+                            record_expected_event(
+                                &expected,
+                                format!("user_profiles_insert_{}", record_id),
+                                "user_profiles",
+                                TopicOp::Insert,
+                                record_id,
+                            )
+                            .await;
                         }
-
-                        let mut expected_lock = expected.lock().await;
-                        expected_lock.insert(
-                            format!("user_profiles_insert_{}", record_id),
-                            EventInfo {
-                                table: "user_profiles".to_string(),
-                                op: TopicOp::Insert,
-                                id: record_id,
-                            },
-                        );
-                        drop(expected_lock);
 
                         tokio::time::sleep(Duration::from_millis(50)).await;
 
@@ -436,19 +430,17 @@ async fn test_topic_high_load_concurrent_publishers() {
                         );
                         if let Err(e) = execute_sql(&update_sql).await {
                             eprintln!("[PUBLISHER-{}] Update error: {}", publisher_id, e);
+                        } else {
+                            record_expected_event(
+                                &expected,
+                                format!("user_profiles_update_{}", record_id),
+                                "user_profiles",
+                                TopicOp::Update,
+                                record_id,
+                            )
+                            .await;
                         }
-
-                        let mut expected_lock = expected.lock().await;
-                        expected_lock.insert(
-                            format!("user_profiles_update_{}", record_id),
-                            EventInfo {
-                                table: "user_profiles".to_string(),
-                                op: TopicOp::Update,
-                                id: record_id,
-                            },
-                        );
-                        drop(expected_lock);
-                    }
+                    },
                     2 => {
                         // Stream events: INSERT only (2 records per iteration)
                         let insert_sql = format!(
@@ -462,18 +454,16 @@ async fn test_topic_high_load_concurrent_publishers() {
                         );
                         if let Err(e) = execute_sql(&insert_sql).await {
                             eprintln!("[PUBLISHER-{}] Insert error: {}", publisher_id, e);
+                        } else {
+                            record_expected_event(
+                                &expected,
+                                format!("event_stream_insert_{}", record_id),
+                                "event_stream",
+                                TopicOp::Insert,
+                                record_id,
+                            )
+                            .await;
                         }
-
-                        let mut expected_lock = expected.lock().await;
-                        expected_lock.insert(
-                            format!("event_stream_insert_{}", record_id),
-                            EventInfo {
-                                table: "event_stream".to_string(),
-                                op: TopicOp::Insert,
-                                id: record_id,
-                            },
-                        );
-                        drop(expected_lock);
 
                         tokio::time::sleep(Duration::from_millis(50)).await;
 
@@ -490,19 +480,17 @@ async fn test_topic_high_load_concurrent_publishers() {
                         );
                         if let Err(e) = execute_sql(&insert_sql2).await {
                             eprintln!("[PUBLISHER-{}] Insert error: {}", publisher_id, e);
+                        } else {
+                            record_expected_event(
+                                &expected,
+                                format!("event_stream_insert_{}", record_id2),
+                                "event_stream",
+                                TopicOp::Insert,
+                                record_id2,
+                            )
+                            .await;
                         }
-
-                        let mut expected_lock = expected.lock().await;
-                        expected_lock.insert(
-                            format!("event_stream_insert_{}", record_id2),
-                            EventInfo {
-                                table: "event_stream".to_string(),
-                                op: TopicOp::Insert,
-                                id: record_id2,
-                            },
-                        );
-                        drop(expected_lock);
-                    }
+                    },
                     3 => {
                         // Products: INSERT then UPDATE
                         let insert_sql = format!(
@@ -516,18 +504,16 @@ async fn test_topic_high_load_concurrent_publishers() {
                         );
                         if let Err(e) = execute_sql(&insert_sql).await {
                             eprintln!("[PUBLISHER-{}] Insert error: {}", publisher_id, e);
+                        } else {
+                            record_expected_event(
+                                &expected,
+                                format!("products_insert_{}", record_id),
+                                "products",
+                                TopicOp::Insert,
+                                record_id,
+                            )
+                            .await;
                         }
-
-                        let mut expected_lock = expected.lock().await;
-                        expected_lock.insert(
-                            format!("products_insert_{}", record_id),
-                            EventInfo {
-                                table: "products".to_string(),
-                                op: TopicOp::Insert,
-                                id: record_id,
-                            },
-                        );
-                        drop(expected_lock);
 
                         tokio::time::sleep(Duration::from_millis(50)).await;
 
@@ -540,19 +526,17 @@ async fn test_topic_high_load_concurrent_publishers() {
                         );
                         if let Err(e) = execute_sql(&update_sql).await {
                             eprintln!("[PUBLISHER-{}] Update error: {}", publisher_id, e);
+                        } else {
+                            record_expected_event(
+                                &expected,
+                                format!("products_update_{}", record_id),
+                                "products",
+                                TopicOp::Update,
+                                record_id,
+                            )
+                            .await;
                         }
-
-                        let mut expected_lock = expected.lock().await;
-                        expected_lock.insert(
-                            format!("products_update_{}", record_id),
-                            EventInfo {
-                                table: "products".to_string(),
-                                op: TopicOp::Update,
-                                id: record_id,
-                            },
-                        );
-                        drop(expected_lock);
-                    }
+                    },
                     4 => {
                         // User sessions: INSERT then UPDATE
                         let insert_sql = format!(
@@ -566,18 +550,16 @@ async fn test_topic_high_load_concurrent_publishers() {
                         );
                         if let Err(e) = execute_sql(&insert_sql).await {
                             eprintln!("[PUBLISHER-{}] Insert error: {}", publisher_id, e);
+                        } else {
+                            record_expected_event(
+                                &expected,
+                                format!("user_sessions_insert_{}", record_id),
+                                "user_sessions",
+                                TopicOp::Insert,
+                                record_id,
+                            )
+                            .await;
                         }
-
-                        let mut expected_lock = expected.lock().await;
-                        expected_lock.insert(
-                            format!("user_sessions_insert_{}", record_id),
-                            EventInfo {
-                                table: "user_sessions".to_string(),
-                                op: TopicOp::Insert,
-                                id: record_id,
-                            },
-                        );
-                        drop(expected_lock);
 
                         tokio::time::sleep(Duration::from_millis(50)).await;
 
@@ -590,19 +572,17 @@ async fn test_topic_high_load_concurrent_publishers() {
                         );
                         if let Err(e) = execute_sql(&update_sql).await {
                             eprintln!("[PUBLISHER-{}] Update error: {}", publisher_id, e);
+                        } else {
+                            record_expected_event(
+                                &expected,
+                                format!("user_sessions_update_{}", record_id),
+                                "user_sessions",
+                                TopicOp::Update,
+                                record_id,
+                            )
+                            .await;
                         }
-
-                        let mut expected_lock = expected.lock().await;
-                        expected_lock.insert(
-                            format!("user_sessions_update_{}", record_id),
-                            EventInfo {
-                                table: "user_sessions".to_string(),
-                                op: TopicOp::Update,
-                                id: record_id,
-                            },
-                        );
-                        drop(expected_lock);
-                    }
+                    },
                     _ => unreachable!(),
                 }
 
@@ -620,6 +600,7 @@ async fn test_topic_high_load_concurrent_publishers() {
     for handle in publish_handles {
         handle.await.expect("Publisher task failed");
     }
+    publishers_done.store(true, Ordering::Relaxed);
 
     eprintln!("[TEST] All publishers completed, waiting for consumer...");
 
@@ -633,11 +614,7 @@ async fn test_topic_high_load_concurrent_publishers() {
     // Verify all expected events were received
     let expected_lock = expected_events.lock().await;
     let expected_count = expected_lock.len();
-    eprintln!(
-        "[TEST] Expected {} events, received {} records",
-        expected_count,
-        records.len()
-    );
+    eprintln!("[TEST] Expected {} events, received {} records", expected_count, records.len());
 
     // Build a map of received events
     let mut received_events = HashMap::<String, ConsumerRecord>::new();
@@ -673,26 +650,28 @@ async fn test_topic_high_load_concurrent_publishers() {
             TopicOp::Delete => "delete",
         };
 
-        let key = format!("{}_{}_{}",table_name, op_str, id);
+        let key = format!("{}_{}_{}", table_name, op_str, id);
         received_events.insert(key, record.clone());
     }
 
     eprintln!("[TEST] Received events by key: {}", received_events.len());
     eprintln!("[TEST] Total records (including potential duplicates): {}", records.len());
-    
+
     // Calculate coverage based on UNIQUE events received
     let unique_coverage = (received_events.len() as f64 / expected_count as f64) * 100.0;
     let duplication_ratio = records.len() as f64 / received_events.len().max(1) as f64;
-    
+
     eprintln!("[TEST] Unique event coverage: {:.1}%", unique_coverage);
     eprintln!("[TEST] Duplication ratio: {:.1}x", duplication_ratio);
-    
+
     // Check for excessive duplication which indicates a bug
     // Note: Consumer offset tracking with AutoOffsetReset::Earliest may cause
     // re-reads within a single session. The primary goal is 100% unique event coverage.
     if duplication_ratio > 2.0 {
         eprintln!("[WARNING] Event duplication detected: {:.1}x", duplication_ratio);
-        eprintln!("[WARNING] This is likely due to consumer offset re-reading, not publisher duplication");
+        eprintln!(
+            "[WARNING] This is likely due to consumer offset re-reading, not publisher duplication"
+        );
     }
 
     // Check coverage
@@ -704,7 +683,11 @@ async fn test_topic_high_load_concurrent_publishers() {
     }
 
     if !missing_events.is_empty() {
-        eprintln!("[TEST] Missing {} unique events out of {}:", missing_events.len(), expected_count);
+        eprintln!(
+            "[TEST] Missing {} unique events out of {}:",
+            missing_events.len(),
+            expected_count
+        );
         for (i, key) in missing_events.iter().enumerate().take(20) {
             eprintln!("[TEST]   Missing event {}: {}", i + 1, key);
         }
@@ -718,7 +701,7 @@ async fn test_topic_high_load_concurrent_publishers() {
     // that previously dropped events via try_send.
     // Expected baseline: 100% coverage (1.0x duplication)
     let min_unique_coverage = 95.0;
-    
+
     assert!(
         unique_coverage >= min_unique_coverage,
         "Expected at least {}% unique event coverage, got {:.1}% ({}/{}) - Synchronous publishing should capture all events.\n\
@@ -728,7 +711,7 @@ async fn test_topic_high_load_concurrent_publishers() {
         received_events.len(),
         expected_count
     );
-    
+
     // Note: Duplication ratio assertion removed. The consumer's AutoOffsetReset::Earliest
     // behavior combined with lack of server-side offset tracking within a single poll session
     // causes re-reads. The critical metric is unique event coverage, not duplication.
@@ -789,4 +772,22 @@ struct EventInfo {
     table: String,
     op: TopicOp,
     id: i64,
+}
+
+async fn record_expected_event(
+    expected: &Arc<TokioMutex<HashMap<String, EventInfo>>>,
+    key: String,
+    table: &str,
+    op: TopicOp,
+    id: i64,
+) {
+    let mut expected_lock = expected.lock().await;
+    expected_lock.insert(
+        key,
+        EventInfo {
+            table: table.to_string(),
+            op,
+            id,
+        },
+    );
 }

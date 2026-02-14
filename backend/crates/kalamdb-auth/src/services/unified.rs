@@ -209,7 +209,9 @@ pub async fn authenticate(
 
     async move {
         match request {
-            AuthRequest::Header(header) => authenticate_header(&header, connection_info, repo).await,
+            AuthRequest::Header(header) => {
+                authenticate_header(&header, connection_info, repo).await
+            },
             AuthRequest::Credentials { username, password } => {
                 authenticate_credentials(&username, &password, connection_info, repo).await
             },
@@ -250,11 +252,11 @@ async fn authenticate_header(
             return Err(AuthError::MalformedAuthorization("Bearer token missing".to_string()));
         }
         let user = authenticate_bearer(token, connection_info, repo).await?;
-        
+
         // Update span with authenticated role for better observability
         tracing::Span::current().record("role", format!("{:?}", user.role).as_str());
         tracing::Span::current().record("user", user.username.as_str());
-        
+
         Ok(AuthenticationResult {
             user,
             method: AuthMethod::Bearer,
@@ -479,10 +481,7 @@ async fn authenticate_bearer(
         // Legacy tokens without a token_type are allowed for backward compatibility.
         if let Some(ref tt) = claims.token_type {
             if *tt == jwt_auth::TokenType::Refresh {
-                log::warn!(
-                    "Refresh token used as access token for user={}",
-                    claims.sub
-                );
+                log::warn!("Refresh token used as access token for user={}", claims.sub);
                 return Err(AuthError::InvalidCredentials(
                     "Refresh tokens cannot be used for API authentication".to_string(),
                 ));
@@ -500,9 +499,7 @@ async fn authenticate_bearer(
         let user = repo.get_user_by_username(&username_typed).await?;
 
         if user.deleted_at.is_some() {
-            return Err(AuthError::InvalidCredentials(
-                "Invalid username or password".to_string(),
-            ));
+            return Err(AuthError::InvalidCredentials("Invalid username or password".to_string()));
         }
 
         // SECURITY: Validate role from claims matches database

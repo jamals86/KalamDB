@@ -411,10 +411,12 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
         // Serialize the INNER command (not the RaftCommand wrapper)
         // The state machine expects MetaCommand, UserDataCommand, or SharedDataCommand directly
         let command_bytes = match &command {
-            crate::RaftCommand::Meta(cmd) => crate::state_machine::serde_helpers::encode(cmd)?,
-            crate::RaftCommand::UserData(cmd) => crate::state_machine::serde_helpers::encode(cmd)?,
+            crate::RaftCommand::Meta(cmd) => crate::codec::command_codec::encode_meta_command(cmd)?,
+            crate::RaftCommand::UserData(cmd) => {
+                crate::codec::command_codec::encode_user_data_command(cmd)?
+            },
             crate::RaftCommand::SharedData(cmd) => {
-                crate::state_machine::serde_helpers::encode(cmd)?
+                crate::codec::command_codec::encode_shared_data_command(cmd)?
             },
         };
 
@@ -445,13 +447,13 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
         } else {
             match command {
                 crate::RaftCommand::Meta(_) => {
-                    let meta_response: crate::MetaResponse =
-                        crate::state_machine::serde_helpers::decode(&response.data)?;
+                    let meta_response =
+                        crate::codec::command_codec::decode_meta_response(&response.data)?;
                     crate::RaftResponse::Meta(meta_response)
                 },
                 crate::RaftCommand::UserData(_) | crate::RaftCommand::SharedData(_) => {
-                    let data_response: crate::DataResponse =
-                        crate::state_machine::serde_helpers::decode(&response.data)?;
+                    let data_response =
+                        crate::codec::command_codec::decode_data_response(&response.data)?;
                     crate::RaftResponse::Data(data_response)
                 },
             }
@@ -478,7 +480,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
         }
 
         // Serialize command once for forwarding using centralized serde_helpers
-        let command_bytes = crate::state_machine::serde_helpers::encode(&command)?;
+        let command_bytes = crate::codec::command_codec::encode_raft_command(&command)?;
 
         // We're not the leader - try to forward to the leader with retries
         // because the leader might not be known yet (during election)
@@ -508,15 +510,16 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
                             match self.forward_to_leader(&leader_node.rpc_addr, cmd_bytes).await {
                                 Ok((response_bytes, log_index)) => {
                                     // Deserialize the response using serdes_helpers
-                                    let response = crate::state_machine::serde_helpers::decode(
-                                        &response_bytes,
-                                    )
-                                    .map_err(|e| {
-                                        RaftError::Internal(format!(
-                                            "Failed to deserialize forwarded response: {}",
-                                            e
-                                        ))
-                                    })?;
+                                    let response =
+                                        crate::codec::command_codec::decode_raft_response(
+                                            &response_bytes,
+                                        )
+                                        .map_err(|e| {
+                                            RaftError::Internal(format!(
+                                                "Failed to deserialize forwarded response: {}",
+                                                e
+                                            ))
+                                        })?;
 
                                     // Wait for local apply to ensure read-your-writes consistency
                                     // This applies to ALL groups (Meta and Data shards)

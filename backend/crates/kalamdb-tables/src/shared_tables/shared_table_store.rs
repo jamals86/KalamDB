@@ -47,7 +47,28 @@ pub struct SharedTableRow {
     pub fields: Row,
 }
 
-impl KSerializable for SharedTableRow {}
+impl KSerializable for SharedTableRow {
+    fn encode(&self) -> Result<Vec<u8>, kalamdb_commons::storage::StorageError> {
+        kalamdb_commons::serialization::row_codec::encode_shared_table_row(
+            self._seq,
+            self._deleted,
+            &self.fields,
+        )
+    }
+
+    fn decode(bytes: &[u8]) -> Result<Self, kalamdb_commons::storage::StorageError>
+    where
+        Self: Sized,
+    {
+        let (seq, deleted, fields) =
+            kalamdb_commons::serialization::row_codec::decode_shared_table_row(bytes)?;
+        Ok(Self {
+            _seq: seq,
+            _deleted: deleted,
+            fields,
+        })
+    }
+}
 
 /// Store for shared tables (cross-user data, not system metadata).
 ///

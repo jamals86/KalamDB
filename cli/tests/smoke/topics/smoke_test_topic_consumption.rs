@@ -528,6 +528,10 @@ async fn test_topic_consume_from_latest() {
         .build()
         .expect("Failed to build consumer");
 
+    // Warm up consumer so Latest offset is established before publishing new messages.
+    let _ = poll_records_until(&mut consumer, 1, Duration::from_secs(1)).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
     // Insert new messages
     for i in 3..=4 {
         execute_sql(&format!(

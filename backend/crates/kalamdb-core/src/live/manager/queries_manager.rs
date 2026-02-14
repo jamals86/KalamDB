@@ -62,8 +62,11 @@ impl LiveQueryManager {
                         .iter()
                         .find(|c| c.column_name.eq_ignore_ascii_case(col_name))
                         .map(|col| {
-                            let mut schema_field =
-                                SchemaField::new(col.column_name.clone(), col.data_type.clone(), idx);
+                            let mut schema_field = SchemaField::new(
+                                col.column_name.clone(),
+                                col.data_type.clone(),
+                                idx,
+                            );
                             if col.is_primary_key {
                                 schema_field = schema_field.with_def("pk,nonnull,unique");
                             } else if !col.is_nullable {

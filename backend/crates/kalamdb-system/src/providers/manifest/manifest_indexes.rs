@@ -2,8 +2,9 @@
 //!
 //! This module defines secondary indexes for the system.manifest table.
 
-use crate::providers::manifest::{ManifestCacheEntry, SyncState};
 use crate::StoragePartition;
+use datafusion::scalar::ScalarValue;
+use kalamdb_commons::models::rows::SystemTableRow;
 use kalamdb_commons::storage::Partition;
 use kalamdb_commons::{ManifestId, StorageKey};
 use kalamdb_store::IndexDefinition;
@@ -21,7 +22,7 @@ use std::sync::Arc;
 /// The index only contains manifests with sync_state == PendingWrite.
 pub struct ManifestPendingWriteIndex;
 
-impl IndexDefinition<ManifestId, ManifestCacheEntry> for ManifestPendingWriteIndex {
+impl IndexDefinition<ManifestId, SystemTableRow> for ManifestPendingWriteIndex {
     fn partition(&self) -> Partition {
         Partition::new(StoragePartition::ManifestPendingWriteIdx.name())
     }
@@ -30,9 +31,15 @@ impl IndexDefinition<ManifestId, ManifestCacheEntry> for ManifestPendingWriteInd
         vec!["sync_state"]
     }
 
-    fn extract_key(&self, primary_key: &ManifestId, entry: &ManifestCacheEntry) -> Option<Vec<u8>> {
-        // Only index entries with PendingWrite state
-        if entry.sync_state == SyncState::PendingWrite {
+    fn extract_key(&self, primary_key: &ManifestId, row: &SystemTableRow) -> Option<Vec<u8>> {
+        let sync_state = row.fields.values.get("sync_state")?;
+        let is_pending_write = matches!(sync_state,
+            ScalarValue::Utf8(Some(value)) if value == "pending_write"
+        ) || matches!(sync_state,
+            ScalarValue::LargeUtf8(Some(value)) if value == "pending_write"
+        );
+
+        if is_pending_write {
             // The key IS the manifest ID (the reference itself)
             Some(primary_key.storage_key())
         } else {
@@ -47,23 +54,27 @@ impl IndexDefinition<ManifestId, ManifestCacheEntry> for ManifestPendingWriteInd
 }
 
 /// Create the default set of indexes for the manifest table.
-pub fn create_manifest_indexes() -> Vec<Arc<dyn IndexDefinition<ManifestId, ManifestCacheEntry>>> {
+pub fn create_manifest_indexes() -> Vec<Arc<dyn IndexDefinition<ManifestId, SystemTableRow>>> {
     vec![Arc::new(ManifestPendingWriteIndex)]
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::providers::manifest::{Manifest, SyncState};
+    use datafusion::scalar::ScalarValue;
+    use kalamdb_commons::models::rows::{Row, SystemTableRow};
     use kalamdb_commons::{NamespaceId, TableId, TableName, UserId};
+    use std::collections::BTreeMap;
 
-    fn create_test_entry(
-        table_id: TableId,
-        user_id: Option<UserId>,
-        sync_state: SyncState,
-    ) -> ManifestCacheEntry {
-        let manifest = Manifest::new(table_id, user_id);
-        ManifestCacheEntry::new(manifest, None, chrono::Utc::now().timestamp_millis(), sync_state)
+    fn create_test_row(sync_state: &str) -> SystemTableRow {
+        let mut fields = BTreeMap::new();
+        fields.insert(
+            "sync_state".to_string(),
+            ScalarValue::Utf8(Some(sync_state.to_string())),
+        );
+        SystemTableRow {
+            fields: Row::new(fields),
+        }
     }
 
     #[test]
@@ -74,29 +85,29 @@ mod tests {
         let index = ManifestPendingWriteIndex;
 
         // PendingWrite entry should be indexed
-        let entry = create_test_entry(table_id.clone(), None, SyncState::PendingWrite);
-        let key = index.extract_key(&manifest_id, &entry);
+        let row = create_test_row("pending_write");
+        let key = index.extract_key(&manifest_id, &row);
         assert!(key.is_some());
         assert_eq!(key.unwrap(), manifest_id.storage_key());
 
         // InSync entry should NOT be indexed
-        let entry = create_test_entry(table_id.clone(), None, SyncState::InSync);
-        let key = index.extract_key(&manifest_id, &entry);
+        let row = create_test_row("in_sync");
+        let key = index.extract_key(&manifest_id, &row);
         assert!(key.is_none());
 
         // Syncing entry should NOT be indexed
-        let entry = create_test_entry(table_id.clone(), None, SyncState::Syncing);
-        let key = index.extract_key(&manifest_id, &entry);
+        let row = create_test_row("syncing");
+        let key = index.extract_key(&manifest_id, &row);
         assert!(key.is_none());
 
         // Stale entry should NOT be indexed
-        let entry = create_test_entry(table_id.clone(), None, SyncState::Stale);
-        let key = index.extract_key(&manifest_id, &entry);
+        let row = create_test_row("stale");
+        let key = index.extract_key(&manifest_id, &row);
         assert!(key.is_none());
 
         // Error entry should NOT be indexed
-        let entry = create_test_entry(table_id, None, SyncState::Error);
-        let key = index.extract_key(&manifest_id, &entry);
+        let row = create_test_row("error");
+        let key = index.extract_key(&manifest_id, &row);
         assert!(key.is_none());
     }
 
@@ -107,9 +118,10 @@ mod tests {
         let manifest_id = ManifestId::new(table_id.clone(), Some(user_id.clone()));
 
         let index = ManifestPendingWriteIndex;
-        let entry = create_test_entry(table_id, Some(user_id), SyncState::PendingWrite);
-
-        let key = index.extract_key(&manifest_id, &entry);
+        let _ = table_id;
+        let _ = user_id;
+        let row = create_test_row("pending_write");
+        let key = index.extract_key(&manifest_id, &row);
         assert!(key.is_some());
         assert_eq!(key.unwrap(), manifest_id.storage_key());
     }

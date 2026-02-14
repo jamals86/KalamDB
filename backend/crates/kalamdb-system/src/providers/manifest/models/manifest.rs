@@ -5,11 +5,10 @@
 //!
 //! ## Serialization Strategy
 //!
-//! - **RocksDB**: All structs use bincode serialization via `StoredScalarValue`
+//! - **RocksDB**: FlatBuffers envelope + FlexBuffers payload
 //! - **manifest.json files**: Use JSON serialization via `serde_json::to_string_pretty()`
 //!
-//! `ColumnStats.min/max` use `StoredScalarValue` - the same bincode-compatible enum
-//! used for row storage. This ensures zero-copy serialization with bincode and
+//! `ColumnStats.min/max` use `StoredScalarValue` for typed scalar stats and
 //! proper JSON output for manifest.json files.
 
 use serde::{Deserialize, Serialize};
@@ -19,7 +18,6 @@ use super::FileSubfolderState;
 use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::rows::StoredScalarValue;
 use kalamdb_commons::models::TableId;
-use kalamdb_commons::KSerializable;
 use kalamdb_commons::UserId;
 
 /// Synchronization state of a cached manifest entry.
@@ -182,15 +180,10 @@ impl ManifestCacheEntry {
     }
 }
 
-// KSerializable implementation for EntityStore support
-impl KSerializable for ManifestCacheEntry {}
-
 /// Statistics for a single column in a segment.
 ///
-/// Min/max values use `StoredScalarValue` - the same bincode-compatible enum
-/// used for row storage. This enables:
-/// - Zero-copy bincode serialization for RocksDB
-/// - Proper JSON output for manifest.json files
+/// Min/max values use `StoredScalarValue` for typed scalar stats.
+/// This enables proper JSON output for manifest.json files.
 /// - Type-safe comparisons without string parsing
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ColumnStats {

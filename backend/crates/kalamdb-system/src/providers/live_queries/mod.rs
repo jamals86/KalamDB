@@ -14,12 +14,8 @@
 
 pub mod live_queries_indexes;
 pub mod live_queries_provider;
-pub mod live_queries_store;
-pub mod live_queries_table;
 pub mod models;
 
-pub use live_queries_indexes::{table_id_index_prefix, TABLE_ID_INDEX};
+pub use live_queries_indexes::{create_live_queries_indexes, table_id_index_prefix, TABLE_ID_INDEX};
 pub use live_queries_provider::LiveQueriesTableProvider;
-pub use live_queries_store::{new_live_queries_store, LiveQueriesStore};
-pub use live_queries_table::LiveQueriesTableSchema;
 pub use models::{LiveQuery, LiveQueryStatus};

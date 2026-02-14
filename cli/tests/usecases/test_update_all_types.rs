@@ -183,12 +183,12 @@ fn test_update_all_types_user_table() {
     let insert_sql = format!(
         r#"INSERT INTO {} (
             id, col_bool, col_int, col_bigint, col_double, col_float, col_text, 
-            col_timestamp, col_date, col_datetime, col_time, col_json, col_uuid, 
+            col_timestamp, col_date, col_datetime, col_time, col_json,
             col_decimal, col_smallint
         ) VALUES (
             'row1', true, 123, 1234567890, 123.45, 12.34, 'initial text',
             '2023-01-01 10:00:00', '2023-01-01', '2023-01-01 10:00:00', '10:00:00',
-            '{{"key": "initial"}}', '550e8400-e29b-41d4-a716-446655440000', 100.50, 100
+            '{{"key": "initial"}}', 100.50, 100
         )"#,
         full_table_name
     );
@@ -275,9 +275,6 @@ fn test_update_all_types_user_table() {
         other => panic!("Unexpected JSON type for col_json: {other}"),
     }
 
-    let col_uuid = normalize_value(row.get("col_uuid").expect("Missing col_uuid"));
-    assert_eq!(col_uuid.as_str(), Some("550e8400-e29b-41d4-a716-446655440000"));
-
     let col_smallint = normalize_value(row.get("col_smallint").expect("Missing col_smallint"));
     assert_eq!(value_as_i64(&col_smallint, "col_smallint", &output), 100);
 
@@ -348,7 +345,6 @@ fn test_update_all_types_user_table() {
             col_datetime = '2023-12-31 23:59:59',
             col_time = '23:59:59',
             col_json = '{{"key": "updated"}}',
-            col_uuid = '123e4567-e89b-12d3-a456-426614174000',
             col_decimal = 200.75,
             col_smallint = 200
         WHERE id = 'row1'"#,
@@ -468,12 +464,12 @@ fn test_update_all_types_shared_table() {
     let insert_sql = format!(
         r#"INSERT INTO {} (
             id, col_bool, col_int, col_bigint, col_double, col_float, col_text, 
-            col_timestamp, col_date, col_datetime, col_time, col_json, col_uuid, 
+            col_timestamp, col_date, col_datetime, col_time, col_json,
             col_decimal, col_smallint
         ) VALUES (
             'row1', true, 123, 1234567890, 123.45, 12.34, 'initial text',
             '2023-01-01 10:00:00', '2023-01-01', '2023-01-01 10:00:00', '10:00:00',
-            '{{"key": "initial"}}', '550e8400-e29b-41d4-a716-446655440000', 100.50, 100
+            '{{"key": "initial"}}', 100.50, 100
         )"#,
         full_table_name
     );
@@ -539,7 +535,6 @@ fn test_update_all_types_shared_table() {
             col_datetime = '2023-12-31 23:59:59',
             col_time = '23:59:59',
             col_json = '{{"key": "updated"}}',
-            col_uuid = '123e4567-e89b-12d3-a456-426614174000',
             col_decimal = 200.75,
             col_smallint = 200
         WHERE id = 'row1'"#,

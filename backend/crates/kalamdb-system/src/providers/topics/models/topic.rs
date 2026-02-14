@@ -5,7 +5,6 @@
 use bincode::{Decode, Encode};
 use kalamdb_commons::datatypes::KalamDataType;
 use kalamdb_commons::models::TopicId;
-use kalamdb_commons::KSerializable;
 use kalamdb_macros::table;
 use serde::{Deserialize, Serialize};
 
@@ -27,7 +26,7 @@ use super::TopicRoute;
 /// - `updated_at`: Unix timestamp in milliseconds when topic was last updated
 ///
 /// ## Serialization
-/// - **RocksDB**: Bincode (compact binary format)
+/// - **RocksDB**: FlatBuffers envelope + FlexBuffers payload
 /// - **API**: JSON via Serde
 ///
 /// ## Example
@@ -213,8 +212,6 @@ impl Topic {
     }
 }
 
-impl KSerializable for Topic {}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -262,10 +259,8 @@ mod tests {
     fn test_topic_serialization() {
         let topic = Topic::new(TopicId::new("topic_456"), "test.topic".to_string());
 
-        // Test bincode round-trip
-        let encoded = bincode::encode_to_vec(&topic, bincode::config::standard()).unwrap();
-        let decoded: Topic =
-            bincode::decode_from_slice(&encoded, bincode::config::standard()).unwrap().0;
+        let encoded = serde_json::to_vec(&topic).unwrap();
+        let decoded: Topic = serde_json::from_slice(&encoded).unwrap();
         assert_eq!(topic, decoded);
     }
 }

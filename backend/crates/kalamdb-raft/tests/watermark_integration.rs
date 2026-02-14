@@ -15,9 +15,10 @@ use tokio::time::{sleep, Duration};
 
 use kalamdb_commons::models::{NamespaceId, UserId};
 use kalamdb_commons::TableId;
+use kalamdb_raft::codec::command_codec::{encode_shared_data_command, encode_user_data_command};
 use kalamdb_raft::commands::{SharedDataCommand, UserDataCommand};
 use kalamdb_raft::state_machine::{
-    encode, get_coordinator, init_coordinator, MetadataCoordinator, PendingBuffer, PendingCommand,
+    get_coordinator, init_coordinator, MetadataCoordinator, PendingBuffer, PendingCommand,
     SharedDataStateMachine, UserDataStateMachine,
 };
 use kalamdb_raft::KalamStateMachine;
@@ -230,7 +231,7 @@ async fn test_user_data_buffering_when_meta_behind() {
         required_meta_index: current_meta + 100, // Well above current, so must buffer
     };
 
-    let cmd_bytes = encode(&cmd).unwrap();
+    let cmd_bytes = encode_user_data_command(&cmd).unwrap();
 
     // Apply command - should be buffered since meta is behind
     let _result = sm.apply(1, 1, &cmd_bytes).await.unwrap();
@@ -251,7 +252,7 @@ async fn test_user_data_buffering_when_meta_behind() {
         required_meta_index: 0, // Can apply immediately, also triggers drain
     };
 
-    let cmd2_bytes = encode(&cmd2).unwrap();
+    let cmd2_bytes = encode_user_data_command(&cmd2).unwrap();
     let _result = sm.apply(2, 1, &cmd2_bytes).await.unwrap();
 
     // After drain, pending should be 0
@@ -277,7 +278,7 @@ async fn test_user_data_immediate_apply_when_meta_caught_up() {
         required_meta_index: 500, // Meta is at 1000, so this applies immediately
     };
 
-    let cmd_bytes = encode(&cmd).unwrap();
+    let cmd_bytes = encode_user_data_command(&cmd).unwrap();
 
     // Apply command - should apply immediately
     let _result = sm.apply(1, 1, &cmd_bytes).await.unwrap();
@@ -310,7 +311,7 @@ async fn test_user_data_snapshot_includes_pending_commands() {
         required_meta_index: current_meta + 1000, // Will be buffered
     };
 
-    let cmd_bytes = encode(&cmd).unwrap();
+    let cmd_bytes = encode_user_data_command(&cmd).unwrap();
     sm.apply(1, 1, &cmd_bytes).await.unwrap();
 
     assert_eq!(sm.pending_count(), 1);
@@ -349,7 +350,7 @@ async fn test_shared_data_buffering() {
         required_meta_index: current_meta + 500,
     };
 
-    let cmd_bytes = encode(&cmd).unwrap();
+    let cmd_bytes = encode_shared_data_command(&cmd).unwrap();
 
     // Apply command - should be buffered
     sm.apply(1, 1, &cmd_bytes).await.unwrap();
@@ -367,7 +368,7 @@ async fn test_shared_data_buffering() {
         }],
         required_meta_index: 0,
     };
-    let cmd2_bytes = encode(&cmd2).unwrap();
+    let cmd2_bytes = encode_shared_data_command(&cmd2).unwrap();
     sm.apply(2, 1, &cmd2_bytes).await.unwrap();
 
     assert_eq!(sm.pending_count(), 0);
@@ -391,7 +392,7 @@ async fn test_shared_data_snapshot_roundtrip() {
         required_meta_index: current_meta + 2000, // Will be buffered
     };
 
-    let cmd_bytes = encode(&cmd).unwrap();
+    let cmd_bytes = encode_shared_data_command(&cmd).unwrap();
     sm.apply(1, 1, &cmd_bytes).await.unwrap();
 
     assert_eq!(sm.pending_count(), 1);
@@ -447,7 +448,7 @@ async fn test_rejoin_ordering_scenario() {
             required_meta_index: *required_meta,
         };
 
-        let cmd_bytes = encode(&cmd).unwrap();
+        let cmd_bytes = encode_user_data_command(&cmd).unwrap();
         sm.apply(*log_index, *term, &cmd_bytes).await.unwrap();
     }
 
@@ -466,7 +467,7 @@ async fn test_rejoin_ordering_scenario() {
         }],
         required_meta_index: 0, // Immediate
     };
-    let trigger_bytes = encode(&trigger_cmd).unwrap();
+    let trigger_bytes = encode_user_data_command(&trigger_cmd).unwrap();
     sm.apply(56, 1, &trigger_bytes).await.unwrap();
 
     // After drain at current_meta+5, only one should remain (entry 54 needs current_meta+10)
@@ -484,7 +485,7 @@ async fn test_rejoin_ordering_scenario() {
         }],
         required_meta_index: 0,
     };
-    let trigger2_bytes = encode(&trigger_cmd2).unwrap();
+    let trigger2_bytes = encode_user_data_command(&trigger_cmd2).unwrap();
     sm.apply(57, 1, &trigger2_bytes).await.unwrap();
 
     // All pending cleared

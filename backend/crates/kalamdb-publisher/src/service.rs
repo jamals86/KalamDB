@@ -230,9 +230,7 @@ impl TopicPublisherService {
     ///
     /// Returns `None` when the partition is empty.
     pub fn latest_offset(&self, topic_id: &TopicId, partition_id: u32) -> Result<Option<u64>> {
-        let next_offset = self
-            .offset_allocator
-            .peek_next_offset(topic_id.as_str(), partition_id);
+        let next_offset = self.offset_allocator.peek_next_offset(topic_id.as_str(), partition_id);
 
         Ok(next_offset.and_then(|next| next.checked_sub(1)))
     }
@@ -303,11 +301,7 @@ impl TopicPublisherService {
                     Ok(msgs) => {
                         if let Some(last) = msgs.last() {
                             let next = last.offset + 1;
-                            self.offset_allocator.seed(
-                                topic.topic_id.as_str(),
-                                partition_id,
-                                next,
-                            );
+                            self.offset_allocator.seed(topic.topic_id.as_str(), partition_id, next);
                             log::info!(
                                 "Restored offset counter for topic={} partition={}: next_offset={}",
                                 topic.topic_id.as_str(),

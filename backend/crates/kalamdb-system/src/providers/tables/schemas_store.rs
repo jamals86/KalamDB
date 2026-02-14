@@ -10,17 +10,51 @@
 //! - Efficient range scans for version history
 //! - Single storage partition for simplicity
 
-use crate::system_table_store::SystemTableStore;
 use crate::SystemTable;
 use kalamdb_commons::models::{NamespaceId, TableId, TableVersionId};
 use kalamdb_commons::schemas::TableDefinition;
-use kalamdb_store::entity_store::EntityStore;
+use kalamdb_commons::storage::Partition;
+use kalamdb_store::entity_store::{CrossUserTableStore, EntityStore};
 use kalamdb_store::StorageBackend;
 use std::sync::Arc;
 
-/// Type alias for the schemas table store
-/// Uses TableVersionId as key to support both latest and versioned lookups
-pub type SchemasStore = SystemTableStore<TableVersionId, TableDefinition>;
+/// Store for `system.schemas` definitions.
+///
+/// Uses `TableVersionId` keys to support both latest-pointer and historical
+/// version entries in the same partition.
+#[derive(Clone)]
+pub struct SchemasStore {
+    backend: Arc<dyn StorageBackend>,
+    partition: Partition,
+}
+
+impl SchemasStore {
+    pub fn new(backend: Arc<dyn StorageBackend>) -> Self {
+        Self {
+            backend,
+            partition: Partition::new(
+                SystemTable::Schemas.column_family_name().expect("Schemas is a table"),
+            ),
+        }
+    }
+}
+
+impl EntityStore<TableVersionId, TableDefinition> for SchemasStore {
+    #[doc(hidden)]
+    fn backend(&self) -> &Arc<dyn StorageBackend> {
+        &self.backend
+    }
+
+    fn partition(&self) -> Partition {
+        self.partition.clone()
+    }
+}
+
+impl CrossUserTableStore<TableVersionId, TableDefinition> for SchemasStore {
+    fn table_access(&self) -> Option<kalamdb_commons::models::TableAccess> {
+        None
+    }
+}
 
 /// Helper function to create a new schemas table store
 ///
@@ -30,7 +64,7 @@ pub type SchemasStore = SystemTableStore<TableVersionId, TableDefinition>;
 /// # Returns
 /// A new SystemTableStore instance configured for the schemas table
 pub fn new_schemas_store(backend: Arc<dyn StorageBackend>) -> SchemasStore {
-    SystemTableStore::new(backend, SystemTable::Schemas)
+    SchemasStore::new(backend)
 }
 
 /// Helper methods for SchemasStore specific operations

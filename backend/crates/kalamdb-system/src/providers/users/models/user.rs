@@ -6,7 +6,6 @@ use crate::providers::storages::models::StorageMode;
 use bincode::{Decode, Encode};
 use kalamdb_commons::datatypes::KalamDataType;
 use kalamdb_commons::models::{ids::UserId, AuthType, Role, StorageId};
-use kalamdb_commons::KSerializable;
 use kalamdb_commons::UserName;
 use kalamdb_macros::table;
 use serde::{Deserialize, Serialize};
@@ -40,7 +39,7 @@ pub const DEFAULT_LOCKOUT_DURATION_MINUTES: i64 = 15;
 /// - `deleted_at`: Optional Unix timestamp in milliseconds for soft delete
 ///
 /// ## Serialization
-/// - **RocksDB**: Bincode (compact binary format)
+/// - **RocksDB**: FlatBuffers envelope + FlexBuffers payload
 /// - **API**: JSON via Serde
 ///
 /// ## Example
@@ -319,10 +318,8 @@ mod tests {
     fn test_user_serialization() {
         let user = create_test_user();
 
-        // Test bincode serialization
-        let config = bincode::config::standard();
-        let bytes = bincode::encode_to_vec(&user, config).unwrap();
-        let (deserialized, _): (User, _) = bincode::decode_from_slice(&bytes, config).unwrap();
+        let bytes = serde_json::to_vec(&user).unwrap();
+        let deserialized: User = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(user, deserialized);
     }
 
@@ -386,6 +383,3 @@ mod tests {
         assert!(user.locked_until.is_none());
     }
 }
-
-// KSerializable implementation for EntityStore support
-impl KSerializable for User {}

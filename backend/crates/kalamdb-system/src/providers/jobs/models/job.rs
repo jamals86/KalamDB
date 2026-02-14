@@ -32,7 +32,7 @@ use super::{JobStatus, JobType};
 /// - `error_message`: Optional error message (for failed jobs)
 ///
 /// ## Serialization
-/// - **RocksDB**: Bincode (compact binary format)
+/// - **RocksDB**: FlatBuffers envelope + FlexBuffers payload
 /// - **API**: JSON via Serde
 ///
 /// ## Example
@@ -294,6 +294,8 @@ pub struct Job {
     pub max_retries: u8, // Maximum retries allowed (default 3)
 }
 
+impl KSerializable for Job {}
+
 impl Job {
     /// Mark job as cancelled
     #[inline]
@@ -476,9 +478,6 @@ impl Default for JobFilter {
     }
 }
 
-// KSerializable implementation for EntityStore support
-impl KSerializable for Job {}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -509,10 +508,8 @@ mod tests {
             priority: None,
         };
 
-        // Test bincode serialization
-        let config = bincode::config::standard();
-        let bytes = bincode::encode_to_vec(&job, config).unwrap();
-        let (deserialized, _): (Job, _) = bincode::decode_from_slice(&bytes, config).unwrap();
+        let bytes = serde_json::to_vec(&job).unwrap();
+        let deserialized: Job = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(job, deserialized);
     }
 

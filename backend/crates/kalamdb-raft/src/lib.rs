@@ -38,6 +38,7 @@
 
 pub mod applier;
 pub mod cluster_types;
+pub mod codec;
 pub mod commands;
 pub mod error;
 pub mod executor;

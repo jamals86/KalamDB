@@ -3,23 +3,43 @@
 //! This module provides a DataFusion TableProvider implementation for the system.manifest table.
 //! Exposes manifest cache entries as a queryable system table.
 
-use super::{create_manifest_indexes, ManifestTableSchema};
+use super::{
+    create_manifest_indexes, manifest_arrow_schema, manifest_table_definition, Manifest, SyncState,
+};
 use crate::error::{SystemError, SystemResultExt};
 use crate::providers::base::{extract_filter_value, SimpleProviderDefinition};
 use crate::providers::manifest::ManifestCacheEntry;
+use crate::system_row_mapper::{model_to_system_row, system_row_to_model};
 use datafusion::arrow::array::RecordBatch;
 use datafusion::logical_expr::Expr;
+use kalamdb_commons::models::rows::SystemTableRow;
 use kalamdb_commons::{ManifestId, StorageKey, TableId};
 use kalamdb_store::entity_store::EntityStore;
-use kalamdb_store::{IndexedEntityStore, StorageBackend};
+use kalamdb_store::{IndexedEntityStore, StorageBackend, StorageError};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::sync::{Arc, RwLock};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ManifestStorageRow {
+    cache_key: String,
+    namespace_id: String,
+    table_name: String,
+    scope: String,
+    etag: Option<String>,
+    last_refreshed: i64,
+    last_accessed: i64,
+    in_memory: bool,
+    sync_state: String,
+    manifest_json: Value,
+}
 
 /// Callback type for checking if a cache key is in hot memory
 pub type InMemoryChecker = Arc<dyn Fn(&str) -> bool + Send + Sync>;
 
 /// System.manifest table provider using IndexedEntityStore architecture
 pub struct ManifestTableProvider {
-    store: IndexedEntityStore<ManifestId, ManifestCacheEntry>,
+    store: IndexedEntityStore<ManifestId, SystemTableRow>,
     /// Optional callback to check if a cache key is in hot memory (injected from kalamdb-core)
     in_memory_checker: RwLock<Option<InMemoryChecker>>,
 }
@@ -61,9 +81,85 @@ impl ManifestTableProvider {
         }
     }
 
-    /// Access the underlying store for direct operations
-    pub fn store(&self) -> &IndexedEntityStore<ManifestId, ManifestCacheEntry> {
-        &self.store
+    /// Get a typed manifest cache entry by key.
+    pub fn get_cache_entry(
+        &self,
+        manifest_id: &ManifestId,
+    ) -> Result<Option<ManifestCacheEntry>, StorageError> {
+        let row = self.store.get(manifest_id)?;
+        row.map(|value| Self::decode_manifest_row(&value).map_err(Self::to_storage_error))
+            .transpose()
+    }
+
+    /// Async typed get by key.
+    pub async fn get_cache_entry_async(
+        &self,
+        manifest_id: &ManifestId,
+    ) -> Result<Option<ManifestCacheEntry>, StorageError> {
+        let row = self.store.get_async(manifest_id.clone()).await?;
+        row.map(|value| Self::decode_manifest_row(&value).map_err(Self::to_storage_error))
+            .transpose()
+    }
+
+    /// Insert/replace a typed manifest cache entry.
+    pub fn put_cache_entry(
+        &self,
+        manifest_id: &ManifestId,
+        entry: &ManifestCacheEntry,
+    ) -> Result<(), StorageError> {
+        let row = Self::encode_manifest_row(entry).map_err(Self::to_storage_error)?;
+        self.store.insert(manifest_id, &row)
+    }
+
+    /// Update with old and new typed entries (for index maintenance correctness).
+    pub fn update_cache_entry_with_old(
+        &self,
+        manifest_id: &ManifestId,
+        old_entry: &ManifestCacheEntry,
+        new_entry: &ManifestCacheEntry,
+    ) -> Result<(), StorageError> {
+        let old_row = Self::encode_manifest_row(old_entry).map_err(Self::to_storage_error)?;
+        let new_row = Self::encode_manifest_row(new_entry).map_err(Self::to_storage_error)?;
+        self.store.update_with_old(manifest_id, Some(&old_row), &new_row)
+    }
+
+    pub fn delete_cache_entry(&self, manifest_id: &ManifestId) -> Result<(), StorageError> {
+        self.store.delete(manifest_id)
+    }
+
+    pub async fn delete_cache_entry_async(&self, manifest_id: &ManifestId) -> Result<(), StorageError> {
+        self.store.delete_async(manifest_id.clone()).await
+    }
+
+    pub fn count_entries(&self) -> Result<usize, StorageError> {
+        self.store.count_all()
+    }
+
+    pub fn scan_manifest_entries(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<(ManifestId, ManifestCacheEntry)>, StorageError> {
+        let rows = self.store.scan_all_typed(Some(limit), None, None)?;
+        rows.into_iter()
+            .map(|(key, row)| {
+                Self::decode_manifest_row(&row)
+                    .map(|entry| (key, entry))
+                    .map_err(Self::to_storage_error)
+            })
+            .collect()
+    }
+
+    pub fn scan_manifest_ids_with_raw_prefix(
+        &self,
+        prefix: &[u8],
+        start_key: Option<&[u8]>,
+        limit: usize,
+    ) -> Result<Vec<ManifestId>, StorageError> {
+        self.store.scan_keys_with_raw_prefix(prefix, start_key, limit)
+    }
+
+    pub fn delete_manifest_ids_batch(&self, ids: &[ManifestId]) -> Result<(), StorageError> {
+        self.store.delete_batch(ids)
     }
 
     /// Check if a cache key is in hot memory
@@ -102,7 +198,9 @@ impl ManifestTableProvider {
             if limit.is_some_and(|lim| count >= lim) {
                 break;
             }
-            entries.push(row.map_err(|e| SystemError::Storage(e.to_string()))?);
+            let (key, raw_row) = row.map_err(|e| SystemError::Storage(e.to_string()))?;
+            let entry = Self::decode_manifest_row(&raw_row)?;
+            entries.push((key, entry));
             count += 1;
         }
         Ok(entries)
@@ -114,7 +212,7 @@ impl ManifestTableProvider {
         entries: Vec<(ManifestId, ManifestCacheEntry)>,
     ) -> Result<RecordBatch, SystemError> {
         crate::build_record_batch!(
-            schema: ManifestTableSchema::schema(),
+            schema: manifest_arrow_schema(),
             entries: entries,
             columns: [
                 cache_keys => OptionalString(|entry| Some(entry.0.as_str())),
@@ -217,11 +315,12 @@ impl ManifestTableProvider {
         // Check for primary key equality filter → O(1) point lookup
         if let Some(cache_key_str) = extract_filter_value(filters, "cache_key") {
             let manifest_id = ManifestId::from(cache_key_str.as_str());
-            if let Ok(Some(entry)) = self.store.get(&manifest_id) {
+            if let Ok(Some(row)) = self.store.get(&manifest_id) {
+                let entry = Self::decode_manifest_row(&row)?;
                 return self.build_single_entry_batch(&manifest_id, &entry);
             }
             // Empty result
-            return Ok(RecordBatch::new_empty(ManifestTableSchema::schema()));
+            return Ok(RecordBatch::new_empty(manifest_arrow_schema()));
         }
 
         // With limit: use iterator with early termination
@@ -235,16 +334,74 @@ impl ManifestTableProvider {
 
     fn provider_definition() -> SimpleProviderDefinition {
         SimpleProviderDefinition {
-            table_name: ManifestTableSchema::table_name(),
-            schema: ManifestTableSchema::schema,
+            table_name: kalamdb_commons::SystemTable::Manifest.table_name(),
+            schema: manifest_arrow_schema,
         }
+    }
+
+    fn encode_manifest_row(entry: &ManifestCacheEntry) -> Result<SystemTableRow, SystemError> {
+        let manifest_id = ManifestId::new(entry.manifest.table_id.clone(), entry.manifest.user_id.clone());
+        let last_refreshed = entry.last_refreshed_millis();
+        let storage_row = ManifestStorageRow {
+            cache_key: manifest_id.as_str().to_string(),
+            namespace_id: entry.manifest.table_id.namespace_id().as_str().to_string(),
+            table_name: entry.manifest.table_id.table_name().as_str().to_string(),
+            scope: manifest_id.scope_str().to_string(),
+            etag: entry.etag.clone(),
+            last_refreshed,
+            last_accessed: last_refreshed,
+            in_memory: false,
+            sync_state: entry.sync_state.to_string(),
+            manifest_json: serde_json::to_value(&entry.manifest).map_err(|error| {
+                SystemError::SerializationError(format!("manifest serialize failed: {error}"))
+            })?,
+        };
+
+        model_to_system_row(&storage_row, &manifest_table_definition())
+    }
+
+    fn decode_manifest_row(row: &SystemTableRow) -> Result<ManifestCacheEntry, SystemError> {
+        let storage_row: ManifestStorageRow = system_row_to_model(row, &manifest_table_definition())?;
+
+        let manifest: Manifest = match storage_row.manifest_json {
+            Value::String(json_text) => serde_json::from_str(&json_text).map_err(|error| {
+                SystemError::SerializationError(format!("manifest deserialize failed: {error}"))
+            })?,
+            json_value => serde_json::from_value(json_value).map_err(|error| {
+                SystemError::SerializationError(format!("manifest deserialize failed: {error}"))
+            })?,
+        };
+
+        let sync_state = match storage_row.sync_state.as_str() {
+            "in_sync" => SyncState::InSync,
+            "pending_write" => SyncState::PendingWrite,
+            "syncing" => SyncState::Syncing,
+            "stale" => SyncState::Stale,
+            "error" => SyncState::Error,
+            value => {
+                return Err(SystemError::SerializationError(format!(
+                    "invalid sync_state value: {value}"
+                )));
+            }
+        };
+
+        Ok(ManifestCacheEntry::new(
+            manifest,
+            storage_row.etag,
+            storage_row.last_refreshed,
+            sync_state,
+        ))
+    }
+
+    fn to_storage_error(err: SystemError) -> StorageError {
+        StorageError::SerializationError(err.to_string())
     }
 }
 
 crate::impl_simple_system_table_provider!(
     provider = ManifestTableProvider,
     key = ManifestId,
-    value = ManifestCacheEntry,
+    value = SystemTableRow,
     definition = provider_definition,
     scan_all = scan_to_record_batch,
     scan_filtered = scan_to_batch_filtered
@@ -280,7 +437,8 @@ mod tests {
             ManifestCacheEntry::new(manifest, Some("etag123".to_string()), 1000, SyncState::InSync);
 
         let key = ManifestId::from("ns1:tbl1:shared");
-        provider.store.put(&key, &entry).unwrap();
+        let row = ManifestTableProvider::encode_manifest_row(&entry).unwrap();
+        provider.store.put(&key, &row).unwrap();
 
         let batch = provider.scan_to_record_batch().unwrap();
         assert_eq!(batch.num_rows(), 1);

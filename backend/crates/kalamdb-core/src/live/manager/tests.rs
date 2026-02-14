@@ -284,7 +284,11 @@ fn test_build_subscription_schema_projection_keeps_defs_and_order() {
     )
     .unwrap();
 
-    let projections = vec!["tenant_id".to_string(), "id".to_string(), "missing".to_string()];
+    let projections = vec![
+        "tenant_id".to_string(),
+        "id".to_string(),
+        "missing".to_string(),
+    ];
     let schema = LiveQueryManager::build_subscription_schema(&table_def, Some(&projections));
 
     assert_eq!(schema.len(), 2);

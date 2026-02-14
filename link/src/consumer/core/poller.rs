@@ -39,7 +39,7 @@ impl ConsumerPoller {
         }
     }
 
-    pub async fn consume(&self, request: ConsumeRequest) -> Result<ConsumeResponse> {
+    pub(crate) async fn consume(&self, request: ConsumeRequest) -> Result<ConsumeResponse> {
         let mut attempt: u32 = 0;
         let max_retries = self.max_retries;
 
@@ -164,9 +164,10 @@ pub struct ConsumeRequest {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct ConsumeResponse {
+pub(crate) struct ConsumeResponse {
     pub messages: Vec<ConsumerRecordWire>,
     pub next_offset: u64,
+    #[allow(dead_code)] // deserialized from JSON; reserved for pagination
     pub has_more: bool,
 }
 
@@ -180,6 +181,7 @@ pub struct AckRequest {
 
 #[derive(Debug, Clone, Deserialize)]
 struct AckResponse {
+    #[allow(dead_code)] // deserialized from JSON; used for validation
     pub success: bool,
     pub acknowledged_offset: u64,
 }

@@ -93,11 +93,8 @@ impl PathResolver {
     pub(crate) fn resolve_cleanup_prefix(template: &str) -> Cow<'_, str> {
         // Find the earliest dynamic placeholder and strip back to the last
         // whole directory segment before it.
-        let dynamic_pos = template
-            .find("{userId}")
-            .into_iter()
-            .chain(template.find("{shard}"))
-            .min();
+        let dynamic_pos =
+            template.find("{userId}").into_iter().chain(template.find("{shard}")).min();
 
         if let Some(pos) = dynamic_pos {
             // Everything before the placeholder
@@ -124,8 +121,10 @@ mod tests {
     #[test]
     fn test_resolve_static_placeholders() {
         let table_id = TableId::new(NamespaceId::new("myns"), TableName::new("mytable"));
-        let result =
-            TemplateResolver::resolve_static_placeholders("ns_{namespace}/tbl_{tableName}", &table_id);
+        let result = TemplateResolver::resolve_static_placeholders(
+            "ns_{namespace}/tbl_{tableName}",
+            &table_id,
+        );
         assert_eq!(result, "ns_myns/tbl_mytable");
     }
 
@@ -142,7 +141,10 @@ mod tests {
     #[test]
     fn test_resolve_dynamic_placeholders() {
         let uid = UserId::new("user123");
-        let result = TemplateResolver::resolve_dynamic_placeholders("ns_myns/tbl_mytable/usr_{userId}", &uid);
+        let result = TemplateResolver::resolve_dynamic_placeholders(
+            "ns_myns/tbl_mytable/usr_{userId}",
+            &uid,
+        );
         assert_eq!(result.as_ref(), "ns_myns/tbl_mytable/usr_user123");
     }
 
@@ -201,8 +203,7 @@ mod tests {
     #[test]
     fn test_cleanup_prefix_userid_before_shard() {
         // Both placeholders; should strip to the earliest one's parent
-        let result =
-            PathResolver::resolve_cleanup_prefix("ns_myns/{userId}/shard_{shard}");
+        let result = PathResolver::resolve_cleanup_prefix("ns_myns/{userId}/shard_{shard}");
         assert_eq!(result.as_ref(), "ns_myns");
     }
 }

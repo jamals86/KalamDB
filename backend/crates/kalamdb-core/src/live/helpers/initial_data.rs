@@ -448,7 +448,6 @@ mod tests {
     use crate::providers::base::TableProviderCore;
     use crate::providers::UserTableProvider;
     use crate::schema_registry::CachedTableData;
-    use kalamdb_system::SchemaRegistry;
     use crate::schema_registry::TablesSchemaRegistryAdapter;
     use crate::sql::executor::SqlExecutor;
     use kalamdb_commons::ids::{SeqId, UserTableRowId};
@@ -461,6 +460,7 @@ mod tests {
     use kalamdb_commons::UserId;
     use kalamdb_store::test_utils::InMemoryBackend;
     use kalamdb_system::NotificationService;
+    use kalamdb_system::SchemaRegistry;
     use kalamdb_tables::user_tables::user_table_store::new_indexed_user_table_store;
     use kalamdb_tables::utils::TableServices;
     use kalamdb_tables::UserTableRow;
@@ -603,9 +603,8 @@ mod tests {
             app_context.clone(),
             Some(app_context.topic_publisher() as Arc<dyn kalamdb_system::TopicPublisher>),
         ));
-        let arrow_schema = tables_schema_registry
-            .get_arrow_schema(&table_id)
-            .expect("get arrow schema");
+        let arrow_schema =
+            tables_schema_registry.get_arrow_schema(&table_id).expect("get arrow schema");
         let core = Arc::new(TableProviderCore::new(
             Arc::new(table_def),
             services,
@@ -613,9 +612,7 @@ mod tests {
             arrow_schema,
             HashMap::new(),
         ));
-        let provider = Arc::new(
-            UserTableProvider::new(core, store),
-        );
+        let provider = Arc::new(UserTableProvider::new(core, store));
 
         // Register the provider in schema_registry
         schema_registry
@@ -751,9 +748,8 @@ mod tests {
             app_context.clone(),
             Some(app_context.topic_publisher() as Arc<dyn kalamdb_system::TopicPublisher>),
         ));
-        let arrow_schema = tables_schema_registry
-            .get_arrow_schema(&table_id)
-            .expect("get arrow schema");
+        let arrow_schema =
+            tables_schema_registry.get_arrow_schema(&table_id).expect("get arrow schema");
         let core = Arc::new(TableProviderCore::new(
             table_def_arc,
             services,
@@ -761,9 +757,7 @@ mod tests {
             arrow_schema,
             HashMap::new(),
         ));
-        let provider = Arc::new(
-            UserTableProvider::new(core, store),
-        );
+        let provider = Arc::new(UserTableProvider::new(core, store));
 
         schema_registry
             .insert_provider(table_id.clone(), provider)
@@ -932,9 +926,8 @@ mod tests {
             app_context.clone(),
             Some(app_context.topic_publisher() as Arc<dyn kalamdb_system::TopicPublisher>),
         ));
-        let arrow_schema = tables_schema_registry
-            .get_arrow_schema(&table_id)
-            .expect("get arrow schema");
+        let arrow_schema =
+            tables_schema_registry.get_arrow_schema(&table_id).expect("get arrow schema");
         let core = Arc::new(TableProviderCore::new(
             table_def_arc,
             services,
@@ -942,9 +935,7 @@ mod tests {
             arrow_schema,
             HashMap::new(),
         ));
-        let provider = Arc::new(
-            UserTableProvider::new(core, store),
-        );
+        let provider = Arc::new(UserTableProvider::new(core, store));
 
         schema_registry
             .insert_provider(table_id.clone(), provider)

@@ -11,7 +11,7 @@ use crate::timeouts::KalamLinkTimeouts;
 use crate::KalamLinkClient;
 
 pub struct TopicConsumer {
-    client: KalamLinkClient,
+    #[allow(dead_code)] // retained for lifetime — owns the reqwest::Client
     config: ConsumerConfig,
     poller: ConsumerPoller,
     offsets: OffsetManager,
@@ -372,8 +372,11 @@ impl ConsumerBuilder {
             config.retry_backoff,
         );
 
+        // `client` is consumed here — the poller holds clones of the
+        // http_client and auth, so the KalamLinkClient is no longer needed.
+        drop(client);
+
         Ok(TopicConsumer {
-            client,
             config,
             poller,
             offsets: OffsetManager::new(),

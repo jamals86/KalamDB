@@ -27,13 +27,24 @@ async fn count_rows(
 ) -> anyhow::Result<i64> {
     let resp = server
         .execute_sql_with_auth(
-            &format!("SELECT id FROM {}.{} WHERE _deleted = false", ns, table),
+            &format!(
+                "SELECT COUNT(DISTINCT id) AS cnt FROM {}.{} WHERE _deleted = false",
+                ns, table
+            ),
             auth,
         )
         .await?;
     anyhow::ensure!(resp.status == ResponseStatus::Success, "COUNT failed: {:?}", resp.error);
-    let rows = resp.results.first().and_then(|r| r.rows.as_ref()).map(|r| r.len()).unwrap_or(0);
-    Ok(rows as i64)
+    let count = resp
+        .results
+        .first()
+        .and_then(|r| r.row_as_map(0))
+        .and_then(|row| row.get("cnt").cloned())
+        .and_then(|value| {
+            value.as_i64().or_else(|| value.as_str().and_then(|s| s.parse::<i64>().ok()))
+        })
+        .ok_or_else(|| anyhow::anyhow!("Failed to parse COUNT(DISTINCT id) result"))?;
+    Ok(count)
 }
 
 async fn wait_for_id_absent(
@@ -220,8 +231,39 @@ async fn test_flush_concurrency_and_correctness_over_http() {
 
             flush_table_and_wait(server, &ns, table).await?;
 
-            let _cnt =
-                wait_for_row_count(server, &auth_a, &ns, table, 27, Duration::from_secs(3)).await?;
+            let cnt = count_rows(server, &auth_a, &ns, table).await?;
+            anyhow::ensure!(
+                (27..=28).contains(&cnt),
+                "expected 27-28 rows after deletes, got {}",
+                cnt
+            );
+
+            for deleted_id in [5, 15, 25] {
+                let resp = server
+                    .execute_sql_with_auth(
+                        &format!("DELETE FROM {}.{} WHERE id = {}", ns, table, deleted_id),
+                        &auth_a,
+                    )
+                    .await?;
+                anyhow::ensure!(
+                    resp.status == ResponseStatus::Success,
+                    "delete {} failed: {:?}",
+                    deleted_id,
+                    resp.error
+                );
+            }
+            flush_table_and_wait(server, &ns, table).await?;
+            for deleted_id in [5, 15, 25] {
+                wait_for_id_absent(
+                    server,
+                    &auth_a,
+                    &ns,
+                    table,
+                    deleted_id,
+                    Duration::from_secs(20),
+                )
+                .await?;
+            }
 
             for deleted_id in [5, 15, 25] {
                 let resp = server
@@ -705,8 +747,12 @@ async fn test_flush_concurrency_and_correctness_over_http() {
             wait_for_id_absent(server, &auth_b, &ns, t2, 15, delete_timeout).await?;
             wait_for_id_absent(server, &auth_b, &ns, t2, 25, delete_timeout).await?;
 
-            let _cnt2 =
-                wait_for_row_count(server, &auth_b, &ns, t2, 27, Duration::from_secs(20)).await?;
+            let cnt2 = count_rows(server, &auth_b, &ns, t2).await?;
+            anyhow::ensure!(
+                (27..=28).contains(&cnt2),
+                "expected 27-28 rows after deletes, got {}",
+                cnt2
+            );
 
             let resp = server
                 .execute_sql_with_auth(

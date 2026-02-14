@@ -3,20 +3,23 @@
 //! This module provides a DataFusion TableProvider implementation for the system.storages table.
 //! Uses the new EntityStore architecture with StorageId keys.
 
-use super::{new_storages_store, StoragesStore, StoragesTableSchema};
 use crate::error::{SystemError, SystemResultExt};
-use crate::providers::base::{extract_filter_value, SimpleProviderDefinition};
+use crate::providers::base::{extract_filter_value, system_rows_to_batch, SimpleProviderDefinition};
 use crate::providers::storages::models::Storage;
+use crate::system_row_mapper::{model_to_system_row, system_row_to_model};
 use datafusion::arrow::array::RecordBatch;
+use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::logical_expr::Expr;
+use kalamdb_commons::models::rows::SystemTableRow;
 use kalamdb_commons::StorageId;
+use kalamdb_commons::SystemTable;
 use kalamdb_store::entity_store::{EntityStore, EntityStoreAsync};
-use kalamdb_store::StorageBackend;
-use std::sync::Arc;
+use kalamdb_store::{IndexedEntityStore, StorageBackend};
+use std::sync::{Arc, OnceLock};
 
 /// System.storages table provider using EntityStore architecture
 pub struct StoragesTableProvider {
-    store: StoragesStore,
+    store: IndexedEntityStore<StorageId, SystemTableRow>,
 }
 
 impl std::fmt::Debug for StoragesTableProvider {
@@ -34,14 +37,22 @@ impl StoragesTableProvider {
     /// # Returns
     /// A new StoragesTableProvider instance
     pub fn new(backend: Arc<dyn StorageBackend>) -> Self {
+        let store = IndexedEntityStore::new(
+            backend,
+            crate::SystemTable::Storages
+                .column_family_name()
+                .expect("Storages is a table"),
+            Vec::new(),
+        );
         Self {
-            store: new_storages_store(backend),
+            store,
         }
     }
 
     /// Create a new storage entry
     pub fn create_storage(&self, storage: Storage) -> Result<(), SystemError> {
-        self.store.put(&storage.storage_id, &storage)?;
+        let row = Self::encode_storage_row(&storage)?;
+        self.store.put(&storage.storage_id, &row)?;
         Ok(())
     }
 
@@ -49,8 +60,9 @@ impl StoragesTableProvider {
     ///
     /// Use this in async contexts to avoid blocking the Tokio runtime.
     pub async fn create_storage_async(&self, storage: Storage) -> Result<(), SystemError> {
+        let row = Self::encode_storage_row(&storage)?;
         self.store
-            .put_async(&storage.storage_id, &storage)
+            .put_async(&storage.storage_id, &row)
             .await
             .into_system_error("put_async error")?;
         Ok(())
@@ -66,7 +78,8 @@ impl StoragesTableProvider {
         &self,
         storage_id: &StorageId,
     ) -> Result<Option<Storage>, SystemError> {
-        Ok(self.store.get(storage_id)?)
+        let row = self.store.get(storage_id)?;
+        row.map(|value| Self::decode_storage_row(&value)).transpose()
     }
 
     /// Async version of `get_storage_by_id()` - offloads to blocking thread pool.
@@ -76,7 +89,12 @@ impl StoragesTableProvider {
         &self,
         storage_id: &StorageId,
     ) -> Result<Option<Storage>, SystemError> {
-        self.store.get_async(storage_id).await.into_system_error("get_async error")
+        let row = self
+            .store
+            .get_async(storage_id.clone())
+            .await
+            .into_system_error("get_async error")?;
+        row.map(|value| Self::decode_storage_row(&value)).transpose()
     }
 
     /// Alias for get_storage_by_id (for backward compatibility)
@@ -104,7 +122,8 @@ impl StoragesTableProvider {
             )));
         }
 
-        self.store.put(&storage.storage_id, &storage)?;
+        let row = Self::encode_storage_row(&storage)?;
+        self.store.put(&storage.storage_id, &row)?;
         Ok(())
     }
 
@@ -113,15 +132,21 @@ impl StoragesTableProvider {
     /// Use this in async contexts to avoid blocking the Tokio runtime.
     pub async fn update_storage_async(&self, storage: Storage) -> Result<(), SystemError> {
         // Check if storage exists
-        if self.store.get_async(&storage.storage_id).await?.is_none() {
+        if self
+            .store
+            .get_async(storage.storage_id.clone())
+            .await?
+            .is_none()
+        {
             return Err(SystemError::NotFound(format!(
                 "Storage not found: {}",
                 storage.storage_id
             )));
         }
 
+        let row = Self::encode_storage_row(&storage)?;
         self.store
-            .put_async(&storage.storage_id, &storage)
+            .put_async(&storage.storage_id, &row)
             .await
             .into_system_error("put_async error")?;
         Ok(())
@@ -138,7 +163,7 @@ impl StoragesTableProvider {
     /// Use this in async contexts to avoid blocking the Tokio runtime.
     pub async fn delete_storage_async(&self, storage_id: &StorageId) -> Result<(), SystemError> {
         self.store
-            .delete_async(storage_id)
+            .delete_async(storage_id.clone())
             .await
             .into_system_error("delete_async error")?;
         Ok(())
@@ -149,8 +174,8 @@ impl StoragesTableProvider {
         let iter = self.store.scan_iterator(None, None)?;
         let mut storages = Vec::new();
         for item in iter {
-            let (_, s) = item?;
-            storages.push(s);
+            let (_, row) = item?;
+            storages.push(Self::decode_storage_row(&row)?);
         }
         Ok(storages)
     }
@@ -159,59 +184,26 @@ impl StoragesTableProvider {
     ///
     /// Use this in async contexts to avoid blocking the Tokio runtime.
     pub async fn list_storages_async(&self) -> Result<Vec<Storage>, SystemError> {
-        let results: Vec<(Vec<u8>, Storage)> = self
+        let results: Vec<(Vec<u8>, SystemTableRow)> = self
             .store
             .scan_all_async(None, None, None)
             .await
             .into_system_error("scan_all_async error")?;
-        Ok(results.into_iter().map(|(_, s)| s).collect())
-    }
-
-    /// Build a RecordBatch from a list of (StorageId, Storage) pairs
-    fn build_storages_batch(
-        &self,
-        entries: Vec<(StorageId, Storage)>,
-    ) -> Result<RecordBatch, SystemError> {
-        crate::build_record_batch!(
-            schema: StoragesTableSchema::schema(),
-            entries: entries,
-            columns: [
-                storage_ids => OptionalString(|entry| Some(entry.1.storage_id.as_str())),
-                storage_names => OptionalString(|entry| Some(entry.1.storage_name.as_str())),
-                descriptions => OptionalString(|entry| entry.1.description.as_deref()),
-                storage_types => OptionalString(|entry| Some(entry.1.storage_type.as_str())),
-                base_directories => OptionalString(|entry| Some(entry.1.base_directory.as_str())),
-                credentials => OptionalString(|entry| entry.1.credentials.as_deref()),
-                config_jsons => OptionalString(|entry| entry.1.config_json.as_deref()),
-                shared_templates => OptionalString(|entry| Some(entry.1.shared_tables_template.as_str())),
-                user_templates => OptionalString(|entry| Some(entry.1.user_tables_template.as_str())),
-                created_ats => Timestamp(|entry| Some(entry.1.created_at)),
-                updated_ats => Timestamp(|entry| Some(entry.1.updated_at))
-            ]
-        )
-        .into_arrow_error("Failed to create RecordBatch")
+        results
+            .into_iter()
+            .map(|(_, row)| Self::decode_storage_row(&row))
+            .collect()
     }
 
     /// Scan all storages and return as RecordBatch
     pub fn scan_all_storages(&self) -> Result<RecordBatch, SystemError> {
-        let iter = self.store.scan_iterator(None, None)?;
-        let mut entries = Vec::new();
-        for item in iter {
-            entries.push(item?);
-        }
-        entries.sort_by(|a, b| {
-            let storage_a = &a.1;
-            let storage_b = &b.1;
-            if storage_a.storage_id.is_local() {
-                std::cmp::Ordering::Less
-            } else if storage_b.storage_id.is_local() {
-                std::cmp::Ordering::Greater
-            } else {
-                storage_a.storage_id.as_str().cmp(storage_b.storage_id.as_str())
-            }
-        });
-
-        self.build_storages_batch(entries)
+        let rows = self
+            .store
+            .scan_all_typed(None, None, None)?
+            .into_iter()
+            .map(|(_, row)| row)
+            .collect();
+        system_rows_to_batch(&Self::schema(), rows)
     }
     fn scan_to_batch_filtered(
         &self,
@@ -221,23 +213,24 @@ impl StoragesTableProvider {
         // Check for primary key equality filter → O(1) point lookup
         if let Some(storage_id_str) = extract_filter_value(filters, "storage_id") {
             let storage_id = StorageId::new(&storage_id_str);
-            if let Some(storage) = self.store.get(&storage_id)? {
-                return self.build_storages_batch(vec![(storage_id, storage)]);
+            if let Some(row) = self.store.get(&storage_id)? {
+                return system_rows_to_batch(&Self::schema(), vec![row]);
             }
-            return self.build_storages_batch(vec![]);
+            return system_rows_to_batch(&Self::schema(), vec![]);
         }
 
         // With limit: use iterator with early termination (skip sort)
         if let Some(lim) = limit {
             let iter = self.store.scan_iterator(None, None)?;
-            let mut entries = Vec::with_capacity(lim.min(1000));
+            let mut rows = Vec::with_capacity(lim.min(1000));
             for item in iter {
-                entries.push(item?);
-                if entries.len() >= lim {
+                let (_, row) = item?;
+                rows.push(row);
+                if rows.len() >= lim {
                     break;
                 }
             }
-            return self.build_storages_batch(entries);
+            return system_rows_to_batch(&Self::schema(), rows);
         }
 
         // No limit: full scan with sort (default behavior)
@@ -246,16 +239,35 @@ impl StoragesTableProvider {
 
     fn provider_definition() -> SimpleProviderDefinition {
         SimpleProviderDefinition {
-            table_name: StoragesTableSchema::table_name(),
-            schema: StoragesTableSchema::schema,
+            table_name: SystemTable::Storages.table_name(),
+            schema: Self::schema,
         }
+    }
+
+    fn encode_storage_row(storage: &Storage) -> Result<SystemTableRow, SystemError> {
+        model_to_system_row(storage, &Storage::definition())
+    }
+
+    fn decode_storage_row(row: &SystemTableRow) -> Result<Storage, SystemError> {
+        system_row_to_model(row, &Storage::definition())
+    }
+
+    fn schema() -> SchemaRef {
+        static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
+        SCHEMA
+            .get_or_init(|| {
+                Storage::definition()
+                    .to_arrow_schema()
+                    .expect("failed to build storages schema")
+            })
+            .clone()
     }
 }
 
 crate::impl_simple_system_table_provider!(
     provider = StoragesTableProvider,
     key = StorageId,
-    value = Storage,
+    value = SystemTableRow,
     definition = provider_definition,
     scan_all = scan_all_storages,
     scan_filtered = scan_to_batch_filtered

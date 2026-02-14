@@ -1,0 +1,29 @@
+namespace kalamdb.serialization;
+
+// Append-only evolution policy:
+// - Never remove fields
+// - Never reuse field IDs
+// - New fields must be optional or have safe defaults
+enum CodecKind : ubyte {
+  Bincode = 0,
+  FlatBuffers = 1,
+  FlexBuffers = 2
+}
+
+table EntityEnvelope {
+  // Storage codec used by payload bytes.
+  codec_kind: CodecKind = Bincode;
+
+  // Stable logical schema identifier (for example:
+  // "kalamdb.system.users.User").
+  schema_id: string;
+
+  // Monotonic wire-version for schema_id.
+  schema_version: ushort = 1;
+
+  // Codec-specific payload bytes.
+  payload: [ubyte];
+}
+
+root_type EntityEnvelope;
+file_identifier "KENV";

@@ -53,15 +53,13 @@
 //!   • Stream: user-scoped RocksDB only, TTL filter, streamable
 //! ```
 
-use crate::error_extensions::KalamDbResultExt;
 use crate::error::KalamDbError;
+use crate::error_extensions::KalamDbResultExt;
 
 use crate::manifest::ManifestAccessPlanner;
 use crate::utils::unified_dml;
 use async_trait::async_trait;
-use datafusion::arrow::array::{
-    Array, BooleanArray, Int64Array, UInt64Array,
-};
+use datafusion::arrow::array::{Array, BooleanArray, Int64Array, UInt64Array};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::catalog::Session;
@@ -1107,7 +1105,11 @@ async fn pk_exists_batch_in_parquet_via_storage_cache(
     }
 
     // Phase 2: Read with column projection (only pk, _seq, _deleted)
-    let columns_to_read = [pk_column, SystemColumnNames::SEQ, SystemColumnNames::DELETED];
+    let columns_to_read = [
+        pk_column,
+        SystemColumnNames::SEQ,
+        SystemColumnNames::DELETED,
+    ];
     let batches = kalamdb_filestore::parse_parquet_projected(result.data, &columns_to_read)
         .into_kalamdb_error("Failed to parse projected Parquet")?;
 
@@ -1206,7 +1208,11 @@ async fn pk_exists_in_parquet_via_storage_cache(
     }
 
     // Step 3: Read with column projection (only pk, _seq, _deleted)
-    let columns_to_read = [pk_column, SystemColumnNames::SEQ, SystemColumnNames::DELETED];
+    let columns_to_read = [
+        pk_column,
+        SystemColumnNames::SEQ,
+        SystemColumnNames::DELETED,
+    ];
     let batches = kalamdb_filestore::parse_parquet_projected(result.data, &columns_to_read)
         .into_kalamdb_error("Failed to parse projected Parquet")?;
 
@@ -1266,10 +1272,7 @@ async fn pk_exists_in_parquet_via_storage_cache(
     }
 
     // Return true if latest version is not deleted
-    Ok(versions
-        .get(pk_value)
-        .map(|(_, is_deleted)| !*is_deleted)
-        .unwrap_or(false))
+    Ok(versions.get(pk_value).map(|(_, is_deleted)| !*is_deleted).unwrap_or(false))
 }
 
 /// Extract PK value as string from an Arrow array at given index (delegates to shared utility).
@@ -1347,9 +1350,7 @@ where
                 core.services.manifest_service.clone(),
             );
 
-            let check_result = pk_checker
-                .check_pk_exists(core, scope, &pk_str)
-                .await?;
+            let check_result = pk_checker.check_pk_exists(core, scope, &pk_str).await?;
 
             if let crate::utils::pk::PkCheckResult::FoundInCold { segment_path } = check_result {
                 return Err(KalamDbError::AlreadyExists(format!(

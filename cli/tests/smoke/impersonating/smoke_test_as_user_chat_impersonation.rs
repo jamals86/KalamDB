@@ -521,7 +521,9 @@ fn smoke_as_user_chat_update_flow() {
             ],
             Duration::from_secs(6),
         )
-        .expect("Regular user update listener should receive initial message snapshot before update");
+        .expect(
+            "Regular user update listener should receive initial message snapshot before update",
+        );
 
     execute_sql_via_client_as(
         &fixture.service_user,

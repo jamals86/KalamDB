@@ -53,7 +53,11 @@ pub async fn read_parquet_batches(
         let bytes = storage_cached.get(table_type, table_id, user_id, parquet_filename).await?.data;
         let batches = parse_parquet_from_bytes(bytes)?;
         let row_count: usize = batches.iter().map(RecordBatch::num_rows).sum();
-        tracing::debug!(batch_count = batches.len(), row_count = row_count, "Parquet read completed");
+        tracing::debug!(
+            batch_count = batches.len(),
+            row_count = row_count,
+            "Parquet read completed"
+        );
         Ok(batches)
     }
     .instrument(span)
@@ -219,10 +223,7 @@ pub fn parse_parquet_with_bloom_filter<V: parquet::data_type::AsBytes>(
 
     // Find the column index for bloom filter probing
     let parquet_schema = metadata.file_metadata().schema_descr();
-    let bloom_col_idx = parquet_schema
-        .columns()
-        .iter()
-        .position(|c| c.name() == bloom_column);
+    let bloom_col_idx = parquet_schema.columns().iter().position(|c| c.name() == bloom_column);
 
     // Collect row groups that are NOT pruned by bloom filter
     let mut selected_row_groups: Vec<usize> = Vec::new();
@@ -297,8 +298,8 @@ pub fn bloom_filter_check_absent<V: parquet::data_type::AsBytes>(
     column: &str,
     value: &V,
 ) -> Result<bool> {
-    let file_reader = SerializedFileReader::new(bytes)
-        .map_err(|e| FilestoreError::Parquet(e.to_string()))?;
+    let file_reader =
+        SerializedFileReader::new(bytes).map_err(|e| FilestoreError::Parquet(e.to_string()))?;
 
     let metadata = file_reader.metadata();
     let num_row_groups = metadata.num_row_groups();
@@ -342,14 +343,14 @@ fn resolve_column_indices(
 ) -> Vec<usize> {
     columns
         .iter()
-        .filter_map(|name| {
-            parquet_schema.columns().iter().position(|c| c.name() == *name)
-        })
+        .filter_map(|name| parquet_schema.columns().iter().position(|c| c.name() == *name))
         .collect()
 }
 
 /// Build a ParquetRecordBatchReader and collect all batches.
-fn build_and_collect(builder: ParquetRecordBatchReaderBuilder<bytes::Bytes>) -> Result<Vec<RecordBatch>> {
+fn build_and_collect(
+    builder: ParquetRecordBatchReaderBuilder<bytes::Bytes>,
+) -> Result<Vec<RecordBatch>> {
     let row_group_count = builder.metadata().num_row_groups();
     let reader = builder.build().map_err(|e| FilestoreError::Parquet(e.to_string()))?;
 

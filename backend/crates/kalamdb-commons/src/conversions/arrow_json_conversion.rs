@@ -215,12 +215,10 @@ pub fn coerce_scalar_to_field(value: ScalarValue, field: &Field) -> Result<Scala
 fn coerce_uuid_scalar(value: ScalarValue, field: &Field) -> Result<Option<ScalarValue>, String> {
     match value {
         ScalarValue::Utf8(Some(raw)) | ScalarValue::LargeUtf8(Some(raw)) => {
-            let uuid = Uuid::parse_str(&raw)
-                .map_err(|e| format!("Invalid UUID literal '{}' for column '{}': {}", raw, field.name(), e))?;
-            Ok(Some(ScalarValue::FixedSizeBinary(
-                16,
-                Some(uuid.as_bytes().to_vec()),
-            )))
+            let uuid = Uuid::parse_str(&raw).map_err(|e| {
+                format!("Invalid UUID literal '{}' for column '{}': {}", raw, field.name(), e)
+            })?;
+            Ok(Some(ScalarValue::FixedSizeBinary(16, Some(uuid.as_bytes().to_vec()))))
         },
         ScalarValue::Binary(Some(bytes)) => {
             if bytes.len() != 16 {

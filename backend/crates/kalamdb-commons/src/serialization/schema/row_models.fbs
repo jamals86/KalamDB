@@ -1,0 +1,62 @@
+namespace kalamdb.serialization.row;
+
+// Tagged scalar wire format. The payload bytes are encoded as FlexBuffers for
+// variant-specific content while keeping FlatBuffers as the outer row container.
+enum ScalarTag : ushort {
+  Null = 0,
+  Boolean = 1,
+  Float32 = 2,
+  Float64 = 3,
+  Int8 = 4,
+  Int16 = 5,
+  Int32 = 6,
+  Int64 = 7,
+  UInt8 = 8,
+  UInt16 = 9,
+  UInt32 = 10,
+  UInt64 = 11,
+  Utf8 = 12,
+  LargeUtf8 = 13,
+  Binary = 14,
+  LargeBinary = 15,
+  FixedSizeBinary = 16,
+  Date32 = 17,
+  Time64Microsecond = 18,
+  TimestampMillisecond = 19,
+  TimestampMicrosecond = 20,
+  TimestampNanosecond = 21,
+  Decimal128 = 22,
+  Embedding = 23,
+  Fallback = 24
+}
+
+table ScalarValuePayload {
+  tag: ScalarTag = Null;
+  payload: [ubyte];
+}
+
+table ColumnValue {
+  name: string;
+  value: ScalarValuePayload;
+}
+
+// Row payload encoded in ordinal-stable map order (BTreeMap key order).
+table RowPayload {
+  columns: [ColumnValue];
+}
+
+table UserTableRowPayload {
+  user_id: string;
+  seq: long;
+  deleted: bool = false;
+  fields: RowPayload;
+}
+
+table SharedTableRowPayload {
+  seq: long;
+  deleted: bool = false;
+  fields: RowPayload;
+}
+
+root_type RowPayload;
+file_identifier "KROW";

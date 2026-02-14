@@ -2,7 +2,7 @@
 extern crate kalam_cli;
 #[cfg(unix)]
 use libc::{flock, LOCK_EX, LOCK_UN};
-use rand::{distr::Alphanumeric, Rng};
+use rand::{distr::Alphanumeric, RngExt};
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -929,7 +929,8 @@ fn ensure_server_ready_sync(base_url: &str) {
                 ║  Start the server:  cd backend && cargo run --release            ║\n\
                 ║  Or set KALAMDB_SERVER_TYPE=fresh to auto-start a test server    ║\n\
                 ╚══════════════════════════════════════════════════════════════════╝\n",
-                server_type.unwrap(), base_url
+                server_type.unwrap(),
+                base_url
             );
         }
         return;
@@ -1158,7 +1159,10 @@ pub fn test_context() -> &'static TestContext {
                         server_url
                     );
                 }
-                eprintln!("✅ [TEST] Using existing server at {} (KALAMDB_SERVER_TYPE=running)", server_url);
+                eprintln!(
+                    "✅ [TEST] Using existing server at {} (KALAMDB_SERVER_TYPE=running)",
+                    server_url
+                );
             },
             Some(ServerType::Fresh) => {
                 // "fresh" means auto-start a local test server
@@ -1167,7 +1171,10 @@ pub fn test_context() -> &'static TestContext {
                     if std::env::var("KALAMDB_ROOT_PASSWORD").is_err() {
                         std::env::set_var("KALAMDB_ROOT_PASSWORD", root_password_from_env());
                     }
-                    std::env::set_var("KALAMDB_STORAGE_DIR", storage_dir.to_string_lossy().to_string());
+                    std::env::set_var(
+                        "KALAMDB_STORAGE_DIR",
+                        storage_dir.to_string_lossy().to_string(),
+                    );
                     server_url = auto_url;
                     auto_started = true;
                     eprintln!("✅ [TEST] Auto-started fresh server at {}", server_url);
@@ -1215,7 +1222,10 @@ pub fn test_context() -> &'static TestContext {
                         if std::env::var("KALAMDB_ROOT_PASSWORD").is_err() {
                             std::env::set_var("KALAMDB_ROOT_PASSWORD", root_password_from_env());
                         }
-                        std::env::set_var("KALAMDB_STORAGE_DIR", storage_dir.to_string_lossy().to_string());
+                        std::env::set_var(
+                            "KALAMDB_STORAGE_DIR",
+                            storage_dir.to_string_lossy().to_string(),
+                        );
                         server_url = auto_url;
                         auto_started = true;
                         eprintln!("✅ [TEST] Auto-started fresh server at {}", server_url);
@@ -1265,14 +1275,16 @@ pub fn test_context() -> &'static TestContext {
         let (is_cluster, mut cluster_urls) = match server_type {
             Some(ServerType::Cluster) => {
                 // Cluster mode: probe cluster URLs to find healthy nodes
-                let cluster_default = "http://127.0.0.1:8081,http://127.0.0.1:8082,http://127.0.0.1:8083";
-                let cluster_urls: Vec<String> = explicit_cluster_urls.clone().unwrap_or_else(|| {
-                    cluster_default
-                        .split(',')
-                        .map(|url| url.trim().to_string())
-                        .filter(|url| !url.is_empty())
-                        .collect()
-                });
+                let cluster_default =
+                    "http://127.0.0.1:8081,http://127.0.0.1:8082,http://127.0.0.1:8083";
+                let cluster_urls: Vec<String> =
+                    explicit_cluster_urls.clone().unwrap_or_else(|| {
+                        cluster_default
+                            .split(',')
+                            .map(|url| url.trim().to_string())
+                            .filter(|url| !url.is_empty())
+                            .collect()
+                    });
                 let healthy: Vec<String> = cluster_urls
                     .iter()
                     .filter(|url| {
@@ -2932,7 +2944,8 @@ fn execute_sql_via_client_internal(
                         let mut retry_after_attempt = false;
                         for (idx, url) in urls.iter().enumerate() {
                             let response =
-                                execute_once(url, &username_owned, &password_owned, &sql, &params).await;
+                                execute_once(url, &username_owned, &password_owned, &sql, &params)
+                                    .await;
 
                             match response {
                                 Ok(response) => {
@@ -2987,7 +3000,8 @@ fn execute_sql_via_client_internal(
                 let max_attempts = if is_cluster_mode() { 1 } else { 5 };
                 for attempt in 0..max_attempts {
                     let response =
-                        execute_once(&base_url, &username_owned, &password_owned, &sql, &params).await?;
+                        execute_once(&base_url, &username_owned, &password_owned, &sql, &params)
+                            .await?;
 
                     if response.success() {
                         return Ok::<_, Box<dyn std::error::Error + Send + Sync>>(response);
@@ -3902,11 +3916,10 @@ impl SubscriptionListener {
             }
         }
 
-        Err(format!(
-            "Event pattern '{}' not found within timeout {:?}",
-            pattern, effective_timeout
+        Err(
+            format!("Event pattern '{}' not found within timeout {:?}", pattern, effective_timeout)
+                .into(),
         )
-        .into())
     }
 
     /// Stop the subscription listener gracefully

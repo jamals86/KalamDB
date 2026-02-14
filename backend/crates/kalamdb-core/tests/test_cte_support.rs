@@ -8,16 +8,16 @@
 //! - CTEs with JOINs
 //! - CTEs with filtering
 
+use chrono::Utc;
 use kalamdb_commons::models::StorageId;
 use kalamdb_commons::{NodeId, Role, UserId};
+use kalamdb_configs::ServerConfig;
 use kalamdb_core::app_context::AppContext;
 use kalamdb_core::sql::context::{ExecutionContext, ExecutionResult};
 use kalamdb_core::sql::executor::SqlExecutor;
+use kalamdb_store::{RocksDBBackend, RocksDbInit};
 use kalamdb_system::providers::storages::models::StorageType;
 use kalamdb_system::Storage;
-use kalamdb_store::{RocksDBBackend, RocksDbInit};
-use kalamdb_configs::ServerConfig;
-use chrono::Utc;
 use std::sync::Arc;
 use tempfile::TempDir;
 
@@ -44,7 +44,11 @@ async fn create_test_app_context() -> (Arc<AppContext>, TempDir) {
 
     // Initialize Raft for single-node mode (required for DDL operations)
     app_context.executor().start().await.expect("Failed to start Raft");
-    app_context.executor().initialize_cluster().await.expect("Failed to initialize Raft cluster");
+    app_context
+        .executor()
+        .initialize_cluster()
+        .await
+        .expect("Failed to initialize Raft cluster");
     app_context.wire_raft_appliers();
 
     // Ensure default local storage exists for table creation.
@@ -79,11 +83,7 @@ fn create_exec_context_with_app_context(
 ) -> ExecutionContext {
     let user_id = UserId::new(user_id.to_string());
     let base_session = app_context.base_session_context();
-    ExecutionContext::new(
-        user_id,
-        role,
-        base_session,
-    )
+    ExecutionContext::new(user_id, role, base_session)
 }
 
 /// Setup: Create a test table and insert sample data
@@ -93,11 +93,7 @@ async fn setup_test_table(
 ) -> Result<(), String> {
     // Create a namespace
     executor
-        .execute(
-            "CREATE NAMESPACE test_ns",
-            exec_ctx,
-            vec![],
-        )
+        .execute("CREATE NAMESPACE test_ns", exec_ctx, vec![])
         .await
         .map_err(|e| format!("Failed to create namespace: {}", e))?;
 
@@ -138,11 +134,7 @@ async fn setup_test_table(
 #[ntest::timeout(60000)]
 async fn test_simple_cte() {
     let (app_context, _temp_dir) = create_test_app_context().await;
-    let exec_ctx = create_exec_context_with_app_context(
-        app_context.clone(),
-        "u_admin",
-        Role::Dba,
-    );
+    let exec_ctx = create_exec_context_with_app_context(app_context.clone(), "u_admin", Role::Dba);
     let executor = SqlExecutor::new(app_context.clone(), false);
 
     // Setup test data
@@ -181,11 +173,7 @@ async fn test_simple_cte() {
 #[ntest::timeout(60000)]
 async fn test_cte_with_aggregation() {
     let (app_context, _temp_dir) = create_test_app_context().await;
-    let exec_ctx = create_exec_context_with_app_context(
-        app_context.clone(),
-        "u_admin",
-        Role::Dba,
-    );
+    let exec_ctx = create_exec_context_with_app_context(app_context.clone(), "u_admin", Role::Dba);
     let executor = SqlExecutor::new(app_context.clone(), false);
 
     // Setup test data
@@ -231,11 +219,7 @@ async fn test_cte_with_aggregation() {
 #[ntest::timeout(60000)]
 async fn test_multiple_ctes() {
     let (app_context, _temp_dir) = create_test_app_context().await;
-    let exec_ctx = create_exec_context_with_app_context(
-        app_context.clone(),
-        "u_admin",
-        Role::Dba,
-    );
+    let exec_ctx = create_exec_context_with_app_context(app_context.clone(), "u_admin", Role::Dba);
     let executor = SqlExecutor::new(app_context.clone(), false);
 
     // Setup test data
@@ -283,11 +267,7 @@ async fn test_multiple_ctes() {
 #[ntest::timeout(60000)]
 async fn test_chained_ctes() {
     let (app_context, _temp_dir) = create_test_app_context().await;
-    let exec_ctx = create_exec_context_with_app_context(
-        app_context.clone(),
-        "u_admin",
-        Role::Dba,
-    );
+    let exec_ctx = create_exec_context_with_app_context(app_context.clone(), "u_admin", Role::Dba);
     let executor = SqlExecutor::new(app_context.clone(), false);
 
     // Setup test data
@@ -330,16 +310,11 @@ async fn test_chained_ctes() {
 // CTE WITH FILTERING AND ORDERING TESTS
 // ============================================================================
 
-
 #[tokio::test]
 #[ntest::timeout(60000)]
 async fn test_cte_with_where_clause() {
     let (app_context, _temp_dir) = create_test_app_context().await;
-    let exec_ctx = create_exec_context_with_app_context(
-        app_context.clone(),
-        "u_admin",
-        Role::Dba,
-    );
+    let exec_ctx = create_exec_context_with_app_context(app_context.clone(), "u_admin", Role::Dba);
     let executor = SqlExecutor::new(app_context.clone(), false);
 
     // Setup test data
@@ -380,11 +355,7 @@ async fn test_cte_with_where_clause() {
 #[ntest::timeout(60000)]
 async fn test_cte_with_limit() {
     let (app_context, _temp_dir) = create_test_app_context().await;
-    let exec_ctx = create_exec_context_with_app_context(
-        app_context.clone(),
-        "u_admin",
-        Role::Dba,
-    );
+    let exec_ctx = create_exec_context_with_app_context(app_context.clone(), "u_admin", Role::Dba);
     let executor = SqlExecutor::new(app_context.clone(), false);
 
     // Setup test data
@@ -423,16 +394,11 @@ async fn test_cte_with_limit() {
 // ERROR HANDLING TESTS
 // ============================================================================
 
-
 #[tokio::test]
 #[ntest::timeout(60000)]
 async fn test_cte_syntax_error() {
     let (app_context, _temp_dir) = create_test_app_context().await;
-    let exec_ctx = create_exec_context_with_app_context(
-        app_context.clone(),
-        "u_admin",
-        Role::Dba,
-    );
+    let exec_ctx = create_exec_context_with_app_context(app_context.clone(), "u_admin", Role::Dba);
     let executor = SqlExecutor::new(app_context.clone(), false);
 
     // Setup test data
@@ -461,11 +427,7 @@ async fn test_cte_syntax_error() {
 #[ntest::timeout(60000)]
 async fn test_cte_undefined_table() {
     let (app_context, _temp_dir) = create_test_app_context().await;
-    let exec_ctx = create_exec_context_with_app_context(
-        app_context.clone(),
-        "u_admin",
-        Role::Dba,
-    );
+    let exec_ctx = create_exec_context_with_app_context(app_context.clone(), "u_admin", Role::Dba);
     let executor = SqlExecutor::new(app_context.clone(), false);
 
     // No setup - testing undefined table

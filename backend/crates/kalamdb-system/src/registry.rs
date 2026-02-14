@@ -7,22 +7,30 @@
 //! a single struct for cleaner AppContext API.
 
 use super::providers::{
-    AuditLogsTableProvider, AuditLogsTableSchema, JobNodesTableProvider, JobNodesTableSchema,
-    JobsTableProvider, JobsTableSchema, LiveQueriesTableProvider, LiveQueriesTableSchema,
-    ManifestTableProvider, ManifestTableSchema, NamespacesTableProvider, NamespacesTableSchema,
-    SchemasTableProvider, SchemasTableSchema, StoragesTableProvider, StoragesTableSchema,
-    TopicOffsetsTableProvider, TopicOffsetsTableSchema, TopicsTableProvider, TopicsTableSchema,
-    UsersTableProvider, UsersTableSchema,
+    AuditLogEntry, AuditLogsTableProvider, JobNodesTableProvider, JobsTableProvider,
+    LiveQueriesTableProvider, ManifestTableProvider, NamespacesTableProvider, SchemasTableProvider,
+    StoragesTableProvider, TopicOffsetsTableProvider,
+    TopicsTableProvider, UsersTableProvider,
 };
+use super::providers::manifest::manifest_table_definition;
+use super::providers::job_nodes::models::JobNode;
+use super::providers::jobs::models::Job;
+use super::providers::live_queries::models::LiveQuery;
+use super::providers::namespaces::models::Namespace;
+use super::providers::storages::models::Storage;
+use super::providers::tables::schemas_table_definition;
+use super::providers::topic_offsets::models::TopicOffset;
+use super::providers::topics::models::Topic;
+use super::providers::users::models::User;
 // SchemaRegistry will be passed as Arc parameter from kalamdb-core
-use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::TableProvider;
-use kalamdb_commons::{models::TableId, schemas::TableDefinition, SystemTable};
+use kalamdb_commons::schemas::{TableDefinition, TableType};
+use kalamdb_commons::SystemTable;
 use kalamdb_session::secure_provider;
 use kalamdb_store::StorageBackend;
 use once_cell::sync::OnceCell;
 use parking_lot::RwLock;
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::sync::Arc;
 
 /// Registry of all system table providers
@@ -57,11 +65,8 @@ pub struct SystemTablesRegistry {
     tables: RwLock<Option<Arc<dyn TableProvider + Send + Sync>>>,
     columns: RwLock<Option<Arc<dyn TableProvider + Send + Sync>>>,
 
-    // Cached persisted system table definitions
-    system_definitions: OnceCell<HashMap<TableId, Arc<TableDefinition>>>,
-
-    // Cached Arrow schemas for persisted system tables
-    system_schemas: OnceCell<HashMap<TableId, SchemaRef>>,
+    // Expected in-code system table definitions used only for startup reconciliation.
+    expected_system_definitions: OnceCell<Vec<Arc<TableDefinition>>>,
 }
 
 impl SystemTablesRegistry {
@@ -109,64 +114,30 @@ impl SystemTablesRegistry {
             tables: RwLock::new(None),      // Initialized via set_tables_view_provider()
             columns: RwLock::new(None),     // Initialized via set_columns_view_provider()
 
-            system_definitions: OnceCell::new(),
-            system_schemas: OnceCell::new(),
+            expected_system_definitions: OnceCell::new(),
         }
     }
 
-    fn definitions_map(&self) -> &HashMap<TableId, Arc<TableDefinition>> {
-        self.system_definitions.get_or_init(|| {
-            let defs: Vec<(SystemTable, TableDefinition)> = vec![
-                (SystemTable::Users, UsersTableSchema::definition()),
-                (SystemTable::Namespaces, NamespacesTableSchema::definition()),
-                (SystemTable::Schemas, SchemasTableSchema::definition()),
-                (SystemTable::Storages, StoragesTableSchema::definition()),
-                (SystemTable::LiveQueries, LiveQueriesTableSchema::definition()),
-                (SystemTable::Jobs, JobsTableSchema::definition()),
-                (SystemTable::JobNodes, JobNodesTableSchema::definition()),
-                (SystemTable::AuditLog, AuditLogsTableSchema::definition()),
-                (SystemTable::Manifest, ManifestTableSchema::definition()),
-                (SystemTable::Topics, TopicsTableSchema::definition()),
-                (SystemTable::TopicOffsets, TopicOffsetsTableSchema::definition()),
-            ];
+    pub fn expected_system_table_definitions(&self) -> Vec<Arc<TableDefinition>> {
+        self.expected_system_definitions
+            .get_or_init(|| {
+                let defs: Vec<(SystemTable, TableDefinition)> = vec![
+                    (SystemTable::Users, User::definition()),
+                    (SystemTable::Namespaces, Namespace::definition()),
+                    (SystemTable::Schemas, schemas_table_definition()),
+                    (SystemTable::Storages, Storage::definition()),
+                    (SystemTable::LiveQueries, LiveQuery::definition()),
+                    (SystemTable::Jobs, Job::definition()),
+                    (SystemTable::JobNodes, JobNode::definition()),
+                    (SystemTable::AuditLog, AuditLogEntry::definition()),
+                    (SystemTable::Manifest, manifest_table_definition()),
+                    (SystemTable::Topics, Topic::definition()),
+                    (SystemTable::TopicOffsets, TopicOffset::definition()),
+                ];
 
-            defs.into_iter()
-                .map(|(table, definition)| (table.table_id(), Arc::new(definition)))
-                .collect()
-        })
-    }
-
-    pub fn get_system_definition(&self, table_id: &TableId) -> Option<Arc<TableDefinition>> {
-        self.definitions_map().get(table_id).cloned()
-    }
-
-    pub fn all_system_table_definitions_cached(&self) -> Vec<Arc<TableDefinition>> {
-        self.definitions_map().values().cloned().collect()
-    }
-
-    fn schemas_map(&self) -> &HashMap<TableId, SchemaRef> {
-        self.system_schemas.get_or_init(|| {
-            vec![
-                (SystemTable::Users, UsersTableSchema::schema()),
-                (SystemTable::Namespaces, NamespacesTableSchema::schema()),
-                (SystemTable::Schemas, SchemasTableSchema::schema()),
-                (SystemTable::Storages, StoragesTableSchema::schema()),
-                (SystemTable::LiveQueries, LiveQueriesTableSchema::schema()),
-                (SystemTable::Jobs, JobsTableSchema::schema()),
-                (SystemTable::JobNodes, JobNodesTableSchema::schema()),
-                (SystemTable::AuditLog, AuditLogsTableSchema::schema()),
-                (SystemTable::Manifest, ManifestTableSchema::schema()),
-                (SystemTable::Topics, TopicsTableSchema::schema()),
-                (SystemTable::TopicOffsets, TopicOffsetsTableSchema::schema()),
-            ]
-            .into_iter()
-            .map(|(table, schema)| (table.table_id(), schema))
-            .collect()
-        })
-    }
-
-    pub fn get_system_schema(&self, table_id: &TableId) -> Option<SchemaRef> {
-        self.schemas_map().get(table_id).cloned()
+                defs.into_iter().map(|(_, definition)| Arc::new(definition)).collect()
+            })
+            .clone()
     }
 
     // ===== Getter Methods =====
@@ -311,61 +282,36 @@ impl SystemTablesRegistry {
     /// All providers are wrapped with `SecuredSystemTableProvider` for defense-in-depth
     /// permission checking at the scan() level.
     pub fn all_system_providers(&self) -> Vec<(SystemTable, Arc<dyn TableProvider>)> {
+        let persisted_tables = self.persisted_system_tables();
+
         // Helper to wrap providers with security
         let wrap =
             |table: SystemTable, provider: Arc<dyn TableProvider>| -> Arc<dyn TableProvider> {
                 secure_provider(provider, table.table_id()) as Arc<dyn TableProvider>
             };
 
-        let mut providers = vec![
-            (
-                SystemTable::Users,
-                wrap(SystemTable::Users, self.users.clone() as Arc<dyn TableProvider>),
-            ),
-            (
-                SystemTable::Jobs,
-                wrap(SystemTable::Jobs, self.jobs.clone() as Arc<dyn TableProvider>),
-            ),
-            (
-                SystemTable::JobNodes,
-                wrap(SystemTable::JobNodes, self.job_nodes.clone() as Arc<dyn TableProvider>),
-            ),
-            (
-                SystemTable::Namespaces,
-                wrap(SystemTable::Namespaces, self.namespaces.clone() as Arc<dyn TableProvider>),
-            ),
-            (
-                SystemTable::Storages,
-                wrap(SystemTable::Storages, self.storages.clone() as Arc<dyn TableProvider>),
-            ),
-            (
-                SystemTable::LiveQueries,
-                wrap(SystemTable::LiveQueries, self.live_queries.clone() as Arc<dyn TableProvider>),
-            ),
-            (
-                SystemTable::Schemas,
-                wrap(SystemTable::Schemas, self.schemas.clone() as Arc<dyn TableProvider>),
-            ),
-            (
-                SystemTable::AuditLog,
-                wrap(SystemTable::AuditLog, self.audit_logs.clone() as Arc<dyn TableProvider>),
-            ),
-            (
-                SystemTable::Manifest,
-                wrap(SystemTable::Manifest, self.manifest.clone() as Arc<dyn TableProvider>),
-            ),
-            (
-                SystemTable::Topics,
-                wrap(SystemTable::Topics, self.topics.clone() as Arc<dyn TableProvider>),
-            ),
-            (
-                SystemTable::TopicOffsets,
-                wrap(
-                    SystemTable::TopicOffsets,
-                    self.topic_offsets.clone() as Arc<dyn TableProvider>,
-                ),
-            ),
-        ];
+        let mut providers = Vec::new();
+        for table in [
+            SystemTable::Users,
+            SystemTable::Jobs,
+            SystemTable::JobNodes,
+            SystemTable::Namespaces,
+            SystemTable::Storages,
+            SystemTable::LiveQueries,
+            SystemTable::Schemas,
+            SystemTable::AuditLog,
+            SystemTable::Manifest,
+            SystemTable::Topics,
+            SystemTable::TopicOffsets,
+        ] {
+            if !persisted_tables.contains(&table) {
+                continue;
+            }
+
+            if let Some(provider) = self.provider_for_system_table(table) {
+                providers.push((table, wrap(table, provider)));
+            }
+        }
 
         // Add stats if initialized (virtual view from kalamdb-core)
         if let Some(stats) = self.stats.read().clone() {
@@ -424,5 +370,59 @@ impl SystemTablesRegistry {
         }
 
         providers
+    }
+
+    /// Returns a secured provider for a persisted system table.
+    ///
+    /// This is the canonical provider lookup used by SchemaRegistry cache binding.
+    pub fn persisted_table_provider(
+        &self,
+        table: SystemTable,
+    ) -> Option<Arc<dyn TableProvider + Send + Sync>> {
+        if table.is_view() {
+            return None;
+        }
+
+        let persisted_tables = self.persisted_system_tables();
+        if !persisted_tables.contains(&table) {
+            return None;
+        }
+
+        let provider = self.provider_for_system_table(table)?;
+        Some(secure_provider(provider, table.table_id()) as Arc<dyn TableProvider + Send + Sync>)
+    }
+
+    fn provider_for_system_table(&self, table: SystemTable) -> Option<Arc<dyn TableProvider>> {
+        match table {
+            SystemTable::Users => Some(self.users.clone() as Arc<dyn TableProvider>),
+            SystemTable::Jobs => Some(self.jobs.clone() as Arc<dyn TableProvider>),
+            SystemTable::JobNodes => Some(self.job_nodes.clone() as Arc<dyn TableProvider>),
+            SystemTable::Namespaces => Some(self.namespaces.clone() as Arc<dyn TableProvider>),
+            SystemTable::Storages => Some(self.storages.clone() as Arc<dyn TableProvider>),
+            SystemTable::LiveQueries => Some(self.live_queries.clone() as Arc<dyn TableProvider>),
+            SystemTable::Schemas => Some(self.schemas.clone() as Arc<dyn TableProvider>),
+            SystemTable::AuditLog => Some(self.audit_logs.clone() as Arc<dyn TableProvider>),
+            SystemTable::Manifest => Some(self.manifest.clone() as Arc<dyn TableProvider>),
+            SystemTable::Topics => Some(self.topics.clone() as Arc<dyn TableProvider>),
+            SystemTable::TopicOffsets => Some(self.topic_offsets.clone() as Arc<dyn TableProvider>),
+            _ => None,
+        }
+    }
+
+    fn persisted_system_tables(&self) -> HashSet<SystemTable> {
+        let Ok(definitions) = self.schemas.list_tables() else {
+            log::error!(
+                "SystemTablesRegistry: failed reading persisted schemas from system.schemas"
+            );
+            return HashSet::new();
+        };
+
+        definitions
+            .into_iter()
+            .filter(|def| def.table_type == TableType::System)
+            .filter(|def| def.namespace_id.as_str() == "system")
+            .filter_map(|def| SystemTable::from_name(def.table_name.as_str()).ok())
+            .filter(|table| !table.is_view())
+            .collect()
     }
 }

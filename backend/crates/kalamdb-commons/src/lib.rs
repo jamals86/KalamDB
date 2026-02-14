@@ -60,8 +60,9 @@ extern crate self as kalamdb_commons;
 // Re-export commonly used types at crate root
 pub use constants::{MAX_SQL_QUERY_LENGTH, RESERVED_NAMESPACE_NAMES};
 pub use conversions::{
-    as_f64, encode_pk_value, estimate_scalar_value_size, scalar_to_f64, scalar_to_i64,
-    scalar_to_pk_string, scalar_value_to_bytes,
+    as_f64, encode_pk_value, estimate_scalar_value_size, json_value_to_scalar_for_column,
+    scalar_to_f64, scalar_to_i64, scalar_to_json_for_column, scalar_to_pk_string,
+    scalar_value_to_bytes,
 };
 pub use errors::{CommonError, Result};
 pub use helpers::arrow_utils;

@@ -1,0 +1,8 @@
+namespace kalamdb.serialization.system;
+
+table AuditLogEntryPayload {
+  payload: [ubyte];
+}
+
+root_type AuditLogEntryPayload;
+file_identifier "KSAL";

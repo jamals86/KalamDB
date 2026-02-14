@@ -17,9 +17,9 @@ use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::trace::SdkTracerProvider;
 use opentelemetry_sdk::Resource;
 use tracing_subscriber::filter::filter_fn;
+use tracing_subscriber::fmt;
 use tracing_subscriber::fmt::format::{FmtSpan, Format};
 use tracing_subscriber::fmt::time::SystemTime;
-use tracing_subscriber::fmt;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Layer};
@@ -200,9 +200,8 @@ pub fn init_logging(
                 )
         });
 
-        let otlp_layer = tracing_opentelemetry::layer()
-            .with_tracer(tracer)
-            .with_filter(otlp_filter);
+        let otlp_layer =
+            tracing_opentelemetry::layer().with_tracer(tracer).with_filter(otlp_filter);
 
         let result = tracing_subscriber::registry()
             .with(console_layer)
@@ -211,10 +210,7 @@ pub fn init_logging(
             .try_init();
         (result, Some(tracer_provider))
     } else {
-        let result = tracing_subscriber::registry()
-            .with(console_layer)
-            .with(file_layer)
-            .try_init();
+        let result = tracing_subscriber::registry().with(console_layer).with(file_layer).try_init();
         (result, None)
     };
 
@@ -230,7 +226,12 @@ pub fn init_logging(
                 }
             }
 
-            tracing::trace!("Logging initialized: level={}, console={}, file={}", level, log_to_console, file_path);
+            tracing::trace!(
+                "Logging initialized: level={}, console={}, file={}",
+                level,
+                log_to_console,
+                file_path
+            );
         },
         Err(e) => {
             if let Some(provider) = init_result.1 {
@@ -239,8 +240,10 @@ pub fn init_logging(
             // Subscriber already initialized - this can happen in test contexts
             // Continue with existing subscriber, but file logging won't be available
             eprintln!("⚠️  Note: Tracing subscriber already initialized: {}", e);
-            eprintln!("   Using existing logging configuration (file logging may not be available).");
-        }
+            eprintln!(
+                "   Using existing logging configuration (file logging may not be available)."
+            );
+        },
     }
 
     Ok(())
@@ -294,9 +297,7 @@ fn build_otlp_provider(otlp: &OtlpSettings) -> anyhow::Result<SdkTracerProvider>
         },
     };
 
-    let resource = Resource::builder()
-        .with_service_name(otlp.service_name.clone())
-        .build();
+    let resource = Resource::builder().with_service_name(otlp.service_name.clone()).build();
 
     let tracer_provider = SdkTracerProvider::builder()
         .with_resource(resource)

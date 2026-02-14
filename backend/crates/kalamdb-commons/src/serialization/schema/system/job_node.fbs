@@ -1,0 +1,8 @@
+namespace kalamdb.serialization.system;
+
+table JobNodePayload {
+  payload: [ubyte];
+}
+
+root_type JobNodePayload;
+file_identifier "KSJN";

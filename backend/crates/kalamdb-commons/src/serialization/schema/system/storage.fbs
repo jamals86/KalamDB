@@ -1,0 +1,8 @@
+namespace kalamdb.serialization.system;
+
+table StoragePayload {
+  payload: [ubyte];
+}
+
+root_type StoragePayload;
+file_identifier "KSST";

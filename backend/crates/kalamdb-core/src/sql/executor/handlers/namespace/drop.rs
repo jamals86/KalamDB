@@ -77,9 +77,11 @@ impl TypedStatementHandler<DropNamespaceStatement> for DropNamespaceHandler {
         for table in tables_in_namespace {
             let table_id = TableId::new(table.namespace_id.clone(), table.table_name.clone());
 
-            self.app_context.applier().drop_table(table_id.clone()).await.map_err(|e| {
-                KalamDbError::ExecutionError(format!("DROP TABLE failed: {}", e))
-            })?;
+            self.app_context
+                .applier()
+                .drop_table(table_id.clone())
+                .await
+                .map_err(|e| KalamDbError::ExecutionError(format!("DROP TABLE failed: {}", e)))?;
 
             use crate::sql::executor::helpers::audit;
             let audit_entry = audit::log_ddl_operation(

@@ -144,10 +144,8 @@ impl TableProviderCore {
         };
 
         // Cache TableId (constructed once, then O(1) access)
-        let table_id = TableId::from_strings(
-            table_def.namespace_id.as_str(),
-            table_def.table_name.as_str(),
-        );
+        let table_id =
+            TableId::from_strings(table_def.namespace_id.as_str(), table_def.table_name.as_str());
 
         Self {
             table_def,

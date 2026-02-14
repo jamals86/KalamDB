@@ -68,10 +68,7 @@ impl UserTableProvider {
     /// # Arguments
     /// * `core` - Shared core with services, schema, pk_name, etc.
     /// * `store` - IndexedEntityStore with PK index for this table
-    pub fn new(
-        core: Arc<TableProviderCore>,
-        store: Arc<UserTableIndexedStore>,
-    ) -> Self {
+    pub fn new(core: Arc<TableProviderCore>, store: Arc<UserTableIndexedStore>) -> Self {
         let pk_index = UserTablePkIndex::new(core.table_id(), core.primary_key_field_name());
 
         if log::log_enabled!(log::Level::Debug) {
@@ -426,11 +423,22 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             // Build complete row including system columns (_seq, _deleted)
             let row = Self::build_notification_row(&entity);
             if has_topics {
-                self.core.publish_to_topics(&table_id, kalamdb_commons::models::TopicOp::Insert, &row, Some(&user_id)).await;
+                self.core
+                    .publish_to_topics(
+                        &table_id,
+                        kalamdb_commons::models::TopicOp::Insert,
+                        &row,
+                        Some(&user_id),
+                    )
+                    .await;
             }
             if has_live_subs {
                 let notification = ChangeNotification::insert(table_id.clone(), row);
-                notification_service.notify_table_change(Some(user_id.clone()), table_id, notification);
+                notification_service.notify_table_change(
+                    Some(user_id.clone()),
+                    table_id,
+                    notification,
+                );
             }
         }
 
@@ -473,8 +481,11 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         })?;
 
         // VALIDATE NOT NULL CONSTRAINTS (per ADR-016: must occur before any RocksDB write)
-        crate::utils::datafusion_dml::validate_not_null_with_set(self.core.non_null_columns(), &coerced_rows)
-            .map_err(|e| KalamDbError::ConstraintViolation(e.to_string()))?;
+        crate::utils::datafusion_dml::validate_not_null_with_set(
+            self.core.non_null_columns(),
+            &coerced_rows,
+        )
+        .map_err(|e| KalamDbError::ConstraintViolation(e.to_string()))?;
 
         let row_count = coerced_rows.len();
 
@@ -593,7 +604,14 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
                 // Build complete row including system columns (_seq, _deleted)
                 let row = Self::build_notification_row(entity);
                 if has_topics {
-                    self.core.publish_to_topics(&table_id, kalamdb_commons::models::TopicOp::Insert, &row, Some(&user_id)).await;
+                    self.core
+                        .publish_to_topics(
+                            &table_id,
+                            kalamdb_commons::models::TopicOp::Insert,
+                            &row,
+                            Some(&user_id),
+                        )
+                        .await;
                 }
                 if has_live_subs {
                     let notification = ChangeNotification::insert(table_id.clone(), row);
@@ -676,25 +694,24 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
 
         // Find latest resolved row for this PK under same user
         // First try hot storage (O(1) via PK index), then fall back to cold storage (Parquet scan)
-        let (_latest_key, latest_row) = if let Some(result) =
-            self.find_by_pk(user_id, &pk_value_scalar)?
-        {
-            result
-        } else {
-            // Not in hot storage, check cold storage
-            log::debug!(
+        let (_latest_key, latest_row) =
+            if let Some(result) = self.find_by_pk(user_id, &pk_value_scalar)? {
+                result
+            } else {
+                // Not in hot storage, check cold storage
+                log::debug!(
                 "[UPDATE] PK {} not found in hot storage, querying cold storage for user={}, pk={}",
                 pk_name,
                 user_id.as_str(),
                 pk_value
             );
-            base::find_row_by_pk(self, Some(user_id), pk_value).await?.ok_or_else(|| {
-                KalamDbError::NotFound(format!(
-                    "Row with {}={} not found (checked both hot and cold storage)",
-                    pk_name, pk_value
-                ))
-            })?
-        };
+                base::find_row_by_pk(self, Some(user_id), pk_value).await?.ok_or_else(|| {
+                    KalamDbError::NotFound(format!(
+                        "Row with {}={} not found (checked both hot and cold storage)",
+                        pk_name, pk_value
+                    ))
+                })?
+            };
 
         // Merge updates onto latest
         let mut merged = latest_row.fields.values.clone();
@@ -705,8 +722,11 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         let new_fields = Row::new(merged);
 
         // VALIDATE NOT NULL CONSTRAINTS on the merged row (per ADR-016)
-        crate::utils::datafusion_dml::validate_not_null_with_set(self.core.non_null_columns(), &[new_fields.clone()])
-            .map_err(|e| KalamDbError::ConstraintViolation(e.to_string()))?;
+        crate::utils::datafusion_dml::validate_not_null_with_set(
+            self.core.non_null_columns(),
+            &[new_fields.clone()],
+        )
+        .map_err(|e| KalamDbError::ConstraintViolation(e.to_string()))?;
 
         let sys_cols = self.core.services.system_columns.clone();
         let seq_id = sys_cols.generate_seq_id().map_err(|e| {
@@ -749,12 +769,23 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         if has_topics || has_live_subs {
             let new_row = Self::build_notification_row(&entity);
             if has_topics {
-                self.core.publish_to_topics(&table_id, kalamdb_commons::models::TopicOp::Update, &new_row, Some(&user_id)).await;
+                self.core
+                    .publish_to_topics(
+                        &table_id,
+                        kalamdb_commons::models::TopicOp::Update,
+                        &new_row,
+                        Some(&user_id),
+                    )
+                    .await;
             }
             if has_live_subs {
                 let old_row = Self::build_notification_row(&latest_row);
                 let notification = ChangeNotification::update(table_id.clone(), old_row, new_row);
-                notification_service.notify_table_change(Some(user_id.clone()), table_id, notification);
+                notification_service.notify_table_change(
+                    Some(user_id.clone()),
+                    table_id,
+                    notification,
+                );
             }
         }
         Ok(row_key)
@@ -878,11 +909,22 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             // Provide tombstone entity with system columns for filter matching
             let row = Self::build_notification_row(&entity);
             if has_topics {
-                self.core.publish_to_topics(&table_id, kalamdb_commons::models::TopicOp::Delete, &row, Some(&user_id)).await;
+                self.core
+                    .publish_to_topics(
+                        &table_id,
+                        kalamdb_commons::models::TopicOp::Delete,
+                        &row,
+                        Some(&user_id),
+                    )
+                    .await;
             }
             if has_live_subs {
                 let notification = ChangeNotification::delete_soft(table_id.clone(), row);
-                notification_service.notify_table_change(Some(user_id.clone()), table_id, notification);
+                notification_service.notify_table_change(
+                    Some(user_id.clone()),
+                    table_id,
+                    notification,
+                );
             }
         }
         Ok(true)
@@ -1106,11 +1148,15 @@ impl TableProvider for UserTableProvider {
 
         // Check if this is a client read that requires leader
         // Skip check for internal reads (jobs, live query notifications, etc.)
-        if read_context.requires_leader() && self.core.services.cluster_coordinator.is_cluster_mode().await {
-            let is_leader = self.core.services.cluster_coordinator.is_leader_for_user(user_id).await;
+        if read_context.requires_leader()
+            && self.core.services.cluster_coordinator.is_cluster_mode().await
+        {
+            let is_leader =
+                self.core.services.cluster_coordinator.is_leader_for_user(user_id).await;
             if !is_leader {
                 // Get leader hint for client redirection
-                let leader_addr = self.core.services.cluster_coordinator.leader_addr_for_user(user_id).await;
+                let leader_addr =
+                    self.core.services.cluster_coordinator.leader_addr_for_user(user_id).await;
                 return Err(DataFusionError::Execution(format!(
                     "NOT_LEADER: This node is not the leader for user {}. Leader: {:?}",
                     user_id, leader_addr

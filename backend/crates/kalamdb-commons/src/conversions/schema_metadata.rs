@@ -33,10 +33,7 @@ pub fn with_kalam_data_type_metadata(mut field: Field, kalam_type: &KalamDataTyp
 
 /// Read compact column definition flags from Arrow field metadata.
 pub fn read_kalam_column_def_metadata(field: &Field) -> Option<String> {
-    field
-        .metadata()
-        .get(KALAM_COLUMN_DEF_METADATA_KEY)
-        .map(|s| s.to_string())
+    field.metadata().get(KALAM_COLUMN_DEF_METADATA_KEY).map(|s| s.to_string())
 }
 
 /// Attach compact column definition flags to an Arrow field.
@@ -44,10 +41,7 @@ pub fn read_kalam_column_def_metadata(field: &Field) -> Option<String> {
 /// Pass values like `"pk,nonnull,unique"` or `"nonnull"`.
 pub fn with_kalam_column_def_metadata(mut field: Field, column_def: &str) -> Field {
     let mut metadata = field.metadata().clone();
-    metadata.insert(
-        KALAM_COLUMN_DEF_METADATA_KEY.to_string(),
-        column_def.to_string(),
-    );
+    metadata.insert(KALAM_COLUMN_DEF_METADATA_KEY.to_string(), column_def.to_string());
     field = field.with_metadata(metadata);
     field
 }

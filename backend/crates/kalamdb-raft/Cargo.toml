@@ -26,6 +26,7 @@ prost = { workspace = true }
 # Serialization
 serde = { workspace = true }
 bincode = { workspace = true }
+flexbuffers = { workspace = true }
 
 # Async
 tokio = { workspace = true }

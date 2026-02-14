@@ -17,6 +17,8 @@ use datafusion::common::DataFusionError;
 use datafusion::datasource::{MemTable, TableProvider};
 use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
 use datafusion::physical_plan::ExecutionPlan;
+use kalamdb_commons::conversions::json_rows_to_arrow_batch;
+use kalamdb_commons::models::rows::{Row, SystemTableRow};
 use kalamdb_commons::{KSerializable, StorageKey};
 use kalamdb_store::{EntityStore, IndexedEntityStore};
 use tracing::Instrument;
@@ -31,7 +33,6 @@ pub type DataFusionResult<T> = Result<T, DataFusionError>;
 /// Providers build this once and reuse it across:
 /// - `SystemTableScan` implementation (table_name, schema, key parsing)
 /// - `TableProvider` implementation (schema)
-/// - `SystemTableProviderExt` implementation (table_name, schema)
 #[derive(Clone, Copy)]
 pub struct IndexedProviderDefinition<K> {
     pub table_name: &'static str,
@@ -54,6 +55,19 @@ pub fn unsupported_filter_pushdown(
     Ok(vec![TableProviderFilterPushDown::Unsupported; filters.len()])
 }
 
+/// Shared conversion path for system table scan serialization.
+///
+/// Converts `SystemTableRow` values into Arrow using the same ScalarValue->Arrow
+/// coercion path used by shared/user tables.
+pub fn system_rows_to_batch(
+    schema: &arrow::datatypes::SchemaRef,
+    rows: Vec<SystemTableRow>,
+) -> Result<RecordBatch, SystemError> {
+    let rows: Vec<Row> = rows.into_iter().map(|row| row.fields).collect();
+    json_rows_to_arrow_batch(schema, rows)
+        .map_err(|e| SystemError::SerializationError(format!("system rows to batch failed: {e}")))
+}
+
 /// Trait for system table providers with unified scan logic.
 ///
 /// This trait provides a common implementation for the `scan()` method
@@ -71,7 +85,7 @@ pub fn unsupported_filter_pushdown(
 ///     fn store(&self) -> &IndexedEntityStore<UserId, User> { &self.store }
 ///     fn table_name(&self) -> &str { "system.users" }
 ///     fn primary_key_column(&self) -> &str { "user_id" }
-///     fn schema(&self) -> SchemaRef { UsersTableSchema::schema() }
+///     fn schema(&self) -> SchemaRef { Self::schema() }
 ///     fn create_batch_from_iter(&self, iter: impl Iterator<Item = (UserId, User)>) -> Result<RecordBatch, SystemError> { ... }
 /// }
 /// ```
@@ -379,8 +393,7 @@ where
 
     /// Scan all entries and return as RecordBatch (full table scan).
     ///
-    /// Used as fallback when `scan_to_batch` is not overridden,
-    /// and by `SystemTableProviderExt::load_batch()`.
+    /// Used as fallback when `scan_to_batch` is not overridden.
     fn scan_all_to_batch(&self) -> Result<RecordBatch, SystemError>;
 
     /// Scan entries with optional filter and limit support.

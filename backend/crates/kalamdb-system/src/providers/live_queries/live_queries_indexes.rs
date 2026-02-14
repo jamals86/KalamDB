@@ -19,6 +19,8 @@
 
 use crate::providers::live_queries::models::LiveQuery;
 use crate::StoragePartition;
+use crate::system_row_mapper::system_row_to_model;
+use kalamdb_commons::models::rows::SystemTableRow;
 use kalamdb_commons::storage::Partition;
 use kalamdb_commons::{LiveQueryId, TableId};
 use kalamdb_store::IndexDefinition;
@@ -36,7 +38,7 @@ pub const TABLE_ID_INDEX: usize = 0;
 /// - Used for broadcasting changes to subscribers
 pub struct TableIdIndex;
 
-impl IndexDefinition<LiveQueryId, LiveQuery> for TableIdIndex {
+impl IndexDefinition<LiveQueryId, SystemTableRow> for TableIdIndex {
     fn partition(&self) -> Partition {
         Partition::new(StoragePartition::SystemLiveQueriesTableIdx.name())
     }
@@ -45,7 +47,8 @@ impl IndexDefinition<LiveQueryId, LiveQuery> for TableIdIndex {
         vec!["namespace_id", "table_name"]
     }
 
-    fn extract_key(&self, primary_key: &LiveQueryId, lq: &LiveQuery) -> Option<Vec<u8>> {
+    fn extract_key(&self, primary_key: &LiveQueryId, row: &SystemTableRow) -> Option<Vec<u8>> {
+        let lq: LiveQuery = system_row_to_model(row, &LiveQuery::definition()).ok()?;
         // Format: namespace_id:table_name + null separator + primary key bytes
         let table_id = TableId::new(lq.namespace_id.clone(), lq.table_name.clone());
         let table_key = table_id.to_string(); // Uses Display impl: "namespace:table"
@@ -63,7 +66,7 @@ impl IndexDefinition<LiveQueryId, LiveQuery> for TableIdIndex {
 }
 
 /// Create all live queries indexes (only TableIdIndex)
-pub fn create_live_queries_indexes() -> Vec<Arc<dyn IndexDefinition<LiveQueryId, LiveQuery>>> {
+pub fn create_live_queries_indexes() -> Vec<Arc<dyn IndexDefinition<LiveQueryId, SystemTableRow>>> {
     vec![Arc::new(TableIdIndex)]
 }
 
@@ -79,6 +82,7 @@ pub fn table_id_index_prefix(table_id: &TableId) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use crate::LiveQueryStatus;
+    use crate::system_row_mapper::model_to_system_row;
 
     use super::*;
     use kalamdb_commons::models::ConnectionId;
@@ -111,7 +115,8 @@ mod tests {
         let (live_id, lq) = create_test_live_query();
         let index = TableIdIndex;
 
-        let key = index.extract_key(&live_id, &lq).expect("Should extract key");
+        let row = model_to_system_row(&lq, &LiveQuery::definition()).unwrap();
+        let key = index.extract_key(&live_id, &row).expect("Should extract key");
 
         // Should start with namespace:table + null separator
         assert!(key.starts_with(b"default:messages\x00"));

@@ -15,7 +15,8 @@ use std::sync::Arc;
 /// Helper to create a simple test session with custom functions registered
 fn create_test_session() -> Arc<SessionContext> {
     // Use DataFusionSessionFactory to get a session with all custom functions registered
-    let factory = DataFusionSessionFactory::new().expect("Failed to create DataFusionSessionFactory");
+    let factory =
+        DataFusionSessionFactory::new().expect("Failed to create DataFusionSessionFactory");
     Arc::new(factory.create_session())
 }
 
@@ -346,7 +347,10 @@ async fn test_context_function_with_coalesce() {
     let exec_ctx = create_exec_context_with_user("alice", "u_alice", Role::User);
     let session = exec_ctx.create_session_with_user();
 
-    let result = session.sql("SELECT COALESCE(KDB_CURRENT_USER(), 'unknown') AS user").await.unwrap();
+    let result = session
+        .sql("SELECT COALESCE(KDB_CURRENT_USER(), 'unknown') AS user")
+        .await
+        .unwrap();
     let batches = result.collect().await.unwrap();
 
     let col = batches[0].column(0);
@@ -451,7 +455,10 @@ async fn test_current_user_empty_check() {
     let exec_ctx = create_exec_context_with_user("testuser", "u_test", Role::User);
     let session = exec_ctx.create_session_with_user();
 
-    let result = session.sql("SELECT KDB_CURRENT_USER() IS NOT NULL AS is_not_null").await.unwrap();
+    let result = session
+        .sql("SELECT KDB_CURRENT_USER() IS NOT NULL AS is_not_null")
+        .await
+        .unwrap();
     let batches = result.collect().await.unwrap();
 
     let col = batches[0].column(0);

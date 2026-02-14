@@ -6,7 +6,6 @@ use kalamdb_commons::models::{
     ids::{AuditLogId, UserId},
     UserName,
 };
-use kalamdb_commons::KSerializable;
 use kalamdb_macros::table;
 use serde::{Deserialize, Serialize};
 
@@ -112,6 +111,3 @@ pub struct AuditLogEntry {
     )]
     pub subject_user_id: Option<UserId>, // User being impersonated (AS USER operations)
 }
-
-// KSerializable implementation for EntityStore support
-impl KSerializable for AuditLogEntry {}

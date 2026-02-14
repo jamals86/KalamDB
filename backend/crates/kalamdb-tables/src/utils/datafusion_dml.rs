@@ -57,7 +57,7 @@ pub async fn collect_input_rows(
                 }
             }
             Err(e)
-        }
+        },
     }
 }
 
@@ -209,10 +209,7 @@ fn predicate_to_bool(value: ScalarValue) -> DataFusionResult<bool> {
 /// validate_not_null_constraints(&schema, &rows)?;
 /// // Safe to write to storage now - validation passed
 /// ```
-pub fn validate_not_null_constraints(
-    schema: &SchemaRef,
-    rows: &[Row],
-) -> DataFusionResult<()> {
+pub fn validate_not_null_constraints(schema: &SchemaRef, rows: &[Row]) -> DataFusionResult<()> {
     // Precompute non-nullable columns to avoid repeated checks
     let non_nullable_columns: Vec<Arc<Field>> =
         schema.fields().iter().filter(|f| !f.is_nullable()).cloned().collect();

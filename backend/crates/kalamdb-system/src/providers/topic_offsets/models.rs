@@ -2,7 +2,6 @@
 
 use kalamdb_commons::datatypes::KalamDataType;
 use kalamdb_commons::models::{ConsumerGroupId, TopicId};
-use kalamdb_commons::KSerializable;
 use kalamdb_macros::table;
 use serde::{Deserialize, Serialize};
 
@@ -107,8 +106,6 @@ impl TopicOffset {
         self.last_acked_offset + 1
     }
 }
-
-impl KSerializable for TopicOffset {}
 
 #[cfg(test)]
 mod tests {

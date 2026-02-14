@@ -5,7 +5,7 @@ use bincode::de::{BorrowDecoder, Decoder};
 use bincode::enc::Encoder;
 use bincode::error::{DecodeError, EncodeError};
 use bincode::{BorrowDecode, Decode, Encode};
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 
 use crate::models::{ConnectionId, UserId};
@@ -19,15 +19,23 @@ use crate::{encode_prefix, StorageKey};
 /// ## Memory Safety
 /// Uses a pre-computed `cached_string` to provide zero-allocation `AsRef<str>` access.
 /// This avoids the previous `Box::leak` pattern which caused memory leaks (~48MB/24h).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone)]
 pub struct LiveQueryId {
     pub user_id: UserId,
     pub connection_id: ConnectionId,
     pub subscription_id: String,
     /// Pre-computed string representation for zero-allocation AsRef<str>
     /// Computed once at construction time or after deserialization.
-    #[serde(skip)]
     cached_string: String,
+}
+
+impl Serialize for LiveQueryId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
 }
 
 // Custom bincode Encode implementation
@@ -71,16 +79,27 @@ impl<'de> Deserialize<'de> for LiveQueryId {
     where
         D: Deserializer<'de>,
     {
-        // Helper struct for deserialization (without cached_string)
         #[derive(Deserialize)]
-        struct LiveQueryIdHelper {
-            user_id: UserId,
-            connection_id: ConnectionId,
-            subscription_id: String,
+        #[serde(untagged)]
+        enum LiveQueryIdRepr {
+            String(String),
+            Struct {
+                user_id: UserId,
+                connection_id: ConnectionId,
+                subscription_id: String,
+            },
         }
 
-        let helper = LiveQueryIdHelper::deserialize(deserializer)?;
-        Ok(LiveQueryId::new(helper.user_id, helper.connection_id, helper.subscription_id))
+        match LiveQueryIdRepr::deserialize(deserializer)? {
+            LiveQueryIdRepr::String(value) => {
+                LiveQueryId::from_string(&value).map_err(serde::de::Error::custom)
+            }
+            LiveQueryIdRepr::Struct {
+                user_id,
+                connection_id,
+                subscription_id,
+            } => Ok(LiveQueryId::new(user_id, connection_id, subscription_id)),
+        }
     }
 }
 

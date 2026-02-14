@@ -18,7 +18,7 @@ KalamDB uses a multi-Raft topology (OpenRaft 0.9) to replicate metadata, jobs, u
 
 ## Command Flow (Cluster Mode)
 
-1. Handlers call the `CommandExecutor` interface. `RaftExecutor` (cluster) serializes commands with bincode (serde) and picks the target group (user shard, shared shard, or metadata group) in [backend/crates/kalamdb-raft/src/executor/raft.rs](backend/crates/kalamdb-raft/src/executor/raft.rs).
+1. Handlers call the `CommandExecutor` interface. `RaftExecutor` (cluster) serializes Raft commands/responses with FlexBuffers and picks the target group (user shard, shared shard, or metadata group) in [backend/crates/kalamdb-raft/src/executor/raft.rs](backend/crates/kalamdb-raft/src/executor/raft.rs).
 2. `RaftManager` proposes to the correct `RaftGroup`:
    - `propose_*` APIs forward to the leader if the local node is a follower via `propose_with_forward`.
    - In `ReplicationMode::All`, leaders wait for every member to apply the committed log before returning.
@@ -57,7 +57,7 @@ Defined in [backend/crates/kalamdb-raft/src/manager/raft_group.rs](backend/crate
 Implemented by `KalamRaftStorage` in [backend/crates/kalamdb-raft/src/storage/raft_store.rs](backend/crates/kalamdb-raft/src/storage/raft_store.rs).
 
 - Combined `RaftStorage` (log + state machine) with in-memory BTreeMap log, vote/commit tracking, and snapshot retention. Snapshot builder captures state machine bytes plus membership metadata; snapshots are served to lagging replicas and purge earlier logs.
-- Serialization uses bincode helpers in [backend/crates/kalamdb-raft/src/state_machine/serde_helpers.rs](backend/crates/kalamdb-raft/src/state_machine/serde_helpers.rs).
+- OpenRaft RPC/snapshot serialization continues to use bincode helpers in [backend/crates/kalamdb-raft/src/state_machine/serde_helpers.rs](backend/crates/kalamdb-raft/src/state_machine/serde_helpers.rs).
 - State machine apply runs on every node; apply errors are logged and surfaced via response payloads when possible.
 - **Current limitation**: log/state storage is in-memory; durability relies on higher layers persisting real data via appliers. Crash restart currently depends on application-level recovery.
 
@@ -81,7 +81,7 @@ Defined in [backend/crates/kalamdb-raft/src/commands](backend/crates/kalamdb-raf
 - Jobs: job creation, claim/release, status, schedules.
 - UserData: per-user DML plus live-query registrations.
 - SharedData: shared-table DML.
-Responses are serialized bincode payloads returned after apply.
+Responses are serialized FlexBuffers payloads returned after apply.
 
 ## Membership & Routing Details
 

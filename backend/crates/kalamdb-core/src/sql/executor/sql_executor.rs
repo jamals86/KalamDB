@@ -111,123 +111,125 @@ impl SqlExecutor {
         );
         // Enter the span for the entire execution
         async {
-        // Step 0: Check SQL query length to prevent DoS attacks
-        // Most legitimate queries are under 10KB, we allow up to 1MB
-        if sql.len() > kalamdb_commons::constants::MAX_SQL_QUERY_LENGTH {
-            log::warn!(
-                "❌ SQL query rejected: length {} bytes exceeds maximum {} bytes",
-                sql.len(),
-                kalamdb_commons::constants::MAX_SQL_QUERY_LENGTH
-            );
-            return Err(KalamDbError::InvalidSql(format!(
-                "SQL query too long: {} bytes (maximum {} bytes)",
-                sql.len(),
-                kalamdb_commons::constants::MAX_SQL_QUERY_LENGTH
-            )));
-        }
+            // Step 0: Check SQL query length to prevent DoS attacks
+            // Most legitimate queries are under 10KB, we allow up to 1MB
+            if sql.len() > kalamdb_commons::constants::MAX_SQL_QUERY_LENGTH {
+                log::warn!(
+                    "❌ SQL query rejected: length {} bytes exceeds maximum {} bytes",
+                    sql.len(),
+                    kalamdb_commons::constants::MAX_SQL_QUERY_LENGTH
+                );
+                return Err(KalamDbError::InvalidSql(format!(
+                    "SQL query too long: {} bytes (maximum {} bytes)",
+                    sql.len(),
+                    kalamdb_commons::constants::MAX_SQL_QUERY_LENGTH
+                )));
+            }
 
-        // Step 1: Classify, authorize, and parse statement in one pass
-        // Prioritize SELECT/DML checks as they represent 99% of queries
-        // Authorization happens before parsing for fail-fast behavior
-        let classified = SqlStatement::classify_and_parse(
-            sql,
-            &exec_ctx.default_namespace(),
-            exec_ctx.user_role(),
-        )
-        .map_err(|e| match e {
-            kalamdb_sql::classifier::StatementClassificationError::Unauthorized(msg) => {
-                KalamDbError::Unauthorized(msg)
-            },
-            kalamdb_sql::classifier::StatementClassificationError::InvalidSql {
-                sql: _,
-                message,
-            } => KalamDbError::InvalidSql(message),
-        })?;
+            // Step 1: Classify, authorize, and parse statement in one pass
+            // Prioritize SELECT/DML checks as they represent 99% of queries
+            // Authorization happens before parsing for fail-fast behavior
+            let classified = SqlStatement::classify_and_parse(
+                sql,
+                &exec_ctx.default_namespace(),
+                exec_ctx.user_role(),
+            )
+            .map_err(|e| match e {
+                kalamdb_sql::classifier::StatementClassificationError::Unauthorized(msg) => {
+                    KalamDbError::Unauthorized(msg)
+                },
+                kalamdb_sql::classifier::StatementClassificationError::InvalidSql {
+                    sql: _,
+                    message,
+                } => KalamDbError::InvalidSql(message),
+            })?;
 
-        // Record the command kind in the span
-        let command_label = format!("{:?}", classified.kind());
-        tracing::Span::current().record("command", &command_label.as_str());
+            // Record the command kind in the span
+            let command_label = format!("{:?}", classified.kind());
+            tracing::Span::current().record("command", &command_label.as_str());
 
-        // Step 2: Route based on statement type
-        let result = match classified.kind() {
-            // Hot path: SELECT queries use DataFusion
-            // Tables are already registered in base session, we just inject user_id
-            SqlStatementKind::Select => {
-                self.execute_via_datafusion(classified.as_str(), params, exec_ctx).await
-            },
+            // Step 2: Route based on statement type
+            let result = match classified.kind() {
+                // Hot path: SELECT queries use DataFusion
+                // Tables are already registered in base session, we just inject user_id
+                SqlStatementKind::Select => {
+                    self.execute_via_datafusion(classified.as_str(), params, exec_ctx).await
+                },
 
-            // DataFusion meta commands (EXPLAIN, SET, SHOW, etc.) - admin only
-            // No caching needed - these are diagnostic/config commands
-            // Authorization already checked in classifier
-            SqlStatementKind::DataFusionMetaCommand => {
-                self.execute_meta_command(sql, exec_ctx).await
-            },
+                // DataFusion meta commands (EXPLAIN, SET, SHOW, etc.) - admin only
+                // No caching needed - these are diagnostic/config commands
+                // Authorization already checked in classifier
+                SqlStatementKind::DataFusionMetaCommand => {
+                    self.execute_meta_command(sql, exec_ctx).await
+                },
 
-            // Native DataFusion DML path (provider insert/update/delete hooks)
-            SqlStatementKind::Insert(_) => {
-                self.execute_dml_via_datafusion(
-                    classified.as_str(),
-                    params,
-                    exec_ctx,
-                    DmlKind::Insert,
-                )
-                .await
-            },
-            SqlStatementKind::Update(_) => {
-                self.execute_dml_via_datafusion(
-                    classified.as_str(),
-                    params,
-                    exec_ctx,
-                    DmlKind::Update,
-                )
-                .await
-            },
-            SqlStatementKind::Delete(_) => {
-                self.execute_dml_via_datafusion(
-                    classified.as_str(),
-                    params,
-                    exec_ctx,
-                    DmlKind::Delete,
-                )
-                .await
-            },
+                // Native DataFusion DML path (provider insert/update/delete hooks)
+                SqlStatementKind::Insert(_) => {
+                    self.execute_dml_via_datafusion(
+                        classified.as_str(),
+                        params,
+                        exec_ctx,
+                        DmlKind::Insert,
+                    )
+                    .await
+                },
+                SqlStatementKind::Update(_) => {
+                    self.execute_dml_via_datafusion(
+                        classified.as_str(),
+                        params,
+                        exec_ctx,
+                        DmlKind::Update,
+                    )
+                    .await
+                },
+                SqlStatementKind::Delete(_) => {
+                    self.execute_dml_via_datafusion(
+                        classified.as_str(),
+                        params,
+                        exec_ctx,
+                        DmlKind::Delete,
+                    )
+                    .await
+                },
 
-            // DDL operations that modify table/view structure require plan cache invalidation
-            // This prevents stale cached plans from referencing dropped/altered tables
-            SqlStatementKind::CreateTable(_)
-            | SqlStatementKind::DropTable(_)
-            | SqlStatementKind::AlterTable(_)
-            | SqlStatementKind::CreateView(_)
-            | SqlStatementKind::CreateNamespace(_)
-            | SqlStatementKind::DropNamespace(_) => {
-                let result = self.handler_registry.handle(classified, params, exec_ctx).await;
-                // Clear plan cache after DDL to invalidate any cached plans
-                // that may reference the modified schema
-                if result.is_ok() {
-                    self.plan_cache.clear();
-                    log::debug!("Plan cache cleared after DDL operation");
-                }
-                result
-            },
+                // DDL operations that modify table/view structure require plan cache invalidation
+                // This prevents stale cached plans from referencing dropped/altered tables
+                SqlStatementKind::CreateTable(_)
+                | SqlStatementKind::DropTable(_)
+                | SqlStatementKind::AlterTable(_)
+                | SqlStatementKind::CreateView(_)
+                | SqlStatementKind::CreateNamespace(_)
+                | SqlStatementKind::DropNamespace(_) => {
+                    let result = self.handler_registry.handle(classified, params, exec_ctx).await;
+                    // Clear plan cache after DDL to invalidate any cached plans
+                    // that may reference the modified schema
+                    if result.is_ok() {
+                        self.plan_cache.clear();
+                        log::debug!("Plan cache cleared after DDL operation");
+                    }
+                    result
+                },
 
-            // All other statements: Delegate to handler registry (no cache invalidation needed)
-            _ => self.handler_registry.handle(classified, params, exec_ctx).await,
-        };
-
-        // Record row count in the span
-        if let Ok(ref res) = result {
-            let rows = match res {
-                ExecutionResult::Rows { row_count, .. } => *row_count,
-                ExecutionResult::Inserted { rows_affected } => *rows_affected,
-                ExecutionResult::Updated { rows_affected } => *rows_affected,
-                ExecutionResult::Deleted { rows_affected } => *rows_affected,
-                _ => 0,
+                // All other statements: Delegate to handler registry (no cache invalidation needed)
+                _ => self.handler_registry.handle(classified, params, exec_ctx).await,
             };
-            tracing::Span::current().record("rows", rows);
-        }
 
-        result
-        }.instrument(span).await
+            // Record row count in the span
+            if let Ok(ref res) = result {
+                let rows = match res {
+                    ExecutionResult::Rows { row_count, .. } => *row_count,
+                    ExecutionResult::Inserted { rows_affected } => *rows_affected,
+                    ExecutionResult::Updated { rows_affected } => *rows_affected,
+                    ExecutionResult::Deleted { rows_affected } => *rows_affected,
+                    _ => 0,
+                };
+                tracing::Span::current().record("rows", rows);
+            }
+
+            result
+        }
+        .instrument(span)
+        .await
     }
 
     #[tracing::instrument(
@@ -324,15 +326,13 @@ impl SqlExecutor {
                                         .await
                                         .map_err(|e2| self.log_sql_error(sql, exec_ctx, e2))?;
                                     let template_plan = retry_df.logical_plan().clone();
-                                    self.plan_cache.insert(cache_key.clone(), template_plan.clone());
+                                    self.plan_cache
+                                        .insert(cache_key.clone(), template_plan.clone());
                                     let rebound_plan =
                                         replace_placeholders_in_plan(template_plan, &params)?;
-                                    retry_session
-                                        .execute_logical_plan(rebound_plan)
-                                        .await
-                                        .map_err(|e3| {
-                                            KalamDbError::ExecutionError(e3.to_string())
-                                        })?
+                                    retry_session.execute_logical_plan(rebound_plan).await.map_err(
+                                        |e3| KalamDbError::ExecutionError(e3.to_string()),
+                                    )?
                                 } else {
                                     return Err(self.log_sql_error(sql, exec_ctx, e));
                                 }

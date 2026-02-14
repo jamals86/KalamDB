@@ -13,7 +13,11 @@ use kalamdb_system::providers::topics::TopicRoute;
 ///
 /// For Full and Diff modes, injects `_table` metadata so consumers can identify
 /// the source table of each message.
-pub(crate) fn extract_payload(route: &TopicRoute, row: &Row, table_id: &TableId) -> Result<Vec<u8>> {
+pub(crate) fn extract_payload(
+    route: &TopicRoute,
+    row: &Row,
+    table_id: &TableId,
+) -> Result<Vec<u8>> {
     match route.payload_mode {
         PayloadMode::Key => extract_key_columns(row),
         PayloadMode::Full | PayloadMode::Diff => extract_full_row_with_metadata(row, table_id),
@@ -82,10 +86,7 @@ fn extract_full_row_with_metadata(row: &Row, table_id: &TableId) -> Result<Vec<u
         .map_err(|e| CommonError::Internal(format!("Failed to convert row to JSON: {}", e)))?;
 
     // Inject source table metadata (uses system column convention with underscore prefix)
-    json_map.insert(
-        "_table".to_string(),
-        serde_json::Value::String(table_id.to_string()),
-    );
+    json_map.insert("_table".to_string(), serde_json::Value::String(table_id.to_string()));
 
     serde_json::to_vec(&json_map)
         .map_err(|e| CommonError::Internal(format!("Failed to serialize row: {}", e)))

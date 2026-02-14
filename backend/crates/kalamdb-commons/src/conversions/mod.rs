@@ -39,6 +39,7 @@
 pub mod arrow_conversion;
 pub mod arrow_json_conversion;
 pub mod scalar_bytes;
+pub mod scalar_json;
 pub mod scalar_numeric;
 pub mod scalar_size;
 pub mod scalar_string;
@@ -47,6 +48,7 @@ pub mod schema_metadata;
 // Re-export commonly used functions at the module root for convenience
 pub use arrow_json_conversion::*;
 pub use scalar_bytes::{encode_pk_value, scalar_value_to_bytes};
+pub use scalar_json::{json_value_to_scalar_for_column, scalar_to_json_for_column};
 pub use scalar_numeric::{as_f64, scalar_to_f64, scalar_to_i64};
 pub use scalar_size::estimate_scalar_value_size;
 pub use scalar_string::{parse_string_as_scalar, scalar_to_pk_string};

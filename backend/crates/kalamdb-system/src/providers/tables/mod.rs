@@ -4,14 +4,14 @@
 //! Stores both latest table definitions and version history in one partition.
 //!
 //! This module contains all components for the system.schemas table:
-//! - Table schema definition with OnceLock caching
-//! - SystemTableStore wrapper with versioning support
+//! - Canonical table definition + cached Arrow schema helpers
+//! - SchemasStore wrapper with versioning support
 //! - TableProvider for DataFusion integration
 
 pub mod schemas_provider;
+mod schemas_definition;
 pub mod schemas_store;
-pub mod schemas_table;
 
+pub use schemas_definition::{schemas_arrow_schema, schemas_table_definition};
 pub use schemas_provider::SchemasTableProvider;
 pub use schemas_store::{new_schemas_store, SchemasStore};
-pub use schemas_table::SchemasTableSchema;

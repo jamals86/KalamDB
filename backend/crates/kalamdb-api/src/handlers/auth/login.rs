@@ -4,11 +4,11 @@
 
 use actix_web::{web, HttpRequest, HttpResponse};
 use chrono::{Duration, Utc};
+use kalamdb_auth::providers::jwt_auth::create_and_sign_refresh_token;
 use kalamdb_auth::{
     authenticate, create_and_sign_token, create_auth_cookie, extract_client_ip_secure, AuthRequest,
     CookieConfig, UserRepository,
 };
-use kalamdb_auth::providers::jwt_auth::create_and_sign_refresh_token;
 use kalamdb_configs::AuthSettings;
 use std::sync::Arc;
 

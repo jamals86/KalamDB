@@ -505,14 +505,12 @@ impl StorageCached {
         let mut batches = Vec::new();
         for file in files {
             let data = self.get(table_type, table_id, user_id, file).await?.data;
-            if let Some(file_batches) =
-                crate::parquet::reader::parse_parquet_with_bloom_filter(
-                    data,
-                    bloom_column,
-                    bloom_value,
-                    columns,
-                )?
-            {
+            if let Some(file_batches) = crate::parquet::reader::parse_parquet_with_bloom_filter(
+                data,
+                bloom_column,
+                bloom_value,
+                columns,
+            )? {
                 batches.extend(file_batches);
             }
         }
