@@ -194,7 +194,7 @@ macro_rules! finish_array {
 /// This macro centralizes the repeated implementations for:
 /// - `SystemTableScan`
 /// - `TableProvider`
-/// - `SystemTableProviderExt`
+/// - direct `TableProvider` implementations
 ///
 /// It only wires the provider surface; business logic stays in each provider module.
 #[macro_export]
@@ -286,23 +286,6 @@ macro_rules! impl_indexed_system_table_provider {
             }
         }
 
-        impl $crate::system_table_trait::SystemTableProviderExt for $provider {
-            fn table_name(&self) -> &str {
-                let definition = Self::$definition_method();
-                definition.table_name
-            }
-
-            fn schema_ref(&self) -> datafusion::arrow::datatypes::SchemaRef {
-                let definition = Self::$definition_method();
-                (definition.schema)()
-            }
-
-            fn load_batch(
-                &self,
-            ) -> Result<datafusion::arrow::array::RecordBatch, $crate::error::SystemError> {
-                self.$load_batch_method()
-            }
-        }
     };
     (
         provider = $provider:ty,
@@ -408,23 +391,6 @@ macro_rules! impl_simple_system_table_provider {
             }
         }
 
-        impl $crate::system_table_trait::SystemTableProviderExt for $provider {
-            fn table_name(&self) -> &str {
-                let definition = Self::$definition_method();
-                definition.table_name
-            }
-
-            fn schema_ref(&self) -> datafusion::arrow::datatypes::SchemaRef {
-                let definition = Self::$definition_method();
-                (definition.schema)()
-            }
-
-            fn load_batch(
-                &self,
-            ) -> Result<datafusion::arrow::array::RecordBatch, $crate::error::SystemError> {
-                self.$scan_all_method()
-            }
-        }
     };
     (
         provider = $provider:ty,

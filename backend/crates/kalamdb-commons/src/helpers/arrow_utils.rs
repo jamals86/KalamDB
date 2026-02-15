@@ -316,7 +316,7 @@ use crate::models::rows::StoredScalarValue;
 /// Compute min/max stats for a column, returning StoredScalarValue.
 ///
 /// Returns values as StoredScalarValue, enabling:
-/// - Zero-copy bincode serialization for RocksDB manifest cache
+/// - Zero-copy binary serialization for RocksDB manifest cache
 /// - Proper JSON output for manifest.json files
 /// - Type-safe comparisons in query planning
 ///

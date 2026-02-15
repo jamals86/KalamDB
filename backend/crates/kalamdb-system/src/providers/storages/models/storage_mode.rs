@@ -1,10 +1,9 @@
-use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
 
 /// Enum representing storage mode preferences for users.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Encode, Decode)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, )]
 pub enum StorageMode {
     Table,
     Region,

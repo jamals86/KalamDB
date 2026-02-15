@@ -13,7 +13,6 @@ use crate::{constants::AuthConstants, StorageKey};
 /// are expected.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", derive(bincode::Encode, bincode::Decode))]
 pub struct UserId(String);
 
 /// Error type for UserId validation failures

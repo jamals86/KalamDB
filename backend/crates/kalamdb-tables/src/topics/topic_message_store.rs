@@ -65,8 +65,15 @@ impl TopicMessageStore {
             has_key = key.is_some()
         );
         let _span_guard = span.entered();
-        let message =
-            TopicMessage::new(topic_id.clone(), partition_id, offset, payload, key, timestamp_ms, Default::default());
+        let message = TopicMessage::new(
+            topic_id.clone(),
+            partition_id,
+            offset,
+            payload,
+            key,
+            timestamp_ms,
+            Default::default(),
+        );
         let msg_id = message.id();
         tracing::trace!("Persisting topic message");
         self.put(&msg_id, &message)

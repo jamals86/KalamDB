@@ -33,7 +33,7 @@
 //! - **Type Safety**: Strongly-typed schemas prevent runtime errors
 //! - **Bidirectional Conversion**: `TableDefinition ↔ Arrow Schema`
 //! - **Schema Versioning**: Track all schema changes with timestamps
-//! - **RocksDB Persistence**: Efficient binary serialization with bincode
+//! - **RocksDB Persistence**: Efficient binary serialization
 //! - **Caching**: DashMap-based lock-free schema cache in kalamdb-core
 //!
 //! # Usage Example
@@ -86,6 +86,7 @@
 
 pub mod column_default;
 pub mod column_definition;
+pub mod field_flag;
 pub mod policy;
 pub mod schema_field;
 pub mod schema_version;
@@ -97,6 +98,7 @@ pub mod table_type;
 
 pub use column_default::ColumnDefault;
 pub use column_definition::ColumnDefinition;
+pub use field_flag::{FieldFlag, FieldFlags};
 pub use schema_field::SchemaField;
 pub use schema_version::SchemaVersion;
 pub use table_access::TableAccess;

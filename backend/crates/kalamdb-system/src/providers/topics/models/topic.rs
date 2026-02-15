@@ -2,10 +2,8 @@
 //!
 //! Represents a durable pub/sub topic backed by RocksDB.
 
-use bincode::{Decode, Encode};
 use kalamdb_commons::datatypes::KalamDataType;
 use kalamdb_commons::models::TopicId;
-use kalamdb_commons::KSerializable;
 use kalamdb_macros::table;
 use serde::{Deserialize, Serialize};
 
@@ -27,7 +25,7 @@ use super::TopicRoute;
 /// - `updated_at`: Unix timestamp in milliseconds when topic was last updated
 ///
 /// ## Serialization
-/// - **RocksDB**: Bincode (compact binary format)
+/// - **RocksDB**: FlatBuffers envelope + FlexBuffers payload
 /// - **API**: JSON via Serde
 ///
 /// ## Example
@@ -56,7 +54,7 @@ use super::TopicRoute;
 /// };
 /// ```
 #[table(name = "topics", comment = "Durable topics for pub/sub messaging")]
-#[derive(Serialize, Deserialize, Encode, Decode, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize,  Clone, Debug, PartialEq)]
 pub struct Topic {
     // Primary key field first
     #[column(
@@ -151,7 +149,6 @@ pub struct Topic {
     pub partitions: u32,
 
     // Complex field last (Vec is heap-allocated)
-    #[bincode(with_serde)]
     #[column(
         id = 7,
         ordinal = 7,
@@ -213,8 +210,6 @@ impl Topic {
     }
 }
 
-impl KSerializable for Topic {}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -262,10 +257,8 @@ mod tests {
     fn test_topic_serialization() {
         let topic = Topic::new(TopicId::new("topic_456"), "test.topic".to_string());
 
-        // Test bincode round-trip
-        let encoded = bincode::encode_to_vec(&topic, bincode::config::standard()).unwrap();
-        let decoded: Topic =
-            bincode::decode_from_slice(&encoded, bincode::config::standard()).unwrap().0;
+        let encoded = serde_json::to_vec(&topic).unwrap();
+        let decoded: Topic = serde_json::from_slice(&encoded).unwrap();
         assert_eq!(topic, decoded);
     }
 }

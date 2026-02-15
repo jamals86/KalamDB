@@ -57,7 +57,7 @@ export interface QueryResultSchemaField {
   name: string;
   dataType: string;
   index: number;
-  def?: string;
+  flags?: string[];
   isPrimaryKey?: boolean;
 }
 

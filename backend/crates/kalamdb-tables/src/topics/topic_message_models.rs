@@ -55,10 +55,10 @@ impl StorageKey for TopicMessageId {
 /// Topic message envelope with metadata and payload
 ///
 /// **Storage Format**:
-/// - Serialized using bincode for efficiency
+/// - Serialized using binary codec for efficiency
 /// - Contains full message envelope (not just payload)
 /// - Immutable once written (append-only)
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, bincode::Encode, bincode::Decode)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TopicMessage {
     /// Topic identifier
     pub topic_id: TopicId,

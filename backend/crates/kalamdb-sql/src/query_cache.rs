@@ -6,8 +6,8 @@
 //! **Performance**: Uses moka cache with TinyLFU eviction for optimal hit rate,
 //! `Arc<T>` for zero-copy results (just atomic pointer increment), and automatic per-entry TTL expiration.
 //!
-//! **Optimization**: Direct typed storage (Arc<T>) instead of bincode serialization.
-//! This is 100-500× faster than the old Arc<[u8]> + bincode approach since we avoid
+//! **Optimization**: Direct typed storage (Arc<T>) instead of binary serialization.
+//! This is 100-500× faster than the old Arc<[u8]> + serialized-bytes approach since we avoid
 //! unnecessary serialize/deserialize overhead for in-memory caching.
 
 use moka::sync::Cache;
@@ -121,7 +121,7 @@ impl QueryCacheExpiry {
 /// - Zero-copy results: Arc<T> allows sharing without cloning (just atomic pointer increment)
 /// - TinyLFU eviction: Automatically evicts entries using optimal LRU+LFU admission
 /// - Per-entry TTL: Different TTLs for different query types
-/// - No serialization overhead: Direct typed storage is 100-500× faster than bincode
+/// - No serialization overhead: Direct typed storage is much faster than byte codecs
 ///
 /// **Design Pattern**: Follows the same pattern as `PlanCache` and `ManifestService.hot_cache`
 /// which also use Arc<T> for zero-copy in-memory caching.

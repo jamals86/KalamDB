@@ -57,7 +57,7 @@ pub use user_name::UserName;
 pub use user_name::UserName as Username;
 
 #[cfg(feature = "full")]
-pub use rows::{KTableRow, StreamTableRow, UserTableRow};
+pub use rows::{KTableRow, StreamTableRow, SystemTableRow, UserTableRow};
 
 pub use connection::ConnectionInfo;
 

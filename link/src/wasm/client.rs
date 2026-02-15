@@ -20,7 +20,7 @@ use base64::Engine;
 
 use super::auth::WasmAuthProvider;
 use super::console_log;
-use super::helpers::{create_promise, md5_hash};
+use super::helpers::{create_promise, subscription_hash};
 use super::reconnect::{reconnect_internal_with_auth, resubscribe_all};
 use super::state::SubscriptionState;
 use super::validation::{
@@ -426,7 +426,11 @@ impl KalamClient {
                 return;
             };
 
-            console_log(&format!("KalamClient: Received WebSocket message: {}", message));
+            // SECURITY: Do not log full message content — it may contain
+            // sensitive row data.  Log only the message type for debugging.
+            if message.len() > 200 {
+                console_log(&format!("KalamClient: Received WebSocket message ({} bytes)", message.len()));
+            }
 
             // Parse message using ServerMessage enum
             if let Ok(event) = serde_json::from_str::<ServerMessage>(&message) {
@@ -807,7 +811,7 @@ impl KalamClient {
         };
 
         // Generate unique subscription ID from SQL hash
-        let subscription_id = format!("sub-{:x}", md5_hash(&sql));
+        let subscription_id = format!("sub-{:x}", subscription_hash(&sql));
 
         // Store subscription state for reconnection (includes callback and last_seq_id)
         self.subscription_state.borrow_mut().insert(

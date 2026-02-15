@@ -62,20 +62,14 @@ fn resolve_ws_url(base_url: &str, override_url: Option<&str>) -> String {
     format!("{}/v1/ws", ws_base)
 }
 
-fn build_request_url(ws_url: &str, auth: &AuthProvider) -> String {
-    match auth {
-        AuthProvider::BasicAuth(_username, _password) => ws_url.to_string(),
-        AuthProvider::JwtToken(token) => append_query(ws_url, "token", token),
-        AuthProvider::None => ws_url.to_string(),
-    }
-}
-
-fn append_query(base: &str, key: &str, value: &str) -> String {
-    if base.contains('?') {
-        format!("{}&{}={}", base, key, value)
-    } else {
-        format!("{}?{}={}", base, key, value)
-    }
+/// Build the WebSocket request URL.
+///
+/// SECURITY: JWT tokens are sent exclusively via the Authorization header
+/// and post-connection Authenticate message — **never** as URL query
+/// parameters.  Embedding tokens in URLs risks exposing them in server
+/// access logs, proxy caches and browser history.
+fn build_request_url(ws_url: &str) -> String {
+    ws_url.to_string()
 }
 
 fn apply_ws_auth_headers(
@@ -345,7 +339,7 @@ impl SubscriptionManager {
         } = config;
 
         let ws_endpoint = resolve_ws_url(base_url, ws_url.as_deref());
-        let request_url = build_request_url(&ws_endpoint, auth);
+        let request_url = build_request_url(&ws_endpoint);
 
         // Connect to WebSocket with connection timeout
         let mut request = request_url.into_client_request().map_err(|e| {
@@ -429,6 +423,77 @@ impl SubscriptionManager {
         }
     }
 
+    /// Process a parsed change event: update subscription ID, request next batch
+    /// if needed, and apply buffering logic. Returns `Some` if the caller should
+    /// yield early (error while requesting next batch).
+    async fn process_event(&mut self, event: ChangeEvent) -> Option<Result<ChangeEvent>> {
+        if let Some(id) = event.subscription_id() {
+            if id != self.subscription_id {
+                self.subscription_id = id.to_string();
+            }
+        }
+
+        // Request next batch when initial data has more pages
+        if let ChangeEvent::InitialDataBatch {
+            ref batch_control, ..
+        } = event
+        {
+            if batch_control.has_more {
+                if let Err(e) = self.request_next_batch(batch_control.last_seq_id).await {
+                    return Some(Err(e));
+                }
+            }
+        }
+
+        // Buffering logic: hold live changes while initial data is still loading
+        match event {
+            ChangeEvent::Ack {
+                ref batch_control, ..
+            }
+            | ChangeEvent::InitialDataBatch {
+                ref batch_control, ..
+            } => {
+                self.is_loading = batch_control.status != BatchStatus::Ready;
+                self.event_queue.push_back(event);
+                if !self.is_loading {
+                    self.flush_buffered_changes();
+                }
+            },
+            ChangeEvent::Insert { .. }
+            | ChangeEvent::Update { .. }
+            | ChangeEvent::Delete { .. } => {
+                if self.is_loading {
+                    self.buffered_changes.push(event);
+                } else {
+                    self.event_queue.push_back(event);
+                }
+            },
+            _ => {
+                self.event_queue.push_back(event);
+            },
+        }
+
+        None // no early return needed
+    }
+
+    /// Decode a raw WebSocket payload (text or binary/gzip) into a UTF-8 string.
+    fn decode_ws_payload(data: &[u8], is_binary: bool) -> Result<String> {
+        if is_binary {
+            let decompressed = crate::compression::decompress_gzip(data).map_err(|e| {
+                KalamLinkError::WebSocketError(format!("Failed to decompress message: {}", e))
+            })?;
+            String::from_utf8(decompressed).map_err(|e| {
+                KalamLinkError::WebSocketError(format!(
+                    "Invalid UTF-8 in decompressed message: {}",
+                    e
+                ))
+            })
+        } else {
+            // Text is already valid UTF-8 (enforced by tokio-tungstenite)
+            Ok(String::from_utf8_lossy(data).into_owned())
+        }
+    }
+
     /// Receive the next change event from the subscription
     ///
     /// **Implements T080**: WebSocket message parsing for ChangeEvent enum
@@ -443,143 +508,22 @@ impl SubscriptionManager {
             }
 
             match self.ws_stream.next().await {
-                Some(Ok(Message::Text(text))) => {
-                    match parse_message(&text) {
-                        Ok(Some(event)) => {
-                            if let Some(id) = event.subscription_id() {
-                                if id != self.subscription_id {
-                                    self.subscription_id = id.to_string();
-                                }
-                            }
+                Some(Ok(msg @ (Message::Text(_) | Message::Binary(_)))) => {
+                    let (data, is_binary) = match msg {
+                        Message::Text(t) => (t.as_bytes().to_vec(), false),
+                        Message::Binary(b) => (b.to_vec(), true),
+                        _ => unreachable!(),
+                    };
 
-                            // Check if this is an initial data batch with more batches pending
-                            // and automatically request the next batch
-                            if let ChangeEvent::InitialDataBatch {
-                                ref batch_control, ..
-                            } = event
-                            {
-                                if batch_control.has_more {
-                                    if let Err(e) =
-                                        self.request_next_batch(batch_control.last_seq_id).await
-                                    {
-                                        return Some(Err(e));
-                                    }
-                                }
-                            }
-
-                            // Handle buffering logic
-                            match event {
-                                ChangeEvent::Ack {
-                                    ref batch_control, ..
-                                } => {
-                                    self.is_loading = batch_control.status != BatchStatus::Ready;
-                                    self.event_queue.push_back(event);
-                                    if !self.is_loading {
-                                        self.flush_buffered_changes();
-                                    }
-                                },
-                                ChangeEvent::InitialDataBatch {
-                                    ref batch_control, ..
-                                } => {
-                                    self.is_loading = batch_control.status != BatchStatus::Ready;
-                                    self.event_queue.push_back(event);
-                                    if !self.is_loading {
-                                        self.flush_buffered_changes();
-                                    }
-                                },
-                                ChangeEvent::Insert { .. }
-                                | ChangeEvent::Update { .. }
-                                | ChangeEvent::Delete { .. } => {
-                                    if self.is_loading {
-                                        self.buffered_changes.push(event);
-                                    } else {
-                                        self.event_queue.push_back(event);
-                                    }
-                                },
-                                _ => {
-                                    self.event_queue.push_back(event);
-                                },
-                            }
-                        },
-                        Ok(None) => continue,
+                    let text = match Self::decode_ws_payload(&data, is_binary) {
+                        Ok(s) => s,
                         Err(e) => return Some(Err(e)),
-                    }
-                },
-                Some(Ok(Message::Binary(data))) => {
-                    // Binary messages are gzip-compressed JSON
-                    let text = match crate::compression::decompress_gzip(&data) {
-                        Ok(decompressed) => match String::from_utf8(decompressed) {
-                            Ok(s) => s,
-                            Err(e) => {
-                                return Some(Err(KalamLinkError::WebSocketError(format!(
-                                    "Invalid UTF-8 in decompressed message: {}",
-                                    e
-                                ))));
-                            },
-                        },
-                        Err(e) => {
-                            return Some(Err(KalamLinkError::WebSocketError(format!(
-                                "Failed to decompress message: {}",
-                                e
-                            ))));
-                        },
                     };
 
                     match parse_message(&text) {
                         Ok(Some(event)) => {
-                            if let Some(id) = event.subscription_id() {
-                                if id != self.subscription_id {
-                                    self.subscription_id = id.to_string();
-                                }
-                            }
-
-                            // Check if this is an initial data batch with more batches pending
-                            // and automatically request the next batch
-                            if let ChangeEvent::InitialDataBatch {
-                                ref batch_control, ..
-                            } = event
-                            {
-                                if batch_control.has_more {
-                                    if let Err(e) =
-                                        self.request_next_batch(batch_control.last_seq_id).await
-                                    {
-                                        return Some(Err(e));
-                                    }
-                                }
-                            }
-
-                            // Handle buffering logic
-                            match event {
-                                ChangeEvent::Ack {
-                                    ref batch_control, ..
-                                } => {
-                                    self.is_loading = batch_control.status != BatchStatus::Ready;
-                                    self.event_queue.push_back(event);
-                                    if !self.is_loading {
-                                        self.flush_buffered_changes();
-                                    }
-                                },
-                                ChangeEvent::InitialDataBatch {
-                                    ref batch_control, ..
-                                } => {
-                                    self.is_loading = batch_control.status != BatchStatus::Ready;
-                                    self.event_queue.push_back(event);
-                                    if !self.is_loading {
-                                        self.flush_buffered_changes();
-                                    }
-                                },
-                                ChangeEvent::Insert { .. }
-                                | ChangeEvent::Update { .. }
-                                | ChangeEvent::Delete { .. } => {
-                                    if self.is_loading {
-                                        self.buffered_changes.push(event);
-                                    } else {
-                                        self.event_queue.push_back(event);
-                                    }
-                                },
-                                _ => {
-                                    self.event_queue.push_back(event);
-                                },
+                            if let Some(early) = self.process_event(event).await {
+                                return Some(early);
                             }
                         },
                         Ok(None) => continue,

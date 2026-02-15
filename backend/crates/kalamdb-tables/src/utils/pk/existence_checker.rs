@@ -380,7 +380,11 @@ impl PkExistenceChecker {
 
         // Step 2: Read only the columns needed for PK existence check
         // (pk_column, _seq, _deleted) instead of the entire file
-        let columns_to_read = [pk_column, SystemColumnNames::SEQ, SystemColumnNames::DELETED];
+        let columns_to_read = [
+            pk_column,
+            SystemColumnNames::SEQ,
+            SystemColumnNames::DELETED,
+        ];
         let batches = kalamdb_filestore::parse_parquet_projected(data, &columns_to_read)
             .into_kalamdb_error("Failed to parse projected Parquet")?;
 

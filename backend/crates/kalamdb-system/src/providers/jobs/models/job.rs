@@ -2,7 +2,6 @@
 //!
 //! Represents a background job (flush, retention, cleanup, etc.).
 
-use bincode::{Decode, Encode};
 use kalamdb_commons::datatypes::KalamDataType;
 use kalamdb_commons::models::ids::{JobId, NamespaceId, NodeId};
 use kalamdb_commons::models::TableName;
@@ -32,7 +31,7 @@ use super::{JobStatus, JobType};
 /// - `error_message`: Optional error message (for failed jobs)
 ///
 /// ## Serialization
-/// - **RocksDB**: Bincode (compact binary format)
+/// - **RocksDB**: FlatBuffers envelope + FlexBuffers payload
 /// - **API**: JSON via Serde
 ///
 /// ## Example
@@ -82,7 +81,7 @@ use super::{JobStatus, JobType};
     name = "jobs",
     comment = "Background jobs for maintenance and data management"
 )]
-#[derive(Serialize, Deserialize, Encode, Decode, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize,  Clone, Debug, PartialEq)]
 pub struct Job {
     // 8-byte aligned fields first (i64, Option<i64>, String/pointer types)
     #[column(
@@ -155,7 +154,6 @@ pub struct Job {
         comment = "Unique job identifier"
     )]
     pub job_id: JobId,
-    #[bincode(with_serde)]
     #[column(
         id = 19,
         ordinal = 19,
@@ -167,7 +165,6 @@ pub struct Job {
     )]
     pub node_id: NodeId,
     /// Node that performed leader actions (if any). Only set when leader_status is Some.
-    #[bincode(with_serde)]
     #[column(
         id = 20,
         ordinal = 20,
@@ -293,6 +290,8 @@ pub struct Job {
     )]
     pub max_retries: u8, // Maximum retries allowed (default 3)
 }
+
+impl KSerializable for Job {}
 
 impl Job {
     /// Mark job as cancelled
@@ -476,9 +475,6 @@ impl Default for JobFilter {
     }
 }
 
-// KSerializable implementation for EntityStore support
-impl KSerializable for Job {}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -509,10 +505,8 @@ mod tests {
             priority: None,
         };
 
-        // Test bincode serialization
-        let config = bincode::config::standard();
-        let bytes = bincode::encode_to_vec(&job, config).unwrap();
-        let (deserialized, _): (Job, _) = bincode::decode_from_slice(&bytes, config).unwrap();
+        let bytes = serde_json::to_vec(&job).unwrap();
+        let deserialized: Job = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(job, deserialized);
     }
 
@@ -545,4 +539,6 @@ mod tests {
         assert_eq!(cancelled.status, JobStatus::Cancelled);
         assert!(cancelled.finished_at.is_some());
     }
+
+
 }

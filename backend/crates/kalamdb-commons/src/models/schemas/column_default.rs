@@ -196,8 +196,6 @@ impl ColumnDefault {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bincode::config::standard;
-    use bincode::serde::{decode_from_slice, encode_to_vec};
     use serde_json::json;
 
     #[test]
@@ -256,18 +254,17 @@ mod tests {
     }
 
     #[test]
-    fn test_bincode_roundtrip() {
+    fn test_flexbuffers_roundtrip() {
         let defaults = vec![
             ColumnDefault::none(),
             ColumnDefault::literal(json!({"key": "value", "nested": [1, 2, 3]})),
             ColumnDefault::function("CONCAT", vec![json!("prefix"), json!({"expr": "value"})]),
         ];
 
-        let config = standard();
         for original in defaults {
-            let bytes = encode_to_vec(&original, config).expect("encode to bincode");
-            let (decoded, _): (ColumnDefault, usize) =
-                decode_from_slice(&bytes, config).expect("decode from bincode");
+            let bytes = flexbuffers::to_vec(&original).expect("encode to flexbuffers");
+            let decoded: ColumnDefault =
+                flexbuffers::from_slice(&bytes).expect("decode from flexbuffers");
             assert_eq!(original, decoded);
         }
     }

@@ -3,10 +3,10 @@
 //! This test verifies that the information_schema.columns table is properly
 //! registered and can be queried via SQL.
 
+use kalamdb_commons::NodeId;
+use kalamdb_configs::ServerConfig;
 use kalamdb_core::app_context::AppContext;
 use kalamdb_store::{RocksDBBackend, RocksDbInit};
-use kalamdb_configs::ServerConfig;
-use kalamdb_commons::NodeId;
 use std::sync::Arc;
 use tempfile::TempDir;
 
@@ -31,7 +31,11 @@ async fn create_test_app_context() -> (Arc<AppContext>, TempDir) {
 
     // Initialize Raft for single-node mode (required for DDL operations)
     app_context.executor().start().await.expect("Failed to start Raft");
-    app_context.executor().initialize_cluster().await.expect("Failed to initialize Raft cluster");
+    app_context
+        .executor()
+        .initialize_cluster()
+        .await
+        .expect("Failed to initialize Raft cluster");
     app_context.wire_raft_appliers();
 
     (app_context, temp_dir)

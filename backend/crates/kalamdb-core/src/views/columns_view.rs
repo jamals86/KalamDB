@@ -240,60 +240,12 @@ impl VirtualView for ColumnsView {
         let mut primary_keys = BooleanBuilder::new();
         let mut primary_key_positions = Int64Builder::new();
 
-        // Add columns from system tables
-        for table_def in self.system_registry.all_system_table_definitions_cached() {
-            for col in &table_def.columns {
-                namespace_ids.append_value(table_def.namespace_id.as_str());
-                table_names.append_value(table_def.table_name.as_str());
-                versions.append_value(table_def.schema_version as i64);
-                column_ids.append_value(col.column_id as i64);
-                column_names.append_value(&col.column_name);
+        // Add columns from all persisted table definitions in system.schemas.
+        let persisted_tables = self.system_registry.tables().list_tables().map_err(|e| {
+            RegistryError::Other(format!("Failed to list persisted table definitions: {}", e))
+        })?;
 
-                if let Some(comment) = &col.column_comment {
-                    comments.append_value(comment);
-                } else {
-                    comments.append_null();
-                }
-
-                data_types.append_value(col.data_type.to_string());
-
-                // Format default value
-                match &col.default_value {
-                    ColumnDefault::None => default_values.append_null(),
-                    ColumnDefault::Literal(lit) => {
-                        default_values.append_value(format!("{:?}", lit))
-                    },
-                    ColumnDefault::FunctionCall { name, args } => {
-                        if args.is_empty() {
-                            default_values.append_value(format!("{}()", name));
-                        } else {
-                            default_values.append_value(format!("{}({:?})", name, args));
-                        }
-                    },
-                }
-
-                ordinals.append_value(col.ordinal_position as i64);
-                nullables.append_value(col.is_nullable);
-                primary_keys.append_value(col.is_primary_key);
-
-                if col.is_primary_key {
-                    // For multi-column PKs, we'd need to track position
-                    // For now, assume single-column PK gets position 1
-                    primary_key_positions.append_value(1);
-                } else {
-                    primary_key_positions.append_null();
-                }
-            }
-        }
-
-        // Add columns from user tables in system.schemas
-        let user_tables = self
-            .system_registry
-            .tables()
-            .list_tables()
-            .map_err(|e| RegistryError::Other(format!("Failed to list user tables: {}", e)))?;
-
-        for table_def in user_tables {
+        for table_def in persisted_tables {
             for col in &table_def.columns {
                 namespace_ids.append_value(table_def.namespace_id.as_str());
                 table_names.append_value(table_def.table_name.as_str());

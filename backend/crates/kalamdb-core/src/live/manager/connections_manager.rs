@@ -181,6 +181,7 @@ impl ConnectionsManager {
         let state = ConnectionState {
             connection_id: connection_id.clone(),
             user_id: None,
+            user_role: None,
             client_ip,
             is_authenticated: false,
             auth_started: false,
@@ -205,7 +206,7 @@ impl ConnectionsManager {
 
     /// Called after successful authentication to update user index
     ///
-    /// Must be called after `state.write().mark_authenticated(user_id)`.
+    /// Must be called after `state.write().mark_authenticated(user_id, role)`.
     pub fn on_authenticated(&self, _connection_id: &ConnectionId, _user_id: UserId) {
         // User index no longer needed - subscriptions are tracked via user_table_subscriptions
     }
@@ -610,7 +611,7 @@ mod tests {
             let mut state = reg.state.write();
             assert!(!state.is_authenticated());
             state.mark_auth_started();
-            state.mark_authenticated(user_id.clone());
+            state.mark_authenticated(user_id.clone(), kalamdb_commons::Role::User);
         }
 
         // Update registry index

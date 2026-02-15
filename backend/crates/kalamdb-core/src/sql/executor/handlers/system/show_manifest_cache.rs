@@ -96,9 +96,9 @@ mod tests {
 
     #[test]
     fn test_schema_structure() {
-        use kalamdb_system::providers::manifest::ManifestTableSchema;
+        use kalamdb_system::providers::manifest::manifest_arrow_schema;
 
-        let schema = ManifestTableSchema::schema();
+        let schema = manifest_arrow_schema();
         assert_eq!(schema.fields().len(), 10);
         assert_eq!(schema.field(0).name(), "cache_key");
         assert_eq!(schema.field(1).name(), "namespace_id");

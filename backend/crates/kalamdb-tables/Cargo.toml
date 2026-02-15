@@ -34,7 +34,6 @@ async-trait = { workspace = true }
 tokio = { workspace = true }
 
 # Serialization
-bincode = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 

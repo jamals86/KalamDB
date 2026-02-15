@@ -3,7 +3,7 @@
 //! Phase 16: Consolidated provider using single store with TableVersionId keys.
 //! Exposes all table versions with is_latest flag for schema history queries.
 
-use super::{new_schemas_store, SchemasStore, SchemasTableSchema};
+use super::{new_schemas_store, schemas_arrow_schema, SchemasStore};
 use crate::error::{SystemError, SystemResultExt};
 use crate::providers::base::{extract_filter_value, SimpleProviderDefinition};
 use datafusion::arrow::array::RecordBatch;
@@ -124,6 +124,24 @@ impl SchemasTableProvider {
         Ok(self.store.put_version(table_id, table_def)?)
     }
 
+    /// Idempotent upsert of the latest schema definition.
+    ///
+    /// Returns `Ok(true)` when a new version is persisted and `Ok(false)` when
+    /// the incoming definition is byte-for-byte identical to the latest version.
+    pub fn upsert_table_version(
+        &self,
+        table_id: &TableId,
+        table_def: &TableDefinition,
+    ) -> Result<bool, SystemError> {
+        match self.store.get_latest(table_id)? {
+            Some(existing) if existing == *table_def => Ok(false),
+            _ => {
+                self.store.put_version(table_id, table_def)?;
+                Ok(true)
+            },
+        }
+    }
+
     /// Get the latest version of a table by ID
     pub fn get_table_by_id(
         &self,
@@ -242,7 +260,7 @@ impl SchemasTableProvider {
     ) -> Result<RecordBatch, SystemError> {
         let versions = self.store.list_versions(table_id)?;
         if versions.is_empty() {
-            return Ok(RecordBatch::new_empty(SchemasTableSchema::schema()));
+            return Ok(RecordBatch::new_empty(schemas_arrow_schema()));
         }
 
         let max_version = versions.iter().map(|(v, _)| *v).max().unwrap_or(0);
@@ -258,7 +276,7 @@ impl SchemasTableProvider {
     ) -> Result<RecordBatch, SystemError> {
         let tables = self.store.scan_namespace(namespace_id)?;
         if tables.is_empty() {
-            return Ok(RecordBatch::new_empty(SchemasTableSchema::schema()));
+            return Ok(RecordBatch::new_empty(schemas_arrow_schema()));
         }
 
         self.build_table_def_batch(tables.into_iter().map(|(_, def)| (def, true)).collect())
@@ -270,7 +288,7 @@ impl SchemasTableProvider {
         entries: Vec<(TableDefinition, bool)>,
     ) -> Result<RecordBatch, SystemError> {
         crate::build_record_batch!(
-            schema: SchemasTableSchema::schema(),
+            schema: schemas_arrow_schema(),
             entries: entries,
             columns: [
                 table_ids => OptionalString(|entry| Some(format!(
@@ -331,7 +349,7 @@ impl SchemasTableProvider {
         }
 
         // Check for namespace equality filter → use scan_namespace-based construction
-        if let Some(ns_str) = extract_filter_value(filters, "namespace") {
+        if let Some(ns_str) = extract_filter_value(filters, "namespace_id") {
             let namespace_id = kalamdb_commons::NamespaceId::new(&ns_str);
             return self.build_versions_batch_for_namespace(&namespace_id);
         }
@@ -342,8 +360,8 @@ impl SchemasTableProvider {
 
     fn provider_definition() -> SimpleProviderDefinition {
         SimpleProviderDefinition {
-            table_name: SchemasTableSchema::table_name(),
-            schema: SchemasTableSchema::schema,
+            table_name: kalamdb_commons::SystemTable::Schemas.table_name(),
+            schema: schemas_arrow_schema,
         }
     }
 }

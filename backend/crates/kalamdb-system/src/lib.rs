@@ -41,16 +41,16 @@ pub mod models; // Re-export models for external usage
 pub mod providers;
 pub mod registry;
 pub mod services;
-pub mod system_table_store;
-pub mod system_table_trait;
+pub(crate) mod system_row_mapper;
 
 // Re-export main types
 pub use error::{Result, SystemError};
-pub use impls::{ClusterCoordinator, ManifestService, NotificationService, SchemaRegistry, TopicPublisher};
+pub use impls::{
+    ClusterCoordinator, ManifestService, NotificationService, SchemaRegistry, TopicPublisher,
+};
 pub use initialization::initialize_system_tables;
 pub use registry::SystemTablesRegistry;
 pub use services::SystemColumnsService;
-pub use system_table_trait::SystemTableProviderExt;
 // Re-export SystemTable and StoragePartition from kalamdb_commons for consistent usage
 pub use kalamdb_commons::{schemas, NamespaceId, StoragePartition, SystemTable, TableName};
 

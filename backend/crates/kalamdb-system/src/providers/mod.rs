@@ -4,10 +4,10 @@
 //! Each provider implements the DataFusion TableProvider trait.
 //!
 //! **Architecture**:
-//! - `*TableSchema` structs: Contain the `TableDefinition` (source of truth)
-//! - `*TableProvider` structs: Implement DataFusion's `TableProvider` trait
-//! - Each `*TableSchema` memoizes its Arrow schema (OnceLock)
-//! - `base` module: Common traits for unified scan logic
+//! - Model types with `#[table]` derive are the source of truth for `TableDefinition`
+//! - `*TableProvider` structs implement DataFusion's `TableProvider` trait
+//! - Providers memoize Arrow schemas with local `OnceLock` caches
+//! - `base` module contains common traits for unified scan logic
 
 pub mod audit_logs;
 pub mod base;
@@ -29,6 +29,7 @@ pub use base::{
 
 // Re-export all providers
 pub use audit_logs::AuditLogsTableProvider;
+pub use audit_logs::AuditLogEntry;
 pub use job_nodes::JobNodesTableProvider;
 pub use jobs::JobsTableProvider;
 pub use live_queries::LiveQueriesTableProvider;
@@ -40,15 +41,5 @@ pub use topic_offsets::TopicOffsetsTableProvider;
 pub use topics::TopicsTableProvider;
 pub use users::UsersTableProvider;
 
-// Re-export all schema definitions (source of truth for TableDefinition)
-pub use audit_logs::AuditLogsTableSchema;
-pub use job_nodes::JobNodesTableSchema;
-pub use jobs::JobsTableSchema;
-pub use live_queries::LiveQueriesTableSchema;
-pub use manifest::ManifestTableSchema;
-pub use namespaces::NamespacesTableSchema;
-pub use storages::StoragesTableSchema;
-pub use tables::SchemasTableSchema;
-pub use topic_offsets::TopicOffsetsTableSchema;
-pub use topics::TopicsTableSchema;
-pub use users::UsersTableSchema;
+pub use manifest::manifest_table_definition;
+pub use tables::schemas_table_definition;

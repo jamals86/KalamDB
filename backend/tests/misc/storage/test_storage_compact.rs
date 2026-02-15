@@ -63,7 +63,7 @@ async fn wait_for_compact_jobs(
     loop {
         let resp = server
             .execute_sql(
-                "SELECT job_id, status, parameters, result FROM system.jobs \
+                "SELECT job_id, status, parameters, message FROM system.jobs \
                  WHERE job_type = 'compact' ORDER BY created_at DESC LIMIT 50",
             )
             .await;

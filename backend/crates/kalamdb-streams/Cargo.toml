@@ -17,7 +17,7 @@ kalamdb-sharding = { path = "../kalamdb-sharding" }
 
 # Serialization
 serde = { workspace = true }
-bincode = { workspace = true }
+flexbuffers = { workspace = true }
 
 # Time handling
 chrono = { workspace = true }

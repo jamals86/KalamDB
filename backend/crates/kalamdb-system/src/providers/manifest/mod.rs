@@ -4,15 +4,13 @@
 //! It provides a read-only view of manifest cache entries for query optimization.
 
 pub mod manifest_indexes;
+mod manifest_definition;
 pub mod manifest_provider;
-pub mod manifest_store;
-pub mod manifest_table;
 pub mod models;
 
 pub use manifest_indexes::create_manifest_indexes;
+pub use manifest_definition::{manifest_arrow_schema, manifest_table_definition};
 pub use manifest_provider::{InMemoryChecker, ManifestTableProvider};
-pub use manifest_store::{new_manifest_store, ManifestStore};
-pub use manifest_table::ManifestTableSchema;
 pub use models::{
     ColumnStats, FileRef, FileSubfolderState, Manifest, ManifestCacheEntry, SegmentMetadata,
     SegmentStatus, SyncState,

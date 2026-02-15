@@ -12,7 +12,8 @@ use std::sync::Arc;
 /// Helper to create a simple test session with custom functions registered
 fn create_test_session() -> Arc<SessionContext> {
     // Use DataFusionSessionFactory to get a session with all custom functions registered
-    let factory = DataFusionSessionFactory::new().expect("Failed to create DataFusionSessionFactory");
+    let factory =
+        DataFusionSessionFactory::new().expect("Failed to create DataFusionSessionFactory");
     Arc::new(factory.create_session())
 }
 

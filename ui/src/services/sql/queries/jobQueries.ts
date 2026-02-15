@@ -10,9 +10,9 @@ function escapeSqlLiteral(value: string): string {
 
 export function buildSystemJobsQuery(filters?: JobFilters): string {
   let sql = `
-    SELECT job_id, job_type, status, parameters, result, 
-           trace, error_message, memory_used, cpu_used, created_at, started_at, 
-           completed_at, node_id
+    SELECT job_id, job_type, status, parameters, message, 
+           exception_trace, memory_used, cpu_used, created_at, started_at, 
+           finished_at, node_id
     FROM system.jobs
   `;
 

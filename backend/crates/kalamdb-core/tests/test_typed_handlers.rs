@@ -3,11 +3,11 @@
 //! This module contains integration tests for type-safe SQL query handling.
 
 use kalamdb_commons::{Role, UserId};
+use kalamdb_configs::ServerConfig;
 use kalamdb_core::app_context::AppContext;
 use kalamdb_core::sql::context::ExecutionContext;
 use kalamdb_core::sql::executor::SqlExecutor;
 use kalamdb_store::{RocksDBBackend, RocksDbInit};
-use kalamdb_configs::ServerConfig;
 use std::sync::Arc;
 use tempfile::TempDir;
 
@@ -32,14 +32,22 @@ async fn create_test_app_context() -> (Arc<AppContext>, TempDir) {
 
     // Initialize Raft for single-node mode (required for DDL operations)
     app_context.executor().start().await.expect("Failed to start Raft");
-    app_context.executor().initialize_cluster().await.expect("Failed to initialize Raft cluster");
+    app_context
+        .executor()
+        .initialize_cluster()
+        .await
+        .expect("Failed to initialize Raft cluster");
     app_context.wire_raft_appliers();
 
     (app_context, temp_dir)
 }
 
 /// Helper to create ExecutionContext
-fn create_exec_context(app_context: Arc<AppContext>, user_id: &str, role: Role) -> ExecutionContext {
+fn create_exec_context(
+    app_context: Arc<AppContext>,
+    user_id: &str,
+    role: Role,
+) -> ExecutionContext {
     let user_id = UserId::new(user_id.to_string());
     let base_session = app_context.base_session_context();
     ExecutionContext::new(user_id, role, base_session)

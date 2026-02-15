@@ -44,6 +44,12 @@ Contributor guides for building and developing KalamDB.
 - **[macos.md](development/macos.md)** / **[linux.md](development/linux.md)** / **[windows.md](development/windows.md)** – Platform guides
 - **[testing-strategy.md](development/testing-strategy.md)** – Testing approach
 - **[how-to-add-sql-statement.md](development/how-to-add-sql-statement.md)** – Adding new SQL statements
+- **[docker-idle-resource-baseline.md](development/docker-idle-resource-baseline.md)** – Why idle Docker CPU/memory is non-zero and how to tune it
+
+### [plans/](plans/)
+Decision-complete implementation plans for major initiatives.
+
+- **[2026-02-14-flatbuffers-flexbuffers-vortex-migration-plan.md](plans/2026-02-14-flatbuffers-flexbuffers-vortex-migration-plan.md)** – Migration plan for FlatBuffers/FlexBuffers with Vortex serde learnings
 
 ### [API-Kalam/](API-Kalam/)
 Bruno API collection for testing endpoints.
@@ -66,6 +72,7 @@ Bruno API collection for testing endpoints.
 1. [Build Guide](development/build.md) – Build the project
 2. [Development Setup](development/development-setup.md) – Full environment setup
 3. [Architecture Decisions](architecture/decisions/) – Understand design choices
+4. [Plans](plans/) – Execution-ready project plans
 
 ---
 
@@ -93,5 +100,5 @@ KalamDB stores each user's messages in isolated storage partitions instead of a 
 
 ---
 
-**Last Updated**: December 2025  
+**Last Updated**: February 2026  
 **KalamDB Version**: 0.1.x

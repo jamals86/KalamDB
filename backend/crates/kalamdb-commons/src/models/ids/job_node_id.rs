@@ -1,7 +1,3 @@
-use bincode::de::{BorrowDecoder, Decoder};
-use bincode::enc::Encoder;
-use bincode::error::{DecodeError, EncodeError};
-use bincode::{BorrowDecode, Decode, Encode};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::fmt;
 
@@ -18,35 +14,6 @@ pub struct JobNodeId {
     job_id: JobId,
     #[serde(skip)]
     cached_string: String,
-}
-
-// Custom bincode Encode implementation
-impl Encode for JobNodeId {
-    fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
-        Encode::encode(&self.node_id, encoder)?;
-        Encode::encode(&self.job_id, encoder)?;
-        Ok(())
-    }
-}
-
-// Custom bincode Decode implementation that populates cached_string
-impl<Context> Decode<Context> for JobNodeId {
-    fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
-        let node_id = NodeId::decode(decoder)?;
-        let job_id = JobId::decode(decoder)?;
-        Ok(JobNodeId::new(&job_id, &node_id))
-    }
-}
-
-// Custom bincode BorrowDecode implementation that populates cached_string
-impl<'de, Context> BorrowDecode<'de, Context> for JobNodeId {
-    fn borrow_decode<D: BorrowDecoder<'de, Context = Context>>(
-        decoder: &mut D,
-    ) -> Result<Self, DecodeError> {
-        let node_id = NodeId::borrow_decode(decoder)?;
-        let job_id = JobId::borrow_decode(decoder)?;
-        Ok(JobNodeId::new(&job_id, &node_id))
-    }
 }
 
 // Custom serde Deserialize implementation that populates cached_string after deserialization

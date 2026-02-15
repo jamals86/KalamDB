@@ -4,12 +4,42 @@ use crate::CLI_VERSION;
 use colored::Colorize;
 
 impl CLISession {
+    fn normalize_server_field(value: String) -> Option<String> {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    }
+
     /// Show current session information
     ///
     /// Displays detailed information about the current CLI session
     pub(super) async fn show_session_info(&mut self) {
-        // Fetch cluster info from system.cluster_nodes
-        let cluster_info = self.fetch_cluster_info().await;
+        let health_status = match self.client.health_check().await {
+            Ok(health) => {
+                self.connected = true;
+                self.server_version = Self::normalize_server_field(health.version);
+                self.server_api_version = Self::normalize_server_field(health.api_version);
+                self.server_build_date = health.build_date.and_then(Self::normalize_server_field);
+                None
+            },
+            Err(e) => {
+                self.connected = false;
+                self.server_version = None;
+                self.server_api_version = None;
+                self.server_build_date = None;
+                Some(e.to_string())
+            },
+        };
+
+        // Only fetch cluster details if the server is reachable right now
+        let cluster_info = if self.connected {
+            self.fetch_cluster_info().await
+        } else {
+            None
+        };
 
         println!();
         println!("{}", "═══════════════════════════════════════".cyan().bold());
@@ -29,6 +59,9 @@ impl CLISession {
                 "No".red()
             }
         );
+        if let Some(ref err) = health_status {
+            println!("  Last check:     {}", format!("Failed ({})", err).red());
+        }
 
         // Session timing
         let uptime = self.connected_at.elapsed();
@@ -104,7 +137,11 @@ impl CLISession {
             }
         } else {
             println!("  Mode:           {}", "Standalone".dimmed());
-            println!("  {}", "(Could not fetch cluster info)".dimmed());
+            if self.connected {
+                println!("  {}", "(Could not fetch cluster info)".dimmed());
+            } else {
+                println!("  {}", "(Server is currently unreachable)".dimmed());
+            }
         }
         println!("  {}", "Use 'SELECT * FROM system.cluster' for full details".dimmed());
         println!();

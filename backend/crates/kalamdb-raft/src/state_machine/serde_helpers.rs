@@ -1,26 +1,20 @@
-//! Serialization helpers for bincode 2.x API compatibility.
+//! Serialization helpers for Raft state machine payloads.
 //!
 //! This module provides simple helper functions for serializing and deserializing
-//! data using bincode 2.x's serde integration.
+//! data using JSON.
 
 use crate::error::RaftError;
 use serde::{de::DeserializeOwned, Serialize};
 
-/// Encode a value to bytes using bincode.
-///
-/// Uses the standard bincode 2.x configuration with variable int encoding.
+/// Encode a value to bytes using JSON.
 pub fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>, RaftError> {
-    bincode::serde::encode_to_vec(value, bincode::config::standard())
+    serde_json::to_vec(value)
         .map_err(|e| RaftError::Serialization(e.to_string()))
 }
 
-/// Decode a value from bytes using bincode.
-///
-/// Uses the standard bincode 2.x configuration with variable int encoding.
+/// Decode a value from bytes using JSON.
 pub fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, RaftError> {
-    let (value, _) = bincode::serde::decode_from_slice(bytes, bincode::config::standard())
-        .map_err(|e| RaftError::Serialization(e.to_string()))?;
-    Ok(value)
+    serde_json::from_slice(bytes).map_err(|e| RaftError::Serialization(e.to_string()))
 }
 
 #[cfg(test)]
@@ -62,7 +56,7 @@ mod tests {
         // Create an EntryPayload::Membership
         let payload: EntryPayload<KalamTypeConfig> = EntryPayload::Membership(membership);
 
-        // Encode with standard config (what we use in serde_helpers)
+        // Encode using the same helper path used by runtime.
         let bytes = encode(&payload).expect("Membership should encode");
 
         // Decode should succeed - this was failing before the skip_serializing_if fix

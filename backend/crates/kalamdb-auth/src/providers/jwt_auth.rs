@@ -132,9 +132,8 @@ pub fn create_and_sign_token(
     expiry_hours: Option<i64>,
     secret: &str,
 ) -> AuthResult<(String, JwtClaims)> {
-    let claims = JwtClaims::with_token_type(
-        user_id, username, role, email, expiry_hours, TokenType::Access,
-    );
+    let claims =
+        JwtClaims::with_token_type(user_id, username, role, email, expiry_hours, TokenType::Access);
     let token = generate_jwt_token(&claims, secret)?;
     Ok((token, claims))
 }
@@ -152,7 +151,12 @@ pub fn create_and_sign_refresh_token(
     secret: &str,
 ) -> AuthResult<(String, JwtClaims)> {
     let claims = JwtClaims::with_token_type(
-        user_id, username, role, email, expiry_hours, TokenType::Refresh,
+        user_id,
+        username,
+        role,
+        email,
+        expiry_hours,
+        TokenType::Refresh,
     );
     let token = generate_jwt_token(&claims, secret)?;
     Ok((token, claims))

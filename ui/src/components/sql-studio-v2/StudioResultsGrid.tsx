@@ -843,15 +843,15 @@ export function StudioResultsGrid({
             open={cellViewer.open}
             onOpenChange={(open) => setCellViewer((previous) => ({ ...previous, open }))}
           >
-            <DialogContent className="max-h-[85vh] max-w-4xl overflow-hidden">
-              <DialogHeader>
+            <DialogContent className="max-h-[85vh] max-w-4xl overflow-hidden flex flex-col">
+              <DialogHeader className="shrink-0">
                 <DialogTitle>{cellViewer.title}</DialogTitle>
               </DialogHeader>
-              <div className="max-h-[70vh] overflow-auto">
+              <div className="flex-1 min-h-0 overflow-hidden">
                 <CodeBlock
                   value={cellViewer.content}
                   jsonPreferred={(cellViewer.dataType?.toLowerCase() ?? "").includes("json")}
-                  maxHeightClassName="max-h-[68vh]"
+                  maxHeightClassName="max-h-full h-full"
                 />
               </div>
             </DialogContent>

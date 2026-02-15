@@ -2,7 +2,6 @@
 
 use kalamdb_commons::datatypes::KalamDataType;
 use kalamdb_commons::models::{ConsumerGroupId, TopicId};
-use kalamdb_commons::KSerializable;
 use kalamdb_macros::table;
 use serde::{Deserialize, Serialize};
 
@@ -15,7 +14,7 @@ use serde::{Deserialize, Serialize};
     name = "topic_offsets",
     comment = "Consumer group offset tracking for topics"
 )]
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, bincode::Encode, bincode::Decode)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TopicOffset {
     /// Topic identifier
     #[column(
@@ -107,8 +106,6 @@ impl TopicOffset {
         self.last_acked_offset + 1
     }
 }
-
-impl KSerializable for TopicOffset {}
 
 #[cfg(test)]
 mod tests {

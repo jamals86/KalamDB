@@ -428,10 +428,7 @@ fn smoke_cli_namespace_management() {
 
     // Test CREATE NAMESPACE again (should error because it already exists)
     let result = execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace));
-    assert!(
-        result.is_err(),
-        "CREATE NAMESPACE should fail when namespace already exists"
-    );
+    assert!(result.is_err(), "CREATE NAMESPACE should fail when namespace already exists");
 
     // Test CREATE NAMESPACE IF NOT EXISTS (should not error)
     let result =

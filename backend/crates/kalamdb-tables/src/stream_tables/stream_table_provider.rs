@@ -196,7 +196,14 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
             let row = Self::build_notification_row(&entity);
 
             if has_topics {
-                self.core.publish_to_topics(&table_id, kalamdb_commons::models::TopicOp::Insert, &row, Some(&user_id)).await;
+                self.core
+                    .publish_to_topics(
+                        &table_id,
+                        kalamdb_commons::models::TopicOp::Insert,
+                        &row,
+                        Some(&user_id),
+                    )
+                    .await;
             }
 
             if has_live_subs {

@@ -1,12 +1,10 @@
 //! Audit log entry for administrative actions.
 
-use bincode::{Decode, Encode};
 use kalamdb_commons::datatypes::KalamDataType;
 use kalamdb_commons::models::{
     ids::{AuditLogId, UserId},
     UserName,
 };
-use kalamdb_commons::KSerializable;
 use kalamdb_macros::table;
 use serde::{Deserialize, Serialize};
 
@@ -19,7 +17,7 @@ use serde::{Deserialize, Serialize};
     name = "audit_log",
     comment = "System audit log for security and compliance tracking"
 )]
-#[derive(Serialize, Deserialize, Encode, Decode, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize,  Clone, Debug, PartialEq)]
 pub struct AuditLogEntry {
     #[column(
         id = 1,
@@ -112,6 +110,3 @@ pub struct AuditLogEntry {
     )]
     pub subject_user_id: Option<UserId>, // User being impersonated (AS USER operations)
 }
-
-// KSerializable implementation for EntityStore support
-impl KSerializable for AuditLogEntry {}

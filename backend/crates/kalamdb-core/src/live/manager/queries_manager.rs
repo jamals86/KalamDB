@@ -29,7 +29,7 @@ use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::{ConnectionId, LiveQueryId, NamespaceId, TableId, TableName, UserId};
 use kalamdb_commons::schemas::{SchemaField, TableDefinition};
 use kalamdb_commons::websocket::SubscriptionRequest;
-use kalamdb_commons::NodeId;
+use kalamdb_commons::{NodeId, Role};
 use kalamdb_system::providers::live_queries::models::LiveQuery as SystemLiveQuery;
 use kalamdb_system::LiveQueriesTableProvider;
 use std::sync::Arc;
@@ -61,16 +61,7 @@ impl LiveQueryManager {
                         .columns
                         .iter()
                         .find(|c| c.column_name.eq_ignore_ascii_case(col_name))
-                        .map(|col| {
-                            let mut schema_field =
-                                SchemaField::new(col.column_name.clone(), col.data_type.clone(), idx);
-                            if col.is_primary_key {
-                                schema_field = schema_field.with_def("pk,nonnull,unique");
-                            } else if !col.is_nullable {
-                                schema_field = schema_field.with_def("nonnull");
-                            }
-                            schema_field
-                        })
+                        .map(|col| SchemaField::from_column_definition(col, idx))
                 })
                 .collect()
         } else {
@@ -78,16 +69,7 @@ impl LiveQueryManager {
             cols.sort_by_key(|c| c.ordinal_position);
             cols.iter()
                 .enumerate()
-                .map(|(idx, col)| {
-                    let mut schema_field =
-                        SchemaField::new(col.column_name.clone(), col.data_type.clone(), idx);
-                    if col.is_primary_key {
-                        schema_field = schema_field.with_def("pk,nonnull,unique");
-                    } else if !col.is_nullable {
-                        schema_field = schema_field.with_def("nonnull");
-                    }
-                    schema_field
-                })
+                .map(|(idx, col)| SchemaField::from_column_definition(col, idx))
                 .collect()
         }
     }
@@ -177,9 +159,18 @@ impl LiveQueryManager {
         initial_data_options: Option<InitialDataOptions>,
     ) -> Result<SubscriptionResult, KalamDbError> {
         // Get user_id from connection state
-        let user_id = connection_state.read().user_id().cloned().ok_or_else(|| {
-            KalamDbError::InvalidOperation("Connection not authenticated".to_string())
-        })?;
+        let (user_id, user_role) = {
+            let state = connection_state.read();
+            let user_id = state.user_id().cloned().ok_or_else(|| {
+                KalamDbError::InvalidOperation("Connection not authenticated".to_string())
+            })?;
+            let user_role = state.user_role().ok_or_else(|| {
+                KalamDbError::InvalidOperation(
+                    "Connection authenticated without role context".to_string(),
+                )
+            })?;
+            (user_id, user_role)
+        };
 
         // Parse table name from SQL
         // TODO: Parse tableid/where/projection all at once using sqlparser instead of writing ad-hoc parsers
@@ -192,7 +183,7 @@ impl LiveQueryManager {
         let table_name = TableName::from(table);
         let table_id = TableId::new(namespace_id.clone(), table_name);
 
-        if namespace_id.is_system_namespace() && !user_id.is_admin() {
+        if namespace_id.is_system_namespace() && !matches!(user_role, Role::Dba | Role::System) {
             return Err(KalamDbError::PermissionDenied(
                 format!(
                     "Cannot subscribe to system table '{}': insufficient privileges. Only DBA and system roles can subscribe to system tables.",
@@ -213,7 +204,7 @@ impl LiveQueryManager {
         // - USER tables: Accessible to any authenticated user (RLS filters data to their rows)
         // - SYSTEM tables: Accessible only to DBA/System roles
         // - SHARED tables: Don't support subscriptions (use direct queries)
-        let is_admin = user_id.is_admin();
+        let is_admin = matches!(user_role, Role::Dba | Role::System);
         match table_def.table_type {
             kalamdb_commons::TableType::User => {
                 // USER tables are accessible to any authenticated user
@@ -293,6 +284,7 @@ impl LiveQueryManager {
                 .initial_data_fetcher
                 .compute_snapshot_end_seq(
                     &live_id,
+                    user_role,
                     &table_id,
                     table_def.table_type,
                     &fetch_options,
@@ -312,6 +304,7 @@ impl LiveQueryManager {
                 .initial_data_fetcher
                 .fetch_initial_data(
                     &live_id,
+                    user_role,
                     &table_id,
                     table_def.table_type,
                     fetch_options,
@@ -352,6 +345,15 @@ impl LiveQueryManager {
             })?
         };
 
+        let user_role = {
+            let state = connection_state.read();
+            state.user_role().ok_or_else(|| {
+                KalamDbError::InvalidOperation(
+                    "Connection authenticated without role context".to_string(),
+                )
+            })?
+        };
+
         let table_def = self
             .schema_registry
             .get(&sub_state.table_id)
@@ -376,6 +378,7 @@ impl LiveQueryManager {
         self.initial_data_fetcher
             .fetch_initial_data(
                 &sub_state.live_id,
+                user_role,
                 &sub_state.table_id,
                 table_def.table_type,
                 fetch_options,

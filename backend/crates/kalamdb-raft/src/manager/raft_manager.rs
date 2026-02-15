@@ -892,7 +892,7 @@ impl RaftManager {
         command: Vec<u8>,
     ) -> Result<(Vec<u8>, u64), RaftError> {
         // Deserialize the command
-        let raft_cmd: crate::RaftCommand = crate::state_machine::serde_helpers::decode(&command)
+        let raft_cmd = crate::codec::command_codec::decode_raft_command(&command)
             .map_err(|e| RaftError::Internal(format!("Failed to deserialize command: {}", e)))?;
 
         // Route to appropriate group
@@ -913,7 +913,7 @@ impl RaftManager {
         };
 
         // Serialize the response
-        let response_bytes = crate::state_machine::serde_helpers::encode(&response)
+        let response_bytes = crate::codec::command_codec::encode_raft_response(&response)
             .map_err(|e| RaftError::Internal(format!("Failed to serialize response: {}", e)))?;
 
         Ok((response_bytes, log_index))

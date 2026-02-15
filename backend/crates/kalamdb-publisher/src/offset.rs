@@ -16,7 +16,9 @@ pub(crate) struct OffsetAllocator {
 
 impl OffsetAllocator {
     pub fn new() -> Self {
-        Self { counters: DashMap::new() }
+        Self {
+            counters: DashMap::new(),
+        }
     }
 
     /// Get the next offset for a topic-partition and atomically increment.
@@ -25,11 +27,8 @@ impl OffsetAllocator {
 
         // Get or insert an AtomicU64 counter.
         // The DashMap shard lock is held only for the lookup/insert, not the increment.
-        let counter = self
-            .counters
-            .entry(key)
-            .or_insert_with(|| Arc::new(AtomicU64::new(0)))
-            .clone();
+        let counter =
+            self.counters.entry(key).or_insert_with(|| Arc::new(AtomicU64::new(0))).clone();
 
         counter.fetch_add(1, Ordering::SeqCst)
     }
@@ -45,9 +44,7 @@ impl OffsetAllocator {
     /// Returns `None` when the topic-partition counter is not initialized.
     pub fn peek_next_offset(&self, topic_id: &str, partition_id: u32) -> Option<u64> {
         let key = format!("{}:{}", topic_id, partition_id);
-        self.counters
-            .get(&key)
-            .map(|counter| counter.load(Ordering::SeqCst))
+        self.counters.get(&key).map(|counter| counter.load(Ordering::SeqCst))
     }
 
     /// Clear all counters.

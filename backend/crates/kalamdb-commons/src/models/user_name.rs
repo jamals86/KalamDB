@@ -1,7 +1,6 @@
 // File: backend/crates/kalamdb-commons/src/models/user_name.rs
 // Type-safe wrapper for usernames (secondary index key)
 
-use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -12,7 +11,7 @@ use crate::StorageKey;
 /// This newtype ensures usernames cannot be confused with user IDs
 /// or other string identifiers, providing compile-time safety for
 /// username-to-UserId lookups in the secondary index.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, )]
 pub struct UserName(String);
 
 /// Error type for UserName validation failures

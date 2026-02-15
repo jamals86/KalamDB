@@ -9,8 +9,6 @@
 
 pub mod models;
 pub mod topics_provider;
-pub mod topics_table;
 
 pub use models::{Topic, TopicRoute};
 pub use topics_provider::{TopicsStore, TopicsTableProvider};
-pub use topics_table::TopicsTableSchema;

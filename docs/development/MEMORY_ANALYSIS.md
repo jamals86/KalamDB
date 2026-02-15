@@ -1,5 +1,7 @@
 # KalamDB Server Memory Analysis & Optimization Guide
 
+> See also: [Docker Idle CPU and Memory Baseline](./docker-idle-resource-baseline.md) for idle-container behavior and tuning.
+
 ## Executive Summary
 
 Based on a comprehensive code audit (January 2026) starting from `main.rs`, KalamDB's idle memory footprint has been significantly reduced. The server now operates with a lean profile suitable for small instances while scaling up for production workloads.

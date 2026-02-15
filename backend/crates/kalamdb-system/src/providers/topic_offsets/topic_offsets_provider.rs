@@ -3,16 +3,18 @@
 //! This module provides a DataFusion TableProvider implementation for the system.topic_offsets table.
 //! Uses `IndexedEntityStore` with composite primary key (topic_id, group_id, partition_id).
 
-use super::TopicOffsetsTableSchema;
 use crate::error::{SystemError, SystemResultExt};
-use crate::providers::base::{extract_filter_value, SimpleProviderDefinition};
+use crate::providers::base::{extract_filter_value, system_rows_to_batch, SimpleProviderDefinition};
+use crate::system_row_mapper::{model_to_system_row, system_row_to_model};
 use datafusion::arrow::array::RecordBatch;
+use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::logical_expr::Expr;
 use kalamdb_commons::models::{ConsumerGroupId, TopicId};
+use kalamdb_commons::models::rows::SystemTableRow;
 use kalamdb_commons::SystemTable;
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_store::{IndexedEntityStore, StorageBackend};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use super::models::TopicOffset;
 
@@ -20,7 +22,7 @@ use super::models::TopicOffset;
 pub type TopicOffsetKey = String;
 
 /// Type alias for the indexed topic offsets store
-pub type TopicOffsetsStore = IndexedEntityStore<TopicOffsetKey, TopicOffset>;
+pub type TopicOffsetsStore = IndexedEntityStore<TopicOffsetKey, SystemTableRow>;
 
 /// System.topic_offsets table provider using IndexedEntityStore.
 ///
@@ -70,14 +72,16 @@ impl TopicOffsetsTableProvider {
     /// * `offset` - TopicOffset entity to upsert
     pub fn upsert_offset(&self, offset: TopicOffset) -> Result<(), SystemError> {
         let key = Self::make_key(&offset.topic_id, &offset.group_id, offset.partition_id);
-        self.store.insert(&key, &offset).into_system_error("insert topic offset error")
+        let row = Self::encode_offset_row(&offset)?;
+        self.store.insert(&key, &row).into_system_error("insert topic offset error")
     }
 
     /// Async version of `upsert_offset()`.
     pub async fn upsert_offset_async(&self, offset: TopicOffset) -> Result<(), SystemError> {
         let key = Self::make_key(&offset.topic_id, &offset.group_id, offset.partition_id);
+        let row = Self::encode_offset_row(&offset)?;
         self.store
-            .insert_async(key, offset)
+            .insert_async(key, row)
             .await
             .into_system_error("insert_async topic offset error")
     }
@@ -90,7 +94,8 @@ impl TopicOffsetsTableProvider {
         partition_id: u32,
     ) -> Result<Option<TopicOffset>, SystemError> {
         let key = Self::make_key(topic_id, group_id, partition_id);
-        Ok(self.store.get(&key)?)
+        let row = self.store.get(&key)?;
+        row.map(|value| Self::decode_offset_row(&value)).transpose()
     }
 
     /// Async version of `get_offset()`.
@@ -101,7 +106,8 @@ impl TopicOffsetsTableProvider {
         partition_id: u32,
     ) -> Result<Option<TopicOffset>, SystemError> {
         let key = Self::make_key(topic_id, group_id, partition_id);
-        self.store.get_async(key).await.into_system_error("get_async error")
+        let row = self.store.get_async(key).await.into_system_error("get_async error")?;
+        row.map(|value| Self::decode_offset_row(&value)).transpose()
     }
 
     /// Get all offsets for a topic and consumer group across all partitions
@@ -111,31 +117,27 @@ impl TopicOffsetsTableProvider {
         group_id: &ConsumerGroupId,
     ) -> Result<Vec<TopicOffset>, SystemError> {
         let all_offsets = self.store.scan_all_typed(None, None, None)?;
-        Ok(all_offsets
-            .iter()
-            .filter_map(|(_, offset)| {
-                if offset.topic_id == *topic_id && offset.group_id == *group_id {
-                    Some(offset.clone())
-                } else {
-                    None
-                }
-            })
-            .collect())
+        let mut offsets = Vec::new();
+        for (_, row) in all_offsets {
+            let offset = Self::decode_offset_row(&row)?;
+            if offset.topic_id == *topic_id && offset.group_id == *group_id {
+                offsets.push(offset);
+            }
+        }
+        Ok(offsets)
     }
 
     /// Get all offsets for a topic across all consumer groups
     pub fn get_topic_offsets(&self, topic_id: &TopicId) -> Result<Vec<TopicOffset>, SystemError> {
         let all_offsets = self.store.scan_all_typed(None, None, None)?;
-        Ok(all_offsets
-            .iter()
-            .filter_map(|(_, offset)| {
-                if offset.topic_id == *topic_id {
-                    Some(offset.clone())
-                } else {
-                    None
-                }
-            })
-            .collect())
+        let mut offsets = Vec::new();
+        for (_, row) in all_offsets {
+            let offset = Self::decode_offset_row(&row)?;
+            if offset.topic_id == *topic_id {
+                offsets.push(offset);
+            }
+        }
+        Ok(offsets)
     }
 
     /// Acknowledge consumption through a specific offset
@@ -151,21 +153,27 @@ impl TopicOffsetsTableProvider {
         let key = Self::make_key(topic_id, group_id, partition_id);
 
         // Get existing offset or create new one
-        let mut topic_offset = self.store.get(&key)?.unwrap_or_else(|| {
-            TopicOffset::new(
-                topic_id.clone(),
-                group_id.clone(),
-                partition_id,
-                0,
-                chrono::Utc::now().timestamp_millis(),
-            )
-        });
+        let mut topic_offset = self
+            .store
+            .get(&key)?
+            .map(|row| Self::decode_offset_row(&row))
+            .transpose()?
+            .unwrap_or_else(|| {
+                TopicOffset::new(
+                    topic_id.clone(),
+                    group_id.clone(),
+                    partition_id,
+                    0,
+                    chrono::Utc::now().timestamp_millis(),
+                )
+            });
 
         // Update offset
         topic_offset.ack(offset, chrono::Utc::now().timestamp_millis());
 
         // Save back
-        self.store.insert(&key, &topic_offset).into_system_error("update offset error")
+        let row = Self::encode_offset_row(&topic_offset)?;
+        self.store.insert(&key, &row).into_system_error("update offset error")
     }
 
     /// Async version of `ack_offset()`.
@@ -184,6 +192,8 @@ impl TopicOffsetsTableProvider {
             .get_async(key.clone())
             .await
             .into_system_error("get_async error")?
+            .map(|row| Self::decode_offset_row(&row))
+            .transpose()?
             .unwrap_or_else(|| {
                 TopicOffset::new(
                     topic_id.clone(),
@@ -198,8 +208,9 @@ impl TopicOffsetsTableProvider {
         topic_offset.ack(offset, chrono::Utc::now().timestamp_millis());
 
         // Save back
+        let row = Self::encode_offset_row(&topic_offset)?;
         self.store
-            .insert_async(key, topic_offset)
+            .insert_async(key, row)
             .await
             .into_system_error("insert_async offset error")
     }
@@ -236,8 +247,10 @@ impl TopicOffsetsTableProvider {
 
     /// List all topic offsets
     pub fn list_offsets(&self) -> Result<Vec<TopicOffset>, SystemError> {
-        let offsets = self.store.scan_all_typed(None, None, None)?;
-        Ok(offsets.iter().map(|(_, o)| o.clone()).collect())
+        let rows = self.store.scan_all_typed(None, None, None)?;
+        rows.into_iter()
+            .map(|(_, row)| Self::decode_offset_row(&row))
+            .collect()
     }
 
     /// Get reference to the underlying store for advanced operations
@@ -245,28 +258,15 @@ impl TopicOffsetsTableProvider {
         &self.store
     }
 
-    /// Build a RecordBatch from topic offset rows.
-    fn build_batch_from_offsets(
-        &self,
-        offsets: Vec<TopicOffset>,
-    ) -> Result<RecordBatch, SystemError> {
-        crate::build_record_batch!(
-            schema: TopicOffsetsTableSchema::schema(),
-            entries: offsets,
-            columns: [
-                topic_ids => OptionalString(|entry| Some(entry.topic_id.as_str())),
-                group_ids => OptionalString(|entry| Some(entry.group_id.as_str())),
-                partition_ids => OptionalInt32(|entry| Some(entry.partition_id as i32)),
-                last_acked_offsets => OptionalInt64(|entry| Some(entry.last_acked_offset as i64)),
-                updated_ats => Timestamp(|entry| Some(entry.updated_at))
-            ]
-        )
-        .into_arrow_error("Failed to create RecordBatch")
-    }
-
     /// Load all topic offsets as a single RecordBatch for DataFusion
     fn load_batch_internal(&self) -> Result<RecordBatch, SystemError> {
-        self.build_batch_from_offsets(self.list_offsets()?)
+        let rows = self
+            .store
+            .scan_all_typed(None, None, None)?
+            .into_iter()
+            .map(|(_, row)| row)
+            .collect();
+        system_rows_to_batch(&Self::schema(), rows)
     }
 
     fn scan_to_batch_filtered(
@@ -281,10 +281,11 @@ impl TopicOffsetsTableProvider {
 
         let iter = self.store.scan_iterator(None, None)?;
         let effective_limit = limit.unwrap_or(100_000);
-        let mut offsets = Vec::with_capacity(effective_limit.min(1000));
+        let mut rows = Vec::with_capacity(effective_limit.min(1000));
 
         for item in iter {
-            let (_, offset) = item?;
+            let (_, row) = item?;
+            let offset = Self::decode_offset_row(&row)?;
             if topic_id_filter
                 .as_deref()
                 .is_some_and(|topic_id| offset.topic_id.as_str() != topic_id)
@@ -301,27 +302,46 @@ impl TopicOffsetsTableProvider {
                 continue;
             }
 
-            offsets.push(offset);
-            if offsets.len() >= effective_limit {
+            rows.push(row);
+            if rows.len() >= effective_limit {
                 break;
             }
         }
 
-        self.build_batch_from_offsets(offsets)
+        system_rows_to_batch(&Self::schema(), rows)
     }
 
     fn provider_definition() -> SimpleProviderDefinition {
         SimpleProviderDefinition {
-            table_name: TopicOffsetsTableSchema::table_name(),
-            schema: TopicOffsetsTableSchema::schema,
+            table_name: SystemTable::TopicOffsets.table_name(),
+            schema: Self::schema,
         }
+    }
+
+    fn encode_offset_row(offset: &TopicOffset) -> Result<SystemTableRow, SystemError> {
+        model_to_system_row(offset, &TopicOffset::definition())
+    }
+
+    fn decode_offset_row(row: &SystemTableRow) -> Result<TopicOffset, SystemError> {
+        system_row_to_model(row, &TopicOffset::definition())
+    }
+
+    fn schema() -> SchemaRef {
+        static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
+        SCHEMA
+            .get_or_init(|| {
+                TopicOffset::definition()
+                    .to_arrow_schema()
+                    .expect("failed to build topic_offsets schema")
+            })
+            .clone()
     }
 }
 
 crate::impl_simple_system_table_provider!(
     provider = TopicOffsetsTableProvider,
     key = TopicOffsetKey,
-    value = TopicOffset,
+    value = SystemTableRow,
     definition = provider_definition,
     scan_all = load_batch_internal,
     scan_filtered = scan_to_batch_filtered

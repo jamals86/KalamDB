@@ -427,6 +427,7 @@ where
     /// store.insert_batch(&entries)?;  // Single atomic write for all
     /// ```
     pub fn insert_batch(&self, entries: &[(K, V)]) -> Result<()> {
+        let _span = tracing::info_span!("store.insert_batch", count = entries.len()).entered();
         if entries.is_empty() {
             return Ok(());
         }
@@ -460,6 +461,60 @@ where
         }
 
         // Single atomic batch write for ALL entities
+        self.backend.batch(operations)
+    }
+
+    /// Batch insert with pre-encoded entity bytes.
+    ///
+    /// Unlike [`insert_batch`] which calls `entity.encode()` per row (creating
+    /// a new FlatBufferBuilder each time), this method accepts pre-encoded
+    /// bytes produced by batch encoders like `batch_encode_user_table_rows()`
+    /// that reuse FlatBufferBuilders across rows.
+    ///
+    /// The caller is responsible for ensuring that `encoded_values[i]`
+    /// corresponds to `entries[i]`. The entries are still needed for index
+    /// key extraction.
+    ///
+    /// ## Performance
+    ///
+    /// - Saves N–1 FlatBufferBuilder allocations for N rows
+    /// - Eliminates per-row `.to_vec()` overhead from inner builder
+    pub fn insert_batch_preencoded(
+        &self,
+        entries: &[(K, V)],
+        encoded_values: Vec<Vec<u8>>,
+    ) -> Result<()> {
+        let _span = tracing::info_span!("store.insert_batch_preencoded", count = entries.len()).entered();
+        if entries.is_empty() {
+            return Ok(());
+        }
+        debug_assert_eq!(entries.len(), encoded_values.len());
+
+        let ops_per_entry = 1 + self.indexes.len();
+        let mut operations = Vec::with_capacity(entries.len() * ops_per_entry);
+        let partition = self.main_partition.clone();
+
+        for ((key, entity), value) in entries.iter().zip(encoded_values.into_iter()) {
+            // 1. Main entity write (pre-encoded)
+            operations.push(Operation::Put {
+                partition: partition.clone(),
+                key: key.storage_key(),
+                value,
+            });
+
+            // 2. Index writes for this entity
+            for (index, index_partition) in self.indexes.iter().zip(self.index_partitions.iter()) {
+                if let Some(index_key) = index.extract_key(key, entity) {
+                    let index_value = index.index_value(key, entity);
+                    operations.push(Operation::Put {
+                        partition: index_partition.clone(),
+                        key: index_key,
+                        value: index_value,
+                    });
+                }
+            }
+        }
+
         self.backend.batch(operations)
     }
 

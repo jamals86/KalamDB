@@ -6,16 +6,46 @@
 //! - Live query routing
 //! - Distributed coordination
 
-use bincode::{Decode, Encode};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 
 /// Node identifier for cluster deployments
 ///
 /// Uses u64 to match OpenRaft's NodeId type for seamless integration.
 /// Configured via server.toml `[cluster] node_id = 1`
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Encode, Decode)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, )]
 pub struct NodeId(u64);
+
+impl Serialize for NodeId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_u64(self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for NodeId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum NodeIdRepr {
+            Number(u64),
+            String(String),
+        }
+
+        match NodeIdRepr::deserialize(deserializer)? {
+            NodeIdRepr::Number(value) => Ok(NodeId::new(value)),
+            NodeIdRepr::String(value) => value
+                .parse::<u64>()
+                .map(NodeId::new)
+                .map_err(serde::de::Error::custom),
+        }
+    }
+}
 
 impl NodeId {
     /// Create a new node ID

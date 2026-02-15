@@ -60,18 +60,18 @@ function highlightJson(json: string): string {
     /("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(\.\d+)?([eE][+\-]?\d+)?)/g,
     (match) => {
       if (/^".*":$/.test(match)) {
-        return `<span class="text-sky-600 dark:text-sky-300">${match}</span>`;
+        return `<span class="text-sky-400">${match}</span>`;
       }
       if (/^"/.test(match)) {
-        return `<span class="text-emerald-600 dark:text-emerald-300">${match}</span>`;
+        return `<span class="text-emerald-400">${match}</span>`;
       }
       if (/true|false/.test(match)) {
-        return `<span class="text-violet-600 dark:text-violet-300">${match}</span>`;
+        return `<span class="text-violet-400">${match}</span>`;
       }
       if (/null/.test(match)) {
-        return `<span class="text-muted-foreground italic">${match}</span>`;
+        return `<span class="text-slate-500 italic">${match}</span>`;
       }
-      return `<span class="text-amber-600 dark:text-amber-300">${match}</span>`;
+      return `<span class="text-amber-400">${match}</span>`;
     },
   );
 }
@@ -86,14 +86,14 @@ export function CodeBlock({
   const highlighted = normalized.isJson ? highlightJson(normalized.text) : null;
 
   return (
-    <div className={cn("rounded-md border bg-muted/40", className)}>
-      <ScrollArea className={cn("w-full", maxHeightClassName)}>
+    <div className={cn("rounded-md border border-slate-700 bg-black h-full flex flex-col", className)}>
+      <ScrollArea className={cn("w-full flex-1", maxHeightClassName)}>
         {normalized.isJson && highlighted ? (
-          <pre className="whitespace-pre p-3 font-mono text-xs leading-5 text-foreground">
+          <pre className="whitespace-pre p-3 font-mono text-xs leading-5 text-slate-200">
             <code dangerouslySetInnerHTML={{ __html: highlighted }} />
           </pre>
         ) : (
-          <pre className="whitespace-pre-wrap p-3 font-mono text-xs leading-5 text-foreground">
+          <pre className="whitespace-pre-wrap p-3 font-mono text-xs leading-5 text-slate-200">
             {normalized.text}
           </pre>
         )}

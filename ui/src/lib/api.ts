@@ -1,4 +1,4 @@
-import { getCurrentToken } from "./kalam-client";
+import { executeQuery, getCurrentToken } from "./kalam-client";
 
 // HTTP API client for auth/setup endpoints.
 // SQL calls should go through kalam-link in `kalam-client.ts`.
@@ -111,6 +111,7 @@ export interface SchemaField {
   name: string;
   data_type: string;
   index: number;
+  flags?: string[];
 }
 
 // Query result alias for hooks
@@ -133,7 +134,21 @@ export interface SqlResponse {
 }
 
 export async function executeSql(sql: string, namespace?: string): Promise<SqlResponse> {
-  return api.post<SqlResponse>("/sql", { sql, namespace });
+  if (namespace && namespace.trim().length > 0) {
+    console.warn("[api] executeSql namespace parameter is ignored; SQL execution now routes through kalam-link");
+  }
+
+  const response = await executeQuery(sql);
+  const result = response.results?.[0];
+
+  return {
+    schema: (result?.schema ?? []) as SchemaField[],
+    rows: (result?.rows ?? []) as unknown[][],
+    row_count: result?.row_count ?? 0,
+    truncated: false,
+    execution_time_ms: response.took ?? 0,
+    as_user: (result as { as_user?: string } | undefined)?.as_user,
+  };
 }
 
 // Auth API helpers

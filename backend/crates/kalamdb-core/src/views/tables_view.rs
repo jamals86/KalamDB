@@ -201,39 +201,12 @@ impl VirtualView for TablesView {
         let mut updated_ats = TimestampMicrosecondBuilder::new();
         let mut created_ats = TimestampMicrosecondBuilder::new();
 
-        // Add system tables
-        for def in self.system_registry.all_system_table_definitions_cached() {
-            namespace_ids.append_value(def.namespace_id.as_str());
-            table_names.append_value(def.table_name.as_str());
-            table_types.append_value(def.table_type.as_str());
-            storage_ids.append_null(); // System tables don't have storage_id
-            versions.append_value(def.schema_version as i64);
+        // Read all persisted table definitions from system.schemas.
+        let persisted_tables = self.system_registry.tables().list_tables().map_err(|e| {
+            RegistryError::Other(format!("Failed to list persisted table definitions: {}", e))
+        })?;
 
-            // Serialize options as JSON
-            match serde_json::to_string(&def.table_options) {
-                Ok(json) => options_json.append_value(json),
-                Err(_) => options_json.append_null(),
-            }
-
-            if let Some(comment) = &def.table_comment {
-                comments.append_value(comment);
-            } else {
-                comments.append_null();
-            }
-
-            // Convert milliseconds to microseconds for Arrow Timestamp(Microsecond)
-            updated_ats.append_value(def.updated_at.timestamp_millis() * 1000);
-            created_ats.append_value(def.created_at.timestamp_millis() * 1000);
-        }
-
-        // Add user tables from system.schemas
-        let user_tables = self
-            .system_registry
-            .tables()
-            .list_tables()
-            .map_err(|e| RegistryError::Other(format!("Failed to list user tables: {}", e)))?;
-
-        for def in user_tables {
+        for def in persisted_tables {
             namespace_ids.append_value(def.namespace_id.as_str());
             table_names.append_value(def.table_name.as_str());
             table_types.append_value(def.table_type.as_str());

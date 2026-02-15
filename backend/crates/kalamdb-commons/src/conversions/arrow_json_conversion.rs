@@ -51,26 +51,34 @@ type ArrayRef = Arc<dyn datafusion::arrow::array::Array>;
 /// This is useful for INSERT operations where we need to ensure the data matches
 /// the schema before broadcasting or storing.
 pub fn coerce_rows(rows: Vec<Row>, schema: &SchemaRef) -> Result<Vec<Row>, String> {
+    let _span = tracing::info_span!("coerce_rows", row_count = rows.len(), num_fields = schema.fields().len()).entered();
     let defaults = get_column_defaults(schema);
     let typed_nulls = get_typed_nulls(schema);
 
     rows.into_iter()
         .map(|mut row| {
-            let mut new_values = BTreeMap::new();
+            // 1. Add defaults for any missing fields (moves/clones only defaults)
             for (i, field) in schema.fields().iter().enumerate() {
                 let field_name = field.name().as_str();
-
-                // Take value from map (move) instead of cloning
-                let raw_value = row
-                    .values
-                    .remove(field_name)
-                    .or_else(|| defaults[i].clone())
-                    .unwrap_or_else(|| typed_nulls[i].clone());
-
-                let coerced = coerce_scalar_to_field(raw_value, field)?;
-                new_values.insert(field_name.to_string(), coerced);
+                if !row.values.contains_key(field_name) {
+                    let default_val = defaults[i]
+                        .clone()
+                        .unwrap_or_else(|| typed_nulls[i].clone());
+                    row.values.insert(field_name.to_string(), default_val);
+                }
             }
-            Ok(Row::new(new_values))
+
+            // 2. Coerce existing values in-place using get_mut + mem::replace.
+            //    This avoids rebuilding the entire BTreeMap (no remove/re-insert,
+            //    no new String key allocations for existing columns).
+            for field in schema.fields() {
+                if let Some(val) = row.values.get_mut(field.name().as_str()) {
+                    let owned = std::mem::replace(val, ScalarValue::Null);
+                    *val = coerce_scalar_to_field(owned, field)?;
+                }
+            }
+
+            Ok(row)
         })
         .collect()
 }
@@ -215,12 +223,10 @@ pub fn coerce_scalar_to_field(value: ScalarValue, field: &Field) -> Result<Scala
 fn coerce_uuid_scalar(value: ScalarValue, field: &Field) -> Result<Option<ScalarValue>, String> {
     match value {
         ScalarValue::Utf8(Some(raw)) | ScalarValue::LargeUtf8(Some(raw)) => {
-            let uuid = Uuid::parse_str(&raw)
-                .map_err(|e| format!("Invalid UUID literal '{}' for column '{}': {}", raw, field.name(), e))?;
-            Ok(Some(ScalarValue::FixedSizeBinary(
-                16,
-                Some(uuid.as_bytes().to_vec()),
-            )))
+            let uuid = Uuid::parse_str(&raw).map_err(|e| {
+                format!("Invalid UUID literal '{}' for column '{}': {}", raw, field.name(), e)
+            })?;
+            Ok(Some(ScalarValue::FixedSizeBinary(16, Some(uuid.as_bytes().to_vec()))))
         },
         ScalarValue::Binary(Some(bytes)) => {
             if bytes.len() != 16 {

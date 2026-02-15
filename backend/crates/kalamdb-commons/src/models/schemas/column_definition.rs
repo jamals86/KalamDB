@@ -158,8 +158,6 @@ impl ColumnDefinition {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bincode::config::standard;
-    use bincode::serde::{decode_from_slice, encode_to_vec};
     use serde_json::json;
 
     #[test]
@@ -253,7 +251,7 @@ mod tests {
     }
 
     #[test]
-    fn test_bincode_roundtrip() {
+    fn test_flexbuffers_roundtrip() {
         let column = ColumnDefinition::new(
             5, // column_id
             "status",
@@ -266,10 +264,9 @@ mod tests {
             Some("Status column".to_string()),
         );
 
-        let config = standard();
-        let bytes = encode_to_vec(&column, config).expect("encode column definition");
-        let (decoded, _): (ColumnDefinition, usize) =
-            decode_from_slice(&bytes, config).expect("decode column definition");
+        let bytes = flexbuffers::to_vec(&column).expect("encode column definition");
+        let decoded: ColumnDefinition =
+            flexbuffers::from_slice(&bytes).expect("decode column definition");
 
         assert_eq!(decoded, column);
     }

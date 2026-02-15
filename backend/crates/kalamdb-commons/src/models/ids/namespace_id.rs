@@ -38,7 +38,6 @@ impl std::error::Error for NamespaceIdValidationError {}
 /// - Names containing null bytes
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", derive(bincode::Encode, bincode::Decode))]
 pub struct NamespaceId(String);
 
 impl NamespaceId {

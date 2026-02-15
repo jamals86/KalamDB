@@ -5,6 +5,8 @@
 use crate::providers::jobs::models::Job;
 use crate::JobStatus;
 use crate::StoragePartition;
+use crate::system_row_mapper::system_row_to_model;
+use kalamdb_commons::models::rows::SystemTableRow;
 use kalamdb_commons::storage::Partition;
 use kalamdb_commons::JobId;
 use kalamdb_store::IndexDefinition;
@@ -24,7 +26,7 @@ use std::sync::Arc;
 /// 3. Be unique by appending job_id
 pub struct JobStatusCreatedAtIndex;
 
-impl IndexDefinition<JobId, Job> for JobStatusCreatedAtIndex {
+impl IndexDefinition<JobId, SystemTableRow> for JobStatusCreatedAtIndex {
     fn partition(&self) -> Partition {
         Partition::new(StoragePartition::SystemJobsStatusIdx.name())
     }
@@ -33,7 +35,8 @@ impl IndexDefinition<JobId, Job> for JobStatusCreatedAtIndex {
         vec!["status", "created_at"]
     }
 
-    fn extract_key(&self, _primary_key: &JobId, job: &Job) -> Option<Vec<u8>> {
+    fn extract_key(&self, _primary_key: &JobId, row: &SystemTableRow) -> Option<Vec<u8>> {
+        let job: Job = system_row_to_model(row, &Job::definition()).ok()?;
         let status_byte = status_to_u8(job.status);
         let mut key = Vec::with_capacity(1 + 8 + job.job_id.as_bytes().len());
         key.push(status_byte);
@@ -64,7 +67,7 @@ impl IndexDefinition<JobId, Job> for JobStatusCreatedAtIndex {
 /// to prevent duplicate job creation.
 pub struct JobIdempotencyKeyIndex;
 
-impl IndexDefinition<JobId, Job> for JobIdempotencyKeyIndex {
+impl IndexDefinition<JobId, SystemTableRow> for JobIdempotencyKeyIndex {
     fn partition(&self) -> Partition {
         Partition::new(StoragePartition::SystemJobsIdempotencyIdx.name())
     }
@@ -73,7 +76,8 @@ impl IndexDefinition<JobId, Job> for JobIdempotencyKeyIndex {
         vec!["idempotency_key"]
     }
 
-    fn extract_key(&self, _primary_key: &JobId, job: &Job) -> Option<Vec<u8>> {
+    fn extract_key(&self, _primary_key: &JobId, row: &SystemTableRow) -> Option<Vec<u8>> {
+        let job: Job = system_row_to_model(row, &Job::definition()).ok()?;
         // Only index jobs that have an idempotency key
         job.idempotency_key.as_ref().map(|k| k.as_bytes().to_vec())
     }
@@ -115,7 +119,7 @@ pub fn parse_job_status(s: &str) -> Option<JobStatus> {
 }
 
 /// Create the default set of indexes for the jobs table.
-pub fn create_jobs_indexes() -> Vec<Arc<dyn IndexDefinition<JobId, Job>>> {
+pub fn create_jobs_indexes() -> Vec<Arc<dyn IndexDefinition<JobId, SystemTableRow>>> {
     vec![
         Arc::new(JobStatusCreatedAtIndex),
         Arc::new(JobIdempotencyKeyIndex),
@@ -126,6 +130,7 @@ pub fn create_jobs_indexes() -> Vec<Arc<dyn IndexDefinition<JobId, Job>>> {
 mod tests {
     use super::*;
     use crate::JobType;
+    use crate::system_row_mapper::model_to_system_row;
     use kalamdb_commons::NodeId;
 
     fn create_test_job(id: &str, status: JobStatus) -> Job {
@@ -172,7 +177,8 @@ mod tests {
         let job_id = job.job_id.clone();
 
         let index = JobStatusCreatedAtIndex;
-        let key = index.extract_key(&job_id, &job).unwrap();
+        let row = model_to_system_row(&job, &Job::definition()).unwrap();
+        let key = index.extract_key(&job_id, &row).unwrap();
 
         // First byte is status (Running = 2)
         assert_eq!(key[0], 2);
@@ -194,14 +200,16 @@ mod tests {
         let job_id = job.job_id.clone();
 
         let index = JobIdempotencyKeyIndex;
+        let row = model_to_system_row(&job, &Job::definition()).unwrap();
 
         // With idempotency key
-        let key = index.extract_key(&job_id, &job);
+        let key = index.extract_key(&job_id, &row);
         assert!(key.is_some());
 
         // Without idempotency key
         job.idempotency_key = None;
-        let key = index.extract_key(&job_id, &job);
+        let row = model_to_system_row(&job, &Job::definition()).unwrap();
+        let key = index.extract_key(&job_id, &row);
         assert!(key.is_none());
     }
 

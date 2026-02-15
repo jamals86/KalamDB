@@ -3,7 +3,6 @@
 use super::{StorageLocationConfig, StorageLocationConfigError, StorageType};
 use kalamdb_commons::datatypes::KalamDataType;
 use kalamdb_commons::models::ids::StorageId;
-use kalamdb_commons::KSerializable;
 use kalamdb_macros::table;
 use serde::{Deserialize, Serialize};
 
@@ -146,6 +145,3 @@ impl Storage {
             .map_err(|e| StorageLocationConfigError::InvalidJson(e.to_string()))
     }
 }
-
-// KSerializable implementation for EntityStore support
-impl KSerializable for Storage {}

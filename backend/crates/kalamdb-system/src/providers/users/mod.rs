@@ -9,9 +9,7 @@
 pub mod models;
 pub mod users_indexes;
 pub mod users_provider;
-pub mod users_table;
 
 pub use models::{AuthType, Role, User, UserName};
 pub use users_indexes::{create_users_indexes, UserRoleIndex, UserUsernameIndex};
 pub use users_provider::{UsersStore, UsersTableProvider};
-pub use users_table::UsersTableSchema;

@@ -94,3 +94,5 @@ cli/logs/server.jsonl
 cli/logs/server.jsonl
 /cli/logs
 cli/results.json
+/target-storage-migration
+/target-storage-rollback

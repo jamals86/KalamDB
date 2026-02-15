@@ -2,6 +2,7 @@
 use super::http_server::HttpTestServer;
 use anyhow::Result;
 use kalam_link::models::QueryResponse;
+use rand::RngExt;
 use tokio::sync::Mutex;
 
 /// A test cluster with 3 nodes for testing replication and consistency.
@@ -69,7 +70,6 @@ impl ClusterTestServer {
 
     /// Execute SQL on a random online node in the cluster
     pub async fn execute_sql_on_random(&self, sql: &str) -> Result<QueryResponse> {
-        use rand::Rng;
         let states = self.node_states.lock().await;
         let mut rng = rand::rng();
 

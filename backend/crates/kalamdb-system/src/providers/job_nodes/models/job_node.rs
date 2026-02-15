@@ -1,15 +1,13 @@
 //! Job-node execution state for system.job_nodes table.
 
 use crate::JobStatus;
-use bincode::{Decode, Encode};
 use kalamdb_commons::datatypes::KalamDataType;
 use kalamdb_commons::models::ids::{JobId, JobNodeId, NodeId};
-use kalamdb_commons::KSerializable;
 use kalamdb_macros::table;
 use serde::{Deserialize, Serialize};
 
 #[table(name = "job_nodes", comment = "Per-node job execution state")]
-#[derive(Serialize, Deserialize, Encode, Decode, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize,  Clone, Debug, PartialEq)]
 pub struct JobNode {
     #[column(
         id = 5,
@@ -61,11 +59,10 @@ pub struct JobNode {
         comment = "Job identifier"
     )]
     pub job_id: JobId,
-    #[bincode(with_serde)]
     #[column(
         id = 2,
         ordinal = 2,
-        data_type(KalamDataType::Text),
+        data_type(KalamDataType::BigInt),
         nullable = false,
         primary_key = true,
         default = "None",
@@ -100,5 +97,47 @@ impl JobNode {
     }
 }
 
-// KSerializable implementation for EntityStore support
-impl KSerializable for JobNode {}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::system_row_mapper::{model_to_system_row, system_row_to_model};
+
+    #[test]
+    fn test_job_node_system_row_roundtrip_preserves_numeric_node_id() {
+        let job_node = JobNode {
+            created_at: 1730000000000,
+            updated_at: 1730000003000,
+            started_at: Some(1730000000100),
+            finished_at: None,
+            job_id: JobId::new("job_node_mapper_roundtrip"),
+            node_id: NodeId::from(1u64),
+            status: JobStatus::Queued,
+            error_message: None,
+        };
+
+        let row = model_to_system_row(&job_node, &JobNode::definition()).expect("encode model to row");
+
+        let node_id_scalar = row
+            .fields
+            .values
+            .get("node_id")
+            .expect("node_id scalar must exist");
+        assert!(matches!(node_id_scalar, datafusion::scalar::ScalarValue::Int64(Some(1))));
+
+        let decoded: JobNode =
+            system_row_to_model(&row, &JobNode::definition()).expect("decode row to model");
+        assert_eq!(decoded, job_node);
+    }
+
+    #[test]
+    fn test_job_node_definition_node_id_is_bigint() {
+        let definition = JobNode::definition();
+        let node_id_column = definition
+            .columns
+            .iter()
+            .find(|column| column.column_name == "node_id")
+            .expect("node_id column must exist");
+
+        assert_eq!(node_id_column.data_type, KalamDataType::BigInt);
+    }
+}

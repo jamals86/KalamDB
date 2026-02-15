@@ -340,7 +340,8 @@ async fn test_select_as_user_scopes_reads() {
         ResponseStatus::Success
     );
 
-    let select_as_user1 = format!("EXECUTE AS USER '{}' (SELECT * FROM {}.items)", user1.as_str(), ns);
+    let select_as_user1 =
+        format!("EXECUTE AS USER '{}' (SELECT * FROM {}.items)", user1.as_str(), ns);
     let resp = server.execute_sql_as_user(&select_as_user1, service_user.as_str()).await;
     assert_eq!(resp.status, ResponseStatus::Success);
     let rows = resp.rows_as_maps();
@@ -378,7 +379,8 @@ async fn test_stream_table_isolation_with_select_as_user() {
         ResponseStatus::Success
     );
 
-    let select_as_user2 = format!("EXECUTE AS USER '{}' (SELECT * FROM {}.events)", user2.as_str(), ns);
+    let select_as_user2 =
+        format!("EXECUTE AS USER '{}' (SELECT * FROM {}.events)", user2.as_str(), ns);
     let resp_user2 = server.execute_sql_as_user(&select_as_user2, service_user.as_str()).await;
     assert_eq!(resp_user2.status, ResponseStatus::Success);
     assert_eq!(resp_user2.rows_as_maps().len(), 0);

@@ -122,18 +122,6 @@ impl RaftError {
     }
 }
 
-impl From<bincode::error::EncodeError> for RaftError {
-    fn from(err: bincode::error::EncodeError) -> Self {
-        RaftError::Serialization(err.to_string())
-    }
-}
-
-impl From<bincode::error::DecodeError> for RaftError {
-    fn from(err: bincode::error::DecodeError) -> Self {
-        RaftError::Serialization(err.to_string())
-    }
-}
-
 impl From<std::io::Error> for RaftError {
     fn from(err: std::io::Error) -> Self {
         RaftError::Storage(err.to_string())
@@ -220,22 +208,6 @@ mod tests {
         assert!(msg.contains("Not leader"));
         assert!(msg.contains("user-shard-5"));
         assert!(msg.contains("2"));
-    }
-
-    #[test]
-    fn test_from_bincode_encode_error() {
-        // Create a bincode encode error by trying to encode something that will fail
-        let value = std::f64::NAN;
-        let result: std::result::Result<Vec<u8>, _> =
-            bincode::serde::encode_to_vec(&value, bincode::config::standard());
-
-        if let Err(encode_err) = result {
-            let raft_err: RaftError = encode_err.into();
-            match raft_err {
-                RaftError::Serialization(_) => {},
-                _ => panic!("Expected Serialization error"),
-            }
-        }
     }
 
     #[test]

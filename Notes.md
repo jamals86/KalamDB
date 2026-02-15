@@ -1320,6 +1320,19 @@ Query OK, 0 rows affected
 
 174) When we implement the delivery_policy we mustc verify the user is subscribing to this tableid before calling out the insert
 
+175) why fetching the table again here? it should be already passed to there: backend/crates/kalamdb-tables/src/manifest/manifest_helpers.rs
+
+176) insetad of holding: pub struct ManifestCacheEntry and manifest we can combine them together for the entitystore, then we wont be needing any custom schema for them, we can make the main object as the schema for the table
+
+177) check that we use zero-copy serdes using flatbuffers to the logic model we have for each system table, the main changes i guess should be in SystemTableRow, when we have something good we can copy it to SharedTableRow and UserTableRow as well and the inside Row -> ScalarValue
+
+178) change this to flatbuffers: backend/crates/kalamdb-raft/src/state_machine/serde_helpers.rs for faster serdes
+
+179) instead of this:       "def": "pk,nonnull,unique", we can do:       "flags": "pk,nn,uq"
+
+
+
+
 
 
 

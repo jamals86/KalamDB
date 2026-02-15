@@ -2271,11 +2271,52 @@ impl CLISession {
         }
     }
 
-    /// Check server health
-    pub async fn health_check(&self) -> Result<()> {
-        self.client.health_check().await?;
-        println!("✓ Server is healthy");
-        Ok(())
+    /// Check server health and refresh cached server metadata
+    pub async fn health_check(&mut self) -> Result<()> {
+        match self.client.health_check().await {
+            Ok(health) => {
+                self.connected = true;
+
+                let version = {
+                    let trimmed = health.version.trim();
+                    if trimmed.is_empty() {
+                        None
+                    } else {
+                        Some(trimmed.to_string())
+                    }
+                };
+                let api_version = {
+                    let trimmed = health.api_version.trim();
+                    if trimmed.is_empty() {
+                        None
+                    } else {
+                        Some(trimmed.to_string())
+                    }
+                };
+                let build_date = health.build_date.and_then(|value| {
+                    let trimmed = value.trim();
+                    if trimmed.is_empty() {
+                        None
+                    } else {
+                        Some(trimmed.to_string())
+                    }
+                });
+
+                self.server_version = version;
+                self.server_api_version = api_version;
+                self.server_build_date = build_date;
+
+                println!("✓ Server is healthy");
+                Ok(())
+            },
+            Err(e) => {
+                self.connected = false;
+                self.server_version = None;
+                self.server_api_version = None;
+                self.server_build_date = None;
+                Err(e.into())
+            },
+        }
     }
 
     /// Get current server URL

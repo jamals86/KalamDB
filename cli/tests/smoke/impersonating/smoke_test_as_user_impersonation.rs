@@ -716,10 +716,12 @@ fn smoke_as_user_stream_table_isolation() {
             .expect("User2 stream select failed");
     assert!(!user2_direct.contains("stream-u1"));
 
-    let service_as_user1 = execute_sql_via_client_as(
-        &service_user,
-        password,
-        &format!("EXECUTE AS USER '{}' (SELECT * FROM {})", user1_id, full_table),
+    let user1_select_sql = format!("EXECUTE AS USER '{}' (SELECT * FROM {})", user1_id, full_table);
+    let service_as_user1 = wait_for_query_contains_with(
+        &user1_select_sql,
+        "stream-u1",
+        Duration::from_secs(10),
+        |sql| execute_sql_via_client_as(&service_user, password, sql),
     )
     .expect("Service SELECT AS USER user1 on stream failed");
     assert!(service_as_user1.contains("stream-u1"));

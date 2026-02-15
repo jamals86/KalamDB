@@ -26,7 +26,10 @@ pub(crate) struct RouteCache {
 
 impl RouteCache {
     pub fn new() -> Self {
-        Self { table_routes: DashMap::new(), topics: DashMap::new() }
+        Self {
+            table_routes: DashMap::new(),
+            topics: DashMap::new(),
+        }
     }
 
     /// Check if any topics are configured for a given table.
@@ -142,7 +145,9 @@ impl RouteCache {
     }
 
     /// Iterate over all cached topics.
-    pub fn iter_topics(&self) -> impl Iterator<Item = dashmap::mapref::multiple::RefMulti<'_, TopicId, Topic>> {
+    pub fn iter_topics(
+        &self,
+    ) -> impl Iterator<Item = dashmap::mapref::multiple::RefMulti<'_, TopicId, Topic>> {
         self.topics.iter()
     }
 

@@ -15,11 +15,11 @@
 //!   - DataSharedShard(N): "s:{N:05}"
 //!
 //! Key Types:
-//!   - log:{index:020}  → RaftLogEntry (bincode)
-//!   - meta:vote        → Vote<u64> (bincode)
-//!   - meta:commit      → Option<LogId<u64>> (bincode)
-//!   - meta:purge       → Option<LogId<u64>> (bincode)
-//!   - snap:meta        → SnapshotMeta (bincode)
+//!   - log:{index:020}  → RaftLogEntry (KSerializable binary payload)
+//!   - meta:vote        → Vote<u64> (KSerializable binary payload)
+//!   - meta:commit      → Option<LogId<u64>> (KSerializable binary payload)
+//!   - meta:purge       → Option<LogId<u64>> (KSerializable binary payload)
+//!   - snap:meta        → SnapshotMeta (KSerializable binary payload)
 //!   - snap:data        → Snapshot file path (string) or inline bytes if small
 //! ```
 //!

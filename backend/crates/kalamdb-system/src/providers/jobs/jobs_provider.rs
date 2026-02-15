@@ -18,24 +18,26 @@
 //! Note: namespace_id and table_name are now stored in the parameters JSON field
 
 use super::jobs_indexes::{create_jobs_indexes, status_to_u8};
-use super::JobsTableSchema;
 use crate::error::{SystemError, SystemResultExt};
-use crate::providers::base::IndexedProviderDefinition;
+use crate::providers::base::{system_rows_to_batch, IndexedProviderDefinition};
+use crate::system_row_mapper::{model_to_system_row, system_row_to_model};
 use crate::JobStatus;
 use datafusion::arrow::array::RecordBatch;
+use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::Expr;
 use datafusion::logical_expr::TableProviderFilterPushDown;
 use kalamdb_commons::JobId;
+use kalamdb_commons::models::rows::SystemTableRow;
 use kalamdb_commons::SystemTable;
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_store::{IndexedEntityStore, StorageBackend};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use super::models::{Job, JobFilter, JobSortField, SortOrder};
 
 /// Type alias for the indexed jobs store
-pub type JobsStore = IndexedEntityStore<JobId, Job>;
+pub type JobsStore = IndexedEntityStore<JobId, SystemTableRow>;
 
 /// System.jobs table provider using IndexedEntityStore for automatic index management.
 ///
@@ -73,7 +75,8 @@ impl JobsTableProvider {
     /// Indexes are automatically maintained via `IndexedEntityStore`.
     /// TODO: Return a string message
     pub fn create_job(&self, job: Job) -> Result<String, SystemError> {
-        self.store.insert(&job.job_id, &job).into_system_error("insert job error")?;
+        let row = Self::encode_job_row(&job)?;
+        self.store.insert(&job.job_id, &row).into_system_error("insert job error")?;
         Ok(format!("Job {} created", job.job_id))
     }
 
@@ -87,15 +90,17 @@ impl JobsTableProvider {
     /// Uses `spawn_blocking` internally to avoid blocking the async runtime.
     pub async fn insert_job_async(&self, job: Job) -> Result<(), SystemError> {
         let job_id = job.job_id.clone();
+        let row = Self::encode_job_row(&job)?;
         self.store
-            .insert_async(job_id, job)
+            .insert_async(job_id, row)
             .await
             .into_system_error("insert_async job error")
     }
 
     /// Get a job by ID
     pub fn get_job_by_id(&self, job_id: &JobId) -> Result<Option<Job>, SystemError> {
-        Ok(self.store.get(job_id)?)
+        let row = self.store.get(job_id)?;
+        row.map(|value| Self::decode_job_row(&value)).transpose()
     }
 
     /// Alias for get_job_by_id (for backward compatibility)
@@ -105,7 +110,8 @@ impl JobsTableProvider {
 
     /// Async version of `get_job()`.
     pub async fn get_job_async(&self, job_id: &JobId) -> Result<Option<Job>, SystemError> {
-        self.store.get_async(job_id.clone()).await.into_system_error("get_async error")
+        let row = self.store.get_async(job_id.clone()).await.into_system_error("get_async error")?;
+        row.map(|value| Self::decode_job_row(&value)).transpose()
     }
 
     /// Update an existing job entry.
@@ -114,17 +120,17 @@ impl JobsTableProvider {
     /// Stale index entries are removed and new ones added atomically.
     pub fn update_job(&self, job: Job) -> Result<(), SystemError> {
         // Check if job exists
-        let old_job = self.store.get(&job.job_id)?;
-        if old_job.is_none() {
+        let old_row = self.store.get(&job.job_id)?;
+        if old_row.is_none() {
             return Err(SystemError::NotFound(format!("Job not found: {}", job.job_id)));
         }
-        let old_job = old_job.unwrap();
+        let old_row = old_row.unwrap();
 
         validate_job_update(&job)?;
+        let new_row = Self::encode_job_row(&job)?;
 
-        // Use update_with_old for efficiency (we already have old entity)
         self.store
-            .update_with_old(&job.job_id, Some(&old_job), &job)
+            .update_with_old(&job.job_id, Some(&old_row), &new_row)
             .into_system_error("update job error")
     }
 
@@ -133,27 +139,28 @@ impl JobsTableProvider {
         log::debug!("[{}] update_job_async called: status={:?}", job.job_id, job.status);
 
         // Check if job exists
-        let old_job = self
+        let old_row = self
             .store
             .get_async(job.job_id.clone())
             .await
             .into_system_error("get_async error")?;
 
-        let old_job = match old_job {
-            Some(j) => j,
+        let old_row = match old_row {
+            Some(row) => row,
             None => {
                 return Err(SystemError::NotFound(format!("Job not found: {}", job.job_id)));
             },
         };
 
         validate_job_update(&job)?;
+        let new_row = Self::encode_job_row(&job)?;
 
         // We need to do update in blocking context since update_with_old is sync
         let store = self.store.clone();
         let job_id_clone = job.job_id.clone();
         let job_id = job.job_id.clone();
         tokio::task::spawn_blocking(move || {
-            store.update_with_old(&job_id_clone, Some(&old_job), &job)
+            store.update_with_old(&job_id_clone, Some(&old_row), &new_row)
         })
         .await
         .into_system_error("spawn_blocking error")?
@@ -219,7 +226,8 @@ impl JobsTableProvider {
                     .into_system_error("scan_by_index_iter error")?;
 
                 for entry in iter {
-                    let (_job_id, job) = entry.into_system_error("scan_by_index_iter error")?;
+                    let (_job_id, row) = entry.into_system_error("scan_by_index_iter error")?;
+                    let job = Self::decode_job_row(&row)?;
                     // Apply other filters that index doesn't cover
                     if self.matches_filter(&job, filter) {
                         jobs.push(job);
@@ -234,8 +242,11 @@ impl JobsTableProvider {
         }
 
         // Fallback to full scan
-        let all_jobs = self.store.scan_all_typed(None, None, None)?;
-        let mut jobs: Vec<Job> = all_jobs.into_iter().map(|(_, job)| job).collect();
+        let all_rows = self.store.scan_all_typed(None, None, None)?;
+        let mut jobs: Vec<Job> = all_rows
+            .into_iter()
+            .map(|(_, row)| Self::decode_job_row(&row))
+            .collect::<Result<Vec<_>, _>>()?;
 
         // Apply filters in memory
         jobs.retain(|job| self.matches_filter(job, filter));
@@ -303,7 +314,8 @@ impl JobsTableProvider {
                     .await
                     .into_system_error("scan_by_index_async error")?;
 
-                for (_job_id, job) in job_entries {
+                for (_job_id, row) in job_entries {
+                    let job = Self::decode_job_row(&row)?;
                     if matches_filter_sync(&job, &filter) {
                         jobs.push(job);
                         if jobs.len() >= limit {
@@ -317,12 +329,15 @@ impl JobsTableProvider {
         }
 
         // Fallback to full scan
-        let all_jobs: Vec<(Vec<u8>, Job)> = self
+        let all_jobs: Vec<(Vec<u8>, SystemTableRow)> = self
             .store
             .scan_all_async(None, None, None)
             .await
             .into_system_error("scan_all_async error")?;
-        let mut jobs: Vec<Job> = all_jobs.into_iter().map(|(_, job)| job).collect();
+        let mut jobs: Vec<Job> = all_jobs
+            .into_iter()
+            .map(|(_, row)| Self::decode_job_row(&row))
+            .collect::<Result<Vec<_>, _>>()?;
 
         jobs.retain(|job| matches_filter_sync(job, &filter));
 
@@ -478,7 +493,8 @@ impl JobsTableProvider {
                 }
 
                 // Load job to check actual finished_at
-                if let Some(job) = self.store.get(&job_id)? {
+                if let Some(row) = self.store.get(&job_id)? {
+                    let job = Self::decode_job_row(&row)?;
                     let reference_time =
                         job.finished_at.or(job.started_at).unwrap_or(job.created_at);
 
@@ -494,35 +510,23 @@ impl JobsTableProvider {
     }
 
     /// Helper to create RecordBatch from jobs
-    fn create_batch(&self, jobs: Vec<(JobId, Job)>) -> Result<RecordBatch, SystemError> {
-        crate::build_record_batch!(
-            schema: JobsTableSchema::schema(),
-            entries: jobs,
-            columns: [
-                job_ids => OptionalString(|entry| Some(entry.1.job_id.as_str())),
-                job_types => OptionalString(|entry| Some(entry.1.job_type.as_str())),
-                statuses => OptionalString(|entry| Some(entry.1.status.as_str())),
-                parameters => OptionalString(|entry| entry.1.parameters.as_deref()),
-                results => OptionalString(|entry| entry.1.message.as_deref()),
-                traces => OptionalString(|entry| entry.1.exception_trace.as_deref()),
-                memory_useds => OptionalInt64(|entry| entry.1.memory_used),
-                cpu_useds => OptionalInt64(|entry| entry.1.cpu_used),
-                created_ats => Timestamp(|entry| Some(entry.1.created_at)),
-                started_ats => OptionalTimestamp(|entry| entry.1.started_at),
-                finished_ats => OptionalTimestamp(|entry| entry.1.finished_at),
-                node_ids => OptionalString(|entry| Some(entry.1.node_id.to_string())),
-                leader_node_ids => OptionalString(|entry| entry.1.leader_node_id.as_ref().map(|n| n.to_string())),
-                leader_statuses => OptionalString(|entry| entry.1.leader_status.as_ref().map(|s| s.as_str())),
-                error_messages => OptionalString(|entry| entry.1.message.as_deref())
-            ]
-        )
-        .into_arrow_error("Failed to create RecordBatch")
+    fn create_batch(&self, jobs: Vec<(JobId, SystemTableRow)>) -> Result<RecordBatch, SystemError> {
+        let rows = jobs.into_iter().map(|(_, row)| row).collect();
+        system_rows_to_batch(&Self::schema(), rows)
     }
 
     /// Scan all jobs and return as RecordBatch
     pub fn scan_all_jobs(&self) -> Result<RecordBatch, SystemError> {
         let jobs = self.store.scan_all_typed(None, None, None)?;
         self.create_batch(jobs)
+    }
+
+    fn encode_job_row(job: &Job) -> Result<SystemTableRow, SystemError> {
+        model_to_system_row(job, &Job::definition())
+    }
+
+    fn decode_job_row(row: &SystemTableRow) -> Result<Job, SystemError> {
+        system_row_to_model(row, &Job::definition())
     }
 }
 
@@ -611,9 +615,9 @@ fn matches_filter_sync(job: &Job, filter: &JobFilter) -> bool {
 impl JobsTableProvider {
     fn provider_definition() -> IndexedProviderDefinition<JobId> {
         IndexedProviderDefinition {
-            table_name: JobsTableSchema::table_name(),
+            table_name: SystemTable::Jobs.table_name(),
             primary_key_column: "job_id",
-            schema: JobsTableSchema::schema,
+            schema: Self::schema,
             parse_key: |value| Some(JobId::new(value)),
         }
     }
@@ -632,12 +636,23 @@ impl JobsTableProvider {
             })
             .collect())
     }
+
+    fn schema() -> SchemaRef {
+        static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
+        SCHEMA
+            .get_or_init(|| {
+                Job::definition()
+                    .to_arrow_schema()
+                    .expect("failed to build jobs schema")
+            })
+            .clone()
+    }
 }
 
 crate::impl_indexed_system_table_provider!(
     provider = JobsTableProvider,
     key = JobId,
-    value = Job,
+    value = SystemTableRow,
     store = store,
     definition = provider_definition,
     build_batch = create_batch,
@@ -779,9 +794,7 @@ mod tests {
         // Scan
         let batch = provider.scan_all_jobs().unwrap();
         assert_eq!(batch.num_rows(), 3);
-        // 15 columns: job_id, job_type, status, parameters, result, trace, memory_used,
-        // cpu_used, created_at, started_at, completed_at, node_id, leader_node_id, leader_status, error_message
-        assert_eq!(batch.num_columns(), 15);
+        assert_eq!(batch.num_columns(), 20);
     }
 
     #[tokio::test]

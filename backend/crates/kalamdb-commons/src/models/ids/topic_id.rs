@@ -21,7 +21,6 @@ use crate::StorageKey;
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", derive(bincode::Encode, bincode::Decode))]
 pub struct TopicId(String);
 
 impl TopicId {

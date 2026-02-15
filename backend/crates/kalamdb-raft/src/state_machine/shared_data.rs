@@ -21,7 +21,10 @@ use std::sync::Arc;
 use crate::applier::SharedDataApplier;
 use crate::{DataResponse, GroupId, RaftError, SharedDataCommand};
 
-use super::{decode, encode, ApplyResult, KalamStateMachine, StateMachineSnapshot};
+use super::{
+    decode as bincode_decode, encode as bincode_encode, ApplyResult, KalamStateMachine,
+    StateMachineSnapshot,
+};
 use super::{get_coordinator, PendingBuffer, PendingCommand};
 
 /// Row operation tracking (for metrics)
@@ -149,7 +152,8 @@ impl SharedDataStateMachine {
         }
 
         for pending in drained {
-            let cmd: SharedDataCommand = decode(&pending.command_bytes)?;
+            let cmd =
+                crate::codec::command_codec::decode_shared_data_command(&pending.command_bytes)?;
             let _ = self.apply_command(cmd).await?;
             log::debug!(
                 "SharedDataStateMachine[{}]: Applied buffered command log_index={}",
@@ -349,7 +353,7 @@ impl KalamStateMachine for SharedDataStateMachine {
         }
 
         // Deserialize command to check watermark
-        let cmd: SharedDataCommand = decode(command)?;
+        let cmd = crate::codec::command_codec::decode_shared_data_command(command)?;
         let required_meta = cmd.required_meta_index();
 
         // Check watermark: if Meta is behind AND required_meta > 0, wait for it to catch up.
@@ -393,7 +397,7 @@ impl KalamStateMachine for SharedDataStateMachine {
         self.last_applied_term.store(term, Ordering::Release);
 
         // Serialize response
-        let response_data = encode(&response)?;
+        let response_data = crate::codec::command_codec::encode_data_response(&response)?;
 
         Ok(ApplyResult::ok_with_data(response_data))
     }
@@ -416,7 +420,7 @@ impl KalamStateMachine for SharedDataStateMachine {
             pending_commands,
         };
 
-        let data = encode(&snapshot)?;
+        let data = bincode_encode(&snapshot)?;
 
         Ok(StateMachineSnapshot::new(
             self.group_id(),
@@ -427,7 +431,7 @@ impl KalamStateMachine for SharedDataStateMachine {
     }
 
     async fn restore(&self, snapshot: StateMachineSnapshot) -> Result<(), RaftError> {
-        let data: SharedDataSnapshot = decode(&snapshot.data)?;
+        let data: SharedDataSnapshot = bincode_decode(&snapshot.data)?;
 
         {
             let mut ops = self.recent_operations.write();
@@ -470,7 +474,7 @@ mod tests {
             rows: vec![],
             required_meta_index: 0,
         };
-        let cmd_bytes = encode(&cmd).unwrap();
+        let cmd_bytes = crate::codec::command_codec::encode_shared_data_command(&cmd).unwrap();
 
         let result = sm.apply(1, 1, &cmd_bytes).await.unwrap();
         assert!(result.is_ok());
@@ -488,7 +492,9 @@ mod tests {
             rows: vec![],
             required_meta_index: 0,
         };
-        sm.apply(1, 1, &encode(&insert).unwrap()).await.unwrap();
+        sm.apply(1, 1, &crate::codec::command_codec::encode_shared_data_command(&insert).unwrap())
+            .await
+            .unwrap();
 
         // Update
         let update = SharedDataCommand::Update {
@@ -497,7 +503,9 @@ mod tests {
             filter: None,
             required_meta_index: 0,
         };
-        sm.apply(2, 1, &encode(&update).unwrap()).await.unwrap();
+        sm.apply(2, 1, &crate::codec::command_codec::encode_shared_data_command(&update).unwrap())
+            .await
+            .unwrap();
 
         // Delete
         let delete = SharedDataCommand::Delete {
@@ -505,7 +513,9 @@ mod tests {
             pk_values: None,
             required_meta_index: 0,
         };
-        sm.apply(3, 1, &encode(&delete).unwrap()).await.unwrap();
+        sm.apply(3, 1, &crate::codec::command_codec::encode_shared_data_command(&delete).unwrap())
+            .await
+            .unwrap();
 
         assert_eq!(sm.total_operations.load(Ordering::Relaxed), 3);
         assert_eq!(sm.last_applied_index(), 3);

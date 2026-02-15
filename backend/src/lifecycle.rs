@@ -177,14 +177,6 @@ pub async fn bootstrap(
     // When a manifest is needed, get_or_load() checks hot cache → RocksDB → returns None
     // This avoids loading manifests that may never be accessed
 
-    // Initialize system tables and verify schema version (Phase 10 Phase 7, T075-T079)
-    let phase_start = std::time::Instant::now();
-    kalamdb_system::initialize_system_tables(backend.clone()).await?;
-    debug!(
-        "System tables initialized with schema version tracking ({:.2}ms)",
-        phase_start.elapsed().as_secs_f64() * 1000.0
-    );
-
     // Seed default storage if necessary (using SystemTablesRegistry)
     let phase_start = std::time::Instant::now();
     let storages_provider = app_context.system_tables().storages();
@@ -387,9 +379,6 @@ pub async fn bootstrap_isolated(
     // and user/shared tables are initialized. The state machine restoration may need to
     // apply commands that interact with these providers.
 
-    // Initialize system tables
-    kalamdb_system::initialize_system_tables(backend.clone()).await?;
-
     // Seed default storage if necessary
     let storages_provider = app_context.system_tables().storages();
     let existing_storages = storages_provider.scan_all_storages()?;
@@ -559,7 +548,7 @@ pub async fn run(
             .app_data(web::Data::new(connection_registry_for_handler.clone()))
             .app_data(web::Data::new(auth_settings.clone()))
             .configure(routes::configure);
-        
+
         // Add UI routes - prefer embedded, fallback to filesystem path
         if kalamdb_api::routes::is_embedded_ui_available() {
             app = app.configure(kalamdb_api::routes::configure_embedded_ui_routes);
@@ -569,7 +558,7 @@ pub async fn run(
                 kalamdb_api::routes::configure_ui_routes(cfg, &path);
             });
         }
-        
+
         app
     })
     // Set backlog BEFORE bind() - this affects the listen queue size

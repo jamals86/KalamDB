@@ -4,7 +4,9 @@ use crate::sql::executor::SqlExecutor;
 use crate::test_helpers::test_app_context_simple;
 use kalamdb_commons::datatypes::KalamDataType;
 use kalamdb_commons::models::{ConnectionId, ConnectionInfo, TableId};
-use kalamdb_commons::schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType};
+use kalamdb_commons::schemas::{
+    ColumnDefinition, FieldFlag, TableDefinition, TableOptions, TableType,
+};
 use kalamdb_commons::websocket::{SubscriptionOptions, SubscriptionRequest};
 use kalamdb_commons::{NamespaceId, TableName};
 use kalamdb_commons::{NodeId, UserId};
@@ -169,7 +171,9 @@ fn register_and_auth_connection(
         .register_connection(connection_id.clone(), ConnectionInfo::new(None))
         .unwrap();
     let connection_state = registration.state;
-    connection_state.write().mark_authenticated(user_id.clone());
+    connection_state
+        .write()
+        .mark_authenticated(user_id.clone(), kalamdb_commons::models::Role::User);
     registry.on_authenticated(&connection_id, user_id);
     connection_state
 }
@@ -229,11 +233,20 @@ fn test_build_subscription_schema_includes_def_for_all_cases() {
     let schema = LiveQueryManager::build_subscription_schema(&table_def, None);
     assert_eq!(schema.len(), 3);
     assert_eq!(schema[0].name, "id");
-    assert_eq!(schema[0].def.as_deref(), Some("pk,nonnull,unique"));
+    assert!(matches!(
+        schema[0].flags,
+        Some(ref flags)
+            if flags.contains(&FieldFlag::PrimaryKey)
+                && flags.contains(&FieldFlag::NonNull)
+                && flags.contains(&FieldFlag::Unique)
+    ));
     assert_eq!(schema[1].name, "tenant_id");
-    assert_eq!(schema[1].def.as_deref(), Some("nonnull"));
+    assert!(matches!(
+        schema[1].flags,
+        Some(ref flags) if flags.contains(&FieldFlag::NonNull)
+    ));
     assert_eq!(schema[2].name, "payload");
-    assert!(schema[2].def.is_none());
+    assert!(schema[2].flags.is_none());
 }
 
 #[test]
@@ -282,16 +295,29 @@ fn test_build_subscription_schema_projection_keeps_defs_and_order() {
     )
     .unwrap();
 
-    let projections = vec!["tenant_id".to_string(), "id".to_string(), "missing".to_string()];
+    let projections = vec![
+        "tenant_id".to_string(),
+        "id".to_string(),
+        "missing".to_string(),
+    ];
     let schema = LiveQueryManager::build_subscription_schema(&table_def, Some(&projections));
 
     assert_eq!(schema.len(), 2);
     assert_eq!(schema[0].name, "tenant_id");
     assert_eq!(schema[0].index, 0);
-    assert_eq!(schema[0].def.as_deref(), Some("nonnull"));
+    assert!(matches!(
+        schema[0].flags,
+        Some(ref flags) if flags.contains(&FieldFlag::NonNull)
+    ));
     assert_eq!(schema[1].name, "id");
     assert_eq!(schema[1].index, 1);
-    assert_eq!(schema[1].def.as_deref(), Some("pk,nonnull,unique"));
+    assert!(matches!(
+        schema[1].flags,
+        Some(ref flags)
+            if flags.contains(&FieldFlag::PrimaryKey)
+                && flags.contains(&FieldFlag::NonNull)
+                && flags.contains(&FieldFlag::Unique)
+    ));
 }
 
 #[tokio::test]

@@ -5,11 +5,10 @@
 //!
 //! ## Serialization Strategy
 //!
-//! - **RocksDB**: All structs use bincode serialization via `StoredScalarValue`
+//! - **RocksDB**: FlatBuffers envelope + FlexBuffers payload
 //! - **manifest.json files**: Use JSON serialization via `serde_json::to_string_pretty()`
 //!
-//! `ColumnStats.min/max` use `StoredScalarValue` - the same bincode-compatible enum
-//! used for row storage. This ensures zero-copy serialization with bincode and
+//! `ColumnStats.min/max` use `StoredScalarValue` for typed scalar stats and
 //! proper JSON output for manifest.json files.
 
 use serde::{Deserialize, Serialize};
@@ -19,7 +18,6 @@ use super::FileSubfolderState;
 use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::rows::StoredScalarValue;
 use kalamdb_commons::models::TableId;
-use kalamdb_commons::KSerializable;
 use kalamdb_commons::UserId;
 
 /// Synchronization state of a cached manifest entry.
@@ -95,7 +93,7 @@ impl SegmentStatus {
 /// Manifest cache entry stored in RocksDB (Phase 4 - US6).
 ///
 /// Fields:
-/// - `manifest`: The Manifest object (stored directly via bincode)
+/// - `manifest`: The Manifest object (stored via binary codec)
 /// - `etag`: Storage ETag or version identifier for freshness validation
 /// - `last_refreshed`: Unix timestamp (milliseconds) of last successful refresh
 /// - `sync_state`: Current synchronization state (InSync | Stale | Error)
@@ -182,15 +180,10 @@ impl ManifestCacheEntry {
     }
 }
 
-// KSerializable implementation for EntityStore support
-impl KSerializable for ManifestCacheEntry {}
-
 /// Statistics for a single column in a segment.
 ///
-/// Min/max values use `StoredScalarValue` - the same bincode-compatible enum
-/// used for row storage. This enables:
-/// - Zero-copy bincode serialization for RocksDB
-/// - Proper JSON output for manifest.json files
+/// Min/max values use `StoredScalarValue` for typed scalar stats.
+/// This enables proper JSON output for manifest.json files.
 /// - Type-safe comparisons without string parsing
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ColumnStats {
@@ -554,9 +547,9 @@ mod tests {
     use kalamdb_commons::{NamespaceId, TableName};
 
     #[test]
-    fn test_manifest_cache_entry_bincode_roundtrip() {
-        // This test ensures ManifestCacheEntry can be serialized/deserialized with bincode
-        // which is used for RocksDB storage
+    fn test_manifest_cache_entry_json_roundtrip() {
+        // This test ensures ManifestCacheEntry can be serialized/deserialized
+        // via serde for API/cache round-trips.
         let table_id = TableId::new(NamespaceId::new("test"), TableName::new("table"));
         let mut manifest = Manifest::new(table_id, None);
 
@@ -593,13 +586,8 @@ mod tests {
         let entry =
             ManifestCacheEntry::new(manifest, Some("etag123".to_string()), 1000, SyncState::InSync);
 
-        // Serialize with bincode
-        let config = bincode::config::standard();
-        let encoded = bincode::serde::encode_to_vec(&entry, config).expect("bincode encode failed");
-
-        // Deserialize with bincode
-        let (decoded, _): (ManifestCacheEntry, _) =
-            bincode::serde::decode_from_slice(&encoded, config).expect("bincode decode failed");
+        let encoded = serde_json::to_vec(&entry).expect("json encode failed");
+        let decoded: ManifestCacheEntry = serde_json::from_slice(&encoded).expect("json decode failed");
 
         // Verify
         assert_eq!(decoded.etag, Some("etag123".to_string()));

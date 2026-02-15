@@ -4,8 +4,11 @@ use std::hash::{Hash, Hasher};
 use wasm_bindgen::prelude::*;
 use web_sys::Request;
 
-/// Simple hash function to generate unique subscription IDs from SQL
-pub(crate) fn md5_hash(s: &str) -> u64 {
+/// Hash a SQL string to produce a deterministic subscription ID suffix.
+///
+/// Uses `DefaultHasher` (SipHash) — fast and collision-resistant enough for
+/// subscription deduplication.  Not a cryptographic hash.
+pub(crate) fn subscription_hash(s: &str) -> u64 {
     let mut hasher = DefaultHasher::new();
     s.hash(&mut hasher);
     hasher.finish()

@@ -144,8 +144,9 @@ pub use error::{KalamLinkError, Result};
 pub use live::LiveConnection;
 pub use models::{
     parse_i64, AckResponse, ChangeEvent, ConnectionOptions, ConsumeMessage, ConsumeRequest,
-    ConsumeResponse, ErrorDetail, HealthCheckResponse, HttpVersion, KalamDataType, LoginRequest,
-    LoginResponse, LoginUserInfo, QueryRequest, QueryResponse, QueryResult, SchemaField,
+    ConsumeResponse, ErrorDetail, FieldFlag, FieldFlags, HealthCheckResponse, HttpVersion,
+    KalamDataType, LoginRequest, LoginResponse, LoginUserInfo, QueryRequest, QueryResponse,
+    QueryResult, SchemaField,
     ServerSetupRequest, ServerSetupResponse, SetupStatusResponse, SetupUserInfo,
     SubscriptionConfig, SubscriptionOptions, UploadProgress,
 };

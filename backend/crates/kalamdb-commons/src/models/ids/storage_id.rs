@@ -13,7 +13,6 @@ use crate::StorageKey;
 /// or table names are expected.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", derive(bincode::Encode, bincode::Decode))]
 pub struct StorageId(String);
 
 /// Error type for StorageId validation failures

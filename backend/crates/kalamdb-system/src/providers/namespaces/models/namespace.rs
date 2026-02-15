@@ -1,9 +1,7 @@
 //! Namespace entity for system.namespaces table.
 
-use bincode::{Decode, Encode};
 use kalamdb_commons::datatypes::KalamDataType;
 use kalamdb_commons::models::ids::NamespaceId;
-use kalamdb_commons::KSerializable;
 use kalamdb_macros::table;
 use serde::{Deserialize, Serialize};
 
@@ -19,7 +17,7 @@ use serde::{Deserialize, Serialize};
 /// - `table_count`: Number of tables in this namespace
 ///
 /// ## Serialization
-/// - **RocksDB**: Bincode (compact binary format)
+/// - **RocksDB**: FlatBuffers envelope + FlexBuffers payload
 /// - **API**: JSON via Serde
 ///
 /// ## Example
@@ -39,7 +37,7 @@ use serde::{Deserialize, Serialize};
 /// Namespace struct with fields ordered for optimal memory alignment.
 /// 8-byte aligned fields first (i64, String types), then smaller types.
 #[table(name = "namespaces", comment = "Database namespaces for multi-tenancy")]
-#[derive(Serialize, Deserialize, Encode, Decode, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize,  Clone, Debug, PartialEq)]
 pub struct Namespace {
     #[column(
         id = 3,
@@ -153,13 +151,9 @@ mod tests {
             table_count: 0,
         };
 
-        // Test bincode serialization
-        let config = bincode::config::standard();
-        let bytes = bincode::encode_to_vec(&namespace, config).unwrap();
-        let (deserialized, _): (Namespace, _) = bincode::decode_from_slice(&bytes, config).unwrap();
+        let bytes = serde_json::to_vec(&namespace).unwrap();
+        let deserialized: Namespace = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(namespace, deserialized);
     }
-}
 
-// KSerializable implementation for EntityStore support
-impl KSerializable for Namespace {}
+}

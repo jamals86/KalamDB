@@ -235,6 +235,7 @@ impl AppContext {
             // Create lazy system schema provider (views created on first access)
             let lazy_system_schema = Arc::new(LazySystemSchemaProvider::new(
                 Arc::clone(&system_tables),
+                Arc::clone(&schema_registry),
                 Arc::clone(&config),
                 std::path::PathBuf::from(&config.logging.logs_path),
             ));
@@ -1026,7 +1027,7 @@ impl AppContext {
     ///
     /// Convenience wrapper for system_tables().jobs().create_job()
     pub fn insert_job(&self, job: &Job) -> Result<(), crate::error::KalamDbError> {
-        self.system_tables
+        self.system_tables()
             .jobs()
             .create_job(job.clone())
             .map(|_| ())  // Discard the message, just return ()
@@ -1037,7 +1038,7 @@ impl AppContext {
     ///
     /// Convenience wrapper for system_tables().jobs().list_jobs()
     pub fn scan_all_jobs(&self) -> Result<Vec<Job>, crate::error::KalamDbError> {
-        self.system_tables.jobs().list_jobs().into_kalamdb_error("Failed to scan jobs")
+        self.system_tables().jobs().list_jobs().into_kalamdb_error("Failed to scan jobs")
     }
 
     /// Get server uptime in seconds

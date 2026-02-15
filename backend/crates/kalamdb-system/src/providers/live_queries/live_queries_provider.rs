@@ -3,22 +3,24 @@
 //! This module provides a DataFusion TableProvider implementation for the system.live_queries table.
 //! Uses IndexedEntityStore with TableIdIndex for efficient table-based lookups.
 
-use super::{new_live_queries_store, LiveQueriesStore, LiveQueriesTableSchema};
 use crate::error::{SystemError, SystemResultExt};
-use crate::providers::base::IndexedProviderDefinition;
+use crate::providers::base::{system_rows_to_batch, IndexedProviderDefinition};
 use crate::providers::live_queries::models::{LiveQuery, LiveQueryStatus};
+use crate::system_row_mapper::{model_to_system_row, system_row_to_model};
 use datafusion::arrow::array::RecordBatch;
+use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
 use kalamdb_commons::models::ConnectionId;
-use kalamdb_commons::{LiveQueryId, NodeId, TableId, UserId};
+use kalamdb_commons::models::rows::SystemTableRow;
+use kalamdb_commons::{LiveQueryId, NodeId, SystemTable, TableId, UserId};
 use kalamdb_store::entity_store::EntityStore;
-use kalamdb_store::StorageBackend;
-use std::sync::Arc;
+use kalamdb_store::{IndexedEntityStore, StorageBackend};
+use std::sync::{Arc, OnceLock};
 
 /// System.live_queries table provider using EntityStore architecture
 pub struct LiveQueriesTableProvider {
-    store: LiveQueriesStore,
+    store: IndexedEntityStore<LiveQueryId, SystemTableRow>,
 }
 
 impl std::fmt::Debug for LiveQueriesTableProvider {
@@ -36,14 +38,22 @@ impl LiveQueriesTableProvider {
     /// # Returns
     /// A new LiveQueriesTableProvider instance
     pub fn new(backend: Arc<dyn StorageBackend>) -> Self {
+        let store = IndexedEntityStore::new(
+            backend,
+            crate::SystemTable::LiveQueries
+                .column_family_name()
+                .expect("LiveQueries is a table"),
+            super::create_live_queries_indexes(),
+        );
         Self {
-            store: new_live_queries_store(backend),
+            store,
         }
     }
 
     /// Create a new live query entry
     pub fn create_live_query(&self, live_query: LiveQuery) -> Result<(), SystemError> {
-        self.store.insert(&live_query.live_id, &live_query)?;
+        let row = Self::encode_live_query_row(&live_query)?;
+        self.store.insert(&live_query.live_id, &row)?;
         Ok(())
     }
 
@@ -51,8 +61,9 @@ impl LiveQueriesTableProvider {
     ///
     /// Use this in async contexts to avoid blocking the Tokio runtime.
     pub async fn create_live_query_async(&self, live_query: LiveQuery) -> Result<(), SystemError> {
+        let row = Self::encode_live_query_row(&live_query)?;
         self.store
-            .insert_async(live_query.live_id.clone(), live_query)
+            .insert_async(live_query.live_id.clone(), row)
             .await
             .into_system_error("insert_async error")?;
         Ok(())
@@ -75,7 +86,8 @@ impl LiveQueriesTableProvider {
         &self,
         live_id: &LiveQueryId,
     ) -> Result<Option<LiveQuery>, SystemError> {
-        Ok(self.store.get(live_id)?)
+        let row = self.store.get(live_id)?;
+        row.map(|value| Self::decode_live_query_row(&value)).transpose()
     }
 
     /// Alias for get_live_query_by_id (for backward compatibility)
@@ -94,7 +106,9 @@ impl LiveQueriesTableProvider {
     ) -> Result<Option<LiveQuery>, SystemError> {
         let live_query_id = LiveQueryId::from_string(live_id)
             .map_err(|e| SystemError::InvalidOperation(format!("Invalid LiveQueryId: {}", e)))?;
-        self.store.get_async(live_query_id).await.into_system_error("get_async error")
+        let row =
+            self.store.get_async(live_query_id).await.into_system_error("get_async error")?;
+        row.map(|value| Self::decode_live_query_row(&value)).transpose()
     }
 
     /// Update an existing live query entry
@@ -107,7 +121,8 @@ impl LiveQueriesTableProvider {
             )));
         }
 
-        self.store.insert(&live_query.live_id, &live_query)?;
+        let row = Self::encode_live_query_row(&live_query)?;
+        self.store.insert(&live_query.live_id, &row)?;
         Ok(())
     }
 
@@ -123,8 +138,9 @@ impl LiveQueriesTableProvider {
             )));
         }
 
+        let row = Self::encode_live_query_row(&live_query)?;
         self.store
-            .insert_async(live_query.live_id.clone(), live_query)
+            .insert_async(live_query.live_id.clone(), row)
             .await
             .into_system_error("insert_async error")?;
         Ok(())
@@ -156,20 +172,25 @@ impl LiveQueriesTableProvider {
 
     /// List all live queries
     pub fn list_live_queries(&self) -> Result<Vec<LiveQuery>, SystemError> {
-        let live_queries = self.store.scan_all_typed(None, None, None)?;
-        Ok(live_queries.into_iter().map(|(_, lq)| lq).collect())
+        let rows = self.store.scan_all_typed(None, None, None)?;
+        rows.into_iter()
+            .map(|(_, row)| Self::decode_live_query_row(&row))
+            .collect()
     }
 
     /// Async version of `list_live_queries()` - offloads to blocking thread pool.
     ///
     /// Use this in async contexts to avoid blocking the Tokio runtime.
     pub async fn list_live_queries_async(&self) -> Result<Vec<LiveQuery>, SystemError> {
-        let results: Vec<(Vec<u8>, LiveQuery)> = self
+        let results: Vec<(Vec<u8>, SystemTableRow)> = self
             .store
             .scan_all_async(None, None, None)
             .await
             .into_system_error("scan_all_async error")?;
-        Ok(results.into_iter().map(|(_, lq)| lq).collect())
+        results
+            .into_iter()
+            .map(|(_, row)| Self::decode_live_query_row(&row))
+            .collect()
     }
 
     /// Get live queries by user ID
@@ -186,16 +207,19 @@ impl LiveQueriesTableProvider {
         user_id: &UserId,
     ) -> Result<Vec<LiveQuery>, SystemError> {
         let user_id = user_id.clone();
-        let all_queries: Vec<(Vec<u8>, LiveQuery)> = self
+        let all_queries: Vec<(Vec<u8>, SystemTableRow)> = self
             .store
             .scan_all_async(None, None, None)
             .await
             .into_system_error("scan_all_async error")?;
-        Ok(all_queries
-            .into_iter()
-            .map(|(_, lq)| lq)
-            .filter(|lq| lq.user_id == user_id)
-            .collect())
+        let mut filtered = Vec::new();
+        for (_, row) in all_queries {
+            let lq = Self::decode_live_query_row(&row)?;
+            if lq.user_id == user_id {
+                filtered.push(lq);
+            }
+        }
+        Ok(filtered)
     }
 
     /// Get live queries by table ID
@@ -245,7 +269,7 @@ impl LiveQueriesTableProvider {
         let prefix_bytes = LiveQueryId::user_connection_prefix(user_id, connection_id);
 
         // Scan all keys with this prefix (async) - using raw bytes for prefix
-        let results: Vec<(LiveQueryId, LiveQuery)> = {
+        let results: Vec<(LiveQueryId, SystemTableRow)> = {
             let store = self.store.clone();
             tokio::task::spawn_blocking(move || {
                 store.scan_with_raw_prefix(&prefix_bytes, None, 100)
@@ -278,7 +302,7 @@ impl LiveQueriesTableProvider {
     /// Async version of `clear_all()`.
     pub async fn clear_all_async(&self) -> Result<usize, SystemError> {
         let store = self.store.clone();
-        let all: Vec<(LiveQueryId, LiveQuery)> =
+        let all: Vec<(LiveQueryId, SystemTableRow)> =
             tokio::task::spawn_blocking(move || store.scan_all_typed(None, None, None))
                 .await
                 .into_system_error("Join error")??;
@@ -299,29 +323,10 @@ impl LiveQueriesTableProvider {
     /// Helper to create RecordBatch from live queries
     fn create_batch(
         &self,
-        live_queries: Vec<(LiveQueryId, LiveQuery)>,
+        live_queries: Vec<(LiveQueryId, SystemTableRow)>,
     ) -> Result<RecordBatch, SystemError> {
-        crate::build_record_batch!(
-            schema: LiveQueriesTableSchema::schema(),
-            entries: live_queries,
-            columns: [
-                live_ids => OptionalString(|entry| Some(entry.1.live_id.as_str())),
-                connection_ids => OptionalString(|entry| Some(entry.1.connection_id.as_str())),
-                subscription_ids => OptionalString(|entry| Some(entry.1.subscription_id.as_str())),
-                namespace_ids => OptionalString(|entry| Some(entry.1.namespace_id.as_str())),
-                table_names => OptionalString(|entry| Some(entry.1.table_name.as_str())),
-                user_ids => OptionalString(|entry| Some(entry.1.user_id.as_str())),
-                queries => OptionalString(|entry| Some(entry.1.query.as_str())),
-                options => OptionalString(|entry| entry.1.options.as_deref()),
-                statuses => OptionalString(|entry| Some(entry.1.status.as_str())),
-                created_ats => Timestamp(|entry| Some(entry.1.created_at)),
-                last_updates => Timestamp(|entry| Some(entry.1.last_update)),
-                changes => OptionalInt64(|entry| Some(entry.1.changes)),
-                node_ids => OptionalInt64(|entry| Some(entry.1.node_id.as_u64() as i64)),
-                last_ping_ats => Timestamp(|entry| Some(entry.1.last_ping_at))
-            ]
-        )
-        .into_arrow_error("Failed to create RecordBatch")
+        let rows = live_queries.into_iter().map(|(_, row)| row).collect();
+        system_rows_to_batch(&Self::schema(), rows)
     }
 
     // =========================================================================
@@ -360,7 +365,8 @@ impl LiveQueriesTableProvider {
             .ok_or_else(|| SystemError::NotFound(format!("Live query not found: {}", live_id)))?;
 
         live_query.status = status;
-        self.store.insert(live_id, &live_query)?;
+        let row = Self::encode_live_query_row(&live_query)?;
+        self.store.insert(live_id, &row)?;
         Ok(())
     }
 
@@ -377,7 +383,8 @@ impl LiveQueriesTableProvider {
             .ok_or_else(|| SystemError::NotFound(format!("Live query not found: {}", live_id)))?;
 
         live_query.last_ping_at = timestamp_ms;
-        self.store.insert(live_id, &live_query)?;
+        let row = Self::encode_live_query_row(&live_query)?;
+        self.store.insert(live_id, &row)?;
         Ok(())
     }
 }
@@ -385,9 +392,9 @@ impl LiveQueriesTableProvider {
 impl LiveQueriesTableProvider {
     fn provider_definition() -> IndexedProviderDefinition<LiveQueryId> {
         IndexedProviderDefinition {
-            table_name: LiveQueriesTableSchema::table_name(),
+            table_name: SystemTable::LiveQueries.table_name(),
             primary_key_column: "live_id",
-            schema: LiveQueriesTableSchema::schema,
+            schema: Self::schema,
             parse_key: |value| LiveQueryId::from_string(value).ok(),
         }
     }
@@ -397,12 +404,31 @@ impl LiveQueriesTableProvider {
         // but DataFusion must still apply them for correctness.
         Ok(vec![TableProviderFilterPushDown::Inexact; filters.len()])
     }
+
+    fn encode_live_query_row(live_query: &LiveQuery) -> Result<SystemTableRow, SystemError> {
+        model_to_system_row(live_query, &LiveQuery::definition())
+    }
+
+    fn decode_live_query_row(row: &SystemTableRow) -> Result<LiveQuery, SystemError> {
+        system_row_to_model(row, &LiveQuery::definition())
+    }
+
+    fn schema() -> SchemaRef {
+        static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
+        SCHEMA
+            .get_or_init(|| {
+                LiveQuery::definition()
+                    .to_arrow_schema()
+                    .expect("failed to build live_queries schema")
+            })
+            .clone()
+    }
 }
 
 crate::impl_indexed_system_table_provider!(
     provider = LiveQueriesTableProvider,
     key = LiveQueryId,
-    value = LiveQuery,
+    value = SystemTableRow,
     store = store,
     definition = provider_definition,
     build_batch = create_batch,

@@ -5,6 +5,7 @@ use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use crate::live::models::ChangeNotification;
 use crate::schema_registry::cached_table_data::CachedTableData;
+use chrono::Utc;
 use dashmap::DashMap;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::TableProvider;
@@ -12,13 +13,14 @@ use datafusion::logical_expr::expr::ScalarFunction as ScalarFunctionExpr;
 use datafusion::logical_expr::Expr;
 use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::conversions::json_value_to_scalar;
+use kalamdb_commons::datatypes::KalamDataType;
 use kalamdb_commons::models::schemas::TableDefinition;
 use kalamdb_commons::models::{StorageId, TableId, TableVersionId};
-use kalamdb_commons::schemas::{ColumnDefault, TableOptions, TableType};
-use kalamdb_commons::TableAccess;
+use kalamdb_commons::schemas::{ColumnDefault, ColumnDefinition, TableOptions, TableType};
+use kalamdb_commons::{SystemTable, TableAccess};
 use kalamdb_system::{NotificationService, SchemaRegistry as SchemaRegistryTrait};
 // use kalamdb_system::NotificationService as NotificationServiceTrait;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, OnceLock};
 
 /// Lightweight table info for file operations
@@ -30,6 +32,13 @@ pub struct TableEntry {
     pub table_type: TableType,
     //TODO: Add access permissions info?
     pub access_level: Option<TableAccess>,
+}
+
+#[derive(Debug, Default)]
+struct SystemSchemaReconcileStats {
+    created: usize,
+    unchanged: usize,
+    upgraded: usize,
 }
 
 /// Unified schema cache for table metadata, schemas, and providers
@@ -94,6 +103,8 @@ impl SchemaRegistry {
     ///
     /// This should be called once at system startup.
     pub fn initialize_tables(&self) -> Result<(), KalamDbError> {
+        self.reconcile_system_table_definitions()?;
+
         // Scan all table definitions
         let all_defs = self.scan_all_table_definitions()?;
 
@@ -108,10 +119,6 @@ impl SchemaRegistry {
         let mut failed_count = 0;
 
         for def in all_defs {
-            if def.table_type == kalamdb_commons::models::schemas::TableType::System {
-                continue; // System tables are handled separately
-            }
-
             let table_name = def.table_name.clone();
             match self.put(def) {
                 Ok(_) => loaded_count += 1,
@@ -128,6 +135,259 @@ impl SchemaRegistry {
             failed_count
         );
         Ok(())
+    }
+
+    pub fn reconcile_system_table_definitions(&self) -> Result<(), KalamDbError> {
+        let system_tables = self.app_context().system_tables();
+        let tables_provider = system_tables.tables();
+        let expected_defs = system_tables.expected_system_table_definitions();
+        let mut stats = SystemSchemaReconcileStats::default();
+
+        for expected in expected_defs {
+            let expected = expected.as_ref();
+            let table_id =
+                TableId::from_strings(expected.namespace_id.as_str(), expected.table_name.as_str());
+
+            let persisted = tables_provider
+                .get_table_by_id(&table_id)
+                .into_kalamdb_error("Failed to load persisted schema definition")?;
+
+            match persisted {
+                None => {
+                    let initial = expected.clone();
+                    tables_provider
+                        .create_table(&table_id, &initial)
+                        .into_kalamdb_error("Failed to persist initial system schema definition")?;
+                    stats.created += 1;
+                    log::info!(
+                        "[SchemaRegistry] persisted missing system table schema {} at version {}",
+                        table_id,
+                        initial.schema_version
+                    );
+                },
+                Some(current) => {
+                    if Self::schema_semantically_equal(&current, expected) {
+                        stats.unchanged += 1;
+                        continue;
+                    }
+
+                    Self::validate_schema_evolution(&current, expected)?;
+                    let upgraded = Self::build_reconciled_definition(&current, expected);
+
+                    tables_provider.put_versioned_schema(&table_id, &upgraded).into_kalamdb_error(
+                        "Failed to persist upgraded system schema definition",
+                    )?;
+                    stats.upgraded += 1;
+                    log::info!(
+                        "[SchemaRegistry] upgraded system schema {} from version {} to {}",
+                        table_id,
+                        current.schema_version,
+                        upgraded.schema_version
+                    );
+                },
+            }
+        }
+
+        if stats.created > 0 || stats.upgraded > 0 {
+            log::info!(
+                "[SchemaRegistry] System schema reconciliation: created={}, upgraded={}, unchanged={}",
+                stats.created,
+                stats.upgraded,
+                stats.unchanged
+            );
+        } else {
+            log::debug!(
+                "[SchemaRegistry] System schema reconciliation: no changes (unchanged={})",
+                stats.unchanged
+            );
+        }
+
+        Ok(())
+    }
+
+    fn schema_semantically_equal(current: &TableDefinition, expected: &TableDefinition) -> bool {
+        current.namespace_id == expected.namespace_id
+            && current.table_name == expected.table_name
+            && current.table_type == expected.table_type
+            && current.columns == expected.columns
+            && current.next_column_id == expected.next_column_id
+            && current.table_options == expected.table_options
+            && current.table_comment == expected.table_comment
+    }
+
+    fn build_reconciled_definition(
+        current: &TableDefinition,
+        expected: &TableDefinition,
+    ) -> TableDefinition {
+        let mut upgraded = expected.clone();
+        upgraded.schema_version = current.schema_version.saturating_add(1);
+        upgraded.created_at = current.created_at;
+        upgraded.updated_at = Utc::now();
+        upgraded
+    }
+
+    fn validate_schema_evolution(
+        current: &TableDefinition,
+        expected: &TableDefinition,
+    ) -> Result<(), KalamDbError> {
+        if current.namespace_id != expected.namespace_id
+            || current.table_name != expected.table_name
+        {
+            return Err(KalamDbError::invalid_schema_evolution(format!(
+                "table identity changed from {}.{} to {}.{}",
+                current.namespace_id.as_str(),
+                current.table_name.as_str(),
+                expected.namespace_id.as_str(),
+                expected.table_name.as_str()
+            )));
+        }
+
+        if current.table_type != expected.table_type {
+            return Err(KalamDbError::invalid_schema_evolution(format!(
+                "table type changed from {} to {} for {}.{}",
+                current.table_type.as_str(),
+                expected.table_type.as_str(),
+                current.namespace_id.as_str(),
+                current.table_name.as_str()
+            )));
+        }
+
+        let current_pk_ids: HashSet<u64> = current
+            .columns
+            .iter()
+            .filter(|col| col.is_primary_key)
+            .map(|col| col.column_id)
+            .collect();
+        let expected_pk_ids: HashSet<u64> = expected
+            .columns
+            .iter()
+            .filter(|col| col.is_primary_key)
+            .map(|col| col.column_id)
+            .collect();
+        if current_pk_ids != expected_pk_ids {
+            return Err(KalamDbError::invalid_schema_evolution(format!(
+                "primary key columns changed for {}.{}",
+                current.namespace_id.as_str(),
+                current.table_name.as_str()
+            )));
+        }
+
+        let current_partition_ids: HashSet<u64> = current
+            .columns
+            .iter()
+            .filter(|col| col.is_partition_key)
+            .map(|col| col.column_id)
+            .collect();
+        let expected_partition_ids: HashSet<u64> = expected
+            .columns
+            .iter()
+            .filter(|col| col.is_partition_key)
+            .map(|col| col.column_id)
+            .collect();
+        if current_partition_ids != expected_partition_ids {
+            return Err(KalamDbError::invalid_schema_evolution(format!(
+                "required partition/index key columns changed for {}.{}",
+                current.namespace_id.as_str(),
+                current.table_name.as_str()
+            )));
+        }
+
+        let expected_by_id: HashMap<u64, &ColumnDefinition> =
+            expected.columns.iter().map(|col| (col.column_id, col)).collect();
+        for old_col in &current.columns {
+            let Some(new_col) = expected_by_id.get(&old_col.column_id).copied() else {
+                return Err(KalamDbError::invalid_schema_evolution(format!(
+                    "column '{}' (id={}) was removed from {}.{}; only additive changes are allowed",
+                    old_col.column_name,
+                    old_col.column_id,
+                    current.namespace_id.as_str(),
+                    current.table_name.as_str()
+                )));
+            };
+
+            if old_col.column_name != new_col.column_name {
+                return Err(KalamDbError::invalid_schema_evolution(format!(
+                    "column rename is not allowed in startup reconciliation (id={}): '{}' -> '{}'",
+                    old_col.column_id, old_col.column_name, new_col.column_name
+                )));
+            }
+
+            if old_col.ordinal_position != new_col.ordinal_position {
+                return Err(KalamDbError::invalid_schema_evolution(format!(
+                    "column ordinal changed for '{}' (id={}): {} -> {}",
+                    old_col.column_name,
+                    old_col.column_id,
+                    old_col.ordinal_position,
+                    new_col.ordinal_position
+                )));
+            }
+
+            if old_col.is_primary_key != new_col.is_primary_key {
+                return Err(KalamDbError::invalid_schema_evolution(format!(
+                    "primary key flag changed for column '{}' (id={})",
+                    old_col.column_name, old_col.column_id
+                )));
+            }
+
+            if old_col.is_partition_key != new_col.is_partition_key {
+                return Err(KalamDbError::invalid_schema_evolution(format!(
+                    "partition/index flag changed for column '{}' (id={})",
+                    old_col.column_name, old_col.column_id
+                )));
+            }
+
+            if old_col.is_nullable && !new_col.is_nullable {
+                return Err(KalamDbError::invalid_schema_evolution(format!(
+                    "column '{}' changed from nullable to NOT NULL",
+                    old_col.column_name
+                )));
+            }
+
+            if !Self::is_safe_type_widening(&old_col.data_type, &new_col.data_type) {
+                return Err(KalamDbError::invalid_schema_evolution(format!(
+                    "incompatible type change for column '{}' (id={}): {} -> {}",
+                    old_col.column_name, old_col.column_id, old_col.data_type, new_col.data_type
+                )));
+            }
+        }
+
+        let current_ids: HashSet<u64> = current.columns.iter().map(|col| col.column_id).collect();
+        for new_col in &expected.columns {
+            if current_ids.contains(&new_col.column_id) {
+                continue;
+            }
+            if !new_col.is_nullable && new_col.default_value.is_none() {
+                return Err(KalamDbError::invalid_schema_evolution(format!(
+                    "new non-null column '{}' must declare a default value",
+                    new_col.column_name
+                )));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn is_safe_type_widening(old_type: &KalamDataType, new_type: &KalamDataType) -> bool {
+        if old_type == new_type {
+            return true;
+        }
+
+        match (old_type, new_type) {
+            (KalamDataType::SmallInt, KalamDataType::Int | KalamDataType::BigInt) => true,
+            (KalamDataType::Int, KalamDataType::BigInt) => true,
+            (KalamDataType::Float, KalamDataType::Double) => true,
+            (
+                KalamDataType::Decimal {
+                    precision: old_precision,
+                    scale: old_scale,
+                },
+                KalamDataType::Decimal {
+                    precision: new_precision,
+                    scale: new_scale,
+                },
+            ) => new_precision >= old_precision && new_scale == old_scale,
+            _ => false,
+        }
     }
 
     // ===== Basic Cache Methods =====
@@ -202,23 +462,28 @@ impl SchemaRegistry {
         let cached_data = Arc::new(CachedTableData::new(Arc::new(table_def.clone())));
         let previous_entry = self.table_cache.insert(table_id.clone(), Arc::clone(&cached_data));
 
-        // 2. Create TableProvider if not a system table
-        if table_def.table_type != TableType::System {
-            match self.create_table_provider(&table_def) {
+        // 2. Bind provider into CachedTableData
+        match table_def.table_type {
+            TableType::System => {
+                if table_def.namespace_id.as_str() == "system" {
+                    if let Ok(system_table) = SystemTable::from_name(table_def.table_name.as_str()) {
+                        if let Some(provider) =
+                            self.app_context().system_tables().persisted_table_provider(system_table)
+                        {
+                            cached_data.set_provider(provider);
+                        }
+                    }
+                }
+            },
+            _ => match self.create_table_provider(&table_def) {
                 Ok(provider) => {
                     cached_data.set_provider(provider.clone());
 
                     // 3. Register with DataFusion immediately
-                    // Note: We register BEFORE inserting into cache? No, AFTER/DURING
-                    // DataFusion registration requires the provider.
-
                     self.register_with_datafusion(&table_id, provider)?;
                 },
                 Err(e) => {
                     log::error!("Failed to create provider for table {}: {}", table_id, e);
-                    // We still insert the definition, but provider creation failed.
-                    // This creates a "definition-only" cache entry which might be problematic for queries.
-                    // But for system stability, maybe we should return error?
                     if let Some(previous) = previous_entry {
                         self.table_cache.insert(table_id, previous);
                     } else {
@@ -226,7 +491,7 @@ impl SchemaRegistry {
                     }
                     return Err(e);
                 },
-            }
+            },
         }
 
         Ok(())
@@ -338,14 +603,12 @@ impl SchemaRegistry {
         ));
 
         // Get Arrow schema from registry (cached at core level)
-        let arrow_schema = tables_schema_registry
-            .get_arrow_schema(&table_id)
-            .map_err(|e| {
-                KalamDbError::InvalidOperation(format!(
-                    "Failed to get Arrow schema for {}: {}",
-                    table_id, e
-                ))
-            })?;
+        let arrow_schema = tables_schema_registry.get_arrow_schema(&table_id).map_err(|e| {
+            KalamDbError::InvalidOperation(format!(
+                "Failed to get Arrow schema for {}: {}",
+                table_id, e
+            ))
+        })?;
 
         // Wrap table_def in Arc for sharing across core (avoids cloning TableDefinition)
         let table_def_arc = Arc::new(table_def.clone());
@@ -366,10 +629,7 @@ impl SchemaRegistry {
                     column_defaults,
                 ));
 
-                let provider = UserTableProvider::new(
-                    core,
-                    user_table_store,
-                );
+                let provider = UserTableProvider::new(core, user_table_store);
                 Ok(Arc::new(provider))
             },
             TableType::Shared => {
@@ -387,10 +647,7 @@ impl SchemaRegistry {
                     column_defaults,
                 ));
 
-                let provider = SharedTableProvider::new(
-                    core,
-                    shared_store,
-                );
+                let provider = SharedTableProvider::new(core, shared_store);
                 Ok(Arc::new(provider))
             },
             TableType::Stream => {
@@ -422,11 +679,7 @@ impl SchemaRegistry {
                     column_defaults,
                 ));
 
-                let provider = StreamTableProvider::new(
-                    core,
-                    stream_store,
-                    Some(ttl_seconds),
-                );
+                let provider = StreamTableProvider::new(core, stream_store, Some(ttl_seconds));
                 Ok(Arc::new(provider))
             },
             TableType::System => Err(KalamDbError::InvalidOperation(format!(
@@ -690,8 +943,7 @@ impl SchemaRegistry {
 
     /// Delete table definition from persistence layer (delete-through pattern)
     pub fn delete_table_definition(&self, table_id: &TableId) -> Result<(), KalamDbError> {
-        let app_ctx = self.app_context();
-        let tables_provider = app_ctx.system_tables().tables();
+        let tables_provider = self.app_context().system_tables().tables();
 
         // Delete from storage
         tables_provider.delete_table(table_id)?;
@@ -704,8 +956,7 @@ impl SchemaRegistry {
 
     /// Scan all table definitions from persistence layer
     pub fn scan_all_table_definitions(&self) -> Result<Vec<TableDefinition>, KalamDbError> {
-        let app_ctx = self.app_context();
-        let tables_provider = app_ctx.system_tables().tables();
+        let tables_provider = self.app_context().system_tables().tables();
 
         // Scan all tables from storage
         let all_entries = tables_provider.scan_all().into_kalamdb_error("Failed to scan tables")?;
@@ -743,13 +994,6 @@ impl SchemaRegistry {
             return Ok(Some(Arc::clone(&cached.table)));
         }
 
-        // Check if it's a system table
-        if table_id.namespace_id().is_system_namespace() {
-            if let Some(def) = app_ctx.system_tables().get_system_definition(table_id) {
-                return Ok(Some(def));
-            }
-        }
-
         let tables_provider = app_ctx.system_tables().tables();
 
         match tables_provider.get_table_by_id(table_id)? {
@@ -779,13 +1023,6 @@ impl SchemaRegistry {
         // Fast path: check cache
         if let Some(cached) = self.get(table_id) {
             return Ok(Some(Arc::clone(&cached.table)));
-        }
-
-        // Check if it's a system table
-        if table_id.namespace_id().is_system_namespace() {
-            if let Some(def) = app_ctx.system_tables().get_system_definition(table_id) {
-                return Ok(Some(def));
-            }
         }
 
         let tables_provider = app_ctx.system_tables().tables();
@@ -923,5 +1160,154 @@ impl SchemaRegistryTrait for SchemaRegistry {
 impl Default for SchemaRegistry {
     fn default() -> Self {
         Self::new(10000) // Default max size: 10,000 tables
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SchemaRegistry;
+    use chrono::{Duration, Utc};
+    use kalamdb_commons::datatypes::KalamDataType;
+    use kalamdb_commons::models::schemas::{ColumnDefinition, TableDefinition};
+    use kalamdb_commons::schemas::{ColumnDefault, TableOptions, TableType};
+    use kalamdb_commons::{NamespaceId, TableName};
+
+    fn base_table_definition() -> TableDefinition {
+        TableDefinition::new(
+            NamespaceId::new("system"),
+            TableName::new("reconcile_test"),
+            TableType::System,
+            vec![
+                ColumnDefinition::primary_key(1, "id", 1, KalamDataType::Uuid),
+                ColumnDefinition::new(
+                    2,
+                    "name",
+                    2,
+                    KalamDataType::Text,
+                    true,
+                    false,
+                    false,
+                    ColumnDefault::None,
+                    None,
+                ),
+            ],
+            TableOptions::system(),
+            None,
+        )
+        .expect("failed to build test table definition")
+    }
+
+    #[test]
+    fn test_schema_semantically_equal_ignores_timestamps_and_version() {
+        let mut current = base_table_definition();
+        current.schema_version = 9;
+        current.created_at = Utc::now() - Duration::days(30);
+        current.updated_at = Utc::now() - Duration::days(2);
+        let expected = base_table_definition();
+
+        assert!(SchemaRegistry::schema_semantically_equal(&current, &expected));
+    }
+
+    #[test]
+    fn test_validate_schema_evolution_accepts_additive_nullable_column() {
+        let current = base_table_definition();
+        let mut expected = current.clone();
+        expected
+            .add_column(ColumnDefinition::new(
+                3,
+                "description",
+                3,
+                KalamDataType::Text,
+                true,
+                false,
+                false,
+                ColumnDefault::None,
+                None,
+            ))
+            .expect("failed to add test column");
+
+        let validation = SchemaRegistry::validate_schema_evolution(&current, &expected);
+        assert!(validation.is_ok(), "{validation:?}");
+    }
+
+    #[test]
+    fn test_validate_schema_evolution_rejects_non_nullable_added_column_without_default() {
+        let current = base_table_definition();
+        let mut expected = current.clone();
+        expected
+            .add_column(ColumnDefinition::new(
+                3,
+                "status",
+                3,
+                KalamDataType::Text,
+                false,
+                false,
+                false,
+                ColumnDefault::None,
+                None,
+            ))
+            .expect("failed to add test column");
+
+        let validation = SchemaRegistry::validate_schema_evolution(&current, &expected);
+        assert!(validation.is_err());
+    }
+
+    #[test]
+    fn test_validate_schema_evolution_rejects_primary_key_change() {
+        let current = base_table_definition();
+        let mut expected = current.clone();
+        expected.columns[0].is_primary_key = false;
+
+        let validation = SchemaRegistry::validate_schema_evolution(&current, &expected);
+        assert!(validation.is_err());
+    }
+
+    #[test]
+    fn test_validate_schema_evolution_rejects_incompatible_type_change() {
+        let current = base_table_definition();
+        let mut expected = current.clone();
+        expected.columns[1].data_type = KalamDataType::Int;
+
+        let validation = SchemaRegistry::validate_schema_evolution(&current, &expected);
+        assert!(validation.is_err());
+    }
+
+    #[test]
+    fn test_validate_schema_evolution_accepts_safe_numeric_widening() {
+        let mut current = base_table_definition();
+        current.columns[1].data_type = KalamDataType::Int;
+        let mut expected = current.clone();
+        expected.columns[1].data_type = KalamDataType::BigInt;
+
+        let validation = SchemaRegistry::validate_schema_evolution(&current, &expected);
+        assert!(validation.is_ok(), "{validation:?}");
+    }
+
+    #[test]
+    fn test_build_reconciled_definition_bumps_version_and_preserves_created_at() {
+        let mut current = base_table_definition();
+        current.schema_version = 3;
+        let created_at = current.created_at;
+
+        let mut expected = current.clone();
+        expected
+            .add_column(ColumnDefinition::new(
+                3,
+                "description",
+                3,
+                KalamDataType::Text,
+                true,
+                false,
+                false,
+                ColumnDefault::None,
+                None,
+            ))
+            .expect("failed to add column");
+
+        let upgraded = SchemaRegistry::build_reconciled_definition(&current, &expected);
+
+        assert_eq!(upgraded.schema_version, 4);
+        assert_eq!(upgraded.created_at, created_at);
+        assert!(SchemaRegistry::schema_semantically_equal(&upgraded, &expected));
     }
 }

@@ -3,8 +3,12 @@
 //! This module defines the `SchemaField` struct used in REST API responses
 //! to provide type-safe schema information to clients.
 
+use crate::schemas::ColumnDefinition;
+use crate::conversions::read_kalam_column_flags_metadata;
 use crate::models::datatypes::KalamDataType;
+use crate::schemas::{FieldFlag, FieldFlags};
 use serde::{Deserialize, Serialize};
+use arrow_schema::Field;
 
 /// A field in the result schema returned by SQL queries
 ///
@@ -18,7 +22,7 @@ use serde::{Deserialize, Serialize};
 ///   "name": "user_id",
 ///   "data_type": "BigInt",
 ///   "index": 0,
-///   "def": "pk,nonnull,unique"
+///   "flags": ["pk", "nn", "uq"]
 /// }
 /// ```
 ///
@@ -42,11 +46,11 @@ pub struct SchemaField {
     /// Column position (0-indexed) in the result set
     pub index: usize,
 
-    /// Compact definition flags (e.g. "pk,nonnull,unique").
+    /// Structured field flags (e.g. ["pk", "nn", "uq"]).
     ///
-    /// Omitted when there are no notable constraints to reduce response size.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub def: Option<String>,
+    /// Omitted when there are no notable flags to reduce response size.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flags: Option<FieldFlags>,
 }
 
 impl SchemaField {
@@ -56,14 +60,52 @@ impl SchemaField {
             name: name.into(),
             data_type,
             index,
-            def: None,
+            flags: None,
         }
     }
 
-    /// Attach compact definition flags to this field.
-    pub fn with_def(mut self, def: impl Into<String>) -> Self {
-        self.def = Some(def.into());
+    pub fn from_column_definition(column: &ColumnDefinition, index: usize) -> Self {
+        Self {
+            name: column.column_name.clone(),
+            data_type: column.data_type.clone(),
+            index,
+            flags: Self::flags_for_column(column.is_primary_key, column.is_nullable),
+        }
+    }
+
+    pub fn from_arrow_field(field: &Field, data_type: KalamDataType, index: usize) -> Self {
+        let flags = read_kalam_column_flags_metadata(field);
+
+        Self {
+            name: field.name().clone(),
+            data_type,
+            index,
+            flags,
+        }
+    }
+
+    pub fn with_flags(mut self, flags: FieldFlags) -> Self {
+        if !flags.is_empty() {
+            self.flags = Some(flags);
+        }
         self
+    }
+
+    pub fn flags_for_column(is_primary_key: bool, is_nullable: bool) -> Option<FieldFlags> {
+        let mut flags = FieldFlags::new();
+        if is_primary_key {
+            flags.insert(FieldFlag::PrimaryKey);
+            flags.insert(FieldFlag::Unique);
+        }
+        if !is_nullable {
+            flags.insert(FieldFlag::NonNull);
+        }
+
+        if flags.is_empty() {
+            None
+        } else {
+            Some(flags)
+        }
     }
 }
 
@@ -79,7 +121,7 @@ mod tests {
         assert!(json.contains("\"name\":\"user_id\""));
         assert!(json.contains("\"data_type\":\"BigInt\""));
         assert!(json.contains("\"index\":0"));
-        assert!(!json.contains("\"def\":"));
+        assert!(!json.contains("\"flags\":"));
     }
 
     #[test]
@@ -89,14 +131,34 @@ mod tests {
         assert_eq!(field.name, "email");
         assert_eq!(field.data_type, KalamDataType::Text);
         assert_eq!(field.index, 1);
-        assert_eq!(field.def, None);
+        assert_eq!(field.flags, None);
     }
 
     #[test]
-    fn test_schema_field_with_def() {
-        let field = SchemaField::new("id", KalamDataType::Uuid, 0).with_def("pk,nonnull,unique");
+    fn test_schema_field_with_flags() {
+        let mut flags = FieldFlags::new();
+        flags.insert(FieldFlag::PrimaryKey);
+        flags.insert(FieldFlag::NonNull);
+        flags.insert(FieldFlag::Unique);
+        let field = SchemaField::new("id", KalamDataType::Uuid, 0).with_flags(flags);
         let json = serde_json::to_string(&field).unwrap();
-        assert!(json.contains("\"def\":\"pk,nonnull,unique\""));
+        assert!(json.contains("\"flags\":["));
+        assert!(json.contains("\"pk\""));
+        assert!(json.contains("\"nn\""));
+        assert!(json.contains("\"uq\""));
+    }
+
+    #[test]
+    fn test_schema_field_deserializes_flags_array() {
+        let json = r#"{"name":"id","data_type":"Uuid","index":0,"flags":["pk","nn","uq"]}"#;
+        let field: SchemaField = serde_json::from_str(json).unwrap();
+        assert!(matches!(
+            field.flags,
+            Some(flags)
+                if flags.contains(&FieldFlag::PrimaryKey)
+                    && flags.contains(&FieldFlag::NonNull)
+                    && flags.contains(&FieldFlag::Unique)
+        ));
     }
 
     #[test]

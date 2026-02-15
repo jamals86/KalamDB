@@ -16,22 +16,24 @@
 //!    - Enables: "All users with role 'admin'"
 
 use super::users_indexes::create_users_indexes;
-use super::UsersTableSchema;
 use crate::error::{SystemError, SystemResultExt};
-use crate::providers::base::IndexedProviderDefinition;
+use crate::providers::base::{system_rows_to_batch, IndexedProviderDefinition};
 use crate::providers::users::models::User;
+use crate::system_row_mapper::{model_to_system_row, system_row_to_model};
 use crate::{StoragePartition, SystemTable};
 use datafusion::arrow::array::RecordBatch;
+use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::Expr;
 use datafusion::logical_expr::TableProviderFilterPushDown;
+use kalamdb_commons::models::rows::SystemTableRow;
 use kalamdb_commons::UserId;
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_store::{IndexedEntityStore, StorageBackend};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 /// Type alias for the indexed users store
-pub type UsersStore = IndexedEntityStore<UserId, User>;
+pub type UsersStore = IndexedEntityStore<UserId, SystemTableRow>;
 
 /// System.users table provider using IndexedEntityStore for automatic index management.
 ///
@@ -99,7 +101,8 @@ impl UsersTableProvider {
         }
 
         // Insert user - indexes are managed automatically
-        self.store.insert(&user.user_id, &user).into_system_error("insert user error")
+        let row = Self::encode_user_row(&user)?;
+        self.store.insert(&user.user_id, &row).into_system_error("insert user error")
     }
 
     /// Update an existing user.
@@ -119,7 +122,8 @@ impl UsersTableProvider {
             return Err(SystemError::NotFound(format!("User not found: {}", user.user_id)));
         }
 
-        let existing_user = existing.unwrap();
+        let existing_row = existing.unwrap();
+        let existing_user = Self::decode_user_row(&existing_row)?;
 
         // If username changed, check for conflicts
         if existing_user.username != user.username {
@@ -147,8 +151,9 @@ impl UsersTableProvider {
         }
 
         // Use update_with_old for efficiency (we already have old entity)
+        let new_row = Self::encode_user_row(&user)?;
         self.store
-            .update_with_old(&user.user_id, Some(&existing_user), &user)
+            .update_with_old(&user.user_id, Some(&existing_row), &new_row)
             .into_system_error("update user error")
     }
 
@@ -164,13 +169,16 @@ impl UsersTableProvider {
         let mut user = self
             .store
             .get(user_id)?
+            .map(|row| Self::decode_user_row(&row))
+            .transpose()?
             .ok_or_else(|| SystemError::NotFound(format!("User not found: {}", user_id)))?;
 
         // Set deleted_at timestamp (soft delete)
         user.deleted_at = Some(chrono::Utc::now().timestamp_millis());
 
         // Update user with deleted_at
-        self.store.update(user_id, &user).into_system_error("update user error")
+        let row = Self::encode_user_row(&user)?;
+        self.store.update(user_id, &row).into_system_error("update user error")
     }
 
     /// Get a user by ID.
@@ -181,7 +189,8 @@ impl UsersTableProvider {
     /// # Returns
     /// Option<User> if found, None otherwise
     pub fn get_user_by_id(&self, user_id: &UserId) -> Result<Option<User>, SystemError> {
-        Ok(self.store.get(user_id)?)
+        let row = self.store.get(user_id)?;
+        row.map(|value| Self::decode_user_row(&value)).transpose()
     }
 
     /// Get a user by username.
@@ -211,34 +220,17 @@ impl UsersTableProvider {
             .scan_by_index(username_index_idx, Some(username_key.as_bytes()), Some(1))
             .into_system_error("scan_by_index error")?;
 
-        Ok(results.into_iter().next().map(|(_, user)| user))
+        results
+            .into_iter()
+            .next()
+            .map(|(_, row)| Self::decode_user_row(&row))
+            .transpose()
     }
 
     /// Helper to create RecordBatch from users
-    fn create_batch(&self, users: Vec<(UserId, User)>) -> Result<RecordBatch, SystemError> {
-        crate::build_record_batch!(
-            schema: UsersTableSchema::schema(),
-            entries: users,
-            columns: [
-                user_ids => OptionalString(|entry| Some(entry.1.user_id.as_str())),
-                usernames => OptionalString(|entry| Some(entry.1.username.as_str())),
-                password_hashes => OptionalString(|entry| Some(entry.1.password_hash.as_str())),
-                roles => OptionalString(|entry| Some(entry.1.role.as_str())),
-                emails => OptionalString(|entry| entry.1.email.as_deref()),
-                auth_types => OptionalString(|entry| Some(entry.1.auth_type.as_str())),
-                auth_datas => OptionalString(|entry| entry.1.auth_data.as_deref()),
-                storage_modes => OptionalString(|entry| Some(entry.1.storage_mode.as_str())),
-                storage_ids => OptionalString(|entry| entry.1.storage_id.as_ref().map(|s| s.as_str())),
-                created_ats => Timestamp(|entry| Some(entry.1.created_at)),
-                updated_ats => Timestamp(|entry| Some(entry.1.updated_at)),
-                last_seens => OptionalTimestamp(|entry| entry.1.last_seen),
-                deleted_ats => OptionalTimestamp(|entry| entry.1.deleted_at),
-                failed_attempts => OptionalInt32(|entry| Some(entry.1.failed_login_attempts)),
-                locked_untils => OptionalTimestamp(|entry| entry.1.locked_until),
-                last_login_ats => OptionalTimestamp(|entry| entry.1.last_login_at)
-            ]
-        )
-        .into_arrow_error("Failed to create RecordBatch")
+    fn create_batch(&self, users: Vec<(UserId, SystemTableRow)>) -> Result<RecordBatch, SystemError> {
+        let rows = users.into_iter().map(|(_, row)| row).collect();
+        system_rows_to_batch(&Self::schema(), rows)
     }
 
     /// Scan all users and return as RecordBatch
@@ -246,13 +238,32 @@ impl UsersTableProvider {
         let users = self.store.scan_all_typed(None, None, None)?;
         self.create_batch(users)
     }
+
+    fn encode_user_row(user: &User) -> Result<SystemTableRow, SystemError> {
+        model_to_system_row(user, &User::definition())
+    }
+
+    fn decode_user_row(row: &SystemTableRow) -> Result<User, SystemError> {
+        system_row_to_model(row, &User::definition())
+    }
     fn provider_definition() -> IndexedProviderDefinition<UserId> {
         IndexedProviderDefinition {
-            table_name: UsersTableSchema::table_name(),
+            table_name: SystemTable::Users.table_name(),
             primary_key_column: "user_id",
-            schema: UsersTableSchema::schema,
+            schema: Self::schema,
             parse_key: |value| Some(UserId::new(value)),
         }
+    }
+
+    fn schema() -> SchemaRef {
+        static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
+        SCHEMA
+            .get_or_init(|| {
+                User::definition()
+                    .to_arrow_schema()
+                    .expect("failed to build users schema")
+            })
+            .clone()
     }
 
     fn filter_pushdown(filters: &[&Expr]) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
@@ -265,7 +276,7 @@ impl UsersTableProvider {
 crate::impl_indexed_system_table_provider!(
     provider = UsersTableProvider,
     key = UserId,
-    value = User,
+    value = SystemTableRow,
     store = store,
     definition = provider_definition,
     build_batch = create_batch,

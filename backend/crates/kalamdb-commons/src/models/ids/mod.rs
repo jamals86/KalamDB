@@ -5,7 +5,7 @@
 //!
 //! All ID types implement:
 //! - `Clone`, `Debug`, `PartialEq`, `Eq`, `Hash` for collections
-//! - `Serialize`, `Deserialize` for JSON/bincode serialization
+//! - `Serialize`, `Deserialize` for JSON/binary serialization
 //! - `Display` for string formatting
 //! - Conversion traits: `AsRef<str>`, `From<String>`, `From<&str>`
 

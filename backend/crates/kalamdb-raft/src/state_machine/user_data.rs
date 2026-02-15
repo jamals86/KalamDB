@@ -27,7 +27,10 @@ use std::sync::Arc;
 use crate::applier::UserDataApplier;
 use crate::{DataResponse, GroupId, RaftError, UserDataCommand};
 
-use super::{decode, encode, ApplyResult, KalamStateMachine, StateMachineSnapshot};
+use super::{
+    decode as bincode_decode, encode as bincode_encode, ApplyResult, KalamStateMachine,
+    StateMachineSnapshot,
+};
 use super::{get_coordinator, PendingBuffer, PendingCommand};
 
 /// Snapshot data for UserDataStateMachine
@@ -145,7 +148,8 @@ impl UserDataStateMachine {
 
         for pending in drained {
             // Deserialize and apply the command
-            let cmd: UserDataCommand = decode(&pending.command_bytes)?;
+            let cmd =
+                crate::codec::command_codec::decode_user_data_command(&pending.command_bytes)?;
             let _ = self.apply_command(cmd).await?;
             log::debug!(
                 "UserDataStateMachine[{}]: Applied buffered command log_index={}",
@@ -456,7 +460,7 @@ impl KalamStateMachine for UserDataStateMachine {
         }
 
         // Deserialize command to check watermark
-        let cmd: UserDataCommand = decode(command)?;
+        let cmd = crate::codec::command_codec::decode_user_data_command(command)?;
         let required_meta = cmd.required_meta_index();
 
         // Check watermark: if Meta is behind AND required_meta > 0, wait for it to catch up.
@@ -500,7 +504,7 @@ impl KalamStateMachine for UserDataStateMachine {
         self.last_applied_term.store(term, Ordering::Release);
 
         // Serialize response
-        let response_data = encode(&response)?;
+        let response_data = crate::codec::command_codec::encode_data_response(&response)?;
 
         Ok(ApplyResult::ok_with_data(response_data))
     }
@@ -522,7 +526,7 @@ impl KalamStateMachine for UserDataStateMachine {
             pending_commands,
         };
 
-        let data = encode(&snapshot)?;
+        let data = bincode_encode(&snapshot)?;
 
         Ok(StateMachineSnapshot::new(
             self.group_id(),
@@ -533,7 +537,7 @@ impl KalamStateMachine for UserDataStateMachine {
     }
 
     async fn restore(&self, snapshot: StateMachineSnapshot) -> Result<(), RaftError> {
-        let data: UserDataSnapshot = decode(&snapshot.data)?;
+        let data: UserDataSnapshot = bincode_decode(&snapshot.data)?;
 
         if data.shard != self.shard {
             return Err(RaftError::InvalidState(format!(
@@ -581,7 +585,7 @@ mod tests {
             required_meta_index: 0,
         };
 
-        let payload = encode(&cmd).unwrap();
+        let payload = crate::codec::command_codec::encode_user_data_command(&cmd).unwrap();
 
         let result = sm.apply(1, 1, &payload).await.unwrap();
         assert!(result.is_ok());
@@ -620,7 +624,7 @@ mod tests {
             live_query,
         };
 
-        let payload = encode(&cmd).unwrap();
+        let payload = crate::codec::command_codec::encode_user_data_command(&cmd).unwrap();
         let result = sm.apply(1, 1, &payload).await.unwrap();
         assert!(result.is_ok());
 
@@ -630,7 +634,7 @@ mod tests {
             failed_node_id: node_id.clone(),
             required_meta_index: 0,
         };
-        let payload2 = encode(&cleanup_cmd).unwrap();
+        let payload2 = crate::codec::command_codec::encode_user_data_command(&cleanup_cmd).unwrap();
         let result = sm.apply(2, 1, &payload2).await.unwrap();
         assert!(result.is_ok());
     }

@@ -66,6 +66,8 @@ export type {
   ConsumeRequest,
   ConsumeResponse,
   ErrorDetail,
+  FieldFlag,
+  FieldFlags,
   HealthCheckResponse,
   HttpVersion,
   JsonValue,

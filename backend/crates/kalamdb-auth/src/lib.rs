@@ -25,7 +25,7 @@ pub use kalamdb_session::AuthSession;
 pub use helpers::ip_extractor::{extract_client_ip_secure, is_localhost_address};
 pub use models::impersonation::{ImpersonationContext, ImpersonationOrigin};
 pub use providers::jwt_auth::{
-    create_and_sign_token, create_and_sign_refresh_token, generate_jwt_token, refresh_jwt_token,
+    create_and_sign_refresh_token, create_and_sign_token, generate_jwt_token, refresh_jwt_token,
     JwtClaims, TokenType, DEFAULT_JWT_EXPIRY_HOURS, KALAMDB_ISSUER,
 };
 pub use repository::user_repo::UserRepository;
