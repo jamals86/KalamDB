@@ -1,14 +1,13 @@
 //! Job-node execution state for system.job_nodes table.
 
 use crate::JobStatus;
-use bincode::{Decode, Encode};
 use kalamdb_commons::datatypes::KalamDataType;
 use kalamdb_commons::models::ids::{JobId, JobNodeId, NodeId};
 use kalamdb_macros::table;
 use serde::{Deserialize, Serialize};
 
 #[table(name = "job_nodes", comment = "Per-node job execution state")]
-#[derive(Serialize, Deserialize, Encode, Decode, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize,  Clone, Debug, PartialEq)]
 pub struct JobNode {
     #[column(
         id = 5,
@@ -60,7 +59,6 @@ pub struct JobNode {
         comment = "Job identifier"
     )]
     pub job_id: JobId,
-    #[bincode(with_serde)]
     #[column(
         id = 2,
         ordinal = 2,
@@ -103,31 +101,6 @@ impl JobNode {
 mod tests {
     use super::*;
     use crate::system_row_mapper::{model_to_system_row, system_row_to_model};
-    use kalamdb_commons::serialization::system_codec::{
-        decode_flex, decode_job_node_payload, encode_flex, encode_job_node_payload,
-    };
-
-    #[test]
-    fn test_job_node_flatbuffers_flex_roundtrip() {
-        let job_node = JobNode {
-            created_at: 1730000000000,
-            updated_at: 1730000003000,
-            started_at: Some(1730000000100),
-            finished_at: None,
-            job_id: JobId::new("job_node_fb_roundtrip"),
-            node_id: NodeId::from(3u64),
-            status: JobStatus::Running,
-            error_message: None,
-        };
-
-        let flex_payload = encode_flex(&job_node).expect("encode flex payload");
-        let wrapped =
-            encode_job_node_payload(&flex_payload).expect("encode job_node flatbuffers wrapper");
-        let unwrapped = decode_job_node_payload(&wrapped).expect("decode job_node wrapper");
-        let decoded: JobNode = decode_flex(&unwrapped).expect("decode flex payload");
-
-        assert_eq!(decoded, job_node);
-    }
 
     #[test]
     fn test_job_node_system_row_roundtrip_preserves_numeric_node_id() {

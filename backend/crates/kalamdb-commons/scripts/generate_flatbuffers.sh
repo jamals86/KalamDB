@@ -15,16 +15,6 @@ mkdir -p "${OUT_DIR}"
 
 flatc --rust -o "${OUT_DIR}" \
   "${SCHEMA_DIR}/entity_envelope.fbs" \
-  "${SCHEMA_DIR}/row_models.fbs" \
-  "${SCHEMA_DIR}/system/audit_log_entry.fbs" \
-  "${SCHEMA_DIR}/system/job_node.fbs" \
-  "${SCHEMA_DIR}/system/job.fbs" \
-  "${SCHEMA_DIR}/system/live_query.fbs" \
-  "${SCHEMA_DIR}/system/manifest_cache_entry.fbs" \
-  "${SCHEMA_DIR}/system/namespace.fbs" \
-  "${SCHEMA_DIR}/system/storage.fbs" \
-  "${SCHEMA_DIR}/system/topic_offset.fbs" \
-  "${SCHEMA_DIR}/system/topic.fbs" \
-  "${SCHEMA_DIR}/system/user.fbs"
+  "${SCHEMA_DIR}/row_models.fbs"
 
 echo "Generated FlatBuffer bindings in ${OUT_DIR}"

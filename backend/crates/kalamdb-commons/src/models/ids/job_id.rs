@@ -1,7 +1,6 @@
 // File: backend/crates/kalamdb-commons/src/models/job_id.rs
 // Type-safe wrapper for job identifiers
 
-use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -11,7 +10,7 @@ use crate::StorageKey;
 ///
 /// Ensures job IDs cannot be accidentally used where other identifier types
 /// are expected.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, )]
 pub struct JobId(String);
 
 impl JobId {

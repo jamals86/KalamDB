@@ -3,7 +3,6 @@
 //! This module provides the `KSerializable` trait which standardizes how
 //! entities are serialized/deserialized for storage in RocksDB.
 
-use bincode::config::standard;
 use serde::{Deserialize, Serialize};
 
 use crate::storage::StorageError;
@@ -12,25 +11,23 @@ pub mod envelope;
 pub mod generated;
 pub mod row_codec;
 pub mod schema;
-pub mod system_codec;
 
 type Result<T> = std::result::Result<T, StorageError>;
 
-pub use envelope::{CodecKind, EntityEnvelope};
+pub use envelope::{encode_envelope_inline, CodecKind, EntityEnvelope};
 
 /// Trait implemented by values that can be stored in an [`EntityStore`].
 ///
 /// Types can override `encode`/`decode` for custom storage formats (e.g.,
-/// row envelopes vs. JSON). The default implementation uses bincode.
+/// row envelopes vs. JSON). The default implementation uses FlexBuffers.
 ///
 /// ## Example
 ///
 /// ```rust
 /// use serde::{Deserialize, Serialize};
-/// use bincode::{Encode, Decode};
 /// use kalamdb_commons::serialization::KSerializable;
 ///
-/// #[derive(Serialize, Deserialize, Encode, Decode)]
+/// #[derive(Serialize, Deserialize, )]
 /// struct MyEntity {
 ///     id: String,
 ///     value: i64,
@@ -40,19 +37,18 @@ pub use envelope::{CodecKind, EntityEnvelope};
 /// ```
 pub trait KSerializable: Serialize + for<'de> Deserialize<'de> + Send + Sync {
     fn encode(&self) -> Result<Vec<u8>> {
-        let config = standard();
-        bincode::serde::encode_to_vec(self, config)
-            .map_err(|e| StorageError::SerializationError(format!("bincode encode failed: {}", e)))
+        flexbuffers::to_vec(self).map_err(|e| {
+            StorageError::SerializationError(format!("flexbuffers encode failed: {}", e))
+        })
     }
 
     fn decode(bytes: &[u8]) -> Result<Self>
     where
         Self: Sized,
     {
-        let config = standard();
-        bincode::serde::decode_from_slice(bytes, config)
-            .map(|(entity, _)| entity)
-            .map_err(|e| StorageError::SerializationError(format!("bincode decode failed: {}", e)))
+        flexbuffers::from_slice(bytes).map_err(|e| {
+            StorageError::SerializationError(format!("flexbuffers decode failed: {}", e))
+        })
     }
 }
 
@@ -62,29 +58,36 @@ impl KSerializable for String {}
 /// Encode a payload into a versioned entity envelope.
 ///
 /// This helper establishes the envelope contract used during the migration away
-/// from raw bincode payloads. Callers are expected to provide a stable
-/// `schema_id` and increment `schema_version` on wire changes.
+/// from raw payloads. Callers are expected to increment `schema_version` on
+/// wire changes.
 pub fn encode_enveloped(
     codec_kind: CodecKind,
-    schema_id: impl Into<String>,
     schema_version: u16,
     payload: Vec<u8>,
 ) -> Result<Vec<u8>> {
-    let envelope = EntityEnvelope::new(codec_kind, schema_id, schema_version, payload);
+    let envelope = EntityEnvelope::new(codec_kind, schema_version, payload);
+    envelope.encode()
+}
+
+/// Like [`encode_enveloped`] but accepts the payload as `&[u8]` instead of
+/// `Vec<u8>`, avoiding an intermediate allocation when the caller already has
+/// a byte slice (e.g. from a `FlatBufferBuilder::finished_data()` or FlexBuffers
+/// encode).
+pub fn encode_enveloped_ref(
+    codec_kind: CodecKind,
+    schema_version: u16,
+    payload: &[u8],
+) -> Result<Vec<u8>> {
+    let envelope = EntityEnvelope::new(codec_kind, schema_version, payload.to_vec());
     envelope.encode()
 }
 
 /// Decode and validate an entity envelope.
 ///
-/// `expected_schema_id` and `expected_schema_version` provide strict validation
-/// to prevent cross-schema decode mistakes.
-pub fn decode_enveloped(
-    bytes: &[u8],
-    expected_schema_id: &str,
-    expected_schema_version: u16,
-) -> Result<EntityEnvelope> {
+/// `expected_schema_version` provides strict version validation.
+pub fn decode_enveloped(bytes: &[u8], expected_schema_version: u16) -> Result<EntityEnvelope> {
     let envelope = EntityEnvelope::decode(bytes)?;
-    envelope.validate(expected_schema_id, expected_schema_version)?;
+    envelope.validate(expected_schema_version)?;
     Ok(envelope)
 }
 
@@ -94,22 +97,19 @@ mod tests {
 
     #[test]
     fn envelope_roundtrip() {
-        let bytes =
-            encode_enveloped(CodecKind::FlatBuffers, "kalamdb.test.envelope", 1, vec![1, 2, 3])
-                .expect("encode envelope");
+        let bytes = encode_enveloped(CodecKind::FlatBuffers, 1, vec![1, 2, 3])
+            .expect("encode envelope");
 
-        let decoded =
-            decode_enveloped(&bytes, "kalamdb.test.envelope", 1).expect("decode envelope");
+        let decoded = decode_enveloped(&bytes, 1).expect("decode envelope");
         assert_eq!(decoded.codec_kind, CodecKind::FlatBuffers);
         assert_eq!(decoded.payload, vec![1, 2, 3]);
     }
 
     #[test]
-    fn envelope_schema_mismatch_rejected() {
-        let bytes = encode_enveloped(CodecKind::FlatBuffers, "schema.a", 1, vec![9])
-            .expect("encode envelope");
+    fn envelope_schema_version_mismatch_rejected() {
+        let bytes = encode_enveloped(CodecKind::FlatBuffers, 1, vec![9]).expect("encode envelope");
 
-        let err = decode_enveloped(&bytes, "schema.b", 1).expect_err("schema mismatch should fail");
-        assert!(err.to_string().contains("schema_id mismatch"));
+        let err = decode_enveloped(&bytes, 2).expect_err("schema version mismatch should fail");
+        assert!(err.to_string().contains("schema_version mismatch"));
     }
 }

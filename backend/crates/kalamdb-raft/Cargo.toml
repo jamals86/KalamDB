@@ -25,7 +25,7 @@ prost = { workspace = true }
 
 # Serialization
 serde = { workspace = true }
-bincode = { workspace = true }
+serde_json = { workspace = true }
 flexbuffers = { workspace = true }
 
 # Async
@@ -55,4 +55,3 @@ tonic-build = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 serial_test = { workspace = true }
-serde_json = { workspace = true }

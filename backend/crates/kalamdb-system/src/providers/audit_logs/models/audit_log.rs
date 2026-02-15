@@ -1,6 +1,5 @@
 //! Audit log entry for administrative actions.
 
-use bincode::{Decode, Encode};
 use kalamdb_commons::datatypes::KalamDataType;
 use kalamdb_commons::models::{
     ids::{AuditLogId, UserId},
@@ -18,7 +17,7 @@ use serde::{Deserialize, Serialize};
     name = "audit_log",
     comment = "System audit log for security and compliance tracking"
 )]
-#[derive(Serialize, Deserialize, Encode, Decode, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize,  Clone, Debug, PartialEq)]
 pub struct AuditLogEntry {
     #[column(
         id = 1,

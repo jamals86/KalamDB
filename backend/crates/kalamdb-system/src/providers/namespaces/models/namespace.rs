@@ -1,6 +1,5 @@
 //! Namespace entity for system.namespaces table.
 
-use bincode::{Decode, Encode};
 use kalamdb_commons::datatypes::KalamDataType;
 use kalamdb_commons::models::ids::NamespaceId;
 use kalamdb_macros::table;
@@ -38,7 +37,7 @@ use serde::{Deserialize, Serialize};
 /// Namespace struct with fields ordered for optimal memory alignment.
 /// 8-byte aligned fields first (i64, String types), then smaller types.
 #[table(name = "namespaces", comment = "Database namespaces for multi-tenancy")]
-#[derive(Serialize, Deserialize, Encode, Decode, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize,  Clone, Debug, PartialEq)]
 pub struct Namespace {
     #[column(
         id = 3,
@@ -141,10 +140,6 @@ impl Namespace {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::serialization::system_codec::{
-        decode_flex, decode_namespace_payload, encode_flex, encode_namespace_payload,
-    };
-    use serde_json::json;
 
     #[test]
     fn test_namespace_serialization() {
@@ -161,44 +156,4 @@ mod tests {
         assert_eq!(namespace, deserialized);
     }
 
-    #[test]
-    fn test_namespace_flatbuffers_flex_roundtrip() {
-        let namespace = Namespace {
-            namespace_id: NamespaceId::new("analytics"),
-            name: "analytics".to_string(),
-            created_at: 1730000000000,
-            options: Some("{}".to_string()),
-            table_count: 12,
-        };
-
-        let flex_payload = encode_flex(&namespace).expect("encode flex payload");
-        let wrapped =
-            encode_namespace_payload(&flex_payload).expect("encode namespace wrapper");
-        let unwrapped = decode_namespace_payload(&wrapped).expect("decode namespace wrapper");
-        let decoded: Namespace = decode_flex(&unwrapped).expect("decode flex payload");
-
-        assert_eq!(decoded, namespace);
-    }
-
-    #[test]
-    fn test_namespace_decode_rejects_string_table_count() {
-        let invalid_payload = json!({
-            "created_at": 1730000000000_i64,
-            "namespace_id": "analytics",
-            "name": "analytics",
-            "options": "{}",
-            "table_count": "12"
-        });
-
-        let flex_payload = encode_flex(&invalid_payload).expect("encode invalid flex payload");
-        let wrapped = encode_namespace_payload(&flex_payload).expect("encode namespace wrapper");
-        let unwrapped = decode_namespace_payload(&wrapped).expect("decode namespace wrapper");
-        let err =
-            decode_flex::<Namespace>(&unwrapped).expect_err("string table_count must fail");
-
-        assert!(
-            err.to_string().contains("expected i32"),
-            "unexpected error: {err}"
-        );
-    }
 }

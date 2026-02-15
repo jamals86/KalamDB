@@ -44,7 +44,7 @@ pub enum RowConversionError {
 }
 
 /// Internal storage representation for ScalarValue
-/// Uses derive for bincode compatibility (storage)
+/// Uses derive for binary storage compatibility.
 /// Note: Int64 and UInt64 are stored as strings to preserve precision in JSON
 /// (JavaScript's Number.MAX_SAFE_INTEGER = 2^53-1 causes precision loss for large i64/u64)
 ///

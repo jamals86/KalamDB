@@ -1326,6 +1326,9 @@ Query OK, 0 rows affected
 
 177) check that we use zero-copy serdes using flatbuffers to the logic model we have for each system table, the main changes i guess should be in SystemTableRow, when we have something good we can copy it to SharedTableRow and UserTableRow as well and the inside Row -> ScalarValue
 
+178) change this to flatbuffers: backend/crates/kalamdb-raft/src/state_machine/serde_helpers.rs for faster serdes
+
+
 
 
 

@@ -1,7 +1,7 @@
 namespace kalamdb.serialization.row;
 
-// Tagged scalar wire format. The payload bytes are encoded as FlexBuffers for
-// variant-specific content while keeping FlatBuffers as the outer row container.
+// Tagged scalar wire format using typed FlatBuffers fields.
+// This avoids per-scalar FlexBuffers encode/decode overhead in hot paths.
 enum ScalarTag : ushort {
   Null = 0,
   Boolean = 1,
@@ -32,7 +32,39 @@ enum ScalarTag : ushort {
 
 table ScalarValuePayload {
   tag: ScalarTag = Null;
-  payload: [ubyte];
+  is_null: bool = false;
+
+  bool_value: bool = false;
+  i8_value: byte = 0;
+  i16_value: short = 0;
+  i32_value: int = 0;
+  i64_value: long = 0;
+  u8_value: ubyte = 0;
+  u16_value: ushort = 0;
+  u32_value: uint = 0;
+  u64_value: ulong = 0;
+  f32_value: float = 0.0;
+  f64_value: double = 0.0;
+
+  // Shared for Utf8/LargeUtf8/Fallback
+  text_value: string;
+  // Shared for Binary/LargeBinary/FixedSizeBinary/Decimal128
+  bytes_value: [ubyte];
+
+  // Fixed-size binary and embedding metadata
+  fixed_size: int = 0;
+
+  // Timestamp timezone (optional)
+  timezone: string;
+
+  // Decimal128 metadata
+  decimal_precision: ubyte = 0;
+  decimal_scale: byte = 0;
+
+  // Embedding payload (for FixedSizeList<float>)
+  embedding_size: int = 0;
+  embedding_values: [float];
+  embedding_valid: [bool];
 }
 
 table ColumnValue {
@@ -55,6 +87,10 @@ table UserTableRowPayload {
 table SharedTableRowPayload {
   seq: long;
   deleted: bool = false;
+  fields: RowPayload;
+}
+
+table SystemTableRowPayload {
   fields: RowPayload;
 }
 

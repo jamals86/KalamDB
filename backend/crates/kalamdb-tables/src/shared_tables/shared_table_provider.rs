@@ -435,28 +435,42 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         })?;
 
         // Build all entities and keys
-        let mut entries: Vec<(SharedTableRowId, SharedTableRow)> = Vec::with_capacity(row_count);
+        let mut shared_rows: Vec<SharedTableRow> = Vec::with_capacity(row_count);
         let mut row_keys: Vec<SharedTableRowId> = Vec::with_capacity(row_count);
 
         for (row_data, seq_id) in coerced_rows.into_iter().zip(seq_ids.into_iter()) {
-            let row_key = seq_id;
-            let entity = SharedTableRow {
+            row_keys.push(seq_id);
+            shared_rows.push(SharedTableRow {
                 _seq: seq_id,
                 _deleted: false,
                 fields: row_data,
-            };
-
-            row_keys.push(row_key);
-            entries.push((row_key, entity));
+            });
         }
 
-        // Single atomic RocksDB WriteBatch for ALL rows
-        self.store.insert_batch(&entries).map_err(|e| {
-            KalamDbError::InvalidOperation(format!(
-                "Failed to batch insert shared table rows: {}",
-                e
-            ))
-        })?;
+        // Batch-encode all rows with FlatBufferBuilder reuse, then write atomically.
+        let encode_input: Vec<(kalamdb_commons::ids::SeqId, bool, &kalamdb_commons::models::rows::Row)> =
+            shared_rows.iter().map(|r| (r._seq, r._deleted, &r.fields)).collect();
+        let encoded_values =
+            kalamdb_commons::serialization::row_codec::batch_encode_shared_table_rows(&encode_input)
+                .map_err(|e| {
+                    KalamDbError::InvalidOperation(format!(
+                        "Failed to batch encode shared table rows: {}",
+                        e
+                    ))
+                })?;
+
+        // Combine keys + entities for index key extraction
+        let entries: Vec<(SharedTableRowId, SharedTableRow)> =
+            row_keys.iter().copied().zip(shared_rows.into_iter()).collect();
+
+        self.store
+            .insert_batch_preencoded(&entries, encoded_values)
+            .map_err(|e| {
+                KalamDbError::InvalidOperation(format!(
+                    "Failed to batch insert shared table rows: {}",
+                    e
+                ))
+            })?;
 
         // Mark manifest as having pending writes (hot data needs to be flushed)
         let manifest_service = self.core.services.manifest_service.clone();

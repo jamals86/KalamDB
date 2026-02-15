@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
     name = "topic_offsets",
     comment = "Consumer group offset tracking for topics"
 )]
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, bincode::Encode, bincode::Decode)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TopicOffset {
     /// Topic identifier
     #[column(

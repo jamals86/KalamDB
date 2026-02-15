@@ -548,26 +548,43 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         })?;
 
         // Build all entities and keys
-        let mut entries: Vec<(UserTableRowId, UserTableRow)> = Vec::with_capacity(row_count);
+        let mut user_rows: Vec<UserTableRow> = Vec::with_capacity(row_count);
         let mut row_keys: Vec<UserTableRowId> = Vec::with_capacity(row_count);
 
         for (row_data, seq_id) in coerced_rows.into_iter().zip(seq_ids.into_iter()) {
-            let row_key = UserTableRowId::new(user_id.clone(), seq_id);
-            let entity = UserTableRow {
+            row_keys.push(UserTableRowId::new(user_id.clone(), seq_id));
+            user_rows.push(UserTableRow {
                 user_id: user_id.clone(),
                 _seq: seq_id,
                 _deleted: false,
                 fields: row_data,
-            };
-
-            row_keys.push(row_key.clone());
-            entries.push((row_key, entity));
+            });
         }
 
-        // Single atomic RocksDB WriteBatch for ALL rows
-        self.store.insert_batch(&entries).map_err(|e| {
-            KalamDbError::InvalidOperation(format!("Failed to batch insert user table rows: {}", e))
-        })?;
+        // Batch-encode all rows with FlatBufferBuilder reuse, then write atomically.
+        // This reuses the inner FlatBufferBuilder across rows (reset() retains capacity),
+        // saving N-1 builder allocations and eliminating per-row .to_vec() copies.
+        let encoded_values =
+            kalamdb_commons::serialization::row_codec::batch_encode_user_table_rows(&user_rows)
+                .map_err(|e| {
+                    KalamDbError::InvalidOperation(format!(
+                        "Failed to batch encode user table rows: {}",
+                        e
+                    ))
+                })?;
+
+        // Combine keys + entities for index key extraction
+        let entries: Vec<(UserTableRowId, UserTableRow)> =
+            row_keys.iter().cloned().zip(user_rows.into_iter()).collect();
+
+        self.store
+            .insert_batch_preencoded(&entries, encoded_values)
+            .map_err(|e| {
+                KalamDbError::InvalidOperation(format!(
+                    "Failed to batch insert user table rows: {}",
+                    e
+                ))
+            })?;
 
         // Mark manifest as having pending writes (hot data needs to be flushed)
         let manifest_service = self.core.services.manifest_service.clone();

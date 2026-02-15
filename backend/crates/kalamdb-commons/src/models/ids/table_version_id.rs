@@ -7,7 +7,6 @@
 //! - Latest pointer: (namespace, table, VERSION_KIND_LATEST)
 //! - Versioned:      (namespace, table, VERSION_KIND_VERSIONED, version)
 
-use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -41,7 +40,7 @@ pub const VERSION_KIND_VERSIONED: u8 = 1;
 /// ```
 ///
 /// Storekey preserves lexicographic ordering for efficient range scans.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, )]
 pub struct TableVersionId {
     /// The base table identifier
     table_id: TableId,

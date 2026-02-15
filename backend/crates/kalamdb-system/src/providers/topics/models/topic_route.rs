@@ -2,7 +2,6 @@
 //!
 //! Defines how a topic consumes change events from a source table.
 
-use bincode::{Decode, Encode};
 use kalamdb_commons::models::{PayloadMode, TableId, TopicOp};
 use serde::{Deserialize, Serialize};
 
@@ -41,7 +40,7 @@ use serde::{Deserialize, Serialize};
 ///     partition_key_expr: None,
 /// };
 /// ```
-#[derive(Serialize, Deserialize, Encode, Decode, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize,  Clone, Debug, PartialEq, Eq)]
 pub struct TopicRoute {
     /// Source table to capture events from
     pub table_id: TableId,
@@ -135,9 +134,8 @@ mod tests {
         );
 
         // Test binary round-trip
-        let encoded = bincode::encode_to_vec(&route, bincode::config::standard()).unwrap();
-        let decoded: TopicRoute =
-            bincode::decode_from_slice(&encoded, bincode::config::standard()).unwrap().0;
+        let encoded = flexbuffers::to_vec(&route).unwrap();
+        let decoded: TopicRoute = flexbuffers::from_slice(&encoded).unwrap();
         assert_eq!(route, decoded);
 
         // Test JSON round-trip

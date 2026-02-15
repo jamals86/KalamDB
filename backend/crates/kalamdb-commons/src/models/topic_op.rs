@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(
     feature = "serde",
-    derive(Serialize, Deserialize, bincode::Encode, bincode::Decode),
+    derive(Serialize, Deserialize),
     serde(rename_all = "lowercase")
 )]
 pub enum TopicOp {

@@ -1,7 +1,6 @@
 // File: backend/crates/kalamdb-commons/src/models/table_id.rs
 // Composite key for system.tables entries
 
-use bincode::{Decode, Encode};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 
@@ -19,7 +18,7 @@ use crate::StorageKey;
 ///
 /// Serializes as "namespace.table" string format for JSON compatibility.
 /// For example: `"flush_test_ns_mkav1q2g_3.metrics"`
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, )]
 pub struct TableId {
     namespace_id: NamespaceId,
     table_name: TableName,
@@ -114,7 +113,7 @@ impl Serialize for TableId {
 }
 
 // Custom Deserialize implementation: deserialize from "namespace.table" string
-// Uses a Visitor pattern to avoid deserialize_any (which bincode doesn't support)
+// Uses a Visitor pattern to avoid deserialize_any for codec compatibility.
 impl<'de> Deserialize<'de> for TableId {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where

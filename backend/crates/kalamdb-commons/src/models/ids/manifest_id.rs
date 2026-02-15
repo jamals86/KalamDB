@@ -16,7 +16,6 @@ use crate::{StorageKey, TableId, UserId};
 /// Format: "namespace:table:scope" where scope is "shared" or user_id
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", derive(bincode::Encode, bincode::Decode))]
 pub struct ManifestId {
     pub table_id: TableId,
     pub user_id: Option<UserId>,

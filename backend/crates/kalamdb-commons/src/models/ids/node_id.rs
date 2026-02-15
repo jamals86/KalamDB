@@ -6,7 +6,6 @@
 //! - Live query routing
 //! - Distributed coordination
 
-use bincode::{Decode, Encode};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 
@@ -14,7 +13,7 @@ use std::fmt;
 ///
 /// Uses u64 to match OpenRaft's NodeId type for seamless integration.
 /// Configured via server.toml `[cluster] node_id = 1`
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Encode, Decode)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, )]
 pub struct NodeId(u64);
 
 impl Serialize for NodeId {

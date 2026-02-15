@@ -12,7 +12,6 @@ use std::str::FromStr;
 /// - **Stream** → `StreamTableOptions`: Event stream tables with TTL-based eviction (e.g., `chat_events`)
 /// - **System** → `SystemTableOptions`: Internal system metadata tables (e.g., `information_schema.tables`)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[cfg_attr(feature = "serde", derive(bincode::Encode, bincode::Decode))]
 pub enum TableType {
     /// Per-user tables with user-specific partitioning
     /// Options: `UserTableOptions` (partition_by_user, max_rows_per_user, enable_rls, compression)

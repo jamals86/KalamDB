@@ -1,11 +1,10 @@
 use std::fmt;
 use std::str::FromStr;
 
-use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 
 /// Enum representing job execution status.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Encode, Decode, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash,  Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum JobStatus {
     New,

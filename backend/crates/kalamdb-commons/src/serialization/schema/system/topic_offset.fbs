@@ -1,8 +1,0 @@
-namespace kalamdb.serialization.system;
-
-table TopicOffsetPayload {
-  payload: [ubyte];
-}
-
-root_type TopicOffsetPayload;
-file_identifier "KSTO";

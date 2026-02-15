@@ -15,7 +15,7 @@
 //! ### User Tables Storage
 //! - Data partitioned by `user_id` for efficient per-user queries
 //! - Implements EntityStore trait for type-safe key-value operations
-//! - RocksDB backend with bincode serialization
+//! - RocksDB backend with binary serialization
 //!
 //! ### Shared Tables Storage
 //! - Global storage with no user partitioning

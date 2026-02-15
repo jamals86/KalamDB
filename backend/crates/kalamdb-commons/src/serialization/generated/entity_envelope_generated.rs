@@ -13,11 +13,10 @@ pub mod serialization {
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 pub const ENUM_MIN_CODEC_KIND: u8 = 0;
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
-pub const ENUM_MAX_CODEC_KIND: u8 = 2;
+pub const ENUM_MAX_CODEC_KIND: u8 = 1;
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 #[allow(non_camel_case_types)]
-pub const ENUM_VALUES_CODEC_KIND: [CodecKind; 3] = [
-  CodecKind::Bincode,
+pub const ENUM_VALUES_CODEC_KIND: [CodecKind; 2] = [
   CodecKind::FlatBuffers,
   CodecKind::FlexBuffers,
 ];
@@ -27,21 +26,18 @@ pub const ENUM_VALUES_CODEC_KIND: [CodecKind; 3] = [
 pub struct CodecKind(pub u8);
 #[allow(non_upper_case_globals)]
 impl CodecKind {
-  pub const Bincode: Self = Self(0);
-  pub const FlatBuffers: Self = Self(1);
-  pub const FlexBuffers: Self = Self(2);
+  pub const FlatBuffers: Self = Self(0);
+  pub const FlexBuffers: Self = Self(1);
 
   pub const ENUM_MIN: u8 = 0;
-  pub const ENUM_MAX: u8 = 2;
+  pub const ENUM_MAX: u8 = 1;
   pub const ENUM_VALUES: &'static [Self] = &[
-    Self::Bincode,
     Self::FlatBuffers,
     Self::FlexBuffers,
   ];
   /// Returns the variant's name or "" if unknown.
   pub fn variant_name(self) -> Option<&'static str> {
     match self {
-      Self::Bincode => Some("Bincode"),
       Self::FlatBuffers => Some("FlatBuffers"),
       Self::FlexBuffers => Some("FlexBuffers"),
       _ => None,
@@ -115,9 +111,8 @@ impl<'a> ::flatbuffers::Follow<'a> for EntityEnvelope<'a> {
 
 impl<'a> EntityEnvelope<'a> {
   pub const VT_CODEC_KIND: ::flatbuffers::VOffsetT = 4;
-  pub const VT_SCHEMA_ID: ::flatbuffers::VOffsetT = 6;
-  pub const VT_SCHEMA_VERSION: ::flatbuffers::VOffsetT = 8;
-  pub const VT_PAYLOAD: ::flatbuffers::VOffsetT = 10;
+  pub const VT_SCHEMA_VERSION: ::flatbuffers::VOffsetT = 6;
+  pub const VT_PAYLOAD: ::flatbuffers::VOffsetT = 8;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -130,7 +125,6 @@ impl<'a> EntityEnvelope<'a> {
   ) -> ::flatbuffers::WIPOffset<EntityEnvelope<'bldr>> {
     let mut builder = EntityEnvelopeBuilder::new(_fbb);
     if let Some(x) = args.payload { builder.add_payload(x); }
-    if let Some(x) = args.schema_id { builder.add_schema_id(x); }
     builder.add_schema_version(args.schema_version);
     builder.add_codec_kind(args.codec_kind);
     builder.finish()
@@ -142,14 +136,7 @@ impl<'a> EntityEnvelope<'a> {
     // Safety:
     // Created from valid Table for this object
     // which contains a valid value in this slot
-    unsafe { self._tab.get::<CodecKind>(EntityEnvelope::VT_CODEC_KIND, Some(CodecKind::Bincode)).unwrap()}
-  }
-  #[inline]
-  pub fn schema_id(&self) -> Option<&'a str> {
-    // Safety:
-    // Created from valid Table for this object
-    // which contains a valid value in this slot
-    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(EntityEnvelope::VT_SCHEMA_ID, None)}
+    unsafe { self._tab.get::<CodecKind>(EntityEnvelope::VT_CODEC_KIND, Some(CodecKind::FlatBuffers)).unwrap()}
   }
   #[inline]
   pub fn schema_version(&self) -> u16 {
@@ -174,7 +161,6 @@ impl ::flatbuffers::Verifiable for EntityEnvelope<'_> {
   ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
     v.visit_table(pos)?
      .visit_field::<CodecKind>("codec_kind", Self::VT_CODEC_KIND, false)?
-     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("schema_id", Self::VT_SCHEMA_ID, false)?
      .visit_field::<u16>("schema_version", Self::VT_SCHEMA_VERSION, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, u8>>>("payload", Self::VT_PAYLOAD, false)?
      .finish();
@@ -183,7 +169,6 @@ impl ::flatbuffers::Verifiable for EntityEnvelope<'_> {
 }
 pub struct EntityEnvelopeArgs<'a> {
     pub codec_kind: CodecKind,
-    pub schema_id: Option<::flatbuffers::WIPOffset<&'a str>>,
     pub schema_version: u16,
     pub payload: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, u8>>>,
 }
@@ -191,8 +176,7 @@ impl<'a> Default for EntityEnvelopeArgs<'a> {
   #[inline]
   fn default() -> Self {
     EntityEnvelopeArgs {
-      codec_kind: CodecKind::Bincode,
-      schema_id: None,
+      codec_kind: CodecKind::FlatBuffers,
       schema_version: 1,
       payload: None,
     }
@@ -206,11 +190,7 @@ pub struct EntityEnvelopeBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
 impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> EntityEnvelopeBuilder<'a, 'b, A> {
   #[inline]
   pub fn add_codec_kind(&mut self, codec_kind: CodecKind) {
-    self.fbb_.push_slot::<CodecKind>(EntityEnvelope::VT_CODEC_KIND, codec_kind, CodecKind::Bincode);
-  }
-  #[inline]
-  pub fn add_schema_id(&mut self, schema_id: ::flatbuffers::WIPOffset<&'b  str>) {
-    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(EntityEnvelope::VT_SCHEMA_ID, schema_id);
+    self.fbb_.push_slot::<CodecKind>(EntityEnvelope::VT_CODEC_KIND, codec_kind, CodecKind::FlatBuffers);
   }
   #[inline]
   pub fn add_schema_version(&mut self, schema_version: u16) {
@@ -239,7 +219,6 @@ impl ::core::fmt::Debug for EntityEnvelope<'_> {
   fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
     let mut ds = f.debug_struct("EntityEnvelope");
       ds.field("codec_kind", &self.codec_kind());
-      ds.field("schema_id", &self.schema_id());
       ds.field("schema_version", &self.schema_version());
       ds.field("payload", &self.payload());
       ds.finish()

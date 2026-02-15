@@ -521,8 +521,6 @@ mod tests {
         PartialEq,
         serde::Serialize,
         serde::Deserialize,
-        bincode::Encode,
-        bincode::Decode,
     )]
     struct DummyValue {
         value: String,

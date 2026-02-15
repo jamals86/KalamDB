@@ -35,7 +35,6 @@ impl std::error::Error for TableNameValidationError {}
 /// - Names containing null bytes
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", derive(bincode::Encode, bincode::Decode))]
 pub struct TableName(String);
 
 impl TableName {

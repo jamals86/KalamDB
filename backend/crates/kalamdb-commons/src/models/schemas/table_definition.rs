@@ -428,8 +428,6 @@ mod tests {
     use crate::models::datatypes::KalamDataType;
     use crate::models::schemas::ColumnDefault;
     use crate::{NamespaceId, TableName};
-    use bincode::config::standard;
-    use bincode::serde::{decode_from_slice, encode_to_vec};
 
     fn sample_columns() -> Vec<ColumnDefinition> {
         vec![
@@ -696,7 +694,7 @@ mod tests {
     }
 
     #[test]
-    fn test_bincode_roundtrip() {
+    fn test_flexbuffers_roundtrip() {
         let mut columns = sample_columns();
         columns[1].default_value = ColumnDefault::literal(serde_json::json!({
             "kind": "text",
@@ -712,79 +710,9 @@ mod tests {
             Some("Test table".to_string()),
         )
         .unwrap();
-
-        let config = standard();
-
-        // Validate individual components roundtrip independently to isolate failures
-        let column_bytes = encode_to_vec(&table.columns, config).expect("encode columns");
-        let (decoded_columns, _): (Vec<ColumnDefinition>, usize) =
-            decode_from_slice(&column_bytes, config).expect("decode columns");
-        assert_eq!(decoded_columns, table.columns);
-
-        let options_bytes =
-            encode_to_vec(&table.table_options, config).expect("encode table options");
-        let (decoded_options, _): (TableOptions, usize) =
-            decode_from_slice(&options_bytes, config).expect("decode table options");
-        assert_eq!(decoded_options, table.table_options);
-
-        let timestamp_bytes = encode_to_vec(table.created_at, config).expect("encode timestamp");
-        let (decoded_ts, _): (chrono::DateTime<chrono::Utc>, usize) =
-            decode_from_slice(&timestamp_bytes, config).expect("decode timestamp");
-        assert_eq!(decoded_ts, table.created_at);
-
-        let namespace_bytes = encode_to_vec(&table.namespace_id, config).expect("encode namespace");
-        let (decoded_ns, _): (NamespaceId, usize) =
-            decode_from_slice(&namespace_bytes, config).expect("decode namespace");
-        assert_eq!(decoded_ns, table.namespace_id);
-
-        let name_bytes = encode_to_vec(&table.table_name, config).expect("encode name");
-        let (decoded_name, _): (TableName, usize) =
-            decode_from_slice(&name_bytes, config).expect("decode name");
-        assert_eq!(decoded_name, table.table_name);
-
-        let comment_bytes = encode_to_vec(&table.table_comment, config).expect("encode comment");
-        let (decoded_comment, _): (Option<String>, usize) =
-            decode_from_slice(&comment_bytes, config).expect("decode comment");
-        assert_eq!(decoded_comment, table.table_comment);
-
-        // Encoding tuple across all fields succeeds, so failure is specific to TableDefinition
-        // implementation. This tuple test helps ensure serde data layout remains stable.
-        let tuple = (
-            table.namespace_id.clone(),
-            table.table_name.clone(),
-            table.table_type,
-            table.columns.clone(),
-            table.schema_version,
-            table.next_column_id,
-            table.table_options.clone(),
-            table.table_comment.clone(),
-            table.created_at,
-            table.updated_at,
-        );
-        let tuple_bytes = encode_to_vec(&tuple, config).expect("encode tuple");
-        #[allow(clippy::type_complexity)]
-        let (decoded_tuple, _): (
-            (
-                NamespaceId,
-                TableName,
-                TableType,
-                Vec<ColumnDefinition>,
-                u32,
-                u64,
-                TableOptions,
-                Option<String>,
-                chrono::DateTime<chrono::Utc>,
-                chrono::DateTime<chrono::Utc>,
-            ),
-            usize,
-        ) = decode_from_slice(&tuple_bytes, config).expect("decode tuple");
-        assert_eq!(decoded_tuple, tuple);
-
-        // Full struct still fails today (tracked via kalamdb-system tests), but regression
-        // coverage ensures intermediate components remain bincode-safe.
-        let bytes = encode_to_vec(&table, config).expect("encode table definition");
-        let (decoded, _): (TableDefinition, usize) =
-            decode_from_slice(&bytes, config).expect("decode table definition");
+        let bytes = flexbuffers::to_vec(&table).expect("encode table definition");
+        let decoded: TableDefinition =
+            flexbuffers::from_slice(&bytes).expect("decode table definition");
 
         assert_eq!(decoded.table_name, table.table_name);
         assert_eq!(decoded.columns.len(), table.columns.len());

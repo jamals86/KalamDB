@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 /// Enum representing table access control in KalamDB.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", derive(bincode::Encode, bincode::Decode))]
 pub enum TableAccess {
     Public,
     Private,

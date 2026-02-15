@@ -5,20 +5,15 @@ namespace kalamdb.serialization;
 // - Never reuse field IDs
 // - New fields must be optional or have safe defaults
 enum CodecKind : ubyte {
-  Bincode = 0,
-  FlatBuffers = 1,
-  FlexBuffers = 2
+  FlatBuffers = 0,
+  FlexBuffers = 1
 }
 
 table EntityEnvelope {
   // Storage codec used by payload bytes.
-  codec_kind: CodecKind = Bincode;
+  codec_kind: CodecKind = FlatBuffers;
 
-  // Stable logical schema identifier (for example:
-  // "kalamdb.system.users.User").
-  schema_id: string;
-
-  // Monotonic wire-version for schema_id.
+  // Monotonic wire-version for payload contract.
   schema_version: ushort = 1;
 
   // Codec-specific payload bytes.

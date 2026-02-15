@@ -1,8 +1,0 @@
-namespace kalamdb.serialization.system;
-
-table ManifestCacheEntryPayload {
-  payload: [ubyte];
-}
-
-root_type ManifestCacheEntryPayload;
-file_identifier "KSMC";

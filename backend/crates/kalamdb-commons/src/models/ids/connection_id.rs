@@ -9,7 +9,6 @@ use serde::{Deserialize, Serialize};
 /// Used to track live query subscriptions and route notifications.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", derive(bincode::Encode, bincode::Decode))]
 pub struct ConnectionId(String);
 
 impl ConnectionId {

@@ -27,7 +27,6 @@ kalamdb-macros = { path = "../kalamdb-macros" }
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 arrow-schema = { workspace = true, optional = true }
-bincode = { workspace = true, optional = true }
 flatbuffers = { workspace = true, optional = true }
 flexbuffers = { workspace = true, optional = true }
 chrono = { workspace = true, optional = true }
@@ -43,7 +42,6 @@ serde = [
 	"dep:serde_json",
 	"dep:arrow",
 	"dep:arrow-schema",
-	"dep:bincode",
 	"dep:flatbuffers",
 	"dep:flexbuffers",
 	"dep:chrono",

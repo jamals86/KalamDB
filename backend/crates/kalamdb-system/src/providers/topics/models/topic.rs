@@ -2,7 +2,6 @@
 //!
 //! Represents a durable pub/sub topic backed by RocksDB.
 
-use bincode::{Decode, Encode};
 use kalamdb_commons::datatypes::KalamDataType;
 use kalamdb_commons::models::TopicId;
 use kalamdb_macros::table;
@@ -55,7 +54,7 @@ use super::TopicRoute;
 /// };
 /// ```
 #[table(name = "topics", comment = "Durable topics for pub/sub messaging")]
-#[derive(Serialize, Deserialize, Encode, Decode, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize,  Clone, Debug, PartialEq)]
 pub struct Topic {
     // Primary key field first
     #[column(
@@ -150,7 +149,6 @@ pub struct Topic {
     pub partitions: u32,
 
     // Complex field last (Vec is heap-allocated)
-    #[bincode(with_serde)]
     #[column(
         id = 7,
         ordinal = 7,

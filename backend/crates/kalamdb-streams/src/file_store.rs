@@ -213,7 +213,7 @@ impl FileStreamLogStore {
                 .map_err(|e| StreamLogError::Io(e.to_string()))?,
         );
 
-        let payload = bincode::serde::encode_to_vec(&record, bincode::config::standard())
+        let payload = flexbuffers::to_vec(&record)
             .map_err(|e| StreamLogError::Serialization(e.to_string()))?;
         let len = payload.len() as u32;
         file.write_all(&len.to_le_bytes())
@@ -241,11 +241,8 @@ impl FileStreamLogStore {
             let len = u32::from_le_bytes(len_buf) as usize;
             let mut payload = vec![0u8; len];
             reader.read_exact(&mut payload).map_err(|e| StreamLogError::Io(e.to_string()))?;
-            let (record, _) = bincode::serde::decode_from_slice::<StreamLogRecord, _>(
-                &payload,
-                bincode::config::standard(),
-            )
-            .map_err(|e| StreamLogError::Serialization(e.to_string()))?;
+            let record = flexbuffers::from_slice::<StreamLogRecord>(&payload)
+                .map_err(|e| StreamLogError::Serialization(e.to_string()))?;
             records.push(record);
         }
         Ok(records)

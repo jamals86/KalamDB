@@ -1,8 +1,0 @@
-namespace kalamdb.serialization.system;
-
-table NamespacePayload {
-  payload: [ubyte];
-}
-
-root_type NamespacePayload;
-file_identifier "KSNS";

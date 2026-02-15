@@ -1,8 +1,0 @@
-namespace kalamdb.serialization.system;
-
-table UserPayload {
-  payload: [ubyte];
-}
-
-root_type UserPayload;
-file_identifier "KSUS";

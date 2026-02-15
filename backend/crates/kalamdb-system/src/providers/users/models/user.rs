@@ -3,7 +3,6 @@
 //! Represents a database user with authentication and authorization information.
 
 use crate::providers::storages::models::StorageMode;
-use bincode::{Decode, Encode};
 use kalamdb_commons::datatypes::KalamDataType;
 use kalamdb_commons::models::{ids::UserId, AuthType, Role, StorageId};
 use kalamdb_commons::UserName;
@@ -74,7 +73,7 @@ pub const DEFAULT_LOCKOUT_DURATION_MINUTES: i64 = 15;
     name = "users",
     comment = "System users for authentication and authorization"
 )]
-#[derive(Serialize, Deserialize, Encode, Decode, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize,  Clone, Debug, PartialEq)]
 pub struct User {
     // 8-byte aligned fields first (i64, Option<i64>, String/pointer types)
     #[column(
@@ -292,10 +291,6 @@ impl User {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::serialization::system_codec::{
-        decode_flex, decode_user_payload, encode_flex, encode_user_payload,
-    };
-    use serde_json::json;
 
     fn create_test_user() -> User {
         User {
@@ -387,47 +382,4 @@ mod tests {
         assert!(user.locked_until.is_none());
     }
 
-    #[test]
-    fn test_user_flatbuffers_flex_roundtrip() {
-        let user = create_test_user();
-
-        let flex_payload = encode_flex(&user).expect("encode flex payload");
-        let wrapped = encode_user_payload(&flex_payload).expect("encode user flatbuffers wrapper");
-        let unwrapped = decode_user_payload(&wrapped).expect("decode user flatbuffers wrapper");
-        let decoded: User = decode_flex(&unwrapped).expect("decode flex payload");
-
-        assert_eq!(decoded, user);
-    }
-
-    #[test]
-    fn test_user_decode_rejects_string_created_at() {
-        let invalid_payload = json!({
-            "created_at": "1730000000000",
-            "updated_at": 1730000000000_i64,
-            "locked_until": null,
-            "last_login_at": null,
-            "last_seen": null,
-            "deleted_at": null,
-            "user_id": "u_bad_created_at",
-            "username": "alice",
-            "password_hash": "$2b$12$hash",
-            "email": "test@example.com",
-            "auth_data": null,
-            "storage_id": "storage_1",
-            "failed_login_attempts": 0,
-            "role": "User",
-            "auth_type": "Password",
-            "storage_mode": "Table"
-        });
-
-        let flex_payload = encode_flex(&invalid_payload).expect("encode invalid flex payload");
-        let wrapped = encode_user_payload(&flex_payload).expect("encode user wrapper");
-        let unwrapped = decode_user_payload(&wrapped).expect("decode user wrapper");
-        let err = decode_flex::<User>(&unwrapped).expect_err("string created_at must fail");
-
-        assert!(
-            err.to_string().contains("expected i64"),
-            "unexpected error: {err}"
-        );
-    }
 }

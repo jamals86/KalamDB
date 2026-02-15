@@ -1,14 +1,13 @@
 // File: backend/crates/kalamdb-commons/src/models/audit_log_id.rs
 // Type-safe wrapper for audit log identifiers.
 
-use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
 use crate::StorageKey;
 
 /// Type-safe wrapper for audit log identifiers stored in system.audit_log.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, )]
 pub struct AuditLogId(String);
 
 impl AuditLogId {

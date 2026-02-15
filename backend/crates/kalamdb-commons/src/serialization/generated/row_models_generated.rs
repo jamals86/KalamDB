@@ -206,7 +206,27 @@ impl<'a> ::flatbuffers::Follow<'a> for ScalarValuePayload<'a> {
 
 impl<'a> ScalarValuePayload<'a> {
   pub const VT_TAG: ::flatbuffers::VOffsetT = 4;
-  pub const VT_PAYLOAD: ::flatbuffers::VOffsetT = 6;
+  pub const VT_IS_NULL: ::flatbuffers::VOffsetT = 6;
+  pub const VT_BOOL_VALUE: ::flatbuffers::VOffsetT = 8;
+  pub const VT_I8_VALUE: ::flatbuffers::VOffsetT = 10;
+  pub const VT_I16_VALUE: ::flatbuffers::VOffsetT = 12;
+  pub const VT_I32_VALUE: ::flatbuffers::VOffsetT = 14;
+  pub const VT_I64_VALUE: ::flatbuffers::VOffsetT = 16;
+  pub const VT_U8_VALUE: ::flatbuffers::VOffsetT = 18;
+  pub const VT_U16_VALUE: ::flatbuffers::VOffsetT = 20;
+  pub const VT_U32_VALUE: ::flatbuffers::VOffsetT = 22;
+  pub const VT_U64_VALUE: ::flatbuffers::VOffsetT = 24;
+  pub const VT_F32_VALUE: ::flatbuffers::VOffsetT = 26;
+  pub const VT_F64_VALUE: ::flatbuffers::VOffsetT = 28;
+  pub const VT_TEXT_VALUE: ::flatbuffers::VOffsetT = 30;
+  pub const VT_BYTES_VALUE: ::flatbuffers::VOffsetT = 32;
+  pub const VT_FIXED_SIZE: ::flatbuffers::VOffsetT = 34;
+  pub const VT_TIMEZONE: ::flatbuffers::VOffsetT = 36;
+  pub const VT_DECIMAL_PRECISION: ::flatbuffers::VOffsetT = 38;
+  pub const VT_DECIMAL_SCALE: ::flatbuffers::VOffsetT = 40;
+  pub const VT_EMBEDDING_SIZE: ::flatbuffers::VOffsetT = 42;
+  pub const VT_EMBEDDING_VALUES: ::flatbuffers::VOffsetT = 44;
+  pub const VT_EMBEDDING_VALID: ::flatbuffers::VOffsetT = 46;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -218,8 +238,28 @@ impl<'a> ScalarValuePayload<'a> {
     args: &'args ScalarValuePayloadArgs<'args>
   ) -> ::flatbuffers::WIPOffset<ScalarValuePayload<'bldr>> {
     let mut builder = ScalarValuePayloadBuilder::new(_fbb);
-    if let Some(x) = args.payload { builder.add_payload(x); }
+    builder.add_f64_value(args.f64_value);
+    builder.add_u64_value(args.u64_value);
+    builder.add_i64_value(args.i64_value);
+    if let Some(x) = args.embedding_valid { builder.add_embedding_valid(x); }
+    if let Some(x) = args.embedding_values { builder.add_embedding_values(x); }
+    builder.add_embedding_size(args.embedding_size);
+    if let Some(x) = args.timezone { builder.add_timezone(x); }
+    builder.add_fixed_size(args.fixed_size);
+    if let Some(x) = args.bytes_value { builder.add_bytes_value(x); }
+    if let Some(x) = args.text_value { builder.add_text_value(x); }
+    builder.add_f32_value(args.f32_value);
+    builder.add_u32_value(args.u32_value);
+    builder.add_i32_value(args.i32_value);
+    builder.add_u16_value(args.u16_value);
+    builder.add_i16_value(args.i16_value);
     builder.add_tag(args.tag);
+    builder.add_decimal_scale(args.decimal_scale);
+    builder.add_decimal_precision(args.decimal_precision);
+    builder.add_u8_value(args.u8_value);
+    builder.add_i8_value(args.i8_value);
+    builder.add_bool_value(args.bool_value);
+    builder.add_is_null(args.is_null);
     builder.finish()
   }
 
@@ -232,11 +272,151 @@ impl<'a> ScalarValuePayload<'a> {
     unsafe { self._tab.get::<ScalarTag>(ScalarValuePayload::VT_TAG, Some(ScalarTag::Null)).unwrap()}
   }
   #[inline]
-  pub fn payload(&self) -> Option<::flatbuffers::Vector<'a, u8>> {
+  pub fn is_null(&self) -> bool {
     // Safety:
     // Created from valid Table for this object
     // which contains a valid value in this slot
-    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, u8>>>(ScalarValuePayload::VT_PAYLOAD, None)}
+    unsafe { self._tab.get::<bool>(ScalarValuePayload::VT_IS_NULL, Some(false)).unwrap()}
+  }
+  #[inline]
+  pub fn bool_value(&self) -> bool {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(ScalarValuePayload::VT_BOOL_VALUE, Some(false)).unwrap()}
+  }
+  #[inline]
+  pub fn i8_value(&self) -> i8 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i8>(ScalarValuePayload::VT_I8_VALUE, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn i16_value(&self) -> i16 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i16>(ScalarValuePayload::VT_I16_VALUE, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn i32_value(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(ScalarValuePayload::VT_I32_VALUE, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn i64_value(&self) -> i64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i64>(ScalarValuePayload::VT_I64_VALUE, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn u8_value(&self) -> u8 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u8>(ScalarValuePayload::VT_U8_VALUE, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn u16_value(&self) -> u16 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u16>(ScalarValuePayload::VT_U16_VALUE, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn u32_value(&self) -> u32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u32>(ScalarValuePayload::VT_U32_VALUE, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn u64_value(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(ScalarValuePayload::VT_U64_VALUE, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn f32_value(&self) -> f32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<f32>(ScalarValuePayload::VT_F32_VALUE, Some(0.0)).unwrap()}
+  }
+  #[inline]
+  pub fn f64_value(&self) -> f64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<f64>(ScalarValuePayload::VT_F64_VALUE, Some(0.0)).unwrap()}
+  }
+  #[inline]
+  pub fn text_value(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(ScalarValuePayload::VT_TEXT_VALUE, None)}
+  }
+  #[inline]
+  pub fn bytes_value(&self) -> Option<::flatbuffers::Vector<'a, u8>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, u8>>>(ScalarValuePayload::VT_BYTES_VALUE, None)}
+  }
+  #[inline]
+  pub fn fixed_size(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(ScalarValuePayload::VT_FIXED_SIZE, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn timezone(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(ScalarValuePayload::VT_TIMEZONE, None)}
+  }
+  #[inline]
+  pub fn decimal_precision(&self) -> u8 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u8>(ScalarValuePayload::VT_DECIMAL_PRECISION, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn decimal_scale(&self) -> i8 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i8>(ScalarValuePayload::VT_DECIMAL_SCALE, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn embedding_size(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(ScalarValuePayload::VT_EMBEDDING_SIZE, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn embedding_values(&self) -> Option<::flatbuffers::Vector<'a, f32>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, f32>>>(ScalarValuePayload::VT_EMBEDDING_VALUES, None)}
+  }
+  #[inline]
+  pub fn embedding_valid(&self) -> Option<::flatbuffers::Vector<'a, bool>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, bool>>>(ScalarValuePayload::VT_EMBEDDING_VALID, None)}
   }
 }
 
@@ -247,21 +427,81 @@ impl ::flatbuffers::Verifiable for ScalarValuePayload<'_> {
   ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
     v.visit_table(pos)?
      .visit_field::<ScalarTag>("tag", Self::VT_TAG, false)?
-     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, u8>>>("payload", Self::VT_PAYLOAD, false)?
+     .visit_field::<bool>("is_null", Self::VT_IS_NULL, false)?
+     .visit_field::<bool>("bool_value", Self::VT_BOOL_VALUE, false)?
+     .visit_field::<i8>("i8_value", Self::VT_I8_VALUE, false)?
+     .visit_field::<i16>("i16_value", Self::VT_I16_VALUE, false)?
+     .visit_field::<i32>("i32_value", Self::VT_I32_VALUE, false)?
+     .visit_field::<i64>("i64_value", Self::VT_I64_VALUE, false)?
+     .visit_field::<u8>("u8_value", Self::VT_U8_VALUE, false)?
+     .visit_field::<u16>("u16_value", Self::VT_U16_VALUE, false)?
+     .visit_field::<u32>("u32_value", Self::VT_U32_VALUE, false)?
+     .visit_field::<u64>("u64_value", Self::VT_U64_VALUE, false)?
+     .visit_field::<f32>("f32_value", Self::VT_F32_VALUE, false)?
+     .visit_field::<f64>("f64_value", Self::VT_F64_VALUE, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("text_value", Self::VT_TEXT_VALUE, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, u8>>>("bytes_value", Self::VT_BYTES_VALUE, false)?
+     .visit_field::<i32>("fixed_size", Self::VT_FIXED_SIZE, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("timezone", Self::VT_TIMEZONE, false)?
+     .visit_field::<u8>("decimal_precision", Self::VT_DECIMAL_PRECISION, false)?
+     .visit_field::<i8>("decimal_scale", Self::VT_DECIMAL_SCALE, false)?
+     .visit_field::<i32>("embedding_size", Self::VT_EMBEDDING_SIZE, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, f32>>>("embedding_values", Self::VT_EMBEDDING_VALUES, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, bool>>>("embedding_valid", Self::VT_EMBEDDING_VALID, false)?
      .finish();
     Ok(())
   }
 }
 pub struct ScalarValuePayloadArgs<'a> {
     pub tag: ScalarTag,
-    pub payload: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, u8>>>,
+    pub is_null: bool,
+    pub bool_value: bool,
+    pub i8_value: i8,
+    pub i16_value: i16,
+    pub i32_value: i32,
+    pub i64_value: i64,
+    pub u8_value: u8,
+    pub u16_value: u16,
+    pub u32_value: u32,
+    pub u64_value: u64,
+    pub f32_value: f32,
+    pub f64_value: f64,
+    pub text_value: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub bytes_value: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, u8>>>,
+    pub fixed_size: i32,
+    pub timezone: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub decimal_precision: u8,
+    pub decimal_scale: i8,
+    pub embedding_size: i32,
+    pub embedding_values: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, f32>>>,
+    pub embedding_valid: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, bool>>>,
 }
 impl<'a> Default for ScalarValuePayloadArgs<'a> {
   #[inline]
   fn default() -> Self {
     ScalarValuePayloadArgs {
       tag: ScalarTag::Null,
-      payload: None,
+      is_null: false,
+      bool_value: false,
+      i8_value: 0,
+      i16_value: 0,
+      i32_value: 0,
+      i64_value: 0,
+      u8_value: 0,
+      u16_value: 0,
+      u32_value: 0,
+      u64_value: 0,
+      f32_value: 0.0,
+      f64_value: 0.0,
+      text_value: None,
+      bytes_value: None,
+      fixed_size: 0,
+      timezone: None,
+      decimal_precision: 0,
+      decimal_scale: 0,
+      embedding_size: 0,
+      embedding_values: None,
+      embedding_valid: None,
     }
   }
 }
@@ -276,8 +516,88 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> ScalarValuePayloadBuilder<'a,
     self.fbb_.push_slot::<ScalarTag>(ScalarValuePayload::VT_TAG, tag, ScalarTag::Null);
   }
   #[inline]
-  pub fn add_payload(&mut self, payload: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , u8>>) {
-    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ScalarValuePayload::VT_PAYLOAD, payload);
+  pub fn add_is_null(&mut self, is_null: bool) {
+    self.fbb_.push_slot::<bool>(ScalarValuePayload::VT_IS_NULL, is_null, false);
+  }
+  #[inline]
+  pub fn add_bool_value(&mut self, bool_value: bool) {
+    self.fbb_.push_slot::<bool>(ScalarValuePayload::VT_BOOL_VALUE, bool_value, false);
+  }
+  #[inline]
+  pub fn add_i8_value(&mut self, i8_value: i8) {
+    self.fbb_.push_slot::<i8>(ScalarValuePayload::VT_I8_VALUE, i8_value, 0);
+  }
+  #[inline]
+  pub fn add_i16_value(&mut self, i16_value: i16) {
+    self.fbb_.push_slot::<i16>(ScalarValuePayload::VT_I16_VALUE, i16_value, 0);
+  }
+  #[inline]
+  pub fn add_i32_value(&mut self, i32_value: i32) {
+    self.fbb_.push_slot::<i32>(ScalarValuePayload::VT_I32_VALUE, i32_value, 0);
+  }
+  #[inline]
+  pub fn add_i64_value(&mut self, i64_value: i64) {
+    self.fbb_.push_slot::<i64>(ScalarValuePayload::VT_I64_VALUE, i64_value, 0);
+  }
+  #[inline]
+  pub fn add_u8_value(&mut self, u8_value: u8) {
+    self.fbb_.push_slot::<u8>(ScalarValuePayload::VT_U8_VALUE, u8_value, 0);
+  }
+  #[inline]
+  pub fn add_u16_value(&mut self, u16_value: u16) {
+    self.fbb_.push_slot::<u16>(ScalarValuePayload::VT_U16_VALUE, u16_value, 0);
+  }
+  #[inline]
+  pub fn add_u32_value(&mut self, u32_value: u32) {
+    self.fbb_.push_slot::<u32>(ScalarValuePayload::VT_U32_VALUE, u32_value, 0);
+  }
+  #[inline]
+  pub fn add_u64_value(&mut self, u64_value: u64) {
+    self.fbb_.push_slot::<u64>(ScalarValuePayload::VT_U64_VALUE, u64_value, 0);
+  }
+  #[inline]
+  pub fn add_f32_value(&mut self, f32_value: f32) {
+    self.fbb_.push_slot::<f32>(ScalarValuePayload::VT_F32_VALUE, f32_value, 0.0);
+  }
+  #[inline]
+  pub fn add_f64_value(&mut self, f64_value: f64) {
+    self.fbb_.push_slot::<f64>(ScalarValuePayload::VT_F64_VALUE, f64_value, 0.0);
+  }
+  #[inline]
+  pub fn add_text_value(&mut self, text_value: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ScalarValuePayload::VT_TEXT_VALUE, text_value);
+  }
+  #[inline]
+  pub fn add_bytes_value(&mut self, bytes_value: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , u8>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ScalarValuePayload::VT_BYTES_VALUE, bytes_value);
+  }
+  #[inline]
+  pub fn add_fixed_size(&mut self, fixed_size: i32) {
+    self.fbb_.push_slot::<i32>(ScalarValuePayload::VT_FIXED_SIZE, fixed_size, 0);
+  }
+  #[inline]
+  pub fn add_timezone(&mut self, timezone: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ScalarValuePayload::VT_TIMEZONE, timezone);
+  }
+  #[inline]
+  pub fn add_decimal_precision(&mut self, decimal_precision: u8) {
+    self.fbb_.push_slot::<u8>(ScalarValuePayload::VT_DECIMAL_PRECISION, decimal_precision, 0);
+  }
+  #[inline]
+  pub fn add_decimal_scale(&mut self, decimal_scale: i8) {
+    self.fbb_.push_slot::<i8>(ScalarValuePayload::VT_DECIMAL_SCALE, decimal_scale, 0);
+  }
+  #[inline]
+  pub fn add_embedding_size(&mut self, embedding_size: i32) {
+    self.fbb_.push_slot::<i32>(ScalarValuePayload::VT_EMBEDDING_SIZE, embedding_size, 0);
+  }
+  #[inline]
+  pub fn add_embedding_values(&mut self, embedding_values: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , f32>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ScalarValuePayload::VT_EMBEDDING_VALUES, embedding_values);
+  }
+  #[inline]
+  pub fn add_embedding_valid(&mut self, embedding_valid: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , bool>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ScalarValuePayload::VT_EMBEDDING_VALID, embedding_valid);
   }
   #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> ScalarValuePayloadBuilder<'a, 'b, A> {
@@ -298,7 +618,27 @@ impl ::core::fmt::Debug for ScalarValuePayload<'_> {
   fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
     let mut ds = f.debug_struct("ScalarValuePayload");
       ds.field("tag", &self.tag());
-      ds.field("payload", &self.payload());
+      ds.field("is_null", &self.is_null());
+      ds.field("bool_value", &self.bool_value());
+      ds.field("i8_value", &self.i8_value());
+      ds.field("i16_value", &self.i16_value());
+      ds.field("i32_value", &self.i32_value());
+      ds.field("i64_value", &self.i64_value());
+      ds.field("u8_value", &self.u8_value());
+      ds.field("u16_value", &self.u16_value());
+      ds.field("u32_value", &self.u32_value());
+      ds.field("u64_value", &self.u64_value());
+      ds.field("f32_value", &self.f32_value());
+      ds.field("f64_value", &self.f64_value());
+      ds.field("text_value", &self.text_value());
+      ds.field("bytes_value", &self.bytes_value());
+      ds.field("fixed_size", &self.fixed_size());
+      ds.field("timezone", &self.timezone());
+      ds.field("decimal_precision", &self.decimal_precision());
+      ds.field("decimal_scale", &self.decimal_scale());
+      ds.field("embedding_size", &self.embedding_size());
+      ds.field("embedding_values", &self.embedding_values());
+      ds.field("embedding_valid", &self.embedding_valid());
       ds.finish()
   }
 }
@@ -784,6 +1124,102 @@ impl ::core::fmt::Debug for SharedTableRowPayload<'_> {
     let mut ds = f.debug_struct("SharedTableRowPayload");
       ds.field("seq", &self.seq());
       ds.field("deleted", &self.deleted());
+      ds.field("fields", &self.fields());
+      ds.finish()
+  }
+}
+pub enum SystemTableRowPayloadOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct SystemTableRowPayload<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for SystemTableRowPayload<'a> {
+  type Inner = SystemTableRowPayload<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> SystemTableRowPayload<'a> {
+  pub const VT_FIELDS: ::flatbuffers::VOffsetT = 4;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    SystemTableRowPayload { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args SystemTableRowPayloadArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<SystemTableRowPayload<'bldr>> {
+    let mut builder = SystemTableRowPayloadBuilder::new(_fbb);
+    if let Some(x) = args.fields { builder.add_fields(x); }
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn fields(&self) -> Option<RowPayload<'a>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<RowPayload>>(SystemTableRowPayload::VT_FIELDS, None)}
+  }
+}
+
+impl ::flatbuffers::Verifiable for SystemTableRowPayload<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<RowPayload>>("fields", Self::VT_FIELDS, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct SystemTableRowPayloadArgs<'a> {
+    pub fields: Option<::flatbuffers::WIPOffset<RowPayload<'a>>>,
+}
+impl<'a> Default for SystemTableRowPayloadArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    SystemTableRowPayloadArgs {
+      fields: None,
+    }
+  }
+}
+
+pub struct SystemTableRowPayloadBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> SystemTableRowPayloadBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_fields(&mut self, fields: ::flatbuffers::WIPOffset<RowPayload<'b >>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<RowPayload>>(SystemTableRowPayload::VT_FIELDS, fields);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> SystemTableRowPayloadBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    SystemTableRowPayloadBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<SystemTableRowPayload<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for SystemTableRowPayload<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("SystemTableRowPayload");
       ds.field("fields", &self.fields());
       ds.finish()
   }

@@ -56,21 +56,28 @@ pub fn coerce_rows(rows: Vec<Row>, schema: &SchemaRef) -> Result<Vec<Row>, Strin
 
     rows.into_iter()
         .map(|mut row| {
-            let mut new_values = BTreeMap::new();
+            // 1. Add defaults for any missing fields (moves/clones only defaults)
             for (i, field) in schema.fields().iter().enumerate() {
                 let field_name = field.name().as_str();
-
-                // Take value from map (move) instead of cloning
-                let raw_value = row
-                    .values
-                    .remove(field_name)
-                    .or_else(|| defaults[i].clone())
-                    .unwrap_or_else(|| typed_nulls[i].clone());
-
-                let coerced = coerce_scalar_to_field(raw_value, field)?;
-                new_values.insert(field_name.to_string(), coerced);
+                if !row.values.contains_key(field_name) {
+                    let default_val = defaults[i]
+                        .clone()
+                        .unwrap_or_else(|| typed_nulls[i].clone());
+                    row.values.insert(field_name.to_string(), default_val);
+                }
             }
-            Ok(Row::new(new_values))
+
+            // 2. Coerce existing values in-place using get_mut + mem::replace.
+            //    This avoids rebuilding the entire BTreeMap (no remove/re-insert,
+            //    no new String key allocations for existing columns).
+            for field in schema.fields() {
+                if let Some(val) = row.values.get_mut(field.name().as_str()) {
+                    let owned = std::mem::replace(val, ScalarValue::Null);
+                    *val = coerce_scalar_to_field(owned, field)?;
+                }
+            }
+
+            Ok(row)
         })
         .collect()
 }

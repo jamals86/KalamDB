@@ -1,10 +1,6 @@
 // File: backend/crates/kalamdb-commons/src/models/live_query_id.rs
 // Type-safe composite identifier for live query subscriptions
 
-use bincode::de::{BorrowDecoder, Decoder};
-use bincode::enc::Encoder;
-use bincode::error::{DecodeError, EncodeError};
-use bincode::{BorrowDecode, Decode, Encode};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 
@@ -35,41 +31,6 @@ impl Serialize for LiveQueryId {
         S: Serializer,
     {
         serializer.serialize_str(self.as_str())
-    }
-}
-
-// Custom bincode Encode implementation
-impl Encode for LiveQueryId {
-    fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
-        Encode::encode(&self.user_id, encoder)?;
-        Encode::encode(&self.connection_id, encoder)?;
-        Encode::encode(&self.subscription_id, encoder)?;
-        // Don't encode cached_string - it's derived
-        Ok(())
-    }
-}
-
-// Custom bincode Decode implementation that populates cached_string
-impl<Context> Decode<Context> for LiveQueryId {
-    fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
-        let user_id = UserId::decode(decoder)?;
-        let connection_id = ConnectionId::decode(decoder)?;
-        let subscription_id = String::decode(decoder)?;
-        // Reconstruct via new() to populate cached_string
-        Ok(LiveQueryId::new(user_id, connection_id, subscription_id))
-    }
-}
-
-// Custom bincode BorrowDecode implementation that populates cached_string
-impl<'de, Context> BorrowDecode<'de, Context> for LiveQueryId {
-    fn borrow_decode<D: BorrowDecoder<'de, Context = Context>>(
-        decoder: &mut D,
-    ) -> Result<Self, DecodeError> {
-        let user_id = UserId::borrow_decode(decoder)?;
-        let connection_id = ConnectionId::borrow_decode(decoder)?;
-        let subscription_id = String::borrow_decode(decoder)?;
-        // Reconstruct via new() to populate cached_string
-        Ok(LiveQueryId::new(user_id, connection_id, subscription_id))
     }
 }
 
