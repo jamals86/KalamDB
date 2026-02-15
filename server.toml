@@ -158,6 +158,13 @@ format = "json"
 # Set to a high value (e.g., 999999) to disable slow query logging
 slow_query_threshold_ms = 1000
 
+[logging.otlp]
+enabled = true
+endpoint = "http://127.0.0.1:4317"
+protocol = "grpc"
+service_name = "kalamdb-server"
+timeout_ms = 3000
+
 [performance]
 # Request timeout in seconds (default: 30s)
 # Requests exceeding this duration will be terminated

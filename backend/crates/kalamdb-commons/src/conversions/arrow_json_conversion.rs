@@ -51,6 +51,7 @@ type ArrayRef = Arc<dyn datafusion::arrow::array::Array>;
 /// This is useful for INSERT operations where we need to ensure the data matches
 /// the schema before broadcasting or storing.
 pub fn coerce_rows(rows: Vec<Row>, schema: &SchemaRef) -> Result<Vec<Row>, String> {
+    let _span = tracing::info_span!("coerce_rows", row_count = rows.len(), num_fields = schema.fields().len()).entered();
     let defaults = get_column_defaults(schema);
     let typed_nulls = get_typed_nulls(schema);
 

@@ -625,6 +625,7 @@ fn decode_embedding_payload(payload: fb_row::ScalarValuePayload<'_>) -> Result<S
 /// For N rows this saves N–1 FlatBufferBuilder allocations on the inner
 /// builder side compared to calling `encode_user_table_row` in a loop.
 pub fn batch_encode_user_table_rows(rows: &[UserTableRow]) -> Result<Vec<Vec<u8>>> {
+    let _span = tracing::info_span!("batch_encode_user_table_rows", count = rows.len()).entered();
     let mut results = Vec::with_capacity(rows.len());
     // Reuse inner builder across rows — reset() keeps the allocated capacity
     let mut inner_builder = flatbuffers::FlatBufferBuilder::with_capacity(512);
@@ -661,6 +662,7 @@ pub fn batch_encode_user_table_rows(rows: &[UserTableRow]) -> Result<Vec<Vec<u8>
 pub fn batch_encode_shared_table_rows(
     rows: &[(SeqId, bool, &Row)],
 ) -> Result<Vec<Vec<u8>>> {
+    let _span = tracing::info_span!("batch_encode_shared_table_rows", count = rows.len()).entered();
     let mut results = Vec::with_capacity(rows.len());
     let mut inner_builder = flatbuffers::FlatBufferBuilder::with_capacity(512);
 

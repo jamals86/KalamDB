@@ -755,6 +755,20 @@ pub async fn create_session(
         }
     }
 
+    fn build_connectivity_diagnostics(server_url: &str, err: &KalamLinkError) -> String {
+        let error_details = match err {
+            KalamLinkError::NetworkError(msg)
+            | KalamLinkError::TimeoutError(msg)
+            | KalamLinkError::InternalError(msg) => msg.as_str(),
+            _ => &err.to_string(),
+        };
+
+        format!(
+            "Connection failed: {}\n\nPossible issues:\n  • Server is not running on {}\n  • URL/port is incorrect\n  • Network connectivity issue\n\nTry:\n  • Check if server is running: curl {}/v1/api/healthcheck\n  • Verify the server URL with --url (example: http://127.0.0.1:8080)",
+            error_details, server_url, server_url
+        )
+    }
+
     // Test auth by creating a test client and trying to execute a simple query
     let test_auth_result = {
         let timeouts = build_timeouts(cli);
@@ -796,8 +810,20 @@ pub async fn create_session(
             .await
         },
         Err(e) => {
-            // Auth test failed - return as error for handling below
-            Err(CLIError::LinkError(e))
+            // If the server is unreachable, return detailed diagnostics.
+            if matches!(
+                e,
+                KalamLinkError::NetworkError(_)
+                    | KalamLinkError::TimeoutError(_)
+                    | KalamLinkError::InternalError(_)
+            ) {
+                Err(CLIError::LinkError(KalamLinkError::NetworkError(
+                    build_connectivity_diagnostics(&server_url, &e),
+                )))
+            } else {
+                // Auth test failed - return as error for handling below
+                Err(CLIError::LinkError(e))
+            }
         },
     };
 

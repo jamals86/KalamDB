@@ -16,6 +16,8 @@
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type JsonValue = any;
 
+import type { FieldFlag as WasmFieldFlag } from '../.wasm-out/kalam_link.js';
+
 export type {
   AckResponse,
   BatchControl,
@@ -40,6 +42,9 @@ export type {
   TimestampFormat,
   UploadProgress,
 } from '../.wasm-out/kalam_link.js';
+
+export type FieldFlag = WasmFieldFlag;
+export type FieldFlags = FieldFlag[];
 
 /* ================================================================== */
 /*  Convenience enums (for runtime values, not just types)            */

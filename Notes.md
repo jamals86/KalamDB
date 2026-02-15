@@ -1328,6 +1328,7 @@ Query OK, 0 rows affected
 
 178) change this to flatbuffers: backend/crates/kalamdb-raft/src/state_machine/serde_helpers.rs for faster serdes
 
+179) instead of this:       "def": "pk,nonnull,unique", we can do:       "flags": "pk,nn,uq"
 
 
 

@@ -34,6 +34,7 @@ arrow = { workspace = true, optional = true }
 openraft = { workspace = true, optional = true }
 uuid = { workspace = true, optional = true }
 log = { workspace = true, optional = true }
+tracing = { workspace = true }
 
 [features]
 # Feature to enable serde support for serialization

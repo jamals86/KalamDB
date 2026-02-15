@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use super::field_flag::FieldFlags;
 use super::kalam_data_type::KalamDataType;
 
 /// A field in the result schema returned by SQL queries
@@ -13,7 +14,8 @@ use super::kalam_data_type::KalamDataType;
 /// {
 ///   "name": "user_id",
 ///   "data_type": "BigInt",
-///   "index": 0
+///   "index": 0,
+///   "flags": ["pk", "nn", "uq"]
 /// }
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -28,4 +30,8 @@ pub struct SchemaField {
 
     /// Column position (0-indexed) in the result set
     pub index: usize,
+
+    /// Structured field flags (e.g. ["pk", "nn", "uq"]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flags: Option<FieldFlags>,
 }

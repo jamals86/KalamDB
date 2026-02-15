@@ -61,19 +61,7 @@ impl LiveQueryManager {
                         .columns
                         .iter()
                         .find(|c| c.column_name.eq_ignore_ascii_case(col_name))
-                        .map(|col| {
-                            let mut schema_field = SchemaField::new(
-                                col.column_name.clone(),
-                                col.data_type.clone(),
-                                idx,
-                            );
-                            if col.is_primary_key {
-                                schema_field = schema_field.with_def("pk,nonnull,unique");
-                            } else if !col.is_nullable {
-                                schema_field = schema_field.with_def("nonnull");
-                            }
-                            schema_field
-                        })
+                        .map(|col| SchemaField::from_column_definition(col, idx))
                 })
                 .collect()
         } else {
@@ -81,16 +69,7 @@ impl LiveQueryManager {
             cols.sort_by_key(|c| c.ordinal_position);
             cols.iter()
                 .enumerate()
-                .map(|(idx, col)| {
-                    let mut schema_field =
-                        SchemaField::new(col.column_name.clone(), col.data_type.clone(), idx);
-                    if col.is_primary_key {
-                        schema_field = schema_field.with_def("pk,nonnull,unique");
-                    } else if !col.is_nullable {
-                        schema_field = schema_field.with_def("nonnull");
-                    }
-                    schema_field
-                })
+                .map(|(idx, col)| SchemaField::from_column_definition(col, idx))
                 .collect()
         }
     }

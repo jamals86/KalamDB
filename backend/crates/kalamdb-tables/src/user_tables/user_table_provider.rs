@@ -37,6 +37,7 @@ use kalamdb_store::EntityStore;
 use std::any::Any;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
+use tracing::Instrument;
 
 // Arrow <-> JSON helpers
 use crate::utils::version_resolution::{merge_versioned_rows, parquet_batch_to_rows};
@@ -376,6 +377,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         user_id: &UserId,
         row_data: Row,
     ) -> Result<UserTableRowId, KalamDbError> {
+        tracing::info!(table_id = %self.core.table_id(), "table.insert");
         ensure_manifest_ready(
             &self.core,
             self.core.table_type(),
@@ -463,6 +465,8 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         user_id: &UserId,
         rows: Vec<Row>,
     ) -> Result<Vec<UserTableRowId>, KalamDbError> {
+        let row_count = rows.len();
+        tracing::info!(table_id = %self.core.table_id(), row_count, "table.insert_batch start");
         if rows.is_empty() {
             return Ok(Vec::new());
         }
@@ -476,9 +480,12 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         )?;
 
         // Coerce rows to match schema types (e.g. String -> Timestamp)
-        let coerced_rows = coerce_rows(rows, &self.schema_ref()).map_err(|e| {
-            KalamDbError::InvalidOperation(format!("Schema coercion failed: {}", e))
-        })?;
+        let coerced_rows = {
+            let _coerce_span = tracing::info_span!("insert_batch.coerce_rows").entered();
+            coerce_rows(rows, &self.schema_ref()).map_err(|e| {
+                KalamDbError::InvalidOperation(format!("Schema coercion failed: {}", e))
+            })?
+        };
 
         // VALIDATE NOT NULL CONSTRAINTS (per ADR-016: must occur before any RocksDB write)
         crate::utils::datafusion_dml::validate_not_null_with_set(
@@ -490,56 +497,59 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         let row_count = coerced_rows.len();
 
         // Batch PK validation: collect all user-provided PK values and their prefixes
+        tracing::info!(row_count, "insert_batch.pk_validation start");
         let pk_name = self.primary_key_field_name();
         let mut pk_values_to_check: Vec<(String, Vec<u8>)> = Vec::new();
-
-        for row_data in &coerced_rows {
-            if let Some(pk_value) = row_data.get(pk_name) {
-                if !matches!(pk_value, ScalarValue::Null) {
-                    let pk_str =
-                        crate::utils::unified_dml::extract_user_pk_value(row_data, pk_name)?;
-                    let prefix = self.pk_index.build_prefix_for_pk(user_id, &pk_value);
-                    pk_values_to_check.push((pk_str, prefix));
-                }
-            }
-        }
-
-        // OPTIMIZED: Check all PKs in single index scan + HashSet lookup
-        // For small batches (1-2 PKs), use individual lookups to avoid scan overhead
-        if !pk_values_to_check.is_empty() {
-            if pk_values_to_check.len() <= 2 {
-                // Small batch: individual lookups are faster
-                for (pk_str, _prefix) in &pk_values_to_check {
-                    if self.find_row_key_by_id_field(user_id, pk_str).await?.is_some() {
-                        return Err(KalamDbError::AlreadyExists(format!(
-                            "Primary key violation: value '{}' already exists in column '{}'",
-                            pk_str, pk_name
-                        )));
-                    }
-                }
-            } else {
-                // Larger batch: use batch index scan for efficiency
-                // Build common prefix for this user's PKs
-                let user_prefix = self.pk_index.build_user_prefix(user_id);
-                let prefixes: Vec<Vec<u8>> =
-                    pk_values_to_check.iter().map(|(_, p)| p.clone()).collect();
-
-                let existing = self
-                    .store
-                    .exists_batch_by_index(0, &user_prefix, &prefixes)
-                    .into_kalamdb_error("Batch PK index scan failed")?;
-
-                // Check if any of the requested PKs already exist
-                for (pk_str, prefix) in &pk_values_to_check {
-                    if existing.contains(prefix) {
-                        return Err(KalamDbError::AlreadyExists(format!(
-                            "Primary key violation: value '{}' already exists in column '{}'",
-                            pk_str, pk_name
-                        )));
+        {
+            for row_data in &coerced_rows {
+                if let Some(pk_value) = row_data.get(pk_name) {
+                    if !matches!(pk_value, ScalarValue::Null) {
+                        let pk_str =
+                            crate::utils::unified_dml::extract_user_pk_value(row_data, pk_name)?;
+                        let prefix = self.pk_index.build_prefix_for_pk(user_id, &pk_value);
+                        pk_values_to_check.push((pk_str, prefix));
                     }
                 }
             }
+
+            // OPTIMIZED: Check all PKs in single index scan + HashSet lookup
+            // For small batches (1-2 PKs), use individual lookups to avoid scan overhead
+            if !pk_values_to_check.is_empty() {
+                if pk_values_to_check.len() <= 2 {
+                    // Small batch: individual lookups are faster
+                    for (pk_str, _prefix) in &pk_values_to_check {
+                        if self.find_row_key_by_id_field(user_id, pk_str).await?.is_some() {
+                            return Err(KalamDbError::AlreadyExists(format!(
+                                "Primary key violation: value '{}' already exists in column '{}'",
+                                pk_str, pk_name
+                            )));
+                        }
+                    }
+                } else {
+                    // Larger batch: use batch index scan for efficiency
+                    // Build common prefix for this user's PKs
+                    let user_prefix = self.pk_index.build_user_prefix(user_id);
+                    let prefixes: Vec<Vec<u8>> =
+                        pk_values_to_check.iter().map(|(_, p)| p.clone()).collect();
+
+                    let existing = self
+                        .store
+                        .exists_batch_by_index(0, &user_prefix, &prefixes)
+                        .into_kalamdb_error("Batch PK index scan failed")?;
+
+                    // Check if any of the requested PKs already exist
+                    for (pk_str, prefix) in &pk_values_to_check {
+                        if existing.contains(prefix) {
+                            return Err(KalamDbError::AlreadyExists(format!(
+                                "Primary key violation: value '{}' already exists in column '{}'",
+                                pk_str, pk_name
+                            )));
+                        }
+                    }
+                }
+            }
         }
+        tracing::info!(row_count, "insert_batch.pk_validation done");
 
         // Generate all SeqIds in single mutex acquisition
         let sys_cols = self.core.services.system_columns.clone();
@@ -564,27 +574,32 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         // Batch-encode all rows with FlatBufferBuilder reuse, then write atomically.
         // This reuses the inner FlatBufferBuilder across rows (reset() retains capacity),
         // saving N-1 builder allocations and eliminating per-row .to_vec() copies.
-        let encoded_values =
+        let encoded_values = {
+            let _encode_span = tracing::info_span!("insert_batch.encode", row_count).entered();
             kalamdb_commons::serialization::row_codec::batch_encode_user_table_rows(&user_rows)
                 .map_err(|e| {
                     KalamDbError::InvalidOperation(format!(
                         "Failed to batch encode user table rows: {}",
                         e
                     ))
-                })?;
+                })?
+        };
 
         // Combine keys + entities for index key extraction
         let entries: Vec<(UserTableRowId, UserTableRow)> =
             row_keys.iter().cloned().zip(user_rows.into_iter()).collect();
 
-        self.store
-            .insert_batch_preencoded(&entries, encoded_values)
-            .map_err(|e| {
-                KalamDbError::InvalidOperation(format!(
-                    "Failed to batch insert user table rows: {}",
-                    e
-                ))
-            })?;
+        {
+            let _write_span = tracing::info_span!("insert_batch.store_write", row_count).entered();
+            self.store
+                .insert_batch_preencoded(&entries, encoded_values)
+                .map_err(|e| {
+                    KalamDbError::InvalidOperation(format!(
+                        "Failed to batch insert user table rows: {}",
+                        e
+                    ))
+                })?;
+        }
 
         // Mark manifest as having pending writes (hot data needs to be flushed)
         let manifest_service = self.core.services.manifest_service.clone();
@@ -1190,6 +1205,7 @@ impl TableProvider for UserTableProvider {
         input: Arc<dyn ExecutionPlan>,
         insert_op: InsertOp,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        tracing::info!(table_id = %self.core.table_id(), "table.insert_into");
         check_user_table_write_access(state, self.core.table_id())
             .map_err(DataFusionError::from)?;
 

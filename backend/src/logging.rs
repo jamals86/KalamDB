@@ -94,8 +94,7 @@ fn build_env_filter(
         ("openraft", "error"),
         ("openraft::replication", "off"),
         ("tracing", "warn"),
-        // Reduce verbose SQL execution span logs
-        ("kalamdb_core::sql::executor", "warn"),
+        // Reduce verbose Raft logs
         ("kalamdb_core::applier::raft", "warn"),
     ];
     for (target, lvl) in noisy {
@@ -193,11 +192,23 @@ pub fn init_logging(
         // Default-allow everything, but remove known noisy transport/system internals.
         // This keeps future app spans/events visible without h2/poll_ready-style chatter.
         let otlp_filter = filter_fn(|metadata| {
-            !is_otlp_noisy_target(metadata.target())
-                && matches!(
+            if is_otlp_noisy_target(metadata.target()) {
+                return false;
+            }
+            // Allow DEBUG-level spans from kalamdb crates for Jaeger profiling
+            if metadata.target().starts_with("kalamdb_") {
+                return matches!(
                     *metadata.level(),
-                    tracing::Level::ERROR | tracing::Level::WARN | tracing::Level::INFO
-                )
+                    tracing::Level::ERROR
+                        | tracing::Level::WARN
+                        | tracing::Level::INFO
+                        | tracing::Level::DEBUG
+                );
+            }
+            matches!(
+                *metadata.level(),
+                tracing::Level::ERROR | tracing::Level::WARN | tracing::Level::INFO
+            )
         });
 
         let otlp_layer =

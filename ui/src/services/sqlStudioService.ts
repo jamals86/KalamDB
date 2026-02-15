@@ -1,4 +1,5 @@
 import { executeQuery, executeSql } from "@/lib/kalam-client";
+import type { SchemaField } from "kalam-link";
 import type {
   QueryLogEntry,
   QueryResultData,
@@ -10,33 +11,49 @@ import type {
 const MAX_SQL_STUDIO_RENDER_ROWS = 1000;
 
 interface RawSqlStatementResult {
-  schema?: { name: string; data_type: string; index: number; def?: string }[];
+  schema?: SchemaField[];
   rows?: unknown[][];
   row_count?: number;
   message?: string;
   as_user?: string;
 }
 
-export type RawQuerySchemaField = { name: string; data_type: string; index: number; def?: string };
+export type RawQuerySchemaField = SchemaField;
 
-function parseSchemaDefTokens(def: string | undefined): string[] {
-  if (!def) {
-    return [];
+function formatSchemaDataType(dataType: SchemaField["data_type"]): string {
+  if (typeof dataType === "string") {
+    return dataType;
   }
 
-  return def
-    .split(",")
-    .map((token) => token.trim().toLowerCase())
-    .filter((token) => token.length > 0);
+  if (dataType && typeof dataType === "object") {
+    const entries = Object.entries(dataType as Record<string, unknown>);
+    const [variant, value] = entries[0] ?? [];
+    if (!variant) {
+      return "Unknown";
+    }
+
+    if (typeof value === "number" || typeof value === "string") {
+      return `${variant}(${value})`;
+    }
+
+    return variant;
+  }
+
+  return "Unknown";
 }
 
-function isPrimaryKeyDef(def: string | undefined): boolean {
-  const tokens = parseSchemaDefTokens(def);
-  return tokens.includes("pk") || tokens.includes("primary_key") || tokens.includes("primary key");
+type FieldFlags = Array<"pk" | "nn" | "uq">;
+
+function isPrimaryKeyFlag(flags: FieldFlags | undefined): boolean {
+  if (!flags || flags.length === 0) {
+    return false;
+  }
+
+  return flags.includes("pk");
 }
 
 export function normalizeSchema(
-  rawSchema: RawQuerySchemaField[] | undefined,
+  rawSchema: SchemaField[] | undefined,
 ): QueryResultSchemaField[] {
   if (!rawSchema) {
     return [];
@@ -44,10 +61,10 @@ export function normalizeSchema(
 
   return rawSchema.map((field) => ({
     name: field.name,
-    dataType: field.data_type,
+    dataType: formatSchemaDataType(field.data_type),
     index: field.index,
-    def: field.def,
-    isPrimaryKey: isPrimaryKeyDef(field.def),
+    flags: field.flags,
+    isPrimaryKey: isPrimaryKeyFlag(field.flags),
   }));
 }
 

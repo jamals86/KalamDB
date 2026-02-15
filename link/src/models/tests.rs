@@ -1,5 +1,6 @@
 use crate::seq_id::SeqId;
 use serde_json::json;
+use std::collections::BTreeSet;
 
 use super::*;
 
@@ -512,8 +513,43 @@ fn test_change_event_helpers() {
             name: "id".to_string(),
             data_type: KalamDataType::BigInt,
             index: 0,
+            flags: None,
         }],
     };
     assert_eq!(ack.subscription_id(), Some("sub-1"));
     assert!(!ack.is_error());
+}
+
+#[test]
+fn test_schema_field_flags_deserializes_array() {
+    let json = r#"{"name":"id","data_type":"BigInt","index":0,"flags":["pk","nn","uq"]}"#;
+    let field: SchemaField = serde_json::from_str(json).unwrap();
+
+    let expected = BTreeSet::from([
+        FieldFlag::PrimaryKey,
+        FieldFlag::NonNull,
+        FieldFlag::Unique,
+    ]);
+
+    assert_eq!(field.flags, Some(expected));
+}
+
+#[test]
+fn test_schema_field_flags_serializes_as_array() {
+    let field = SchemaField {
+        name: "id".to_string(),
+        data_type: KalamDataType::BigInt,
+        index: 0,
+        flags: Some(BTreeSet::from([
+            FieldFlag::PrimaryKey,
+            FieldFlag::NonNull,
+            FieldFlag::Unique,
+        ])),
+    };
+
+    let json = serde_json::to_string(&field).unwrap();
+    assert!(json.contains("\"flags\":["));
+    assert!(json.contains("\"pk\""));
+    assert!(json.contains("\"nn\""));
+    assert!(json.contains("\"uq\""));
 }

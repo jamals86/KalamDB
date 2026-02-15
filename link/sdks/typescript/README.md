@@ -255,6 +255,7 @@ interface SchemaField {
   name: string;
   data_type: string;
   index: number;
+  flags?: ("pk" | "nn" | "uq")[];
 }
 
 interface QueryResult {

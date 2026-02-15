@@ -5,9 +5,9 @@
 //! Historical versions are stored as separate entries: `{tableId}<ver>{version:08}` -> TableDefinition
 //! The latest pointer `{tableId}<lat>` points to the current version.
 
-use crate::conversions::{with_kalam_column_def_metadata, with_kalam_data_type_metadata};
+use crate::conversions::{with_kalam_column_flags_metadata, with_kalam_data_type_metadata};
 use crate::models::datatypes::{ArrowConversionError, ToArrowType};
-use crate::models::schemas::{ColumnDefinition, TableOptions, TableType};
+use crate::models::schemas::{ColumnDefinition, SchemaField, TableOptions, TableType};
 use crate::{NamespaceId, TableName};
 use arrow_schema::{Field, Schema as ArrowSchema};
 use chrono::{DateTime, Utc};
@@ -312,18 +312,9 @@ impl TableDefinition {
                 // Store KalamDataType in metadata for lossless round-trip conversion
                 field = with_kalam_data_type_metadata(field, &col.data_type);
 
-                let mut defs: Vec<&str> = Vec::with_capacity(3);
-                if col.is_primary_key {
-                    defs.push("pk");
-                }
-                if !col.is_nullable {
-                    defs.push("nonnull");
-                }
-                if col.is_primary_key {
-                    defs.push("unique");
-                }
-                if !defs.is_empty() {
-                    field = with_kalam_column_def_metadata(field, &defs.join(","));
+                if let Some(flags) = SchemaField::flags_for_column(col.is_primary_key, col.is_nullable)
+                {
+                    field = with_kalam_column_flags_metadata(field, &flags);
                 }
 
                 Ok(field)
