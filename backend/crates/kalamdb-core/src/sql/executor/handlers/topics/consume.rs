@@ -10,7 +10,6 @@ use datafusion::arrow::{
 };
 use kalamdb_commons::models::{ConsumerGroupId, TopicId};
 use kalamdb_sql::ddl::{ConsumePosition, ConsumeStatement};
-use kalamdb_system::providers::topic_offsets::TopicOffset;
 use kalamdb_tables::topics::topic_message_schema::topic_message_schema;
 use std::sync::Arc;
 
@@ -59,26 +58,22 @@ impl TypedStatementHandler<ConsumeStatement> for ConsumeHandler {
                 .map_err(|e| KalamDbError::InvalidOperation(e.to_string()))?
                 .map(|offset| offset + 1)
                 .unwrap_or(0),
-            // Earliest with group: use committed offset if available, else 0
-            (ConsumePosition::Earliest, Some(group_name)) => {
-                let group_id = ConsumerGroupId::new(group_name);
-                let offsets: Vec<TopicOffset> = topic_publisher
-                    .get_group_offsets(&topic_id, &group_id)
-                    .map_err(|e| KalamDbError::InvalidOperation(e.to_string()))?;
-
-                // Find offset for partition 0
-                offsets
-                    .iter()
-                    .find(|o| o.partition_id == partition_id)
-                    .map(|o| o.last_acked_offset + 1) // Start from next message after last acked
-                    .unwrap_or(0)
-            },
+            // Earliest with group defaults to the beginning when no committed offset exists.
+            // Group-aware claiming is enforced by `fetch_messages_for_group`.
+            (ConsumePosition::Earliest, Some(_)) => 0,
         };
 
         // Fetch messages from topic publisher
-        let messages = topic_publisher
-            .fetch_messages(&topic_id, partition_id, start_offset, limit)
-            .map_err(|e| KalamDbError::InvalidOperation(e.to_string()))?;
+        let messages = if let Some(group_name) = &statement.group_id {
+            let group_id = ConsumerGroupId::new(group_name);
+            topic_publisher
+                .fetch_messages_for_group(&topic_id, &group_id, partition_id, start_offset, limit)
+                .map_err(|e| KalamDbError::InvalidOperation(e.to_string()))?
+        } else {
+            topic_publisher
+                .fetch_messages(&topic_id, partition_id, start_offset, limit)
+                .map_err(|e| KalamDbError::InvalidOperation(e.to_string()))?
+        };
 
         // Convert messages to RecordBatch using cached schema
         let schema = topic_message_schema();

@@ -116,8 +116,9 @@ pub async fn consume_handler(
     };
 
     // Fetch messages
-    let messages = match topic_publisher.fetch_messages(
+    let messages = match topic_publisher.fetch_messages_for_group(
         topic_id,
+        group_id,
         body.partition_id,
         start_offset,
         body.limit as usize,
@@ -132,30 +133,47 @@ pub async fn consume_handler(
 
     // Convert to response format (matching topic_message_schema fields)
     // Schema fields: topic, partition, offset, key, payload, timestamp_ms
-    // TODO: Why we need to construct new TopicMessage instead of reusing the one from topic_message_models? Because we need to resolve user_id to username, and format the op as a string for the API response. We can optimize this later if needed.
+    // Cache user_id → username lookups to avoid redundant RocksDB reads within a single batch.
+    let mut user_cache: std::collections::HashMap<kalamdb_commons::models::UserId, Option<String>> =
+        std::collections::HashMap::new();
+
+    // Clone topic_id once for the entire response batch.
+    let batch_topic_id = topic.topic_id.clone();
+    // Pre-create the base64 engine reference once.
+    let b64_engine = &base64::engine::general_purpose::STANDARD;
+
     let response_messages: Vec<TopicMessage> = messages
         .iter()
         .map(|msg| {
             use base64::Engine;
-            // Resolve user_id to username for the consumer
+            // Resolve user_id to username for the consumer (cached)
             let username = msg.user_id.as_ref().and_then(|uid| {
-                app_context
-                    .system_tables()
-                    .users()
-                    .get_user_by_id(uid)
-                    .ok()
-                    .flatten()
-                    .map(|u| u.username.into_string())
+                user_cache
+                    .entry(uid.clone())
+                    .or_insert_with(|| {
+                        app_context
+                            .system_tables()
+                            .users()
+                            .get_user_by_id(uid)
+                            .ok()
+                            .flatten()
+                            .map(|u| u.username.into_string())
+                    })
+                    .clone()
             });
             TopicMessage {
-                topic_id: topic.topic_id.clone(),
+                topic_id: batch_topic_id.clone(),
                 partition_id: msg.partition_id,
                 offset: msg.offset,
-                payload: base64::engine::general_purpose::STANDARD.encode(&msg.payload),
+                payload: b64_engine.encode(&msg.payload),
                 key: msg.key.clone(),
                 timestamp_ms: msg.timestamp_ms,
                 username,
-                op: format!("{:?}", msg.op),
+                op: match msg.op {
+                    kalamdb_commons::models::TopicOp::Insert => "Insert".to_owned(),
+                    kalamdb_commons::models::TopicOp::Update => "Update".to_owned(),
+                    kalamdb_commons::models::TopicOp::Delete => "Delete".to_owned(),
+                },
             }
         })
         .collect();

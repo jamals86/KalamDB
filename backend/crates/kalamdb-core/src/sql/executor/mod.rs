@@ -6,6 +6,7 @@
 //! handler implementations are in place.
 
 pub mod default_ordering;
+mod fast_insert;
 pub mod handler_adapter;
 pub mod handler_registry;
 pub mod handlers;
@@ -18,6 +19,10 @@ use crate::sql::executor::handler_registry::HandlerRegistry;
 use crate::sql::plan_cache::PlanCache;
 pub use crate::sql::ExecutionMetadata;
 pub use datafusion::scalar::ScalarValue;
+use kalamdb_commons::models::TableId;
+use kalamdb_commons::schemas::TableType;
+use kalamdb_sql::statement_classifier::SqlStatement;
+use sqlparser::ast::Statement as SqlParserStatement;
 use std::sync::Arc;
 
 /// Public facade for SQL execution routing.
@@ -27,4 +32,30 @@ pub struct SqlExecutor {
     plan_cache: Arc<PlanCache>,
 }
 
-pub type ExecutorMetadataAlias = ExecutionMetadata;
+/// Optional execution context prepared by upstream callers (e.g. API layer).
+#[derive(Debug, Clone)]
+pub struct PreparedExecutionStatement {
+    pub sql: String,
+    pub table_id: Option<TableId>,
+    pub table_type: Option<TableType>,
+    pub parsed_statement: Option<SqlParserStatement>,
+    pub classified_statement: Option<SqlStatement>,
+}
+
+impl PreparedExecutionStatement {
+    pub fn new(
+        sql: String,
+        table_id: Option<TableId>,
+        table_type: Option<TableType>,
+        parsed_statement: Option<SqlParserStatement>,
+        classified_statement: Option<SqlStatement>,
+    ) -> Self {
+        Self {
+            sql,
+            table_id,
+            table_type,
+            parsed_statement,
+            classified_statement,
+        }
+    }
+}

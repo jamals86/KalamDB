@@ -1,11 +1,12 @@
-use super::SqlExecutor;
+use super::{PreparedExecutionStatement, SqlExecutor};
 use crate::error::KalamDbError;
 use crate::sql::executor::helpers::guards::block_system_namespace_modification;
 use crate::sql::plan_cache::PlanCacheKey;
-use crate::sql::{ExecutionContext, ExecutionMetadata, ExecutionResult};
+use crate::sql::{ExecutionContext, ExecutionResult};
 use arrow::array::RecordBatch;
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::conversions::arrow_json_conversion::arrow_value_to_scalar;
+use kalamdb_commons::models::TableId;
 use kalamdb_sql::statement_classifier::{SqlStatement, SqlStatementKind};
 use std::time::Duration;
 use tracing::Instrument;
@@ -28,13 +29,10 @@ impl SqlExecutor {
 
     fn block_system_namespace_dml(
         &self,
-        sql: &str,
-        exec_ctx: &ExecutionContext,
+        table_id: Option<&TableId>,
         dml_kind: DmlKind,
     ) -> Result<(), KalamDbError> {
-        let Some(table_id) =
-            kalamdb_sql::extract_dml_table_id(sql, exec_ctx.default_namespace().as_str())
-        else {
+        let Some(table_id) = table_id else {
             return Ok(());
         };
 
@@ -51,6 +49,20 @@ impl SqlExecutor {
         (msg.contains("table") && msg.contains("not found"))
             || (msg.contains("relation") && msg.contains("does not exist"))
             || msg.contains("unknown table")
+    }
+
+    fn map_classification_error(
+        err: kalamdb_sql::classifier::StatementClassificationError,
+    ) -> KalamDbError {
+        match err {
+            kalamdb_sql::classifier::StatementClassificationError::Unauthorized(msg) => {
+                KalamDbError::Unauthorized(msg)
+            },
+            kalamdb_sql::classifier::StatementClassificationError::InvalidSql {
+                sql: _,
+                message,
+            } => KalamDbError::InvalidSql(message),
+        }
     }
 
     /// Construct a new executor hooked into the shared `AppContext`.
@@ -91,17 +103,58 @@ impl SqlExecutor {
         exec_ctx: &ExecutionContext,
         params: Vec<ScalarValue>,
     ) -> Result<ExecutionResult, KalamDbError> {
-        self.execute_with_metadata(sql, exec_ctx, None, params).await
+        // Step 0: Check SQL query length to prevent DoS attacks
+        if sql.len() > kalamdb_commons::constants::MAX_SQL_QUERY_LENGTH {
+            log::warn!(
+                "SQL query rejected: length {} bytes exceeds maximum {} bytes",
+                sql.len(),
+                kalamdb_commons::constants::MAX_SQL_QUERY_LENGTH
+            );
+            return Err(KalamDbError::InvalidSql(format!(
+                "SQL query too long: {} bytes (maximum {} bytes)",
+                sql.len(),
+                kalamdb_commons::constants::MAX_SQL_QUERY_LENGTH
+            )));
+        }
+
+        // parse_single_statement uses sqlparser which doesn't understand
+        // custom DDL (CREATE NAMESPACE, CREATE USER, SHOW TABLES, etc.).
+        // When it fails we fall through with None — the classifier and
+        // executor handle these statements via their own tokeniser.
+        let parsed_statement = kalamdb_sql::parse_single_statement(sql)
+            .ok()
+            .flatten();
+        let table_id = parsed_statement.as_ref().and_then(|stmt| {
+            kalamdb_sql::extract_dml_table_id_from_statement(
+                stmt,
+                exec_ctx.default_namespace().as_str(),
+            )
+        });
+        let classified = SqlStatement::classify_and_parse(
+            sql,
+            &exec_ctx.default_namespace(),
+            exec_ctx.user_role(),
+        )
+        .map_err(Self::map_classification_error)?;
+        let metadata = PreparedExecutionStatement::new(
+            sql.to_string(),
+            table_id,
+            None,
+            parsed_statement,
+            Some(classified),
+        );
+
+        self.execute_with_metadata(&metadata, exec_ctx, params).await
     }
 
-    /// Execute a statement with optional metadata.
+    /// Execute a statement with prepared metadata.
     pub async fn execute_with_metadata(
         &self,
-        sql: &str,
+        metadata: &PreparedExecutionStatement,
         exec_ctx: &ExecutionContext,
-        _metadata: Option<&ExecutionMetadata>,
         params: Vec<ScalarValue>,
     ) -> Result<ExecutionResult, KalamDbError> {
+        let sql = metadata.sql.as_str();
         let span = tracing::info_span!(
             "sql.execute",
             user_id = %exec_ctx.user_id().as_str(),
@@ -111,37 +164,10 @@ impl SqlExecutor {
         );
         // Enter the span for the entire execution
         async {
-            // Step 0: Check SQL query length to prevent DoS attacks
-            // Most legitimate queries are under 10KB, we allow up to 1MB
-            if sql.len() > kalamdb_commons::constants::MAX_SQL_QUERY_LENGTH {
-                log::warn!(
-                    "❌ SQL query rejected: length {} bytes exceeds maximum {} bytes",
-                    sql.len(),
-                    kalamdb_commons::constants::MAX_SQL_QUERY_LENGTH
-                );
-                return Err(KalamDbError::InvalidSql(format!(
-                    "SQL query too long: {} bytes (maximum {} bytes)",
-                    sql.len(),
-                    kalamdb_commons::constants::MAX_SQL_QUERY_LENGTH
-                )));
-            }
-
-            // Step 1: Classify, authorize, and parse statement in one pass
-            // Prioritize SELECT/DML checks as they represent 99% of queries
-            // Authorization happens before parsing for fail-fast behavior
-            let classified = SqlStatement::classify_and_parse(
-                sql,
-                &exec_ctx.default_namespace(),
-                exec_ctx.user_role(),
-            )
-            .map_err(|e| match e {
-                kalamdb_sql::classifier::StatementClassificationError::Unauthorized(msg) => {
-                    KalamDbError::Unauthorized(msg)
-                },
-                kalamdb_sql::classifier::StatementClassificationError::InvalidSql {
-                    sql: _,
-                    message,
-                } => KalamDbError::InvalidSql(message),
+            let classified = metadata.classified_statement.clone().ok_or_else(|| {
+                KalamDbError::InvalidSql(
+                    "Missing pre-classified statement metadata for SQL execution".to_string(),
+                )
             })?;
 
             // Record the command kind in the span
@@ -167,6 +193,7 @@ impl SqlExecutor {
                 SqlStatementKind::Insert(_) => {
                     self.execute_dml_via_datafusion(
                         classified.as_str(),
+                        metadata,
                         params,
                         exec_ctx,
                         DmlKind::Insert,
@@ -176,6 +203,7 @@ impl SqlExecutor {
                 SqlStatementKind::Update(_) => {
                     self.execute_dml_via_datafusion(
                         classified.as_str(),
+                        metadata,
                         params,
                         exec_ctx,
                         DmlKind::Update,
@@ -185,6 +213,7 @@ impl SqlExecutor {
                 SqlStatementKind::Delete(_) => {
                     self.execute_dml_via_datafusion(
                         classified.as_str(),
+                        metadata,
                         params,
                         exec_ctx,
                         DmlKind::Delete,
@@ -243,11 +272,37 @@ impl SqlExecutor {
     async fn execute_dml_via_datafusion(
         &self,
         sql: &str,
+        metadata: &PreparedExecutionStatement,
         params: Vec<ScalarValue>,
         exec_ctx: &ExecutionContext,
         dml_kind: DmlKind,
     ) -> Result<ExecutionResult, KalamDbError> {
-        self.block_system_namespace_dml(sql, exec_ctx, dml_kind)?;
+        let parsed_statement = metadata.parsed_statement.as_ref();
+        self.block_system_namespace_dml(metadata.table_id.as_ref(), dml_kind)?;
+
+        // Fast-path: bypass DataFusion for simple INSERT INTO ... VALUES (...)
+        // This avoids ~2.6ms of optimizer + physical planner overhead per INSERT.
+        if matches!(dml_kind, DmlKind::Insert) && params.is_empty() {
+            let schema_registry = self.app_context.schema_registry();
+            let fast_insert_result = if let Some(statement) = parsed_statement {
+                super::fast_insert::try_fast_insert(
+                    statement,
+                    exec_ctx,
+                    &schema_registry,
+                    metadata.table_id.as_ref(),
+                    metadata.table_type,
+                )
+                .await
+            } else {
+                Ok(None)
+            };
+
+            match fast_insert_result {
+                Ok(Some(result)) => return Ok(result),
+                Ok(None) => { /* fall through to DataFusion */ },
+                Err(e) => return Err(e),
+            }
+        }
 
         use crate::sql::executor::parameter_binding::{
             replace_placeholders_in_plan, validate_params,
@@ -261,8 +316,12 @@ impl SqlExecutor {
         // This avoids reparsing/replanning the same INSERT/UPDATE/DELETE shape repeatedly.
         let df = if params.is_empty() {
             let session = exec_ctx.create_session_with_user();
+            let plan_start = std::time::Instant::now();
             match session.sql(sql).await {
-                Ok(df) => df,
+                Ok(df) => {
+                    tracing::info!(plan_ms = %plan_start.elapsed().as_micros() as f64 / 1000.0, "sql.dml_plan");
+                    df
+                },
                 Err(e) => {
                     if Self::is_table_not_found_error(&e) {
                         if let Err(load_err) = self.load_existing_tables().await {
@@ -382,9 +441,11 @@ impl SqlExecutor {
             }
         };
 
+        let collect_start = std::time::Instant::now();
         let batches = df.collect().await.map_err(|e| {
             KalamDbError::Other(format!("Error executing DML statement '{}': {}", sql, e))
         })?;
+        tracing::info!(collect_ms = %format!("{:.3}", collect_start.elapsed().as_micros() as f64 / 1000.0), "sql.dml_collect");
 
         let rows_affected = Self::extract_rows_affected(&batches)?;
         tracing::Span::current().record("rows_affected", rows_affected);

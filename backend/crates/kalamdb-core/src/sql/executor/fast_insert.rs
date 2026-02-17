@@ -1,0 +1,269 @@
+//! Fast-path INSERT bypass for simple `INSERT INTO table (cols) VALUES (...)` statements.
+//!
+//! Bypasses DataFusion's optimizer and physical planner (~2.6ms overhead) by parsing
+//! the INSERT SQL directly with sqlparser, resolving the KalamTableProvider from the
+//! schema registry, converting values to Row objects, and calling `insert_rows()` directly.
+//!
+//! Falls back to DataFusion for:
+//! - INSERT ... SELECT (subquery source)
+//! - ON CONFLICT / ON DUPLICATE KEY
+//! - RETURNING clauses
+//! - Complex expressions in VALUES (functions, casts, subqueries)
+//! - System namespace tables
+//! - Columns with DEFAULT expressions omitted from INSERT column list
+//! - Any parse failure
+
+use crate::error::KalamDbError;
+use crate::schema_registry::SchemaRegistry;
+use crate::sql::{ExecutionContext, ExecutionResult};
+use datafusion::scalar::ScalarValue;
+use kalamdb_commons::models::rows::row::Row;
+use kalamdb_commons::schemas::TableType;
+use kalamdb_commons::TableId;
+use kalamdb_tables::KalamTableProvider;
+use sqlparser::ast::{
+    Expr, Insert, ObjectNamePart, SetExpr, Statement, TableObject, UnaryOperator, Value,
+};
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
+/// Attempt a fast-path INSERT that bypasses DataFusion's optimizer/physical planner.
+///
+/// Returns `Ok(Some(result))` if the fast path succeeded,
+/// `Ok(None)` if the SQL is too complex for the fast path (fall back to DataFusion),
+/// or `Err(e)` if the INSERT was valid for fast-path but failed during execution.
+pub async fn try_fast_insert(
+    statement: &Statement,
+    exec_ctx: &ExecutionContext,
+    schema_registry: &Arc<SchemaRegistry>,
+    prepared_table_id: Option<&TableId>,
+    prepared_table_type: Option<TableType>,
+) -> Result<Option<ExecutionResult>, KalamDbError> {
+    let insert = match statement {
+        Statement::Insert(insert) => insert.clone(),
+        _ => return Ok(None),
+    };
+    try_fast_insert_from_insert(
+        insert,
+        exec_ctx,
+        schema_registry,
+        prepared_table_id,
+        prepared_table_type,
+    )
+    .await
+}
+
+async fn try_fast_insert_from_insert(
+    insert: Insert,
+    exec_ctx: &ExecutionContext,
+    schema_registry: &Arc<SchemaRegistry>,
+    prepared_table_id: Option<&TableId>,
+    prepared_table_type: Option<TableType>,
+) -> Result<Option<ExecutionResult>, KalamDbError> {
+    let default_namespace = exec_ctx.default_namespace();
+
+    // 2. Quick bail for features we don't optimize
+    if insert.on.is_some() || insert.returning.is_some() || insert.overwrite {
+        return Ok(None);
+    }
+
+    // 3. Extract table name
+    let table_id = match prepared_table_id {
+        Some(id) => id.clone(),
+        None => match extract_table_id(&insert, default_namespace.as_str()) {
+            Some(id) => id,
+            None => return Ok(None),
+        },
+    };
+
+    // 4. Block system namespace DML
+    if table_id.namespace_id().is_system_namespace() {
+        return Ok(None);
+    }
+
+    // 5. Extract VALUES body (reject INSERT ... SELECT, etc.)
+    let source = match insert.source {
+        Some(source) => source,
+        None => return Ok(None),
+    };
+
+    if source.with.is_some() || source.order_by.is_some() || source.limit_clause.is_some() {
+        return Ok(None);
+    }
+
+    let value_rows = match *source.body {
+        SetExpr::Values(values) => values.rows,
+        _ => return Ok(None),
+    };
+
+    // 6. Get the KalamTableProvider from the schema registry (already cached there)
+    let kalam_provider: Arc<dyn KalamTableProvider> =
+        match schema_registry.get_kalam_provider(&table_id) {
+            Some(p) => p,
+            None => return Ok(None),
+        };
+
+    // 6b. Enforce SHARED table access control.
+    //     The DataFusion path checks this in SharedTableProvider::insert_into(),
+    //     but the fast path bypasses that — so we must check here.
+    let is_shared = prepared_table_type == Some(TableType::Shared);
+    if is_shared || prepared_table_type.is_none() {
+        if let Some(cached) = schema_registry.get(&table_id) {
+            let entry = cached.table_entry();
+            if entry.table_type == kalamdb_commons::schemas::TableType::Shared {
+                let access_level =
+                    entry.access_level.unwrap_or(kalamdb_commons::TableAccess::Private);
+                let role = exec_ctx.user_role();
+                kalamdb_session::permissions::check_shared_table_write_access_level(
+                    role,
+                    access_level,
+                    table_id.namespace_id(),
+                    table_id.table_name(),
+                )
+                .map_err(|e| KalamDbError::PermissionDenied(e.to_string()))?;
+            }
+        }
+    }
+
+    // 7. Determine column names from the provider's schema
+    //    KalamTableProvider extends TableProvider, so we can call schema() directly
+    let schema = kalam_provider.schema();
+
+    let column_names: Vec<String> = if insert.columns.is_empty() {
+        // No columns specified — use all non-system columns from schema
+        schema
+            .fields()
+            .iter()
+            .filter(|f| !f.name().starts_with('_'))
+            .map(|f| f.name().clone())
+            .collect()
+    } else {
+        insert.columns.iter().map(|ident| ident.value.clone()).collect()
+    };
+
+    // 7b. If any schema column with a DEFAULT expression is missing from the
+    //     INSERT column list, fall back to DataFusion which evaluates defaults
+    //     correctly (SNOWFLAKE_ID(), UUID_V7(), ULID(), CURRENT_USER(), etc.).
+    //     Without this check, coerce_rows fills type-zero values (0, "") instead.
+    for field in schema.fields() {
+        let col_name = field.name();
+        if col_name.starts_with('_') {
+            continue; // skip system columns
+        }
+        if !column_names.iter().any(|c| c == col_name) {
+            // Column is missing from the INSERT — check if it has a default
+            if kalam_provider.get_column_default(col_name).is_some() {
+                return Ok(None); // fall back to DataFusion for default evaluation
+            }
+        }
+    }
+
+    // 8. Convert VALUES to Row objects
+    let rows = match values_to_rows(&value_rows, &column_names) {
+        Ok(rows) => rows,
+        Err(_) => return Ok(None),
+    };
+
+    // 9. Call insert_rows directly via KalamTableProvider, bypassing DataFusion
+    let user_id = exec_ctx.user_id();
+    let row_count = rows.len();
+    tracing::info!(table_id = %table_id, row_count = row_count, "sql.fast_insert");
+    let rows_affected = kalam_provider.insert_rows(user_id, rows).await?;
+
+    Ok(Some(ExecutionResult::Inserted { rows_affected }))
+}
+
+/// Extract TableId from INSERT's table reference.
+fn extract_table_id(insert: &Insert, default_namespace: &str) -> Option<TableId> {
+    let parts: Vec<String> = match &insert.table {
+        TableObject::TableName(obj_name) => obj_name
+            .0
+            .iter()
+            .filter_map(|part| match part {
+                ObjectNamePart::Identifier(ident) => Some(ident.value.clone()),
+                _ => None,
+            })
+            .collect(),
+        _ => return None,
+    };
+
+    match parts.len() {
+        1 => Some(TableId::from_strings(default_namespace, &parts[0])),
+        2 => Some(TableId::from_strings(&parts[0], &parts[1])),
+        _ => None,
+    }
+}
+
+/// Convert parsed VALUES rows into Row objects.
+fn values_to_rows(
+    value_rows: &[Vec<Expr>],
+    column_names: &[String],
+) -> Result<Vec<Row>, &'static str> {
+    let mut rows = Vec::with_capacity(value_rows.len());
+
+    for value_row in value_rows {
+        if value_row.len() != column_names.len() {
+            return Err("column count mismatch");
+        }
+
+        let mut values = BTreeMap::new();
+        for (expr, col_name) in value_row.iter().zip(column_names.iter()) {
+            let scalar = expr_to_scalar(expr)?;
+            values.insert(col_name.clone(), scalar);
+        }
+        rows.push(Row::new(values));
+    }
+
+    Ok(rows)
+}
+
+/// Convert a sqlparser Expr to a DataFusion ScalarValue.
+///
+/// Only handles literal values and simple negation. Returns Err for anything
+/// more complex (functions, casts, subqueries, etc.) to trigger DataFusion fallback.
+fn expr_to_scalar(expr: &Expr) -> Result<ScalarValue, &'static str> {
+    match expr {
+        Expr::Value(val) => sql_value_to_scalar(&val.value),
+        Expr::UnaryOp {
+            op: UnaryOperator::Minus,
+            expr,
+        } => match expr.as_ref() {
+            Expr::Value(val) => match &val.value {
+                Value::Number(n, _) => {
+                    if let Ok(i) = n.parse::<i64>() {
+                        Ok(ScalarValue::Int64(Some(-i)))
+                    } else if let Ok(f) = n.parse::<f64>() {
+                        Ok(ScalarValue::Float64(Some(-f)))
+                    } else {
+                        Err("unsupported negative number")
+                    }
+                },
+                _ => Err("unsupported unary minus operand"),
+            },
+            _ => Err("unsupported unary expression"),
+        },
+        _ => Err("unsupported expression type"),
+    }
+}
+
+/// Convert a sqlparser Value to a DataFusion ScalarValue.
+fn sql_value_to_scalar(value: &Value) -> Result<ScalarValue, &'static str> {
+    match value {
+        Value::Number(n, _) => {
+            // Try integer first, then float
+            if let Ok(i) = n.parse::<i64>() {
+                Ok(ScalarValue::Int64(Some(i)))
+            } else if let Ok(f) = n.parse::<f64>() {
+                Ok(ScalarValue::Float64(Some(f)))
+            } else {
+                Err("unsupported number format")
+            }
+        },
+        Value::SingleQuotedString(s) | Value::DoubleQuotedString(s) => {
+            Ok(ScalarValue::Utf8(Some(s.clone())))
+        },
+        Value::Boolean(b) => Ok(ScalarValue::Boolean(Some(*b))),
+        Value::Null => Ok(ScalarValue::Null),
+        _ => Err("unsupported value type"), // Hex, BitString, etc.
+    }
+}

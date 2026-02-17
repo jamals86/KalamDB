@@ -496,19 +496,22 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         let has_topics = self.core.has_topic_routes(&table_id);
         let has_live_subs = notification_service.has_subscribers(None, &table_id);
         if has_topics || has_live_subs {
-            for (_row_key, entity) in entries.iter() {
-                let row = Self::build_notification_row(entity);
-                if has_topics {
-                    self.core
-                        .publish_to_topics(
-                            &table_id,
-                            kalamdb_commons::models::TopicOp::Insert,
-                            &row,
-                            None,
-                        )
-                        .await;
-                }
-                if has_live_subs {
+            // Build notification rows
+            let rows: Vec<_> = entries.iter().map(|(_row_key, entity)| Self::build_notification_row(entity)).collect();
+
+            // Batch publish to topics (single RocksDB WriteBatch + single lock per partition)
+            if has_topics {
+                self.core
+                    .publish_batch_to_topics(
+                        &table_id,
+                        kalamdb_commons::models::TopicOp::Insert,
+                        &rows,
+                        None,
+                    )
+                    .await;
+            }
+            if has_live_subs {
+                for row in rows {
                     let notification = ChangeNotification::insert(table_id.clone(), row);
                     notification_service.notify_table_change(None, table_id.clone(), notification);
                 }
@@ -1089,5 +1092,14 @@ impl TableProvider for SharedTableProvider {
 
     fn statistics(&self) -> Option<datafusion::physical_plan::Statistics> {
         self.base_statistics()
+    }
+}
+
+// KalamTableProvider: extends TableProvider with KalamDB-specific DML
+#[async_trait]
+impl crate::utils::dml_provider::KalamTableProvider for SharedTableProvider {
+    async fn insert_rows(&self, user_id: &UserId, rows: Vec<Row>) -> Result<usize, KalamDbError> {
+        let keys = self.insert_batch(user_id, rows).await?;
+        Ok(keys.len())
     }
 }

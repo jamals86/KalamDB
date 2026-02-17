@@ -17,7 +17,7 @@ use crate::live_query::LiveQueryManager;
 use crate::schema_registry::SchemaRegistry;
 use crate::sql::datafusion_session::DataFusionSessionFactory;
 use crate::sql::executor::SqlExecutor;
-use crate::views::lazy_system_schema::LazySystemSchemaProvider;
+use crate::views::system_schema_provider::SystemSchemaProvider;
 use async_trait::async_trait;
 use datafusion::catalog::SchemaProvider;
 use datafusion::prelude::SessionContext;
@@ -232,16 +232,17 @@ impl AppContext {
             // Create schema cache (Phase 10 unified cache)
             let schema_registry = Arc::new(SchemaRegistry::new(10000));
 
-            // Create lazy system schema provider (views created on first access)
-            let lazy_system_schema = Arc::new(LazySystemSchemaProvider::new(
-                Arc::clone(&system_tables),
+            // Create system schema provider (views created lazily on first access,
+            // stored in SchemaRegistry's CachedTableData)
+            let system_schema = Arc::new(SystemSchemaProvider::new(
                 Arc::clone(&schema_registry),
+                Arc::clone(&system_tables),
                 Arc::clone(&config),
                 std::path::PathBuf::from(&config.logging.logs_path),
             ));
 
             // Get stats_view reference for callback wiring later
-            let stats_view = lazy_system_schema.get_or_create_stats_view();
+            let stats_view = system_schema.stats_view();
 
             // Register all system tables in DataFusion
             // Use config-driven DataFusion settings for parallelism
@@ -260,12 +261,12 @@ impl AppContext {
                     .catalog("kalam")
                     .expect("Catalog 'kalam' not found - ensure DataFusionSessionFactory is properly configured");
 
-            // Register the lazy system schema provider with the catalog
+            // Register the system schema provider with the catalog
             // Views are created on first access, not eagerly at startup
             catalog
                 .register_schema(
                     "system",
-                    Arc::clone(&lazy_system_schema) as Arc<dyn SchemaProvider>,
+                    Arc::clone(&system_schema) as Arc<dyn SchemaProvider>,
                 )
                 .expect("Failed to register system schema");
 
@@ -392,9 +393,9 @@ impl AppContext {
             // data consistency across nodes, and each node notifies its own
             // live query subscribers locally when data is applied.
 
-            // Wire the executor into the lazy system schema provider
+            // Wire the executor into the system schema provider
             // This enables cluster and cluster_groups views (created on first access)
-            lazy_system_schema.set_executor(Arc::clone(&executor));
+            system_schema.set_executor(Arc::clone(&executor));
 
             // Create notification service (before AppContext)
             let notification_service = NotificationService::new(Arc::clone(&connection_registry));

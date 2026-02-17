@@ -60,7 +60,7 @@ pub use ddl::{
     SubscribeStatement, SubscriptionOptions,
 };
 pub use ddl_parent::DdlAst;
-pub use parser::extract_dml_table_id;
+pub use parser::{extract_dml_table_id, extract_dml_table_id_from_statement, parse_single_statement};
 pub use parser::SqlParser;
 pub use query_cache::{QueryCache, QueryCacheKey, QueryCacheTtlConfig};
 pub use validation::{

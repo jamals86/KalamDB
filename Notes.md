@@ -547,35 +547,6 @@ Transaction:
 and things like this:
         let name = statement.name.as_str();
         let namespace_id = NamespaceId::new(name);
-117) [COMPLETED] Consolidate duplicated ScalarValue conversion logic into centralized module
-    We have many places where we duplicate this similar logic:
-    /// Encode a PK value to bytes for index key
-    fn encode_pk_value(value: &ScalarValue) -> Vec<u8> {
-        match value {
-            ScalarValue::Int64(Some(n)) => n.to_string().into_bytes(),
-            ScalarValue::Int32(Some(n)) => n.to_string().into_bytes(),
-            ScalarValue::Int16(Some(n)) => n.to_string().into_bytes(),
-            ScalarValue::UInt64(Some(n)) => n.to_string().into_bytes(),
-            ScalarValue::UInt32(Some(n)) => n.to_string().into_bytes(),
-            ScalarValue::Utf8(Some(s)) | ScalarValue::LargeUtf8(Some(s)) => s.as_bytes().to_vec(),
-            // For other types, convert to string
-            _ => value.to_string().into_bytes(),
-        }
-    }
-
-  ✅ SOLUTION IMPLEMENTED:
-  - Created backend/crates/kalamdb-commons/src/conversions.rs module
-  - Centralized function: pub fn scalar_value_to_bytes(value: &ScalarValue) -> Vec<u8>
-  - Added backwards compatibility alias: pub fn encode_pk_value() for existing code
-  - Removed duplicates from:
-    * backend/crates/kalamdb-tables/src/user_tables/pk_index.rs
-    * backend/crates/kalamdb-tables/src/shared_tables/pk_index.rs
-  - Added comprehensive unit tests in conversions.rs
-  - Updated all call sites to use the centralized function
-  - Re-exported from kalamdb-commons lib.rs for easy access
-  - Workspace builds successfully with all crates compiling
-  - All places where we read config from file directly and change them to read from AppContext
-  - Remove any duplicate config models which is a dto and use only the configs instead of mirroring it to different structs
 
 122) [MEDIUM] in impl JobExecutor for FlushExecutor add generic to the model instead of having json parameters we can have T: DeserializeOwned + Send + Sync + 'static and then we can deserialize into the right struct directly instead of having to parse json each time
 
@@ -583,13 +554,6 @@ and things like this:
 
 126) [MEDIUM] Combine the 2 shared/user tables flushing and querying using a shared hybrid service which is used in both cases to reduce code duplication and maintenance burden
 both of them read from a path and from a store but user table filter the store which is the hot storage based on user id as well
-
-
-128) [NOT RELEVANT - DONE with AS USER impersonation] IMPORTANT - Insert a row as a system/service user to a different user_id this will be used for users to send messages to others as well or an ai send to different user or publish to different user's stream table
-INSERT INTO <namespace>.<table>
-   [AS USER '<user_id>']
-   VALUES (...);
-
 
 130) [MEDIUM] We need to have describe table <namespace>.<table> to show the table schema in cli and server as well also to display: cold rows count, hot rows count, total rows count, storage id, primary key(s), indexes, etc
 
@@ -626,13 +590,6 @@ ServerMessage will use arrow arrays directly as well
 143) [LOW] Add type-safe modles to ChangeNotification
 144) [MEDIUM] Shared tables should have a manifest stored in memory as well for better performance with also the same as user table to disk 
 145) [NOT RELEVANT - Manifests implemented] User tables manifest should be in rocksdb and persisted into storage disk after flush
-146) [LOW] Instead of these let partition_name = format!(
-                "{}{}:{}",
-                ColumnFamilyNames::USER_TABLE_PREFIX,
-                table_id.namespace_id().as_str(),
-                table_id.table_name().as_str()
-            );
-    read the partion as it is from a const or static function in commons for all of them
 
 147) [HIGH] When flushing shouldnt i do that async? so i dont block while waiting for rocksdb flushing or deleting folder to finish
 
@@ -793,8 +750,6 @@ instead of: 1 failed: Invalid operation: No handler registered for statement typ
 
 205) [MEDIUM] Add test which check having like 100 parquet batches per shared table and having manifest file has 100 segments and test the performance
 
-206) [NOT RELEVANT - Using Moka cache] the last_accessed in manifest is not needed anymore since now we rely on Moka cache for knowing the last accessed time
-
 [HIGH] Make sure there is tests which insert/updte data and then check if the actual data we inserted/updated is there and exists in select then flush the data and check again if insert/update works with the flushed data in cold storage, check that insert fails when inserting a row id primary key which already exists and update do works
 
 
@@ -831,14 +786,6 @@ IMPORTANT:
 16) [LOW - FUTURE] Add file DataType for storing files/blobs next to the storage parquet files
 17) [MEDIUM] Persist views in the system_views table and load them on database starts
 18) [HIGH] Remove the usage of scan_all from EntityStore and replace all calls to always include filter or limit and check ability to have a stream instead of returning a vector
-
-
-
-[NOT RELEVANT - Known issue being addressed] Key Findings
-Flush Timing Issue: Data inserted immediately before flush may not be in RocksDB column families yet, resulting in 0 rows flushed
-Parquet Querying Limitation: After flush, data is removed from RocksDB but queries don't yet retrieve from Parquet files - this is a known gap
-
-
 
 
 Code Cleanup Operations:
@@ -1324,13 +1271,13 @@ Query OK, 0 rows affected
 
 176) insetad of holding: pub struct ManifestCacheEntry and manifest we can combine them together for the entitystore, then we wont be needing any custom schema for them, we can make the main object as the schema for the table
 
-177) check that we use zero-copy serdes using flatbuffers to the logic model we have for each system table, the main changes i guess should be in SystemTableRow, when we have something good we can copy it to SharedTableRow and UserTableRow as well and the inside Row -> ScalarValue
-
 178) change this to flatbuffers: backend/crates/kalamdb-raft/src/state_machine/serde_helpers.rs for faster serdes
 
-179) instead of this:       "def": "pk,nonnull,unique", we can do:       "flags": "pk,nn,uq"
+179) Re-check if the serdes of the table data is zero-copy
 
+185) should we still be visible? maybe we should always use the schema registry for everything instead of: pub fn system_tables(&self) -> Arc<SystemTablesRegistry>
 
+186) make this: const VISIBILITY_TIMEOUT: Duration = Duration::from_secs(60); confugurable per topic
 
 
 

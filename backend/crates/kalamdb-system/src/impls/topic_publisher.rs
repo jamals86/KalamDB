@@ -40,4 +40,25 @@ pub trait TopicPublisher: Send + Sync {
         row: &Row,
         user_id: Option<&UserId>,
     ) -> std::result::Result<usize, String>;
+
+    /// Publish a batch of row changes to matching topics in a single operation.
+    ///
+    /// This is significantly faster than calling `publish_for_table()` in a loop
+    /// because it batches RocksDB writes, reuses JSON serialization, and acquires
+    /// partition locks once per partition instead of once per row.
+    ///
+    /// Default implementation falls back to per-row publishing for backward compat.
+    fn publish_batch_for_table(
+        &self,
+        table_id: &TableId,
+        operation: TopicOp,
+        rows: &[Row],
+        user_id: Option<&UserId>,
+    ) -> std::result::Result<usize, String> {
+        let mut total = 0;
+        for row in rows {
+            total += self.publish_for_table(table_id, operation.clone(), row, user_id)?;
+        }
+        Ok(total)
+    }
 }

@@ -8,14 +8,14 @@ pub mod error;
 pub mod projection;
 pub mod registry;
 
-pub use cached_table_data::CachedTableData;
+pub use cached_table_data::{CachedProvider, CachedTableData, TableEntry};
 pub use error::RegistryError;
 pub use kalamdb_commons::helpers::string_interner::SystemColumns;
 
 pub use kalamdb_system::SystemColumnsService;
 pub use projection::{project_batch, schemas_compatible};
 pub use registry::TablesSchemaRegistryAdapter;
-pub use registry::{SchemaRegistry, TableEntry};
+pub use registry::SchemaRegistry;
 
 // Re-export common types from kalamdb_commons for convenience
 pub use kalamdb_commons::models::{NamespaceId, TableName, UserId};

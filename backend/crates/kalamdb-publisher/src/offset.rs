@@ -33,6 +33,18 @@ impl OffsetAllocator {
         counter.fetch_add(1, Ordering::SeqCst)
     }
 
+    /// Atomically allocate a contiguous range of `count` offsets.
+    ///
+    /// Returns the start of the range. The allocated range is `[start, start + count)`.
+    /// This is more efficient than calling `next_offset()` in a loop because it
+    /// requires only a single atomic operation.
+    pub fn next_n_offsets(&self, topic_id: &str, partition_id: u32, count: u64) -> u64 {
+        let key = format!("{}:{}", topic_id, partition_id);
+        let counter =
+            self.counters.entry(key).or_insert_with(|| Arc::new(AtomicU64::new(0))).clone();
+        counter.fetch_add(count, Ordering::SeqCst)
+    }
+
     /// Seed a counter to a specific value (used during restore from persisted messages).
     pub fn seed(&self, topic_id: &str, partition_id: u32, next_offset: u64) {
         let key = format!("{}:{}", topic_id, partition_id);

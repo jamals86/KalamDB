@@ -77,6 +77,6 @@ pub use store_ext::{SharedTableStoreExt, StreamTableStoreExt, UserTableStoreExt}
 
 // Re-export providers for core integration
 pub use utils::{
-    BaseTableProvider, SharedTableProvider, StreamTableProvider, TableProviderCore,
-    UserTableProvider,
+    BaseTableProvider, KalamTableProvider, SharedTableProvider, StreamTableProvider,
+    TableProviderCore, UserTableProvider,
 };

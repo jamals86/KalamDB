@@ -494,13 +494,13 @@ fn test_provider_cache_insert_and_get() {
 
     // Now insert provider into the cached data
     let stats_view = Arc::new(StatsView::new());
-    cache.get(&table_id).unwrap().set_provider(stats_view);
+    cache.get(&table_id).unwrap().set_system_provider(stats_view);
     let provider =
         Arc::new(StatsTableProvider::new(stats_view)) as Arc<dyn TableProvider + Send + Sync>;
 
-    // Get the cached data and set provider directly (tests CachedTableData.set_provider)
+    // Get the cached data and set provider directly (tests CachedTableData.set_system_provider)
     let cached = cache.get(&table_id).expect("should have cached data");
-    cached.set_provider(Arc::clone(&provider));
+    cached.set_system_provider(Arc::clone(&provider));
 
     // Retrieve via get_provider
     let retrieved = cache.get_provider(&table_id).expect("provider present");

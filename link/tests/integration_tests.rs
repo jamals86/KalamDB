@@ -405,6 +405,7 @@ fn test_change_event_subscription_id() {
             name: "id".to_string(),
             data_type: KalamDataType::BigInt,
             index: 0,
+            flags: None,
         }],
     };
     assert_eq!(ack.subscription_id(), Some("sub-ack"));

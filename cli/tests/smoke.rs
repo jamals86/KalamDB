@@ -63,6 +63,8 @@ mod smoke_test_user_table_subscription;
 mod smoke_test_topic_consumption;
 #[path = "smoke/topics/smoke_test_topic_high_load.rs"]
 mod smoke_test_topic_high_load;
+#[path = "smoke/topics/smoke_test_topic_throughput.rs"]
+mod smoke_test_topic_throughput;
 
 // CLI tests
 #[path = "smoke/cli/smoke_test_cli_commands.rs"]

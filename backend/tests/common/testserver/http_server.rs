@@ -864,6 +864,7 @@ impl Drop for HttpTestServer {
 /// clients against a real server instance.
 #[allow(dead_code)]
 pub async fn start_http_test_server() -> Result<HttpTestServer> {
+    let global_lock = acquire_global_http_test_server_lock()?;
     let temp_dir = tempfile::TempDir::new()?;
     let data_path = temp_dir.path().to_path_buf();
 
@@ -898,7 +899,7 @@ pub async fn start_http_test_server() -> Result<HttpTestServer> {
 
     let server = HttpTestServer {
         _temp_dir: Some(temp_dir),
-        _global_lock: None, // No longer use file lock - OnceCell handles per-process synchronization
+        _global_lock: global_lock,
         base_url,
         data_path,
         root_auth_header: root_jwt_auth_header(&jwt_secret),
@@ -921,6 +922,7 @@ pub async fn start_http_test_server() -> Result<HttpTestServer> {
 pub async fn start_http_test_server_with_config(
     override_config: impl FnOnce(&mut kalamdb_configs::ServerConfig),
 ) -> Result<HttpTestServer> {
+    let global_lock = acquire_global_http_test_server_lock()?;
     let temp_dir = tempfile::TempDir::new()?;
     let data_path = temp_dir.path().to_path_buf();
 
@@ -954,7 +956,7 @@ pub async fn start_http_test_server_with_config(
 
     let server = HttpTestServer {
         _temp_dir: Some(temp_dir),
-        _global_lock: None, // No longer use file lock
+        _global_lock: global_lock,
         base_url,
         data_path,
         root_auth_header: root_jwt_auth_header(&jwt_secret),

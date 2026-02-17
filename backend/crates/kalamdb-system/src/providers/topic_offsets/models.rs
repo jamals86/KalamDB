@@ -95,10 +95,17 @@ impl TopicOffset {
         }
     }
 
-    /// Acknowledge (commit) an offset after processing
+    /// Acknowledge (commit) an offset after processing.
+    ///
+    /// Monotonic: the committed offset only advances, never regresses.
+    /// This is critical when multiple consumers in the same group ack
+    /// out-of-order (e.g., consumer B acks offset 399, then consumer A
+    /// acks offset 199 — the committed offset must stay at 399).
     pub fn ack(&mut self, offset: u64, timestamp_ms: i64) {
-        self.last_acked_offset = offset;
-        self.updated_at = timestamp_ms;
+        if offset > self.last_acked_offset {
+            self.last_acked_offset = offset;
+            self.updated_at = timestamp_ms;
+        }
     }
 
     /// Get the next offset to fetch (last_acked + 1)
@@ -142,5 +149,36 @@ mod tests {
         offset.ack(10, 3000);
         assert_eq!(offset.last_acked_offset, 10);
         assert_eq!(offset.next_offset(), 11);
+    }
+
+    #[test]
+    fn test_ack_never_regresses() {
+        let mut offset =
+            TopicOffset::new(TopicId::from("test"), ConsumerGroupId::from("group1"), 0, 0, 1000);
+
+        // Advance to offset 399
+        offset.ack(399, 2000);
+        assert_eq!(offset.last_acked_offset, 399);
+
+        // Try to ack a lower offset (out-of-order from Consumer A)
+        offset.ack(199, 3000);
+        assert_eq!(
+            offset.last_acked_offset, 399,
+            "ack with lower offset must not regress committed position"
+        );
+        assert_eq!(
+            offset.updated_at, 2000,
+            "timestamp should not change on no-op ack"
+        );
+
+        // Equal offset is also a no-op
+        offset.ack(399, 4000);
+        assert_eq!(offset.last_acked_offset, 399);
+        assert_eq!(offset.updated_at, 2000);
+
+        // Higher offset advances
+        offset.ack(400, 5000);
+        assert_eq!(offset.last_acked_offset, 400);
+        assert_eq!(offset.updated_at, 5000);
     }
 }
