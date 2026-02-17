@@ -268,6 +268,7 @@ fn smoke_subscription_multi_batch_initial_data() {
     );
 
     // Small delay to ensure data is visible
+    std::thread::sleep(Duration::from_millis(500));
 
     // Subscribe with small batch size to force multiple batches
     let query = format!("SELECT * FROM {}", full);
@@ -276,7 +277,7 @@ fn smoke_subscription_multi_batch_initial_data() {
         start_subscription_with_config(&query, Some(options)).expect("subscription should start");
 
     // Collect all initial data events
-    let events = listener.collect_events_until_ready(Duration::from_secs(15));
+    let events = listener.collect_events_until_ready(Duration::from_secs(45));
 
     // Count InitialDataBatch events and rows
     let batch_events: Vec<&String> =

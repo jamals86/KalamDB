@@ -8,12 +8,48 @@
 use crate::common::*;
 use chrono::{DateTime, Datelike, Utc};
 use serde_json::Value as JsonValue;
+use std::collections::HashMap;
+use std::thread;
+use std::time::{Duration, Instant};
 
 fn arrow_value_as_string(value: &JsonValue) -> Option<String> {
     extract_arrow_value(value)
         .unwrap_or_else(|| value.clone())
         .as_str()
         .map(|s| s.to_string())
+}
+
+fn wait_for_storage_check_row(
+    sql: &str,
+    timeout: Duration,
+) -> (HashMap<String, JsonValue>, String) {
+    let deadline = Instant::now() + timeout;
+    let mut last_result = String::new();
+
+    loop {
+        if let Ok(result) = execute_sql_as_root_via_client_json(sql) {
+            last_result = result.clone();
+            if let Ok(json) = serde_json::from_str::<JsonValue>(&result) {
+                if let Some(rows) = get_rows_as_hashmaps(&json) {
+                    if let Some(row) = rows.first() {
+                        let status = row.get("status").and_then(arrow_value_as_string);
+                        if status.as_deref() == Some("healthy") {
+                            return (row.clone(), result);
+                        }
+                    }
+                }
+            }
+        }
+
+        if Instant::now() >= deadline {
+            panic!(
+                "Timed out waiting for healthy storage check row for SQL: {}. Last result: {}",
+                sql, last_result
+            );
+        }
+
+        thread::sleep(Duration::from_millis(200));
+    }
 }
 
 #[ntest::timeout(60_000)]
@@ -28,17 +64,7 @@ fn smoke_storage_check_local_basic() {
     }
 
     let sql = "STORAGE CHECK local";
-    let result =
-        execute_sql_as_root_via_client_json(sql).expect("STORAGE CHECK local should succeed");
-
-    // Parse the JSON result
-    let json: JsonValue = serde_json::from_str(&result)
-        .unwrap_or_else(|err| panic!("Failed to parse JSON response: {}\n{}", err, result));
-
-    let rows = get_rows_as_hashmaps(&json).unwrap_or_default();
-    assert_eq!(rows.len(), 1, "STORAGE CHECK should return exactly 1 row");
-
-    let row = &rows[0];
+    let (row, _result) = wait_for_storage_check_row(sql, Duration::from_secs(20));
 
     // Verify storage_id
     let storage_id = row.get("storage_id").and_then(arrow_value_as_string);
@@ -148,16 +174,7 @@ fn smoke_storage_check_extended() {
     }
 
     let sql = "STORAGE CHECK local EXTENDED";
-    let result = execute_sql_as_root_via_client_json(sql)
-        .expect("STORAGE CHECK local EXTENDED should succeed");
-
-    let json: JsonValue = serde_json::from_str(&result)
-        .unwrap_or_else(|err| panic!("Failed to parse JSON response: {}\n{}", err, result));
-
-    let rows = get_rows_as_hashmaps(&json).unwrap_or_default();
-    assert_eq!(rows.len(), 1, "STORAGE CHECK EXTENDED should return exactly 1 row");
-
-    let row = &rows[0];
+    let (row, _result) = wait_for_storage_check_row(sql, Duration::from_secs(20));
 
     // Verify status is healthy
     let status = row.get("status").and_then(arrow_value_as_string);

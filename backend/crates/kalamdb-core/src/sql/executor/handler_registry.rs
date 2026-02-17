@@ -19,6 +19,7 @@ use dashmap::DashMap;
 use kalamdb_commons::models::TableId;
 use kalamdb_sql::statement_classifier::SqlStatement;
 use std::sync::Arc;
+use tracing::Instrument;
 
 // Import all typed handlers
 use crate::sql::executor::handlers::cluster::{
@@ -753,26 +754,25 @@ impl HandlerRegistry {
         context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
         let stmt_name = statement.name().to_string();
-        let _span = tracing::debug_span!("sql.handler", handler = %stmt_name).entered();
-        // Step 1: Extract statement discriminant for O(1) lookup
-        let key = std::mem::discriminant(statement.kind());
+        let span = tracing::debug_span!("sql.handler", handler = %stmt_name);
+        async {
+            // Step 1: Extract statement discriminant for O(1) lookup
+            let key = std::mem::discriminant(statement.kind());
 
-        // Step 2: Find handler in registry
-        let handler = self.handlers.get(&key).ok_or_else(|| {
-            KalamDbError::InvalidOperation(format!(
-                "No handler registered for statement type '{}'",
-                statement.name()
-            ))
-        })?;
+            // Step 2: Find handler in registry
+            let handler = self.handlers.get(&key).ok_or_else(|| {
+                KalamDbError::InvalidOperation(format!(
+                    "No handler registered for statement type '{}'",
+                    statement.name()
+                ))
+            })?;
 
-        // Step 3: Check authorization (fail-fast)
-        handler.check_authorization(&statement, context).await?;
+            // Step 3: Check authorization (fail-fast)
+            handler.check_authorization(&statement, context).await?;
 
-        // Step 4: Execute statement (session is in context, no need to pass separately)
-        //println!("[DEBUG HandlerRegistry] About to execute handler for statement: {}", statement.name());
-        let result = handler.execute(statement, params, context).await;
-        //println!("[DEBUG HandlerRegistry] Handler returned: {:?}", result.as_ref().map(|r| format!("{:?}", r)).unwrap_or_else(|e| format!("Error: {}", e)));
-        result
+            // Step 4: Execute statement (session is in context, no need to pass separately)
+            handler.execute(statement, params, context).await
+        }.instrument(span).await
     }
 
     /// Check if a handler is registered for a statement type

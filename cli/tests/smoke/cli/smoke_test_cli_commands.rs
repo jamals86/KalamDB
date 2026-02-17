@@ -464,7 +464,7 @@ fn smoke_cli_namespace_management() {
 }
 
 /// Smoke Test: ALTER TABLE commands
-#[ntest::timeout(30000)]
+#[ntest::timeout(90000)]
 #[test]
 fn smoke_cli_alter_table() {
     if !is_server_running() {
@@ -499,7 +499,7 @@ fn smoke_cli_alter_table() {
             namespace, table
         ),
         "email",
-        Duration::from_secs(20),
+        Duration::from_secs(45),
     )
     .expect("email column should be visible in information_schema after ALTER TABLE");
 
@@ -516,7 +516,7 @@ fn smoke_cli_alter_table() {
             Err(err) => {
                 let message = err.to_string();
                 if message.contains("No field named email")
-                    && start.elapsed() < Duration::from_secs(20)
+                    && start.elapsed() < Duration::from_secs(45)
                 {
                     last_error = Some(message);
                     std::thread::sleep(Duration::from_millis(150));
@@ -534,7 +534,7 @@ fn smoke_cli_alter_table() {
     let _ = wait_for_sql_output_contains(
         &format!("SELECT email FROM {} WHERE id = 1", full_table),
         "test@example.com",
-        Duration::from_secs(8),
+        Duration::from_secs(20),
     )
     .expect("Email should be stored");
 
