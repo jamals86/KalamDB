@@ -13,7 +13,7 @@ Faster operations. Lower infrastructure expenses. Zero waste.
 [![Release](https://img.shields.io/github/v/release/jamals86/KalamDB?display_name=tag)](https://github.com/jamals86/KalamDB/releases)
 [![Docker Pulls](https://img.shields.io/docker/pulls/jamals86/kalamdb)](https://hub.docker.com/r/jamals86/kalamdb)
 
-**Latest release:** v0.3.0-alpha1
+**Latest release:** v0.3.0-alpha2
 
 ---
 
