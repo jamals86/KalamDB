@@ -132,17 +132,18 @@ KalamDB includes built-in clustering with **high availability** using **Raft con
 - Role-based access control and authentication
 - `kalam` CLI tool
 - Admin UI with SQL Studio
-- SDK for TypeScript using WASM
+- SDK for TypeScript
 - Support for more storage backends (Azure, GCS, S3-compatible) using ObjectStore 
 - Stronger WebSocket auth and rate limiting
 - Indexes for both cold/hot storages (Manifest + RocksDB)
+- User file storage FILE DataType
+- Query caching and more indexes
+- Consumer groups for stream/user tables
 
 ---
 
 ### 🚧 **In Progress**
 - High-Availability with Raft consensus and multi-raft groups
-- User file storage FILE DataType
-- Consumer groups for stream/user tables
 - Langchain integration
 - Cluster management (snapshotting, backups)
 - Cleanup and simplification of docs and examples
@@ -151,9 +152,7 @@ KalamDB includes built-in clustering with **high availability** using **Raft con
 
 ### 📋 **Planned / Future**
 - Backup/restore and system catalog tables
-- Query caching and more indexes
 - Run workflows on data changes (triggers)
-- File storage and BLOB support
 - Richer search (full-text, vector embeddings as DataType)
 - Connectors to external data sources (Flink, Kafka, etc)
 - Transactions and constraints

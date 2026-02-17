@@ -5,10 +5,42 @@ use datafusion::datasource::TableProvider;
 use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::models::schemas::TableDefinition;
 use kalamdb_commons::models::{StorageId, TableId};
+use kalamdb_commons::schemas::{TableOptions, TableType};
+use kalamdb_commons::TableAccess;
 use kalamdb_filestore::StorageCached;
+use kalamdb_tables::KalamTableProvider;
 use parking_lot::RwLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+
+/// Lightweight table info for file operations
+#[derive(Debug, Clone)]
+pub struct TableEntry {
+    /// Storage ID for the table
+    pub storage_id: StorageId,
+    /// Table type (User or Shared)
+    pub table_type: TableType,
+    /// Access level (for shared tables)
+    pub access_level: Option<TableAccess>,
+}
+
+/// Cached provider wrapper — either a full `KalamTableProvider` (User/Shared/Stream)
+/// or a plain `TableProvider` (System tables that don't support DML).
+pub enum CachedProvider {
+    /// User/Shared/Stream tables with full DML support via `KalamTableProvider`
+    Kalam(Arc<dyn KalamTableProvider>),
+    /// System tables (read-only, DataFusion `TableProvider` only)
+    System(Arc<dyn TableProvider + Send + Sync>),
+}
+
+impl Clone for CachedProvider {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Kalam(p) => Self::Kalam(Arc::clone(p)),
+            Self::System(p) => Self::System(Arc::clone(p)),
+        }
+    }
+}
 
 /// Cached table data containing all metadata and schema information
 ///
@@ -17,7 +49,6 @@ use std::sync::Arc;
 ///
 /// **Performance Note**: Moka cache handles LRU eviction automatically based on
 /// access patterns, so we only track timestamps for metrics and debugging.
-#[derive(Debug)]
 pub struct CachedTableData {
     /// Full schema definition with all columns
     pub table: Arc<TableDefinition>,
@@ -27,15 +58,6 @@ pub struct CachedTableData {
 
     /// Current schema version number
     pub schema_version: u32,
-
-    /// Memoized Arrow schema for DataFusion integration (Phase 10, US1, FR-002)
-    ///
-    /// Computed once on first access via lazy initialization with double-check locking.
-    /// Eliminates repeated `to_arrow_schema()` calls (50-100μs each) after initial computation.
-    ///
-    /// **Performance**: 50-100× speedup for repeated schema access (75μs → 1.5μs)
-    /// **Thread Safety**: RwLock allows concurrent reads, exclusive writes for initialization
-    arrow_schema: Arc<RwLock<Option<Arc<datafusion::arrow::datatypes::Schema>>>>,
 
     /// Last access timestamp in milliseconds since Unix epoch.
     ///
@@ -50,14 +72,27 @@ pub struct CachedTableData {
     /// Used for Parquet row-group statistics keyed by stable column_id
     indexed_columns: Vec<(u64, String)>,
 
-    /// Cached DataFusion TableProvider for this table
+    /// Cached KalamDB table provider (User/Shared/Stream or System)
     ///
-    /// Lazily initialized when first needed. Stores the provider so it can be
-    /// reused across queries without recreating. When the table is evicted from
-    /// cache, the provider is automatically cleaned up.
+    /// Lazily initialized when first needed. For User/Shared/Stream tables,
+    /// stores a `KalamTableProvider` that supports both DataFusion scans and
+    /// direct DML (fast INSERT bypass). For System tables, stores a plain
+    /// `TableProvider` (read-only).
     ///
     /// **Thread Safety**: RwLock allows concurrent reads, exclusive writes for initialization
-    provider: Arc<RwLock<Option<Arc<dyn TableProvider + Send + Sync>>>>,
+    provider: Arc<RwLock<Option<CachedProvider>>>,
+}
+
+impl std::fmt::Debug for CachedTableData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CachedTableData")
+            .field("table", &self.table)
+            .field("storage_id", &self.storage_id)
+            .field("schema_version", &self.schema_version)
+            .field("bloom_filter_columns", &self.bloom_filter_columns)
+            .field("indexed_columns", &self.indexed_columns)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Clone for CachedTableData {
@@ -66,7 +101,6 @@ impl Clone for CachedTableData {
             table: Arc::clone(&self.table),
             storage_id: self.storage_id.clone(),
             schema_version: self.schema_version,
-            arrow_schema: Arc::clone(&self.arrow_schema),
             last_accessed_ms: AtomicU64::new(self.last_accessed_ms.load(Ordering::Relaxed)),
             bloom_filter_columns: self.bloom_filter_columns.clone(),
             indexed_columns: self.indexed_columns.clone(),
@@ -85,7 +119,6 @@ impl CachedTableData {
             table: schema,
             storage_id,
             schema_version,
-            arrow_schema: Arc::new(RwLock::new(None)),
             last_accessed_ms: AtomicU64::new(Self::now_millis()),
             bloom_filter_columns,
             indexed_columns,
@@ -157,48 +190,36 @@ impl CachedTableData {
         self.last_accessed_ms.load(Ordering::Relaxed)
     }
 
-    /// Get or compute Arrow schema with double-check locking (Phase 10, US1, FR-003)
+    /// Get Arrow schema from the cached provider or compute from TableDefinition
     ///
-    /// **Performance**: First call computes schema (~75μs), subsequent calls return cached Arc (~1.5μs)
-    /// This achieves 50-100× speedup for repeated access.
-    ///
-    /// **Thread Safety**: Uses double-check locking pattern:
-    /// 1. Fast path: Read lock → check if Some → return Arc::clone (concurrent reads)
-    /// 2. Slow path: Write lock → double-check → compute → cache → return (exclusive write)
+    /// If a provider is cached, returns its schema directly (zero-cost).
+    /// Otherwise computes from the TableDefinition.
     ///
     /// # Returns
     /// Arc-wrapped Arrow Schema for zero-copy sharing across TableProvider instances
-    ///
-    /// # Panics
-    /// Panics if RwLock is poisoned (unrecoverable lock corruption)
     pub fn arrow_schema(&self) -> Result<Arc<datafusion::arrow::datatypes::Schema>, KalamDbError> {
-        // Fast path: Check if already computed (concurrent reads allowed)
-        {
-            let read_guard = self.arrow_schema.read();
-            if let Some(schema) = read_guard.as_ref() {
-                return Ok(Arc::clone(schema)); // 1.5μs cached access
-            }
+        // Fast path: get schema from cached provider (already computed and stored there)
+        if let Some(provider) = self.get_provider() {
+            return Ok(provider.schema());
         }
 
-        // Slow path: Compute and cache (exclusive write)
-        {
-            let mut write_guard = self.arrow_schema.write();
+        // Slow path: compute from TableDefinition (provider not yet created)
+        self.table
+            .to_arrow_schema()
+            .into_schema_error("Failed to convert to Arrow schema")
+    }
 
-            // Double-check: Another thread may have computed while we waited for write lock
-            if let Some(schema) = write_guard.as_ref() {
-                return Ok(Arc::clone(schema));
-            }
-
-            // Compute Arrow schema from TableDefinition (~75μs first time)
-            let arrow_schema = self
-                .table
-                .to_arrow_schema()
-                .into_schema_error("Failed to convert to Arrow schema")?;
-
-            // Cache for future access
-            *write_guard = Some(Arc::clone(&arrow_schema));
-
-            Ok(arrow_schema)
+    /// Build a `TableEntry` from this cached data
+    pub fn table_entry(&self) -> TableEntry {
+        TableEntry {
+            storage_id: self.storage_id.clone(),
+            table_type: self.table.table_type.into(),
+            access_level: match &self.table.table_options {
+                TableOptions::Shared(opts) => {
+                    Some(opts.access_level.clone().unwrap_or(TableAccess::Private))
+                },
+                TableOptions::User(_) | TableOptions::System(_) | TableOptions::Stream(_) => None,
+            },
         }
     }
 
@@ -256,23 +277,42 @@ impl CachedTableData {
 
     /// Get the cached DataFusion TableProvider for this table
     ///
-    /// Returns None if no provider has been set yet.
+    /// Returns the underlying `TableProvider` regardless of whether this is
+    /// a `KalamTableProvider` (User/Shared/Stream) or plain System provider.
+    /// Uses trait upcasting for `KalamTableProvider` → `TableProvider`.
     ///
     /// **Performance**: O(1) access with read lock
     pub fn get_provider(&self) -> Option<Arc<dyn TableProvider + Send + Sync>> {
         let guard = self.provider.read();
-        guard.as_ref().map(Arc::clone)
+        guard.as_ref().map(|cached| match cached {
+            CachedProvider::Kalam(p) => Arc::clone(p) as Arc<dyn TableProvider + Send + Sync>,
+            CachedProvider::System(p) => Arc::clone(p),
+        })
     }
 
-    /// Set the DataFusion TableProvider for this table
+    /// Get the `KalamTableProvider` for fast INSERT bypass
     ///
-    /// Overwrites any existing provider. The provider is automatically
-    /// cleaned up when the CachedTableData is dropped.
+    /// Returns `Some` for User/Shared/Stream tables, `None` for System tables.
     ///
-    /// **Performance**: O(1) with write lock
-    pub fn set_provider(&self, provider: Arc<dyn TableProvider + Send + Sync>) {
+    /// **Performance**: O(1) access with read lock
+    pub fn get_kalam_provider(&self) -> Option<Arc<dyn KalamTableProvider>> {
+        let guard = self.provider.read();
+        match guard.as_ref() {
+            Some(CachedProvider::Kalam(p)) => Some(Arc::clone(p)),
+            _ => None,
+        }
+    }
+
+    /// Set a `KalamTableProvider` (User/Shared/Stream tables)
+    pub fn set_kalam_provider(&self, provider: Arc<dyn KalamTableProvider>) {
         let mut guard = self.provider.write();
-        *guard = Some(provider);
+        *guard = Some(CachedProvider::Kalam(provider));
+    }
+
+    /// Set a plain `TableProvider` for system tables
+    pub fn set_system_provider(&self, provider: Arc<dyn TableProvider + Send + Sync>) {
+        let mut guard = self.provider.write();
+        *guard = Some(CachedProvider::System(provider));
     }
 
     /// Clear the cached provider (used during table invalidation)

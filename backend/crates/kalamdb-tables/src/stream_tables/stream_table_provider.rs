@@ -562,3 +562,12 @@ impl TableProvider for StreamTableProvider {
         self.base_statistics()
     }
 }
+
+// KalamTableProvider: extends TableProvider with KalamDB-specific DML
+#[async_trait]
+impl crate::utils::dml_provider::KalamTableProvider for StreamTableProvider {
+    async fn insert_rows(&self, user_id: &UserId, rows: Vec<Row>) -> Result<usize, KalamDbError> {
+        let keys = self.insert_batch(user_id, rows).await?;
+        Ok(keys.len())
+    }
+}

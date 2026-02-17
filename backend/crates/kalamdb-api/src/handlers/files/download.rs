@@ -32,8 +32,8 @@ pub async fn download_file(
 
     // Look up table definition from schema registry
     let schema_registry = app_context.schema_registry();
-    let table_entry = match schema_registry.get_table_entry(&table_id) {
-        Some(entry) => entry,
+    let table_entry = match schema_registry.get(&table_id) {
+        Some(cached) => cached.table_entry(),
         None => {
             return HttpResponse::NotFound().json(serde_json::json!({
                 "error": format!("Table '{}' not found", table_id),

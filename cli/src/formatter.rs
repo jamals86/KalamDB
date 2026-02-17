@@ -426,7 +426,7 @@ impl OutputFormatter {
     ) -> String {
         match data_type {
             Some(KalamDataType::Timestamp) => {
-                self.format_timestamp_value(value, TimestampUnit::Microseconds)
+                self.format_timestamp_value(value, TimestampUnit::Nanoseconds)
             },
             Some(KalamDataType::Date) => self.format_date_value(value),
             Some(KalamDataType::DateTime) => {
@@ -479,6 +479,7 @@ impl OutputFormatter {
             },
             _ => {
                 let ms = self.parse_i64(value).map(|raw| match unit {
+                    TimestampUnit::Nanoseconds => raw / 1_000_000,
                     TimestampUnit::Microseconds => raw / 1000,
                     TimestampUnit::Auto => {
                         if raw.abs() >= 100_000_000_000_000 {
@@ -518,6 +519,7 @@ impl OutputFormatter {
 }
 
 enum TimestampUnit {
+    Nanoseconds,
     Microseconds,
     Auto,
 }

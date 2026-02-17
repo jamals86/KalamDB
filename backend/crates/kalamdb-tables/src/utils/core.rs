@@ -317,4 +317,39 @@ impl TableProviderCore {
             log::warn!("Topic publish failed for table {}: {}", table_id, e);
         }
     }
+
+    /// Publish a batch of row changes to matching topics.
+    ///
+    /// Uses `publish_batch_for_table` which batches RocksDB writes, reuses JSON
+    /// serialization, and acquires partition locks once per partition instead of
+    /// once per row — significantly faster than calling `publish_to_topics()` in a loop.
+    pub async fn publish_batch_to_topics(
+        &self,
+        table_id: &TableId,
+        op: kalamdb_commons::models::TopicOp,
+        rows: &[kalamdb_commons::models::rows::Row],
+        user_id: Option<&kalamdb_commons::models::UserId>,
+    ) {
+        if rows.is_empty() {
+            return;
+        }
+
+        let topic_pub = match self.services.topic_publisher.as_ref() {
+            Some(tp) if tp.has_topics_for_table(table_id) => tp,
+            _ => return,
+        };
+
+        // Leadership check: only leader publishes to avoid duplicates in cluster mode.
+        let is_leader = match user_id {
+            Some(uid) => self.services.cluster_coordinator.is_leader_for_user(uid).await,
+            None => self.services.cluster_coordinator.is_leader_for_shared().await,
+        };
+        if !is_leader {
+            return;
+        }
+
+        if let Err(e) = topic_pub.publish_batch_for_table(table_id, op, rows, user_id) {
+            log::warn!("Topic batch publish failed for table {}: {}", table_id, e);
+        }
+    }
 }

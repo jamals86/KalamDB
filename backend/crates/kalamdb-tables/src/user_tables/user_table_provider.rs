@@ -37,7 +37,6 @@ use kalamdb_store::EntityStore;
 use std::any::Any;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
-use tracing::Instrument;
 
 // Arrow <-> JSON helpers
 use crate::utils::version_resolution::{merge_versioned_rows, parquet_batch_to_rows};
@@ -632,20 +631,22 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         let has_topics = self.core.has_topic_routes(&table_id);
         let has_live_subs = notification_service.has_subscribers(Some(&user_id), &table_id);
         if has_topics || has_live_subs {
-            for (_row_key, entity) in entries.iter() {
-                // Build complete row including system columns (_seq, _deleted)
-                let row = Self::build_notification_row(entity);
-                if has_topics {
-                    self.core
-                        .publish_to_topics(
-                            &table_id,
-                            kalamdb_commons::models::TopicOp::Insert,
-                            &row,
-                            Some(&user_id),
-                        )
-                        .await;
-                }
-                if has_live_subs {
+            // Build notification rows
+            let rows: Vec<_> = entries.iter().map(|(_row_key, entity)| Self::build_notification_row(entity)).collect();
+
+            // Batch publish to topics (single RocksDB WriteBatch + single lock per partition)
+            if has_topics {
+                self.core
+                    .publish_batch_to_topics(
+                        &table_id,
+                        kalamdb_commons::models::TopicOp::Insert,
+                        &rows,
+                        Some(&user_id),
+                    )
+                    .await;
+            }
+            if has_live_subs {
+                for row in rows {
                     let notification = ChangeNotification::insert(table_id.clone(), row);
                     notification_service.notify_table_change(
                         Some(user_id.clone()),
@@ -1310,5 +1311,14 @@ impl TableProvider for UserTableProvider {
         }
 
         crate::utils::datafusion_dml::rows_affected_plan(state, updated).await
+    }
+}
+
+// KalamTableProvider: extends TableProvider with KalamDB-specific DML
+#[async_trait]
+impl crate::utils::dml_provider::KalamTableProvider for UserTableProvider {
+    async fn insert_rows(&self, user_id: &UserId, rows: Vec<Row>) -> Result<usize, KalamDbError> {
+        let keys = self.insert_batch(user_id, rows).await?;
+        Ok(keys.len())
     }
 }

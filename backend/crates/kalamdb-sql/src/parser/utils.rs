@@ -29,17 +29,33 @@ pub fn parse_sql_statements(
         .parse_statements()
 }
 
+/// Parse a single SQL statement using KalamDB defaults and GenericDialect.
+pub fn parse_single_statement(sql: &str) -> Result<Option<Statement>, ParserError> {
+    let dialect = GenericDialect {};
+    let mut statements = parse_sql_statements(sql, &dialect)?;
+    if statements.len() != 1 {
+        return Ok(None);
+    }
+    Ok(statements.pop())
+}
+
 /// Extract the target table for INSERT/UPDATE/DELETE DML statements.
 ///
 /// Returns None if parsing fails or the statement is not INSERT/UPDATE/DELETE.
 pub fn extract_dml_table_id(sql: &str, default_namespace: &str) -> Option<TableId> {
     let dialect = GenericDialect {};
     let statements = parse_sql_statements(sql, &dialect).ok()?;
-    if statements.is_empty() {
-        return None;
-    }
+    statements
+        .first()
+        .and_then(|statement| extract_dml_table_id_from_statement(statement, default_namespace))
+}
 
-    match &statements[0] {
+/// Extract the target table for INSERT/UPDATE/DELETE from a parsed SQL statement.
+pub fn extract_dml_table_id_from_statement(
+    statement: &Statement,
+    default_namespace: &str,
+) -> Option<TableId> {
+    match statement {
         Statement::Insert(insert) => {
             let table_parts: Vec<String> = match &insert.table {
                 TableObject::TableName(obj_name) => obj_name
@@ -52,12 +68,7 @@ pub fn extract_dml_table_id(sql: &str, default_namespace: &str) -> Option<TableI
                     .collect(),
                 _ => return None,
             };
-
-            match table_parts.len() {
-                1 => Some(TableId::from_strings(default_namespace, &table_parts[0])),
-                2 => Some(TableId::from_strings(&table_parts[0], &table_parts[1])),
-                _ => None,
-            }
+            table_id_from_parts(&table_parts, default_namespace)
         },
         Statement::Update(sqlparser::ast::Update { table, .. }) => match &table.relation {
             TableFactor::Table { name, .. } => {
@@ -69,12 +80,7 @@ pub fn extract_dml_table_id(sql: &str, default_namespace: &str) -> Option<TableI
                         _ => None,
                     })
                     .collect();
-
-                match parts.len() {
-                    1 => Some(TableId::from_strings(default_namespace, &parts[0])),
-                    2 => Some(TableId::from_strings(&parts[0], &parts[1])),
-                    _ => None,
-                }
+                table_id_from_parts(&parts, default_namespace)
             },
             _ => None,
         },
@@ -98,13 +104,16 @@ pub fn extract_dml_table_id(sql: &str, default_namespace: &str) -> Option<TableI
                     _ => None,
                 })
                 .collect();
-
-            match parts.len() {
-                1 => Some(TableId::from_strings(default_namespace, &parts[0])),
-                2 => Some(TableId::from_strings(&parts[0], &parts[1])),
-                _ => None,
-            }
+            table_id_from_parts(&parts, default_namespace)
         },
+        _ => None,
+    }
+}
+
+fn table_id_from_parts(parts: &[String], default_namespace: &str) -> Option<TableId> {
+    match parts.len() {
+        1 => Some(TableId::from_strings(default_namespace, &parts[0])),
+        2 => Some(TableId::from_strings(&parts[0], &parts[1])),
         _ => None,
     }
 }

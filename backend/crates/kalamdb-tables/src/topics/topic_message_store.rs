@@ -150,6 +150,31 @@ impl TopicMessageStore {
 
         Ok(count)
     }
+
+    /// Batch-write pre-encoded message key-value pairs directly to storage.
+    ///
+    /// Unlike `batch_put()` on EntityStore, this skips per-entry serialization
+    /// and partition cloning because callers have already encoded the keys and
+    /// values. This is designed for the publish hot-path where messages are
+    /// serialized *outside* the partition write lock to minimise lock hold time.
+    pub fn batch_put_raw(
+        &self,
+        entries: Vec<(Vec<u8>, Vec<u8>)>,
+    ) -> kalamdb_store::storage_trait::Result<()> {
+        use kalamdb_commons::storage::Operation;
+
+        let partition = self.partition();
+        let operations: Vec<Operation> = entries
+            .into_iter()
+            .map(|(key, value)| Operation::Put {
+                partition: partition.clone(),
+                key,
+                value,
+            })
+            .collect();
+
+        self.backend().batch(operations)
+    }
 }
 
 /// Implement EntityStore trait for typed CRUD operations

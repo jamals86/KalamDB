@@ -8,6 +8,7 @@
 pub mod base;
 pub mod core;
 pub mod datafusion_dml;
+pub mod dml_provider;
 pub mod parquet;
 pub mod pk; // Primary key utilities and existence checking
 pub mod pk_utils; // Phase 13.7: Shared PK extraction and bloom filter utilities
@@ -32,6 +33,7 @@ pub mod streams {
 // Re-export key types for convenience
 pub use base::{BaseTableProvider, TableProviderCore};
 pub use core::TableServices;
+pub use dml_provider::KalamTableProvider;
 pub use shared::SharedTableProvider;
 pub use streams::StreamTableProvider;
 pub use users::UserTableProvider;

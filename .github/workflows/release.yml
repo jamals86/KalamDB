@@ -3,11 +3,6 @@ name: Release
 on:
   workflow_dispatch:
     inputs:
-      version_tag:
-        description: "Version tag for release (e.g. v0.3.0)"
-        required: true
-        default: "v0.3.0"
-
       platforms:
         description: "Comma-separated platforms (like --platforms). Ignored if all_platforms=true"
         required: false
@@ -17,10 +12,16 @@ on:
         description: "Build all platforms (like --all-platforms)"
         type: boolean
         required: false
-        default: false
+        default: true
 
       github_release:
         description: "Publish GitHub Release"
+        type: boolean
+        required: false
+        default: true
+
+      pre_release:
+        description: "Mark GitHub release as pre-release"
         type: boolean
         required: false
         default: true
@@ -40,7 +41,7 @@ on:
         description: "Publish TypeScript SDK to npm"
         type: boolean
         required: false
-        default: true
+        default: false
 
       force_npm_publish:
         description: "Force republish (unpublish existing version first)"
@@ -57,6 +58,38 @@ env:
   DEFAULT_PLATFORMS: "linux-x86_64,macos-aarch64,windows-x86_64"
 
 jobs:
+  read_version:
+    name: Read Version from Cargo.toml
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      pre_release: ${{ steps.version.outputs.pre_release }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read version and set outputs
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(sed -n '/^\[workspace.package\]/,/^\[/{s/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p}' Cargo.toml | head -n1)"
+          if [[ -z "$VERSION" ]]; then
+            echo "Failed to read [workspace.package].version from Cargo.toml" >&2
+            exit 1
+          fi
+          TAG="v${VERSION}"
+          PRE_RELEASE="${{ github.event.inputs.pre_release }}"
+          if [[ -z "$PRE_RELEASE" ]]; then
+            PRE_RELEASE="true"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "pre_release=$PRE_RELEASE" >> "$GITHUB_OUTPUT"
+          echo "✅ Version: $VERSION, Tag: $TAG, Pre-release: $PRE_RELEASE"
+
   build_ui:
     name: Build Admin UI
     runs-on: ubuntu-latest
@@ -116,27 +149,11 @@ jobs:
   build_cli_linux_x86_64:
     name: Build CLI Linux x86_64
     runs-on: ubuntu-22.04
+    needs: read_version
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Set tag/version
-        id: vars
-        shell: bash
-        run: |
-          set -euo pipefail
-          TAG="${GITHUB_REF_NAME:-}"
-          if [[ -z "$TAG" || "$TAG" == "" ]] || [[ "$TAG" != v* ]]; then
-            TAG="${{ github.event.inputs.version_tag }}"
-          fi
-          if [[ -z "$TAG" || "$TAG" != v* ]]; then
-            echo "version_tag must start with 'v' (example: v0.1.2). Got: '$TAG'" >&2
-            exit 1
-          fi
-          VERSION="${TAG#v}"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -172,7 +189,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          VERSION="${{ steps.vars.outputs.version }}"
+          VERSION="${{ needs.read_version.outputs.version }}"
           mkdir -p dist/$VERSION
           CLI_OUT="kalamcli-${VERSION}-linux-x86_64"
           cp "target/x86_64-unknown-linux-gnu/release-dist/kalam" "dist/$VERSION/$CLI_OUT"
@@ -183,33 +200,17 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: dist-cli-linux-x86_64
-          path: dist/${{ steps.vars.outputs.version }}/*.tar.gz
+          path: dist/${{ needs.read_version.outputs.version }}/*.tar.gz
           if-no-files-found: error
 
   build_cli_windows_x86_64:
     name: Build CLI Windows x86_64
     runs-on: ubuntu-latest
+    needs: read_version
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Set tag/version
-        id: vars
-        shell: bash
-        run: |
-          set -euo pipefail
-          TAG="${GITHUB_REF_NAME:-}"
-          if [[ -z "$TAG" || "$TAG" == "" ]] || [[ "$TAG" != v* ]]; then
-            TAG="${{ github.event.inputs.version_tag }}"
-          fi
-          if [[ -z "$TAG" || "$TAG" != v* ]]; then
-            echo "version_tag must start with 'v' (example: v0.1.2). Got: '$TAG'" >&2
-            exit 1
-          fi
-          VERSION="${TAG#v}"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -249,7 +250,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          VERSION="${{ steps.vars.outputs.version }}"
+          VERSION="${{ needs.read_version.outputs.version }}"
           mkdir -p dist/$VERSION
           CLI_OUT="kalamcli-${VERSION}-windows-x86_64.exe"
           cp "target/x86_64-pc-windows-gnu/release-dist/kalam.exe" "dist/$VERSION/$CLI_OUT"
@@ -270,33 +271,17 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: dist-cli-windows-x86_64
-          path: dist/${{ steps.vars.outputs.version }}/*.zip
+          path: dist/${{ needs.read_version.outputs.version }}/*.zip
           if-no-files-found: error
 
   build_cli_macos_arm:
     name: Build CLI macOS ARM
     runs-on: macos-14
+    needs: read_version
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Set tag/version
-        id: vars
-        shell: bash
-        run: |
-          set -euo pipefail
-          TAG="${GITHUB_REF_NAME:-}"
-          if [[ -z "$TAG" || "$TAG" == "" ]] || [[ "$TAG" != v* ]]; then
-            TAG="${{ github.event.inputs.version_tag }}"
-          fi
-          if [[ -z "$TAG" || "$TAG" != v* ]]; then
-            echo "version_tag must start with 'v' (example: v0.1.2). Got: '$TAG'" >&2
-            exit 1
-          fi
-          VERSION="${TAG#v}"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -331,7 +316,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          VERSION="${{ steps.vars.outputs.version }}"
+          VERSION="${{ needs.read_version.outputs.version }}"
           mkdir -p dist/$VERSION
           CLI_OUT="kalamcli-${VERSION}-macos-aarch64"
           cp "target/aarch64-apple-darwin/release-dist/kalam" "dist/$VERSION/$CLI_OUT"
@@ -342,15 +327,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: dist-cli-macos-arm
-          path: dist/${{ steps.vars.outputs.version }}/*.tar.gz
+          path: dist/${{ needs.read_version.outputs.version }}/*.tar.gz
           if-no-files-found: error
 
   build_linux_x86_64:
     name: Build Server Linux x86_64
     runs-on: ubuntu-22.04
-    needs: build_ui
+    needs: [build_ui, read_version]
     env:
-      VERSION_TAG_INPUT: ${{ github.event.inputs.version_tag }}
       PLATFORMS_INPUT: ${{ github.event.inputs.platforms }}
       ALL_PLATFORMS_INPUT: ${{ github.event.inputs.all_platforms }}
 
@@ -358,20 +342,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set tag/version
+      - name: Determine platforms
         id: vars
         shell: bash
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME:-}"
-          if [[ -z "$TAG" || "$TAG" == "" ]] || [[ "$TAG" != v* ]]; then
-            TAG="${VERSION_TAG_INPUT:-}"
-          fi
-          if [[ -z "$TAG" || "$TAG" != v* ]]; then
-            echo "version_tag must start with 'v' (example: v0.1.2). Got: '$TAG'" >&2
-            exit 1
-          fi
-          VERSION="${TAG#v}"
 
           # Determine requested platforms for this run
           PLATFORMS_INPUT="${PLATFORMS_INPUT:-}"
@@ -391,8 +366,6 @@ jobs:
           {
             echo "platforms=$PLATFORMS_INPUT"
             echo "build_linux=$BUILD_LINUX"
-            echo "tag=$TAG"
-            echo "version=$VERSION"
           } >> "$GITHUB_OUTPUT"
 
       - name: Download UI dist
@@ -443,7 +416,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          VERSION="${{ steps.vars.outputs.version }}"
+          VERSION="${{ needs.read_version.outputs.version }}"
           mkdir -p dist/$VERSION
 
           SRV_OUT="kalamdb-server-${VERSION}-linux-x86_64"
@@ -458,15 +431,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: dist-linux-x86_64
-          path: dist/${{ steps.vars.outputs.version }}/*
+          path: dist/${{ needs.read_version.outputs.version }}/*
           if-no-files-found: error
 
   build_linux_aarch64:
     name: Build Server Linux ARM64
     runs-on: ubuntu-latest
-    needs: build_ui
+    needs: [build_ui, read_version]
     env:
-      VERSION_TAG_INPUT: ${{ github.event.inputs.version_tag }}
       PLATFORMS_INPUT: ${{ github.event.inputs.platforms }}
       ALL_PLATFORMS_INPUT: ${{ github.event.inputs.all_platforms }}
 
@@ -474,28 +446,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set tag/version
+      - name: Set build flags
         id: vars
         shell: bash
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME:-}"
-          if [[ -z "$TAG" || "$TAG" == "" ]] || [[ "$TAG" != v* ]]; then
-            TAG="${VERSION_TAG_INPUT:-}"
-          fi
-          if [[ -z "$TAG" || "$TAG" != v* ]]; then
-            echo "version_tag must start with 'v' (example: v0.1.2). Got: '$TAG'" >&2
-            exit 1
-          fi
-          VERSION="${TAG#v}"
 
           # Always build linux-aarch64 for Docker multi-arch support
           BUILD_LINUX_ARM=true
 
           {
             echo "build_linux_arm=$BUILD_LINUX_ARM"
-            echo "tag=$TAG"
-            echo "version=$VERSION"
           } >> "$GITHUB_OUTPUT"
 
       - name: Download UI dist
@@ -544,7 +505,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          VERSION="${{ steps.vars.outputs.version }}"
+          VERSION="${{ needs.read_version.outputs.version }}"
           mkdir -p dist/$VERSION
 
           SRV_OUT="kalamdb-server-${VERSION}-linux-aarch64"
@@ -559,33 +520,17 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: dist-linux-aarch64
-          path: dist/${{ steps.vars.outputs.version }}/*
+          path: dist/${{ needs.read_version.outputs.version }}/*
           if-no-files-found: error
 
   build_cli_linux_aarch64:
     name: Build CLI Linux ARM64
     runs-on: ubuntu-latest
+    needs: read_version
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Set tag/version
-        id: vars
-        shell: bash
-        run: |
-          set -euo pipefail
-          TAG="${GITHUB_REF_NAME:-}"
-          if [[ -z "$TAG" || "$TAG" == "" ]] || [[ "$TAG" != v* ]]; then
-            TAG="${{ github.event.inputs.version_tag }}"
-          fi
-          if [[ -z "$TAG" || "$TAG" != v* ]]; then
-            echo "version_tag must start with 'v' (example: v0.1.2). Got: '$TAG'" >&2
-            exit 1
-          fi
-          VERSION="${TAG#v}"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -620,7 +565,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          VERSION="${{ steps.vars.outputs.version }}"
+          VERSION="${{ needs.read_version.outputs.version }}"
           mkdir -p dist/$VERSION
           CLI_OUT="kalamcli-${VERSION}-linux-aarch64"
           cp "target/aarch64-unknown-linux-gnu/docker/kalam" "dist/$VERSION/$CLI_OUT"
@@ -631,15 +576,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: dist-cli-linux-aarch64
-          path: dist/${{ steps.vars.outputs.version }}/*.tar.gz
+          path: dist/${{ needs.read_version.outputs.version }}/*.tar.gz
           if-no-files-found: error
 
   build_windows_x86_64:
     name: Build Windows x86_64
     runs-on: ubuntu-latest
-    needs: build_ui
+    needs: [build_ui, read_version]
     env:
-      VERSION_TAG_INPUT: ${{ github.event.inputs.version_tag }}
       PLATFORMS_INPUT: ${{ github.event.inputs.platforms }}
       ALL_PLATFORMS_INPUT: ${{ github.event.inputs.all_platforms }}
 
@@ -647,20 +591,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set tag/version
+      - name: Determine platforms
         id: vars
         shell: bash
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME:-}"
-          if [[ -z "$TAG" || "$TAG" == "" ]] || [[ "$TAG" != v* ]]; then
-            TAG="${VERSION_TAG_INPUT:-}"
-          fi
-          if [[ -z "$TAG" || "$TAG" != v* ]]; then
-            echo "version_tag must start with 'v' (example: v0.1.2). Got: '$TAG'" >&2
-            exit 1
-          fi
-          VERSION="${TAG#v}"
 
           PLATFORMS_INPUT="${PLATFORMS_INPUT:-}"
           if [[ -z "${PLATFORMS_INPUT}" ]]; then
@@ -679,8 +614,6 @@ jobs:
           {
             echo "platforms=$PLATFORMS_INPUT"
             echo "build_windows=$BUILD_WINDOWS"
-            echo "tag=$TAG"
-            echo "version=$VERSION"
           } >> "$GITHUB_OUTPUT"
 
       - name: Download UI dist
@@ -735,7 +668,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          VERSION="${{ steps.vars.outputs.version }}"
+          VERSION="${{ needs.read_version.outputs.version }}"
           mkdir -p dist/$VERSION
 
           SRV_OUT="kalamdb-server-${VERSION}-windows-x86_64.exe"
@@ -760,15 +693,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: dist-windows-x86_64
-          path: dist/${{ steps.vars.outputs.version }}/*
+          path: dist/${{ needs.read_version.outputs.version }}/*
           if-no-files-found: error
 
   build_macos_arm:
     name: Build macOS ARM
     runs-on: macos-14
-    needs: build_ui
+    needs: [build_ui, read_version]
     env:
-      VERSION_TAG_INPUT: ${{ github.event.inputs.version_tag }}
       PLATFORMS_INPUT: ${{ github.event.inputs.platforms }}
       ALL_PLATFORMS_INPUT: ${{ github.event.inputs.all_platforms }}
 
@@ -776,20 +708,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set tag/version
+      - name: Determine platforms
         id: vars
         shell: bash
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME:-}"
-          if [[ -z "$TAG" || "$TAG" == "" ]] || [[ "$TAG" != v* ]]; then
-            TAG="${VERSION_TAG_INPUT:-}"
-          fi
-          if [[ -z "$TAG" || "$TAG" != v* ]]; then
-            echo "version_tag must start with 'v' (example: v0.1.2). Got: '$TAG'" >&2
-            exit 1
-          fi
-          VERSION="${TAG#v}"
 
           PLATFORMS_INPUT="${PLATFORMS_INPUT:-}"
           if [[ -z "${PLATFORMS_INPUT}" ]]; then
@@ -808,8 +731,6 @@ jobs:
           {
             echo "platforms=$PLATFORMS_INPUT"
             echo "build_macos=$BUILD_MACOS"
-            echo "tag=$TAG"
-            echo "version=$VERSION"
           } >> "$GITHUB_OUTPUT"
 
       - name: Download UI dist
@@ -898,7 +819,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          VERSION="${{ steps.vars.outputs.version }}"
+          VERSION="${{ needs.read_version.outputs.version }}"
           mkdir -p dist/$VERSION
 
           SRV_OUT="kalamdb-server-${VERSION}-macos-aarch64"
@@ -913,7 +834,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: dist-macos-arm
-          path: dist/${{ steps.vars.outputs.version }}/*
+          path: dist/${{ needs.read_version.outputs.version }}/*
           if-no-files-found: error
 
   # ═══════════════════════════════════════════════════════════════════════════
@@ -925,31 +846,13 @@ jobs:
     needs:
       - build_linux_x86_64
       - build_cli_linux_x86_64
+      - read_version
     # Continue even if tests fail - will be marked as warning
     continue-on-error: true
-    env:
-      VERSION_TAG_INPUT: ${{ github.event.inputs.version_tag }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Set tag/version
-        id: vars
-        shell: bash
-        run: |
-          set -euo pipefail
-          TAG="${GITHUB_REF_NAME:-}"
-          if [[ -z "$TAG" || "$TAG" == "" ]] || [[ "$TAG" != v* ]]; then
-            TAG="${VERSION_TAG_INPUT:-}"
-          fi
-          if [[ -z "$TAG" || "$TAG" != v* ]]; then
-            echo "version_tag must start with 'v' (example: v0.1.2). Got: '$TAG'" >&2
-            exit 1
-          fi
-          VERSION="${TAG#v}"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Download server binary
         uses: actions/download-artifact@v4
@@ -989,7 +892,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          VERSION="${{ steps.vars.outputs.version }}"
+          VERSION="${{ needs.read_version.outputs.version }}"
           
           # Extract all tar.gz archives
           find dist -name "*.tar.gz" -type f -exec tar -xzf {} -C dist/ \;
@@ -1130,39 +1033,19 @@ jobs:
       - build_linux_aarch64
       - build_windows_x86_64
       - build_macos_arm
+      - read_version
 
     if: ${{ github.event_name == 'push' || github.event.inputs.github_release == 'true' }}
-    env:
-      VERSION_TAG_INPUT: ${{ github.event.inputs.version_tag }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set tag/version
-        id: vars
-        shell: bash
-        run: |
-          set -euo pipefail
-          TAG="${GITHUB_REF_NAME:-}"
-          if [[ -z "$TAG" || "$TAG" == "" ]] || [[ "$TAG" != v* ]]; then
-            TAG="${VERSION_TAG_INPUT:-}"
-          fi
-          if [[ -z "$TAG" || "$TAG" != v* ]]; then
-            echo "version_tag must start with 'v' (example: v0.1.2). Got: '$TAG'" >&2
-            exit 1
-          fi
-          VERSION="${TAG#v}"
-          {
-            echo "tag=$TAG"
-            echo "version=$VERSION"
-          } >> "$GITHUB_OUTPUT"
-
       - name: Update README latest release
         shell: bash
         run: |
           set -euo pipefail
-          TAG="${{ steps.vars.outputs.tag }}"
+          TAG="${{ needs.read_version.outputs.tag }}"
 
           git fetch origin main
           git checkout main
@@ -1190,7 +1073,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          VERSION="${{ steps.vars.outputs.version }}"
+          VERSION="${{ needs.read_version.outputs.version }}"
           mkdir -p "dist/$VERSION"
 
           # Flatten artifacts into dist/<version>/
@@ -1208,12 +1091,13 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.vars.outputs.tag }}
+          tag_name: ${{ needs.read_version.outputs.tag }}
+          prerelease: ${{ needs.read_version.outputs.pre_release == 'true' }}
           generate_release_notes: true
           files: |
-            dist/${{ steps.vars.outputs.version }}/*.tar.gz
-            dist/${{ steps.vars.outputs.version }}/*.zip
-            dist/${{ steps.vars.outputs.version }}/SHA256SUMS
+            dist/${{ needs.read_version.outputs.version }}/*.tar.gz
+            dist/${{ needs.read_version.outputs.version }}/*.zip
+            dist/${{ needs.read_version.outputs.version }}/SHA256SUMS
 
   docker:
     name: Push Docker image (Docker Hub)
@@ -1223,35 +1107,21 @@ jobs:
       - build_cli_linux_aarch64
       - build_linux_x86_64
       - build_linux_aarch64
+      - read_version
 
     if: ${{ github.event_name == 'push' || github.event.inputs.docker_push == 'true' }}
     env:
-      VERSION_TAG_INPUT: ${{ github.event.inputs.version_tag }}
       DOCKER_REPO_INPUT: ${{ github.event.inputs.docker_repo }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set tag/version
+      - name: Set Docker repo
         id: vars
         shell: bash
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME:-}"
-          if [[ -z "$TAG" || "$TAG" == "" ]] || [[ "$TAG" != v* ]]; then
-            TAG="${VERSION_TAG_INPUT:-}"
-          fi
-          if [[ -z "$TAG" || "$TAG" != v* ]]; then
-            echo "version_tag must start with 'v' (example: v0.1.2). Got: '$TAG'" >&2
-            exit 1
-          fi
-          VERSION="${TAG#v}"
-          {
-            echo "tag=$TAG"
-            echo "version=$VERSION"
-          } >> "$GITHUB_OUTPUT"
-
           DOCKER_REPO="${DOCKER_REPO_INPUT:-}"
           if [[ -z "$DOCKER_REPO" ]]; then
             DOCKER_REPO="jamals86/kalamdb"
@@ -1286,7 +1156,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          VERSION="${{ steps.vars.outputs.version }}"
+          VERSION="${{ needs.read_version.outputs.version }}"
           mkdir -p binaries-amd64
 
           # Extract server binary
@@ -1304,7 +1174,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          VERSION="${{ steps.vars.outputs.version }}"
+          VERSION="${{ needs.read_version.outputs.version }}"
           mkdir -p binaries-arm64
 
           # Extract server binary
@@ -1340,7 +1210,7 @@ jobs:
           build-contexts: |
             binaries=binaries-amd64
           tags: |
-            ${{ steps.vars.outputs.docker_repo }}:${{ steps.vars.outputs.version }}-amd64
+            ${{ steps.vars.outputs.docker_repo }}:${{ needs.read_version.outputs.version }}-amd64
 
       - name: Test Docker image (linux/amd64)
         continue-on-error: true
@@ -1350,11 +1220,11 @@ jobs:
           export KALAMDB_JWT_SECRET="$(openssl rand -base64 32)"
           
           # Pull the just-built image
-          docker pull ${{ steps.vars.outputs.docker_repo }}:${{ steps.vars.outputs.version }}-amd64
+          docker pull ${{ steps.vars.outputs.docker_repo }}:${{ needs.read_version.outputs.version }}-amd64
           
           # Run smoke test
           chmod +x docker/build/test-docker-image.sh
-          ./docker/build/test-docker-image.sh ${{ steps.vars.outputs.docker_repo }}:${{ steps.vars.outputs.version }}-amd64
+          ./docker/build/test-docker-image.sh ${{ steps.vars.outputs.docker_repo }}:${{ needs.read_version.outputs.version }}-amd64
 
       - name: Build and push Docker image (linux/arm64)
         uses: docker/build-push-action@v6
@@ -1366,14 +1236,14 @@ jobs:
           build-contexts: |
             binaries=binaries-arm64
           tags: |
-            ${{ steps.vars.outputs.docker_repo }}:${{ steps.vars.outputs.version }}-arm64
+            ${{ steps.vars.outputs.docker_repo }}:${{ needs.read_version.outputs.version }}-arm64
 
       - name: Create and push multi-arch manifest
         shell: bash
         run: |
           set -euo pipefail
           REPO="${{ steps.vars.outputs.docker_repo }}"
-          VERSION="${{ steps.vars.outputs.version }}"
+          VERSION="${{ needs.read_version.outputs.version }}"
 
           # Create manifest for versioned tag
           docker buildx imagetools create -t "${REPO}:${VERSION}" \
@@ -1393,30 +1263,12 @@ jobs:
   publish_npm:
     name: Publish TypeScript SDK to npm
     runs-on: ubuntu-latest
+    needs: read_version
     if: ${{ github.event_name == 'push' || github.event.inputs.npm_publish == 'true' }}
-    env:
-      VERSION_TAG_INPUT: ${{ github.event.inputs.version_tag }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Set tag/version
-        id: vars
-        shell: bash
-        run: |
-          set -euo pipefail
-          TAG="${GITHUB_REF_NAME:-}"
-          if [[ -z "$TAG" || "$TAG" == "" ]] || [[ "$TAG" != v* ]]; then
-            TAG="${VERSION_TAG_INPUT:-}"
-          fi
-          if [[ -z "$TAG" || "$TAG" != v* ]]; then
-            echo "version_tag must start with 'v' (example: v0.1.2). Got: '$TAG'" >&2
-            exit 1
-          fi
-          VERSION="${TAG#v}"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -1460,7 +1312,7 @@ jobs:
         working-directory: link/sdks/typescript
         run: |
           set -euo pipefail
-          VERSION="${{ steps.vars.outputs.version }}"
+          VERSION="${{ needs.read_version.outputs.version }}"
           echo "📝 Updating package.json version to $VERSION"
           npm version "$VERSION" --no-git-tag-version --allow-same-version
           cat package.json | grep version
@@ -1472,7 +1324,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
-          VERSION="${{ steps.vars.outputs.version }}"
+          VERSION="${{ needs.read_version.outputs.version }}"
           FORCE_PUBLISH="${{ github.event.inputs.force_npm_publish }}"
           
           echo "🚀 Publishing kalam-link@$VERSION to npm..."

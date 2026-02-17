@@ -776,6 +776,451 @@ async fn test_topic_high_load_concurrent_publishers() {
     eprintln!("[TEST] High-load test completed successfully!");
 }
 
+/// Test that two concurrent consumers in the same group do not process the same
+/// message offsets under high load.
+#[tokio::test]
+#[ntest::timeout(300000)]
+async fn test_topic_high_load_two_consumers_same_group_single_delivery() {
+    let namespace = common::generate_unique_namespace("highload_group");
+    let table = format!("{}.events", namespace);
+    let topic = format!("{}.{}", namespace, common::generate_unique_table("same_group"));
+    let group_id = format!("same-group-{}", common::random_string(8));
+
+    execute_sql(&format!("CREATE NAMESPACE {}", namespace))
+        .await
+        .expect("Failed to create namespace");
+    execute_sql(&format!("CREATE TABLE {} (id INT PRIMARY KEY, payload TEXT)", table))
+        .await
+        .expect("Failed to create table");
+    execute_sql(&format!("CREATE TOPIC {}", topic))
+        .await
+        .expect("Failed to create topic");
+    execute_sql(&format!("ALTER TOPIC {} ADD SOURCE {} ON INSERT", topic, table))
+        .await
+        .expect("Failed to add topic source");
+    wait_for_topic_ready(&topic, 1).await;
+
+    let expected_messages: usize = 1_200;
+    let publishers_done = Arc::new(AtomicBool::new(false));
+
+    let spawn_consumer = |consumer_name: &'static str, publishers_done: Arc<AtomicBool>| {
+        let topic = topic.clone();
+        let group_id = group_id.clone();
+        tokio::spawn(async move {
+            let client = create_test_client().await;
+            let mut consumer = client
+                .consumer()
+                .topic(&topic)
+                .group_id(&group_id)
+                .auto_offset_reset(AutoOffsetReset::Earliest)
+                .max_poll_records(200)
+                .build()
+                .expect("Failed to build consumer");
+
+            let mut seen_offsets = HashSet::<(u32, u64)>::new();
+            let deadline = std::time::Instant::now() + Duration::from_secs(90);
+            let mut idle_loops: u32 = 0;
+
+            while std::time::Instant::now() < deadline {
+                match consumer.poll().await {
+                    Ok(batch) if batch.is_empty() => {
+                        idle_loops += 1;
+                        if publishers_done.load(Ordering::Relaxed) && idle_loops >= 20 {
+                            break;
+                        }
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    },
+                    Ok(batch) => {
+                        idle_loops = 0;
+                        for record in &batch {
+                            seen_offsets.insert((record.partition_id, record.offset));
+                            consumer.mark_processed(record);
+                        }
+
+                        let _ = consumer.commit_sync().await;
+                    },
+                    Err(err) => {
+                        let message = err.to_string();
+                        if message.contains("error decoding") || message.contains("network") {
+                            tokio::time::sleep(Duration::from_millis(100)).await;
+                            continue;
+                        }
+                        panic!("{} poll error: {}", consumer_name, message);
+                    },
+                }
+            }
+
+            let _ = consumer.commit_sync().await;
+            seen_offsets
+        })
+    };
+
+    let consumer_a_handle = spawn_consumer("consumer-a", publishers_done.clone());
+    let consumer_b_handle = spawn_consumer("consumer-b", publishers_done.clone());
+
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    let publisher_parallelism = 24;
+    let per_publisher = expected_messages / publisher_parallelism;
+    let mut publish_handles = Vec::with_capacity(publisher_parallelism);
+
+    for publisher in 0..publisher_parallelism {
+        let table = table.clone();
+        publish_handles.push(tokio::spawn(async move {
+            for idx in 0..per_publisher {
+                let id = (publisher * per_publisher + idx) as i64;
+                execute_sql(&format!(
+                    "INSERT INTO {} (id, payload) VALUES ({}, 'event_{}')",
+                    table, id, id
+                ))
+                .await
+                .expect("Insert failed");
+            }
+        }));
+    }
+
+    for handle in publish_handles {
+        handle.await.expect("Publisher task failed");
+    }
+    publishers_done.store(true, Ordering::Relaxed);
+
+    let consumer_a_offsets = consumer_a_handle.await.expect("consumer-a failed");
+    let consumer_b_offsets = consumer_b_handle.await.expect("consumer-b failed");
+
+    let overlap_count = consumer_a_offsets.intersection(&consumer_b_offsets).count();
+    let total_unique = consumer_a_offsets.union(&consumer_b_offsets).count();
+
+    eprintln!(
+        "[TEST] same-group consumers results: A={}, B={}, overlap={}, total_unique={}",
+        consumer_a_offsets.len(),
+        consumer_b_offsets.len(),
+        overlap_count,
+        total_unique
+    );
+
+    assert_eq!(
+        overlap_count, 0,
+        "Consumers in the same group should not receive overlapping offsets"
+    );
+    assert_eq!(
+        total_unique, expected_messages,
+        "Expected all produced messages to be processed exactly once by the group"
+    );
+
+    let _ = execute_sql(&format!("DROP TOPIC {}", topic)).await;
+    let _ = execute_sql(&format!("DROP TABLE {}", table)).await;
+    let _ = execute_sql(&format!("DROP NAMESPACE {}", namespace)).await;
+}
+
+/// Test fan-out: two consumer groups each receive the full message stream.
+///
+/// This verifies that different consumer groups operate independently — every
+/// group sees every message, while within a single group, messages are not
+/// duplicated.
+#[tokio::test]
+#[ntest::timeout(300000)]
+async fn test_topic_fan_out_different_groups_receive_all() {
+    let namespace = common::generate_unique_namespace("fanout");
+    let table = format!("{}.events", namespace);
+    let topic = format!("{}.{}", namespace, common::generate_unique_table("fanout_topic"));
+    let group_a = format!("fanout-group-a-{}", common::random_string(8));
+    let group_b = format!("fanout-group-b-{}", common::random_string(8));
+
+    execute_sql(&format!("CREATE NAMESPACE {}", namespace))
+        .await
+        .expect("create ns");
+    execute_sql(&format!("CREATE TABLE {} (id INT PRIMARY KEY, data TEXT)", table))
+        .await
+        .expect("create table");
+    execute_sql(&format!("CREATE TOPIC {}", topic))
+        .await
+        .expect("create topic");
+    execute_sql(&format!("ALTER TOPIC {} ADD SOURCE {} ON INSERT", topic, table))
+        .await
+        .expect("add source");
+    wait_for_topic_ready(&topic, 1).await;
+
+    let expected_messages: usize = 500;
+    let publishers_done = Arc::new(AtomicBool::new(false));
+
+    // Helper: spawn a single consumer for a given group
+    let spawn_group_consumer =
+        |group_id: String, publishers_done: Arc<AtomicBool>, label: &'static str| {
+            let topic = topic.clone();
+            tokio::spawn(async move {
+                let client = create_test_client().await;
+                let mut consumer = client
+                    .consumer()
+                    .topic(&topic)
+                    .group_id(&group_id)
+                    .auto_offset_reset(AutoOffsetReset::Earliest)
+                    .max_poll_records(200)
+                    .build()
+                    .expect("build consumer");
+
+                let mut seen = HashSet::<(u32, u64)>::new();
+                let deadline = std::time::Instant::now() + Duration::from_secs(90);
+                let mut idle: u32 = 0;
+
+                while std::time::Instant::now() < deadline {
+                    match consumer.poll().await {
+                        Ok(batch) if batch.is_empty() => {
+                            idle += 1;
+                            if publishers_done.load(Ordering::Relaxed) && idle >= 25 {
+                                break;
+                            }
+                            tokio::time::sleep(Duration::from_millis(100)).await;
+                        },
+                        Ok(batch) => {
+                            idle = 0;
+                            for rec in &batch {
+                                seen.insert((rec.partition_id, rec.offset));
+                                consumer.mark_processed(rec);
+                            }
+                            let _ = consumer.commit_sync().await;
+                        },
+                        Err(e) => {
+                            let msg = e.to_string();
+                            if msg.contains("error decoding") || msg.contains("network") {
+                                tokio::time::sleep(Duration::from_millis(100)).await;
+                                continue;
+                            }
+                            panic!("{} poll error: {}", label, msg);
+                        },
+                    }
+                }
+                let _ = consumer.commit_sync().await;
+                seen
+            })
+        };
+
+    let handle_a = spawn_group_consumer(group_a.clone(), publishers_done.clone(), "group-a");
+    let handle_b = spawn_group_consumer(group_b.clone(), publishers_done.clone(), "group-b");
+
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    // Publish
+    let parallelism = 10;
+    let per = expected_messages / parallelism;
+    let mut pubs = Vec::new();
+    for p in 0..parallelism {
+        let tbl = table.clone();
+        pubs.push(tokio::spawn(async move {
+            for i in 0..per {
+                let id = (p * per + i) as i64;
+                execute_sql(&format!(
+                    "INSERT INTO {} (id, data) VALUES ({}, 'val_{}')",
+                    tbl, id, id
+                ))
+                .await
+                .expect("insert");
+            }
+        }));
+    }
+    for h in pubs {
+        h.await.expect("pub task");
+    }
+    publishers_done.store(true, Ordering::Relaxed);
+
+    let offsets_a = handle_a.await.expect("group-a consumer");
+    let offsets_b = handle_b.await.expect("group-b consumer");
+
+    eprintln!(
+        "[TEST] fan-out results: group_a={}, group_b={}, expected={}",
+        offsets_a.len(),
+        offsets_b.len(),
+        expected_messages
+    );
+
+    assert_eq!(
+        offsets_a.len(),
+        expected_messages,
+        "Group A should receive every message (got {} of {})",
+        offsets_a.len(),
+        expected_messages
+    );
+    assert_eq!(
+        offsets_b.len(),
+        expected_messages,
+        "Group B should receive every message (got {} of {})",
+        offsets_b.len(),
+        expected_messages
+    );
+
+    // Both groups should see identical offset sets (same messages)
+    assert_eq!(
+        offsets_a, offsets_b,
+        "Both groups should see the exact same set of offsets"
+    );
+
+    let _ = execute_sql(&format!("DROP TOPIC {}", topic)).await;
+    let _ = execute_sql(&format!("DROP TABLE {}", table)).await;
+    let _ = execute_sql(&format!("DROP NAMESPACE {}", namespace)).await;
+}
+
+/// Stress test: 4 consumers in the same group under high load.
+///
+/// Verifies exactly-once delivery semantics hold with more consumer concurrency.
+#[tokio::test]
+#[ntest::timeout(300000)]
+async fn test_topic_four_consumers_same_group_no_duplicates() {
+    let namespace = common::generate_unique_namespace("stress4c");
+    let table = format!("{}.items", namespace);
+    let topic = format!("{}.{}", namespace, common::generate_unique_table("stress4"));
+    let group_id = format!("stress4-group-{}", common::random_string(8));
+
+    execute_sql(&format!("CREATE NAMESPACE {}", namespace))
+        .await
+        .expect("create ns");
+    execute_sql(&format!("CREATE TABLE {} (id INT PRIMARY KEY, value TEXT)", table))
+        .await
+        .expect("create table");
+    execute_sql(&format!("CREATE TOPIC {}", topic))
+        .await
+        .expect("create topic");
+    execute_sql(&format!("ALTER TOPIC {} ADD SOURCE {} ON INSERT", topic, table))
+        .await
+        .expect("add source");
+    wait_for_topic_ready(&topic, 1).await;
+
+    let expected_messages: usize = 2_000;
+    let publishers_done = Arc::new(AtomicBool::new(false));
+
+    let consumer_count = 4;
+    let mut consumer_handles = Vec::with_capacity(consumer_count);
+
+    for idx in 0..consumer_count {
+        let topic = topic.clone();
+        let group_id = group_id.clone();
+        let done = publishers_done.clone();
+        let label = format!("consumer-{}", idx);
+
+        consumer_handles.push(tokio::spawn(async move {
+            let client = create_test_client().await;
+            let mut consumer = client
+                .consumer()
+                .topic(&topic)
+                .group_id(&group_id)
+                .auto_offset_reset(AutoOffsetReset::Earliest)
+                .max_poll_records(100)
+                .build()
+                .expect("build consumer");
+
+            let mut seen = HashSet::<(u32, u64)>::new();
+            let deadline = std::time::Instant::now() + Duration::from_secs(120);
+            let mut idle: u32 = 0;
+
+            while std::time::Instant::now() < deadline {
+                match consumer.poll().await {
+                    Ok(batch) if batch.is_empty() => {
+                        idle += 1;
+                        if done.load(Ordering::Relaxed) && idle >= 30 {
+                            break;
+                        }
+                        tokio::time::sleep(Duration::from_millis(80)).await;
+                    },
+                    Ok(batch) => {
+                        idle = 0;
+                        for rec in &batch {
+                            seen.insert((rec.partition_id, rec.offset));
+                            consumer.mark_processed(rec);
+                        }
+                        let _ = consumer.commit_sync().await;
+                    },
+                    Err(e) => {
+                        let msg = e.to_string();
+                        if msg.contains("error decoding") || msg.contains("network") {
+                            tokio::time::sleep(Duration::from_millis(80)).await;
+                            continue;
+                        }
+                        panic!("{} poll error: {}", label, msg);
+                    },
+                }
+            }
+            let _ = consumer.commit_sync().await;
+            (label, seen)
+        }));
+    }
+
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    // Publish with high parallelism
+    let publisher_parallelism = 40;
+    let per_publisher = expected_messages / publisher_parallelism;
+    let mut pub_handles = Vec::with_capacity(publisher_parallelism);
+    for p in 0..publisher_parallelism {
+        let tbl = table.clone();
+        pub_handles.push(tokio::spawn(async move {
+            for i in 0..per_publisher {
+                let id = (p * per_publisher + i) as i64;
+                execute_sql(&format!(
+                    "INSERT INTO {} (id, value) VALUES ({}, 'item_{}')",
+                    tbl, id, id
+                ))
+                .await
+                .expect("insert");
+            }
+        }));
+    }
+    for h in pub_handles {
+        h.await.expect("pub task");
+    }
+    publishers_done.store(true, Ordering::Relaxed);
+
+    // Collect results
+    let mut all_consumer_offsets: Vec<(String, HashSet<(u32, u64)>)> = Vec::new();
+    for h in consumer_handles {
+        all_consumer_offsets.push(h.await.expect("consumer task"));
+    }
+
+    // Check: no overlap between any pair of consumers
+    let mut combined: HashSet<(u32, u64)> = HashSet::new();
+    let mut total_messages_across_consumers = 0;
+
+    for (label, offsets) in &all_consumer_offsets {
+        eprintln!("[TEST] {} received {} messages", label, offsets.len());
+        total_messages_across_consumers += offsets.len();
+
+        for (other_label, other_offsets) in &all_consumer_offsets {
+            if label != other_label {
+                let overlap = offsets.intersection(other_offsets).count();
+                assert_eq!(
+                    overlap, 0,
+                    "Overlap between {} and {} = {} (must be 0)",
+                    label, other_label, overlap
+                );
+            }
+        }
+
+        combined.extend(offsets.iter());
+    }
+
+    eprintln!(
+        "[TEST] 4-consumer stress: total_unique={}, total_received={}, expected={}",
+        combined.len(),
+        total_messages_across_consumers,
+        expected_messages
+    );
+
+    // No duplicates: total received should equal total unique
+    assert_eq!(
+        total_messages_across_consumers,
+        combined.len(),
+        "No duplicates: sum of per-consumer counts should equal unique count"
+    );
+
+    // All messages delivered
+    assert_eq!(
+        combined.len(),
+        expected_messages,
+        "All messages should be delivered exactly once across the group"
+    );
+
+    let _ = execute_sql(&format!("DROP TOPIC {}", topic)).await;
+    let _ = execute_sql(&format!("DROP TABLE {}", table)).await;
+    let _ = execute_sql(&format!("DROP NAMESPACE {}", namespace)).await;
+}
+
 #[derive(Debug, Clone)]
 struct EventInfo {
     table: String,

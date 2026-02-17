@@ -8,6 +8,7 @@ use std::fmt;
 /// - Gcs: Google Cloud Storage
 /// - Azure: Azure Blob Storage
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum StorageType {
     /// Local or network filesystem storage
     Filesystem,
