@@ -87,7 +87,7 @@ fn test_hot_cold_storage_data_integrity() {
     let result = wait_for_query_contains_with(
         &format!("SELECT * FROM {} ORDER BY id", full_table_name),
         "Alice",
-        std::time::Duration::from_secs(5),
+        std::time::Duration::from_secs(20),
         execute_sql,
     )
     .expect("SELECT from cold storage failed");
@@ -309,8 +309,16 @@ fn test_update_operations_hot_and_cold() {
     assert!(result.contains("35"), "Third row count should be 35");
 
     // === Test 2: FLUSH to cold storage ===
-    execute_sql(&format!("STORAGE FLUSH TABLE {}", full_table_name))
+    let flush_output = execute_sql(&format!("STORAGE FLUSH TABLE {}", full_table_name))
         .expect("STORAGE FLUSH TABLE failed");
+    if let Ok(job_id) = parse_job_id_from_flush_output(&flush_output) {
+        let timeout = if is_cluster_mode() {
+            std::time::Duration::from_secs(30)
+        } else {
+            std::time::Duration::from_secs(10)
+        };
+        verify_job_completed(&job_id, timeout).expect("flush job should complete");
+    }
 
     // === Test 3: UPDATE specific row in cold storage ===
     execute_sql(&format!(

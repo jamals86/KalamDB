@@ -21,7 +21,57 @@ use log::debug;
 use log::{info, warn};
 use std::net::{SocketAddr, TcpListener};
 use std::sync::Arc;
-use tracing_actix_web::TracingLogger;
+use tracing_actix_web::{RootSpanBuilder, TracingLogger};
+
+/// Custom root span builder that forces `parent: None` on every request span.
+///
+/// The default `TracingLogger` inherits whatever span is "current" on the
+/// thread when a new request arrives.  With `tracing-opentelemetry` in the
+/// subscriber stack, this means that a request processed on a thread that
+/// still has another request's span entered will be incorrectly parented
+/// under that span in Jaeger.  By explicitly setting `parent: None` we
+/// guarantee every HTTP request starts a fresh, independent trace.
+struct KalamDbRootSpanBuilder;
+
+impl RootSpanBuilder for KalamDbRootSpanBuilder {
+    fn on_request_start(request: &actix_web::dev::ServiceRequest) -> tracing::Span {
+        let method = request.method().as_str();
+        let path = request.uri().path();
+        // `parent: None` ensures this span is always a root span,
+        // preventing cross-request span contamination.
+        tracing::info_span!(
+            parent: None,
+            "HTTP request",
+            http.method = %method,
+            http.route = %path,
+            http.status_code = tracing::field::Empty,
+            otel.kind = "server",
+            otel.status_code = tracing::field::Empty,
+        )
+    }
+
+    fn on_request_end<B: actix_web::body::MessageBody>(
+        span: tracing::Span,
+        outcome: &Result<actix_web::dev::ServiceResponse<B>, actix_web::Error>,
+    ) {
+        match outcome {
+            Ok(response) => {
+                let status = response.status().as_u16();
+                span.record("http.status_code", status);
+                if status >= 500 {
+                    span.record("otel.status_code", "ERROR");
+                } else {
+                    span.record("otel.status_code", "OK");
+                }
+            },
+            Err(err) => {
+                span.record("otel.status_code", "ERROR");
+                span.record("http.status_code", 500u16);
+                tracing::error!(parent: &span, error = %err, "HTTP request error");
+            },
+        }
+    }
+}
 
 /// Aggregated application components that need to be shared across the
 /// HTTP server and shutdown handling.
@@ -537,7 +587,9 @@ pub async fn run(
             // Connection protection (first middleware - drops bad requests early)
             .wrap(connection_protection.clone())
             // Tracing middleware (creates a root span per HTTP request)
-            .wrap(TracingLogger::default())
+            // Uses KalamDbRootSpanBuilder to force `parent: None` on each request,
+            // preventing cross-request span contamination in OTel/Jaeger.
+            .wrap(TracingLogger::<KalamDbRootSpanBuilder>::new())
             .wrap(middleware::build_cors_from_config(&cors_config))
             .app_data(web::Data::new(app_context_for_handler.clone()))
             .app_data(web::Data::new(session_factory.clone()))
@@ -764,7 +816,7 @@ pub async fn run_for_tests(
     let server = HttpServer::new(move || {
         let mut app = App::new()
             .wrap(connection_protection.clone())
-            .wrap(TracingLogger::default())
+            .wrap(TracingLogger::<KalamDbRootSpanBuilder>::new())
             .wrap(middleware::build_cors_from_config(&cors_config))
             .app_data(web::Data::new(app_context_for_handler.clone()))
             .app_data(web::Data::new(session_factory.clone()))
