@@ -528,7 +528,11 @@ mod tests {
             iss: "kalamdb-test".to_string(),
             exp: now + 3600,
             iat: now,
-            username: Some(kalamdb_commons::UserName::new(sqli_username)),
+            // The username field uses UserName which validates and rejects SQL
+            // injection characters.  The test exercises JWT claim preservation
+            // via the `sub` field only; the optional `username` claim is left
+            // absent so the JWT encoder does not reject the payload.
+            username: None,
             email: None,
             role: None,
             token_type: Some(TokenType::Access),

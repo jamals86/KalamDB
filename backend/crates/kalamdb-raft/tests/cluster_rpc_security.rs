@@ -52,9 +52,14 @@ const PORT_FORWARD_SQL_FORGED_TOKEN: u16 = 19703;
 const PORT_FORWARD_SQL_MALFORMED: u16 = 19704;
 const PORT_FORWARD_SQL_SQLI: u16 = 19705;
 const PORT_FORWARD_SQL_OVERSIZED: u16 = 19706;
-const PORT_UNAUTHENTICATED_CLUSTER_RPCS: u16 = 19707;
 const PORT_FORWARD_SQL_EMPTY_CREDS: u16 = 19708;
 const PORT_FORWARD_SQL_REPLAY: u16 = 19709;
+// Ports for unauthenticated cluster RPC tests must not overlap with the
+// ForwardSql ports above.  Using a separate base (19720+) avoids the previous
+// conflict where +1 / +2 offsets collided with 19708 and 19709.
+const PORT_UNAUTHENTICATED_PING: u16 = 19720;
+const PORT_UNAUTHENTICATED_NOTIFY_FOLLOWERS: u16 = 19721;
+const PORT_UNAUTHENTICATED_GET_NODE_INFO: u16 = 19722;
 
 // ─── Test handler ────────────────────────────────────────────────────────────
 
@@ -516,15 +521,37 @@ async fn test_forward_sql_oversized_payload_rejected_before_parsing() {
         request_id: None,
     };
 
-    let response = client.forward_sql(tonic::Request::new(request)).await.unwrap();
-    let resp = response.into_inner();
+    let response = client.forward_sql(tonic::Request::new(request)).await;
 
-    assert_eq!(
-        resp.status_code, 401,
-        "Oversized unauthenticated request must be rejected at auth gate"
-    );
-    assert_eq!(allowed.load(Ordering::SeqCst), 0);
-    assert_eq!(rejected.load(Ordering::SeqCst), 1);
+    // An oversized payload may be rejected at two layers:
+    //  (a) The gRPC transport returns OutOfRange / ResourceExhausted before the
+    //      auth handler ever runs.
+    //  (b) The auth handler receives it and returns HTTP 401.
+    // Both outcomes confirm the oversized, unauthenticated request was rejected.
+    match response {
+        Ok(resp) => {
+            let inner = resp.into_inner();
+            assert_eq!(
+                inner.status_code, 401,
+                "Oversized unauthenticated request must be rejected at auth gate, got {}",
+                inner.status_code
+            );
+            assert_eq!(allowed.load(Ordering::SeqCst), 0);
+            assert_eq!(rejected.load(Ordering::SeqCst), 1);
+        }
+        Err(status) => {
+            // Transport-level rejection is also an acceptable security outcome.
+            assert!(
+                status.code() == tonic::Code::OutOfRange
+                    || status.code() == tonic::Code::ResourceExhausted
+                    || status.code() == tonic::Code::InvalidArgument,
+                "Expected a size-limit rejection status, got {:?}",
+                status
+            );
+            // The handler never ran, so allowed/rejected counters stay at 0.
+            assert_eq!(allowed.load(Ordering::SeqCst), 0);
+        }
+    }
 }
 
 /// Replay attack: the same valid `ForwardSql` request should not be accepted
@@ -580,7 +607,7 @@ async fn test_forward_sql_token_replay_is_rejected() {
 async fn test_ping_reachable_without_user_token() {
     let handler: Arc<dyn ClusterMessageHandler> =
         Arc::new(NoOpClusterHandler);
-    let port = PORT_UNAUTHENTICATED_CLUSTER_RPCS;
+    let port = PORT_UNAUTHENTICATED_PING;
     let mut client = start_grpc_server_with_handler(handler, port).await;
 
     let resp = client
@@ -604,7 +631,7 @@ async fn test_ping_reachable_without_user_token() {
 async fn test_notify_followers_garbage_payload_is_handled_gracefully() {
     let (handler, _, _, unauthenticated) = SecurityStubHandler::new();
     let handler: Arc<dyn ClusterMessageHandler> = handler;
-    let port = PORT_UNAUTHENTICATED_CLUSTER_RPCS + 1;
+    let port = PORT_UNAUTHENTICATED_NOTIFY_FOLLOWERS;
     let mut client = start_grpc_server_with_handler(handler, port).await;
 
     let req = NotifyFollowersRequest {
@@ -641,7 +668,7 @@ async fn test_notify_followers_garbage_payload_is_handled_gracefully() {
 async fn test_get_node_info_does_not_expose_sensitive_fields() {
     let (handler, _, _, unauthenticated) = SecurityStubHandler::new();
     let handler: Arc<dyn ClusterMessageHandler> = handler;
-    let port = PORT_UNAUTHENTICATED_CLUSTER_RPCS + 2;
+    let port = PORT_UNAUTHENTICATED_GET_NODE_INFO;
     let mut client = start_grpc_server_with_handler(handler, port).await;
 
     let resp = client

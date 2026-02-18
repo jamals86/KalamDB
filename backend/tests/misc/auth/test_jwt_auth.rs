@@ -327,11 +327,12 @@ async fn test_jwt_auth_missing_sub_claim() {
     // Execute request
     let resp = test::call_service(&app, req).await;
 
-    // Should be 400 Bad Request for JWT missing 'sub' claim (malformed token)
-    // Note: 400 is more appropriate than 401 because the token format is invalid
-    assert_eq!(resp.status(), 400, "Expected 400 Bad Request for JWT missing 'sub' claim");
+    // Should be 401 Unauthorized for JWT missing 'sub' claim.
+    // Per OWASP AA05, all authentication failures (including malformed tokens)
+    // should return 401 to avoid leaking token format details to attackers.
+    assert_eq!(resp.status(), 401, "Expected 401 Unauthorized for JWT missing 'sub' claim");
 
-    println!("✓ JWT with missing 'sub' claim correctly rejected with 400");
+    println!("✓ JWT with missing 'sub' claim correctly rejected with 401");
 }
 
 /// T064 - Test authentication failure with malformed Bearer token header

@@ -25,7 +25,9 @@ fn test_hot_cold_storage_data_integrity() {
     }
 
     let table_name = generate_unique_table("hot_cold_integrity");
-    let namespace = "test_storage";
+    // Use a test-unique namespace so concurrent tests cannot interfere via
+    // DROP NAMESPACE CASCADE on the shared 'test_storage' namespace.
+    let namespace = generate_unique_table("ts_hc");
     let full_table_name = format!("{}.{}", namespace, table_name);
 
     // === Setup: Create namespace and table ===
@@ -165,7 +167,9 @@ fn test_duplicate_primary_key_insert_fails() {
     }
 
     let table_name = generate_unique_table("duplicate_pk");
-    let namespace = "test_storage";
+    // Use a test-unique namespace so concurrent tests cannot interfere via
+    // DROP NAMESPACE CASCADE on the shared 'test_storage' namespace.
+    let namespace = generate_unique_table("ts_dpk");
     let full_table_name = format!("{}.{}", namespace, table_name);
 
     // === Setup: Create namespace and table ===
@@ -271,7 +275,9 @@ fn test_update_operations_hot_and_cold() {
     }
 
     let table_name = generate_unique_table("update_hot_cold");
-    let namespace = "test_storage";
+    // Use a test-unique namespace so concurrent tests cannot interfere via
+    // DROP NAMESPACE CASCADE on the shared 'test_storage' namespace.
+    let namespace = generate_unique_table("ts_uhc");
     let full_table_name = format!("{}.{}", namespace, table_name);
 
     // === Setup ===

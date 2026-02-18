@@ -97,7 +97,10 @@ impl ResponseError for AuthExtractError {
     fn status_code(&self) -> StatusCode {
         match &self.inner {
             AuthError::MissingAuthorization(_) => StatusCode::UNAUTHORIZED,
-            AuthError::MalformedAuthorization(_) => StatusCode::BAD_REQUEST,
+            // Malformed tokens are an authentication failure, not a protocol
+            // error.  Returning 401 avoids leaking whether a token was well-
+            // formed vs simply wrong (OWASP information-disclosure mitigation).
+            AuthError::MalformedAuthorization(_) => StatusCode::UNAUTHORIZED,
             AuthError::InvalidCredentials(_) => StatusCode::UNAUTHORIZED,
             AuthError::RemoteAccessDenied(_) => StatusCode::FORBIDDEN,
             AuthError::UserNotFound(_) => StatusCode::UNAUTHORIZED,
@@ -150,7 +153,9 @@ mod tests {
         let err =
             AuthExtractError::new(AuthError::MalformedAuthorization("test".to_string()), 10.0);
         assert_eq!(err.error_code(), "MALFORMED_AUTHORIZATION");
-        assert_eq!(err.status_code(), StatusCode::BAD_REQUEST);
+        // Malformed tokens return 401 (unauthorized) to avoid leaking whether a
+        // request was well-formed vs. simply wrong (OWASP AA05 guidance).
+        assert_eq!(err.status_code(), StatusCode::UNAUTHORIZED);
 
         let err = AuthExtractError::new(AuthError::TokenExpired, 10.0);
         assert_eq!(err.error_code(), "TOKEN_EXPIRED");
