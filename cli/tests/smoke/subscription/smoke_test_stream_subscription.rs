@@ -30,7 +30,7 @@ fn smoke_stream_table_subscription() {
             event_type TEXT,
             payload TEXT,
             timestamp TIMESTAMP
-        ) WITH (TYPE = 'STREAM', TTL_SECONDS = 10)"#,
+        ) WITH (TYPE = 'STREAM', TTL_SECONDS = 3)"#,
         full
     );
     execute_sql_as_root_via_client(&create_sql).expect("create stream table should succeed");
@@ -74,7 +74,7 @@ fn smoke_stream_table_subscription() {
 
     // 5) Verify data is present via regular SELECT immediately after insert
     let select_sql = format!("SELECT * FROM {}", full);
-    let select_visible_deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let select_visible_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     let mut last_select_output = String::new();
     while std::time::Instant::now() < select_visible_deadline {
         last_select_output =
@@ -85,13 +85,13 @@ fn smoke_stream_table_subscription() {
     }
     assert!(
         last_select_output.contains(ev_val),
-        "expected to find inserted event '{}' in SELECT output within 10s after insert. Output:\n{}",
+        "expected to find inserted event '{}' in SELECT output within 5s after insert. Output:\n{}",
         ev_val,
         last_select_output
     );
 
     // 6) Verify data has been evicted via regular SELECT (poll until TTL passes)
-    let eviction_deadline = std::time::Instant::now() + std::time::Duration::from_secs(12);
+    let eviction_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     let mut select_after_ttl = String::new();
     while std::time::Instant::now() < eviction_deadline {
         select_after_ttl = execute_sql_as_root_via_client_json(&select_sql)
@@ -103,7 +103,10 @@ fn smoke_stream_table_subscription() {
     }
     assert!(
         !select_after_ttl.contains(ev_val),
-        "expected event '{}' to be evicted within 12 seconds (TTL=10s)",
+        "expected event '{}' to be evicted within 5 seconds (TTL=3s)",
         ev_val
     );
+
+    // Cleanup
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
 }

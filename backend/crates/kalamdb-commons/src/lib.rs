@@ -64,7 +64,7 @@ pub use conversions::{
     scalar_to_f64, scalar_to_i64, scalar_to_json_for_column, scalar_to_pk_string,
     scalar_value_to_bytes,
 };
-pub use errors::{CommonError, Result};
+pub use errors::{CommonError, NotLeaderError, Result};
 pub use helpers::arrow_utils;
 pub use helpers::arrow_utils::{empty_batch, RecordBatchBuilder};
 pub use helpers::file_helpers;

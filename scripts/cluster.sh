@@ -437,7 +437,7 @@ start_node() {
         exit 1
     fi
 
-    (cd "$data_dir" && nohup "$binary" > "$log_file" 2>&1) &
+    (cd "$data_dir" && KALAMDB_ROOT_PASSWORD="$ROOT_PASSWORD" nohup "$binary" > "$log_file" 2>&1) &
     local pid=$!
     echo $pid > "$pid_file"
 

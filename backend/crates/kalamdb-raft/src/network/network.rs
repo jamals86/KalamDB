@@ -18,8 +18,11 @@ use openraft::raft::{
     VoteRequest, VoteResponse,
 };
 use parking_lot::RwLock;
-use tonic::transport::Channel;
+use tonic::transport::{Certificate, Channel, ClientTlsConfig, Identity};
 
+use kalamdb_commons::models::NodeId;
+
+use crate::manager::{PeerNode, RpcTlsConfig};
 use crate::storage::{KalamNode, KalamTypeConfig};
 use crate::GroupId;
 
@@ -34,6 +37,20 @@ impl std::fmt::Display for ConnectionError {
 }
 
 impl std::error::Error for ConnectionError {}
+
+#[derive(Debug, Clone)]
+struct RpcAuthIdentity {
+    cluster_id: String,
+    node_id: NodeId,
+}
+
+#[derive(Debug, Clone)]
+struct RpcTlsMaterial {
+    ca_pem: Vec<u8>,
+    cert_pem: Vec<u8>,
+    key_pem: Vec<u8>,
+    peer_server_names: HashMap<NodeId, String>,
+}
 
 #[derive(Debug)]
 struct ConnectionState {
@@ -156,28 +173,48 @@ pub struct RaftNetwork {
     channel: Channel,
     /// Connection retry tracker
     connection_tracker: ConnectionTracker,
+    /// Outgoing RPC auth identity (node + cluster)
+    auth_identity: RpcAuthIdentity,
 }
 
 impl RaftNetwork {
     /// Create a new network instance
-    pub(crate) fn new(
+    fn new(
         target: u64,
         _target_node: KalamNode,
         group_id: GroupId,
         channel: Channel,
         connection_tracker: ConnectionTracker,
+        auth_identity: RpcAuthIdentity,
     ) -> Self {
         Self {
             target,
             group_id,
             channel,
             connection_tracker,
+            auth_identity,
         }
     }
 
     /// Get the gRPC channel
     fn get_channel(&self) -> Result<Channel, ConnectionError> {
         Ok(self.channel.clone())
+    }
+
+    fn add_outgoing_rpc_metadata<T>(
+        &self,
+        request: &mut tonic::Request<T>,
+    ) -> Result<(), ConnectionError> {
+        let cluster_id = tonic::metadata::MetadataValue::try_from(self.auth_identity.cluster_id.as_str())
+            .map_err(|e| ConnectionError(format!("Invalid cluster_id metadata: {}", e)))?;
+        let node_id = tonic::metadata::MetadataValue::try_from(self.auth_identity.node_id.as_u64().to_string())
+            .map_err(|e| ConnectionError(format!("Invalid node_id metadata: {}", e)))?;
+
+        request
+            .metadata_mut()
+            .insert("x-kalamdb-cluster-id", cluster_id);
+        request.metadata_mut().insert("x-kalamdb-node-id", node_id);
+        Ok(())
     }
 }
 
@@ -204,11 +241,13 @@ impl OpenRaftNetwork<KalamTypeConfig> for RaftNetwork {
         // Create gRPC request
         let mut client = crate::network::service::raft_client::RaftClient::new(channel);
 
-        let grpc_request = tonic::Request::new(crate::network::service::RaftRpcRequest {
+        let mut grpc_request = tonic::Request::new(crate::network::service::RaftRpcRequest {
             group_id: self.group_id.to_string(),
             rpc_type: "append_entries".to_string(),
             payload: request_bytes,
         });
+        self.add_outgoing_rpc_metadata(&mut grpc_request)
+            .map_err(|e| RPCError::Network(NetworkError::new(&e)))?;
 
         // Send request
         let response = match client.raft_rpc(grpc_request).await {
@@ -266,11 +305,13 @@ impl OpenRaftNetwork<KalamTypeConfig> for RaftNetwork {
         // Create gRPC request
         let mut client = crate::network::service::raft_client::RaftClient::new(channel);
 
-        let grpc_request = tonic::Request::new(crate::network::service::RaftRpcRequest {
+        let mut grpc_request = tonic::Request::new(crate::network::service::RaftRpcRequest {
             group_id: self.group_id.to_string(),
             rpc_type: "install_snapshot".to_string(),
             payload: request_bytes,
         });
+        self.add_outgoing_rpc_metadata(&mut grpc_request)
+            .map_err(|e| RPCError::Network(NetworkError::new(&e)))?;
 
         // Send request
         let response = match client.raft_rpc(grpc_request).await {
@@ -325,11 +366,13 @@ impl OpenRaftNetwork<KalamTypeConfig> for RaftNetwork {
         // Create gRPC request
         let mut client = crate::network::service::raft_client::RaftClient::new(channel);
 
-        let grpc_request = tonic::Request::new(crate::network::service::RaftRpcRequest {
+        let mut grpc_request = tonic::Request::new(crate::network::service::RaftRpcRequest {
             group_id: self.group_id.to_string(),
             rpc_type: "vote".to_string(),
             payload: request_bytes,
         });
+        self.add_outgoing_rpc_metadata(&mut grpc_request)
+            .map_err(|e| RPCError::Network(NetworkError::new(&e)))?;
 
         // Send request
         let response = match client.raft_rpc(grpc_request).await {
@@ -369,11 +412,15 @@ pub struct RaftNetworkFactory {
     /// Group ID for this factory
     group_id: GroupId,
     /// Known nodes in the cluster
-    nodes: Arc<RwLock<HashMap<u64, KalamNode>>>,
+    nodes: Arc<RwLock<HashMap<NodeId, KalamNode>>>,
     /// Cached gRPC channels (node_id -> channel)
-    channels: Arc<dashmap::DashMap<u64, Channel>>,
+    channels: Arc<dashmap::DashMap<NodeId, Channel>>,
     /// Connection retry tracker
     connection_tracker: ConnectionTracker,
+    /// Outgoing RPC auth identity (set during group start)
+    auth_identity: Arc<RwLock<Option<RpcAuthIdentity>>>,
+    /// Optional TLS client material + peer server-name mappings
+    tls_material: Arc<RwLock<Option<RpcTlsMaterial>>>,
 }
 
 impl RaftNetworkFactory {
@@ -384,6 +431,8 @@ impl RaftNetworkFactory {
             nodes: Arc::new(RwLock::new(HashMap::new())),
             channels: Arc::new(dashmap::DashMap::new()),
             connection_tracker: ConnectionTracker::new(group_id, Duration::from_secs(3)),
+            auth_identity: Arc::new(RwLock::new(None)),
+            tls_material: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -392,23 +441,208 @@ impl RaftNetworkFactory {
         self.connection_tracker.set_retry_interval(interval);
     }
 
+    /// Configure outgoing RPC metadata identity for this node.
+    pub fn configure_rpc_auth_identity(&self, node_id: NodeId, cluster_id: String) {
+        let mut guard = self.auth_identity.write();
+        *guard = Some(RpcAuthIdentity {
+            cluster_id,
+            node_id,
+        });
+    }
+
+    /// Add outgoing node identity metadata to a gRPC request.
+    pub fn add_outgoing_rpc_metadata<T>(
+        &self,
+        request: &mut tonic::Request<T>,
+    ) -> Result<(), crate::RaftError> {
+        let auth_identity = self.auth_identity.read().clone().ok_or_else(|| {
+            crate::RaftError::Config("RPC auth identity is not configured".to_string())
+        })?;
+
+        let cluster_id = tonic::metadata::MetadataValue::try_from(auth_identity.cluster_id.as_str())
+            .map_err(|e| crate::RaftError::Internal(format!("Invalid cluster_id metadata: {}", e)))?;
+        let node_id = tonic::metadata::MetadataValue::try_from(auth_identity.node_id.as_u64().to_string())
+            .map_err(|e| crate::RaftError::Internal(format!("Invalid node_id metadata: {}", e)))?;
+
+        request
+            .metadata_mut()
+            .insert("x-kalamdb-cluster-id", cluster_id);
+        request.metadata_mut().insert("x-kalamdb-node-id", node_id);
+        Ok(())
+    }
+
+    /// Configure TLS/mTLS material for outgoing channels.
+    pub fn configure_rpc_tls(
+        &self,
+        tls: &RpcTlsConfig,
+        peers: &[PeerNode],
+    ) -> Result<(), crate::RaftError> {
+        if !tls.enabled {
+            let mut guard = self.tls_material.write();
+            *guard = None;
+            self.channels.clear();
+            return Ok(());
+        }
+
+        let ca_cert_path = tls.ca_cert_path.as_deref().ok_or_else(|| {
+            crate::RaftError::Config("rpc_tls.enabled=true but ca_cert_path is missing".to_string())
+        })?;
+        let node_cert_path = tls.node_cert_path.as_deref().ok_or_else(|| {
+            crate::RaftError::Config("rpc_tls.enabled=true but node_cert_path is missing".to_string())
+        })?;
+        let node_key_path = tls.node_key_path.as_deref().ok_or_else(|| {
+            crate::RaftError::Config("rpc_tls.enabled=true but node_key_path is missing".to_string())
+        })?;
+
+        let ca_pem = std::fs::read(ca_cert_path).map_err(|e| {
+            crate::RaftError::Config(format!(
+                "Failed reading cluster CA cert '{}': {}",
+                ca_cert_path, e
+            ))
+        })?;
+        let cert_pem = std::fs::read(node_cert_path).map_err(|e| {
+            crate::RaftError::Config(format!(
+                "Failed reading node cert '{}': {}",
+                node_cert_path, e
+            ))
+        })?;
+        let key_pem = std::fs::read(node_key_path).map_err(|e| {
+            crate::RaftError::Config(format!(
+                "Failed reading node key '{}': {}",
+                node_key_path, e
+            ))
+        })?;
+
+        let mut peer_server_names = HashMap::new();
+        for peer in peers {
+            let server_name = if let Some(name) = peer.rpc_server_name.as_ref() {
+                name.clone()
+            } else {
+                Self::rpc_host_from_addr(&peer.rpc_addr)?
+            };
+            peer_server_names.insert(peer.node_id, server_name);
+        }
+
+        let mut guard = self.tls_material.write();
+        *guard = Some(RpcTlsMaterial {
+            ca_pem,
+            cert_pem,
+            key_pem,
+            peer_server_names,
+        });
+        self.channels.clear();
+        Ok(())
+    }
+
+    fn rpc_host_from_addr(rpc_addr: &str) -> Result<String, crate::RaftError> {
+        let (host, _port) = rpc_addr.rsplit_once(':').ok_or_else(|| {
+            crate::RaftError::Config(format!(
+                "Invalid rpc_addr '{}': expected host:port",
+                rpc_addr
+            ))
+        })?;
+        if host.is_empty() {
+            return Err(crate::RaftError::Config(format!(
+                "Invalid rpc_addr '{}': host is empty",
+                rpc_addr
+            )));
+        }
+        Ok(host.to_string())
+    }
+
+    fn build_channel(&self, node_id: NodeId, node: &KalamNode) -> Result<Channel, ConnectionError> {
+        let tls_material = self.tls_material.read().clone();
+        let (scheme, endpoint) = if tls_material.is_some() {
+            ("https", format!("https://{}", node.rpc_addr))
+        } else {
+            ("http", format!("http://{}", node.rpc_addr))
+        };
+
+        let mut endpoint = Channel::from_shared(endpoint)
+            .map_err(|e| ConnectionError(format!("Invalid {} endpoint: {}", scheme, e)))?
+            .connect_timeout(Duration::from_secs(5))
+            .timeout(Duration::from_secs(30));
+
+        if let Some(material) = tls_material {
+            let server_name = material
+                .peer_server_names
+                .get(&node_id)
+                .cloned()
+                .unwrap_or_else(|| {
+                    Self::rpc_host_from_addr(&node.rpc_addr)
+                        .unwrap_or_else(|_| "localhost".to_string())
+                });
+            let tls_config = ClientTlsConfig::new()
+                .ca_certificate(Certificate::from_pem(material.ca_pem))
+                .identity(Identity::from_pem(material.cert_pem, material.key_pem))
+                .domain_name(server_name);
+            endpoint = endpoint
+                .tls_config(tls_config)
+                .map_err(|e| ConnectionError(format!("Failed configuring TLS endpoint: {}", e)))?;
+        }
+
+        Ok(endpoint.connect_lazy())
+    }
+
     /// Register a node in the cluster
-    pub fn register_node(&self, node_id: u64, node: KalamNode) {
+    pub fn register_node(&self, node_id: NodeId, node: KalamNode) {
         let mut nodes = self.nodes.write();
         nodes.insert(node_id, node);
     }
 
     /// Remove a node from the cluster
-    pub fn unregister_node(&self, node_id: u64) {
+    pub fn unregister_node(&self, node_id: NodeId) {
         let mut nodes = self.nodes.write();
         nodes.remove(&node_id);
         self.channels.remove(&node_id);
     }
 
     /// Get node info by node ID (for leader forwarding)
-    pub fn get_node(&self, node_id: u64) -> Option<KalamNode> {
+    pub fn get_node(&self, node_id: NodeId) -> Option<KalamNode> {
         let nodes = self.nodes.read();
         nodes.get(&node_id).cloned()
+    }
+
+    /// Get or create a gRPC channel to a peer node.
+    ///
+    /// This is used by [`super::cluster_client::ClusterClient`] for non-Raft
+    /// cluster communication. Channels are lazily connected and cached.
+    pub fn get_or_create_channel(&self, node_id: NodeId) -> Option<Channel> {
+        // Return existing cached channel
+        if let Some(ch) = self.channels.get(&node_id) {
+            return Some(ch.clone());
+        }
+
+        // Look up the node's rpc_addr and create a lazy channel
+        let node = {
+            let nodes = self.nodes.read();
+            nodes.get(&node_id).cloned()
+        };
+
+        let node = node?;
+        let ch = match self.build_channel(node_id, &node) {
+            Ok(ch) => ch,
+            Err(e) => {
+                log::error!(
+                    "Failed to build channel for node {} in group {}: {}",
+                    node_id,
+                    self.group_id,
+                    e
+                );
+                return None;
+            },
+        };
+
+        self.channels.insert(node_id, ch.clone());
+        Some(ch)
+    }
+
+    /// Get all registered peer node IDs and their info.
+    ///
+    /// Used by [`super::cluster_client::ClusterClient`] for broadcasting.
+    pub fn get_all_peers(&self) -> Vec<(NodeId, KalamNode)> {
+        let nodes = self.nodes.read();
+        nodes.iter().map(|(&id, node)| (id, node.clone())).collect()
     }
 }
 
@@ -417,30 +651,24 @@ impl OpenRaftNetworkFactory<KalamTypeConfig> for RaftNetworkFactory {
 
     async fn new_client(&mut self, target: u64, node: &KalamNode) -> Self::Network {
         // Register the node if not already known
-        self.register_node(target, node.clone());
+        let target_node_id = NodeId::from(target);
+        self.register_node(target_node_id, node.clone());
 
         // Get or create channel
-        let channel = if let Some(ch) = self.channels.get(&target) {
+        let channel = if let Some(ch) = self.channels.get(&target_node_id) {
             ch.clone()
         } else {
-            // Need to create a new channel
-            // Note: Tonic's connect is async, but we can't easily do async inside dashmap entry
-            // So we do it outside. This might race but it's fine (last one wins)
+            let ch = self
+                .build_channel(target_node_id, node)
+                .unwrap_or_else(|e| panic!("Failed to build channel for node {}: {}", target_node_id, e));
 
-            // Note: We use the endpoint from the provided node info
-            let endpoint = format!("http://{}", node.rpc_addr);
-
-            // Create a channel that lazily connects
-            // This avoids making a connection just to check if it works
-            let ch = Channel::from_shared(endpoint)
-                .expect("Invalid URI")
-                .connect_timeout(std::time::Duration::from_secs(5))
-                .timeout(std::time::Duration::from_secs(30))
-                .connect_lazy();
-
-            self.channels.insert(target, ch.clone());
+            self.channels.insert(target_node_id, ch.clone());
             ch
         };
+
+        let auth_identity = self.auth_identity.read().clone().unwrap_or_else(|| {
+            panic!("RPC auth identity is not configured for group {}", self.group_id)
+        });
 
         RaftNetwork::new(
             target,
@@ -448,6 +676,7 @@ impl OpenRaftNetworkFactory<KalamTypeConfig> for RaftNetworkFactory {
             self.group_id,
             channel,
             self.connection_tracker.clone(),
+            auth_identity,
         )
     }
 }
@@ -460,9 +689,9 @@ mod tests {
     fn test_network_factory_creation() {
         let factory = RaftNetworkFactory::new(GroupId::Meta);
 
-        factory.register_node(1, KalamNode::new("127.0.0.1:9000", "127.0.0.1:8080"));
+        factory.register_node(NodeId::from(1), KalamNode::new("127.0.0.1:9000", "127.0.0.1:8080"));
 
         let nodes = factory.nodes.read();
-        assert!(nodes.contains_key(&1));
+        assert!(nodes.contains_key(&NodeId::from(1)));
     }
 }

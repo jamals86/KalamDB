@@ -16,6 +16,7 @@ use crate::error_extensions::KalamDbResultExt;
 use crate::stream_tables::{StreamTableRow, StreamTableStore};
 use crate::utils::base::{extract_seq_bounds_from_filter, BaseTableProvider, TableProviderCore};
 use crate::utils::row_utils::extract_user_context;
+use crate::utils::row_utils::extract_full_user_context;
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
@@ -23,6 +24,7 @@ use datafusion::catalog::Session;
 use datafusion::datasource::TableProvider;
 use datafusion::error::DataFusionError;
 use datafusion::error::Result as DataFusionResult;
+use kalamdb_commons::NotLeaderError;
 use datafusion::logical_expr::dml::InsertOp;
 use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
 use datafusion::physical_plan::ExecutionPlan;
@@ -473,6 +475,25 @@ impl TableProvider for StreamTableProvider {
         filters: &[Expr],
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        // In cluster mode, route client reads to the Meta leader where all DML data lives
+        let (_user_id, _role, read_context) = extract_full_user_context(state).map_err(|e| {
+            DataFusionError::Execution(format!("Failed to extract user context: {}", e))
+        })?;
+
+        if read_context.requires_leader()
+            && self.core.services.cluster_coordinator.is_cluster_mode().await
+        {
+            let is_leader =
+                self.core.services.cluster_coordinator.is_meta_leader().await;
+            if !is_leader {
+                let leader_addr =
+                    self.core.services.cluster_coordinator.meta_leader_addr().await;
+                return Err(DataFusionError::External(
+                    Box::new(NotLeaderError::new(leader_addr)),
+                ));
+            }
+        }
+
         self.base_scan(state, projection, filters, limit).await
     }
 
@@ -501,6 +522,7 @@ impl TableProvider for StreamTableProvider {
 
         let (user_id, _role) =
             extract_user_context(state).map_err(|e| DataFusionError::Execution(e.to_string()))?;
+
         let rows = crate::utils::datafusion_dml::collect_input_rows(state, input).await?;
         let inserted = self
             .insert_batch(user_id, rows)
@@ -519,6 +541,9 @@ impl TableProvider for StreamTableProvider {
             .map_err(DataFusionError::from)?;
         crate::utils::datafusion_dml::validate_where_clause(&filters, "DELETE")?;
 
+        let (user_id, _role) =
+            extract_user_context(state).map_err(|e| DataFusionError::Execution(e.to_string()))?;
+
         let rows =
             crate::utils::datafusion_dml::collect_matching_rows(self, state, &filters).await?;
         if rows.is_empty() {
@@ -526,8 +551,6 @@ impl TableProvider for StreamTableProvider {
         }
 
         let pk_column = self.primary_key_field_name().to_string();
-        let (user_id, _role) =
-            extract_user_context(state).map_err(|e| DataFusionError::Execution(e.to_string()))?;
         let mut seen = HashSet::new();
         let mut deleted: u64 = 0;
 

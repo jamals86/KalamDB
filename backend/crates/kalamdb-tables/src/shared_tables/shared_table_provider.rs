@@ -23,6 +23,7 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::catalog::Session;
 use datafusion::datasource::TableProvider;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
+use kalamdb_commons::NotLeaderError;
 use datafusion::logical_expr::dml::InsertOp;
 use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
 use datafusion::physical_plan::ExecutionPlan;
@@ -964,10 +965,11 @@ impl TableProvider for SharedTableProvider {
         {
             let is_leader = self.core.services.cluster_coordinator.is_leader_for_shared().await;
             if !is_leader {
-                // For shared tables, redirect to leader
-                // We don't have a specific user, so we just report not leader
-                return Err(DataFusionError::Execution(
-                    "NOT_LEADER: This node is not the leader for shared tables".to_string(),
+                // Include leader address for auto-forwarding by the SQL handler
+                let leader_addr =
+                    self.core.services.cluster_coordinator.leader_addr_for_shared().await;
+                return Err(DataFusionError::External(
+                    Box::new(NotLeaderError::new(leader_addr)),
                 ));
             }
         }
@@ -991,6 +993,18 @@ impl TableProvider for SharedTableProvider {
             )));
         }
 
+        // In cluster mode, ensure we're on the shared shard leader
+        if self.core.services.cluster_coordinator.is_cluster_mode().await {
+            let is_leader = self.core.services.cluster_coordinator.is_leader_for_shared().await;
+            if !is_leader {
+                let leader_addr =
+                    self.core.services.cluster_coordinator.leader_addr_for_shared().await;
+                return Err(DataFusionError::External(
+                    Box::new(NotLeaderError::new(leader_addr)),
+                ));
+            }
+        }
+
         let rows = crate::utils::datafusion_dml::collect_input_rows(state, input).await?;
         let inserted = self
             .insert_batch(base::system_user_id(), rows)
@@ -1008,6 +1022,18 @@ impl TableProvider for SharedTableProvider {
         check_shared_table_write_access(state, self.core.table_def())
             .map_err(DataFusionError::from)?;
         crate::utils::datafusion_dml::validate_where_clause(&filters, "DELETE")?;
+
+        // In cluster mode, ensure we're on the shared shard leader
+        if self.core.services.cluster_coordinator.is_cluster_mode().await {
+            let is_leader = self.core.services.cluster_coordinator.is_leader_for_shared().await;
+            if !is_leader {
+                let leader_addr =
+                    self.core.services.cluster_coordinator.leader_addr_for_shared().await;
+                return Err(DataFusionError::External(
+                    Box::new(NotLeaderError::new(leader_addr)),
+                ));
+            }
+        }
 
         let rows =
             crate::utils::datafusion_dml::collect_matching_rows(self, state, &filters).await?;
@@ -1046,6 +1072,18 @@ impl TableProvider for SharedTableProvider {
         check_shared_table_write_access(state, self.core.table_def())
             .map_err(DataFusionError::from)?;
         crate::utils::datafusion_dml::validate_where_clause(&filters, "UPDATE")?;
+
+        // In cluster mode, ensure we're on the shared shard leader
+        if self.core.services.cluster_coordinator.is_cluster_mode().await {
+            let is_leader = self.core.services.cluster_coordinator.is_leader_for_shared().await;
+            if !is_leader {
+                let leader_addr =
+                    self.core.services.cluster_coordinator.leader_addr_for_shared().await;
+                return Err(DataFusionError::External(
+                    Box::new(NotLeaderError::new(leader_addr)),
+                ));
+            }
+        }
 
         let pk_column = self.primary_key_field_name().to_string();
         crate::utils::datafusion_dml::validate_update_assignments(&assignments, &pk_column)?;
@@ -1099,6 +1137,17 @@ impl TableProvider for SharedTableProvider {
 #[async_trait]
 impl crate::utils::dml_provider::KalamTableProvider for SharedTableProvider {
     async fn insert_rows(&self, user_id: &UserId, rows: Vec<Row>) -> Result<usize, KalamDbError> {
+        // In cluster mode, ensure we're on the shared shard leader.
+        // This is needed because fast_insert bypasses DataFusion's insert_into(),
+        // which has its own leadership check.
+        if self.core.services.cluster_coordinator.is_cluster_mode().await {
+            let is_leader = self.core.services.cluster_coordinator.is_leader_for_shared().await;
+            if !is_leader {
+                let leader_addr =
+                    self.core.services.cluster_coordinator.leader_addr_for_shared().await;
+                return Err(KalamDbError::NotLeader { leader_addr });
+            }
+        }
         let keys = self.insert_batch(user_id, rows).await?;
         Ok(keys.len())
     }

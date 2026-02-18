@@ -15,6 +15,7 @@ pub mod manager;
 pub mod models; // Consolidated model definitions
 pub mod notification;
 pub mod subscription;
+pub mod cluster_handler;
 
 // Re-export types from kalamdb-commons (canonical source)
 pub use kalamdb_commons::models::{ConnectionId, LiveQueryId, TableId, UserId};
@@ -42,6 +43,7 @@ pub use helpers::{
 };
 
 // Re-export from other modules
+pub use cluster_handler::CoreClusterHandler;
 pub use notification::NotificationService;
 pub use subscription::SubscriptionService;
 

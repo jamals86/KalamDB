@@ -328,6 +328,9 @@ fn smoke_subscription_multi_batch_initial_data() {
 
     listener.stop().ok();
     println!("[TEST] Multi-batch initial data test passed!");
+
+    // Cleanup
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
 }
 
 // ============================================================================
@@ -475,6 +478,9 @@ fn smoke_subscription_resume_from_seq_id() {
     );
 
     println!("[TEST] Subscription resume test passed! (seq_id capture: {:?})", last_seq_id);
+
+    // Cleanup
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
 }
 
 // ============================================================================
@@ -630,6 +636,9 @@ fn smoke_subscription_high_volume_changes() {
         "[TEST] High-volume changes test passed! {} inserts, {} updates received",
         insert_count, update_count
     );
+
+    // Cleanup
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
 }
 
 // ============================================================================
@@ -718,6 +727,9 @@ fn smoke_subscription_delete_events() {
         "[TEST] Delete events test passed! {} delete events received",
         delete_events.len()
     );
+
+    // Cleanup
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
 }
 
 // Helper extension for SubscriptionListener to collect until ready
@@ -967,4 +979,7 @@ fn smoke_subscription_column_projection() {
 
     listener.stop().ok();
     println!("[TEST] Column projection test passed! Only selected columns returned in subscription events.");
+
+    // Cleanup
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
 }

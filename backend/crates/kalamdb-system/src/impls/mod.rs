@@ -90,9 +90,17 @@ pub trait SchemaRegistry: Send + Sync {
 pub trait ClusterCoordinator: Send + Sync {
     async fn is_cluster_mode(&self) -> bool;
 
+    /// Check if this node is the Meta group leader (where all DML data lives).
+    async fn is_meta_leader(&self) -> bool;
+
+    /// Get the API address of the Meta group leader.
+    async fn meta_leader_addr(&self) -> Option<String>;
+
     async fn is_leader_for_user(&self, user_id: &UserId) -> bool;
 
     async fn is_leader_for_shared(&self) -> bool;
 
     async fn leader_addr_for_user(&self, user_id: &UserId) -> Option<String>;
+
+    async fn leader_addr_for_shared(&self) -> Option<String>;
 }

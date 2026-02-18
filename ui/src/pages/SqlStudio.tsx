@@ -1,4 +1,5 @@
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { PanelRightClose, PanelRightOpen } from "lucide-react";
 import { QueryTabStrip } from "@/components/sql-studio-v2/QueryTabStrip";
 import { StudioEditorPanel } from "@/components/sql-studio-v2/StudioEditorPanel";
@@ -10,6 +11,7 @@ import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/componen
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { useAuth } from "@/lib/auth";
 import { subscribe, type Unsubscribe } from "@/lib/kalam-client";
+import type { ServerMessage, ChangeTypeRaw, SchemaField } from "kalam-link";
 import type {
   QueryRunSummary,
   QueryTab,
@@ -22,7 +24,6 @@ import {
 import {
   executeSqlStudioQuery,
   normalizeSchema,
-  type RawQuerySchemaField,
 } from "@/services/sqlStudioService";
 import {
   addWorkspaceTab,
@@ -99,6 +100,8 @@ function normalizeLiveRows(rows: unknown[]): Record<string, unknown>[] {
 }
 
 export default function SqlStudio() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const initialWorkspace = useMemo(() => {
     const fallbackTab = createQueryTab(1);
     return loadSqlStudioWorkspaceState(toPersistedTab(fallbackTab));
@@ -128,6 +131,7 @@ export default function SqlStudio() {
   } | null>(null);
   const [isUiHydrated, setIsUiHydrated] = useState(false);
   const liveUnsubscribeRef = useRef<Record<string, Unsubscribe>>({});
+  const consumedPrefillKeyRef = useRef<string | null>(null);
 
   const activeTab = useMemo(
     () => {
@@ -215,6 +219,39 @@ export default function SqlStudio() {
     dispatch(setNamespaceExpanded({ namespaceName, expanded: true }));
     dispatch(setTableExpanded({ tableKey: selectedTableKey, expanded: true }));
   }, [dispatch, selectedTableKey]);
+
+  useEffect(() => {
+    if (!isUiHydrated) {
+      return;
+    }
+
+    const state = location.state as { prefillSql?: string; prefillTitle?: string } | null;
+    const prefillSql = state?.prefillSql?.trim();
+    if (!prefillSql) {
+      return;
+    }
+
+    const prefillKey = `${location.key}:${prefillSql}`;
+    if (consumedPrefillKeyRef.current === prefillKey) {
+      return;
+    }
+    consumedPrefillKeyRef.current = prefillKey;
+
+    const tab: QueryTab = {
+      id: createTabId(tabs.length + 1),
+      title: state?.prefillTitle?.trim() || `Query ${tabs.length + 1}`,
+      sql: prefillSql,
+      isDirty: true,
+      isLive: false,
+      liveStatus: "idle",
+      resultView: "results",
+      lastSavedAt: null,
+      savedQueryId: null,
+    };
+    dispatch(addWorkspaceTab(tab));
+    dispatch(setWorkspaceActiveTabId(tab.id));
+    navigate(location.pathname, { replace: true, state: null });
+  }, [dispatch, isUiHydrated, location.key, location.pathname, location.state, navigate, tabs.length]);
 
   const updateTab = useCallback((tabId: string, updates: Partial<QueryTab>) => {
     dispatch(updateWorkspaceTab({ tabId, updates }));
@@ -341,83 +378,121 @@ export default function SqlStudio() {
     }));
     updateTab(tab.id, { liveStatus: "connecting", isLive: true });
     try {
-      const unsubscribe = await subscribe(tab.sql, (event) => {
-        const serverMessage = event as {
-          type?: string;
-          rows?: Record<string, unknown>[];
-          change_type?: string;
-          message?: string;
-          code?: string;
-          schema?: RawQuerySchemaField[];
-        };
-
-        if (serverMessage.type === "error") {
-          dispatch(appendWorkspaceResultLog({
-            tabId: tab.id,
-            entry: createLogEntry(serverMessage.message ?? "Live query error", "error", user?.username, serverMessage),
-            statusOverride: "error",
-          }));
-          updateTab(tab.id, { liveStatus: "error" });
-          return;
-        }
-
-        if (serverMessage.type === "subscription_ack") {
-          if (Array.isArray(serverMessage.schema) && serverMessage.schema.length > 0) {
-            dispatch(setWorkspaceLiveSchema({
+      const unsubscribe = await subscribe(tab.sql, (msg: ServerMessage) => {
+        switch (msg.type) {
+          case "error": {
+            dispatch(appendWorkspaceResultLog({
               tabId: tab.id,
-              schema: normalizeSchema(serverMessage.schema),
+              entry: createLogEntry(msg.message ?? "Live query error", "error", user?.username, msg),
+              statusOverride: "error",
             }));
+            updateTab(tab.id, { liveStatus: "error" });
+            return;
           }
-          dispatch(appendWorkspaceResultLog({
-            tabId: tab.id,
-            entry: createLogEntry("Live subscription connected.", "info", user?.username, serverMessage),
-          }));
-          updateTab(tab.id, { liveStatus: "connected", resultView: "results" });
-          return;
-        }
 
-        if (Array.isArray(serverMessage.rows)) {
-          const receivedRows = normalizeLiveRows(serverMessage.rows);
-          const changeType = serverMessage.type === "change"
-            ? (serverMessage.change_type ?? "change")
-            : "initial";
+          case "auth_success":
+          case "auth_error":
+            // Auth messages are handled by the SDK internally
+            return;
 
-          dispatch(appendWorkspaceLiveRows({
-            tabId: tab.id,
-            rows: receivedRows,
-            changeType,
-            schema: normalizeSchema(serverMessage.schema),
-          }));
-          dispatch(appendWorkspaceResultLog({
-            tabId: tab.id,
-            entry: createLogEntry(
-              `Received ${receivedRows.length} row${receivedRows.length === 1 ? "" : "s"} (${changeType}).`,
-              "info",
-              user?.username,
-              serverMessage,
-            ),
-          }));
-          updateTab(tab.id, { liveStatus: "connected", resultView: "results" });
-          return;
-        }
+          case "subscription_ack": {
+            if (msg.schema.length > 0) {
+              dispatch(setWorkspaceLiveSchema({
+                tabId: tab.id,
+                schema: normalizeSchema(msg.schema as SchemaField[]),
+              }));
+            }
+            dispatch(appendWorkspaceResultLog({
+              tabId: tab.id,
+              entry: createLogEntry("Live subscription connected.", "info", user?.username, msg),
+            }));
+            updateTab(tab.id, { liveStatus: "connected", resultView: "results" });
+            return;
+          }
 
-        if (Array.isArray(event)) {
-          const receivedRows = normalizeLiveRows(event as unknown[]);
-          dispatch(appendWorkspaceLiveRows({
-            tabId: tab.id,
-            rows: receivedRows,
-            changeType: "data",
-          }));
-          dispatch(appendWorkspaceResultLog({
-            tabId: tab.id,
-            entry: createLogEntry(
-              `Received ${receivedRows.length} row${receivedRows.length === 1 ? "" : "s"} (data).`,
-              "info",
-              user?.username,
-              event,
-            ),
-          }));
-          updateTab(tab.id, { liveStatus: "connected", resultView: "results" });
+          case "initial_data_batch": {
+            const rows = normalizeLiveRows(msg.rows);
+            dispatch(appendWorkspaceLiveRows({
+              tabId: tab.id,
+              rows,
+              changeType: "initial",
+              schema: undefined,
+            }));
+            dispatch(appendWorkspaceResultLog({
+              tabId: tab.id,
+              entry: createLogEntry(
+                `Received ${rows.length} row${rows.length === 1 ? "" : "s"} (initial).`,
+                "info",
+                user?.username,
+                msg,
+              ),
+            }));
+            updateTab(tab.id, { liveStatus: "connected", resultView: "results" });
+            return;
+          }
+
+          case "change": {
+            const changeType: ChangeTypeRaw = msg.change_type;
+
+            if (changeType === "delete") {
+              // DELETE: data is in old_values, rows is null
+              const deletedRows = normalizeLiveRows(msg.old_values ?? []);
+              dispatch(appendWorkspaceLiveRows({
+                tabId: tab.id,
+                rows: deletedRows,
+                changeType: "delete",
+              }));
+              dispatch(appendWorkspaceResultLog({
+                tabId: tab.id,
+                entry: createLogEntry(
+                  `Deleted ${deletedRows.length} row${deletedRows.length === 1 ? "" : "s"}.`,
+                  "info",
+                  user?.username,
+                  msg,
+                ),
+              }));
+            } else if (changeType === "update") {
+              // UPDATE: new values in rows, previous values in old_values
+              const updatedRows = normalizeLiveRows(msg.rows ?? []);
+              dispatch(appendWorkspaceLiveRows({
+                tabId: tab.id,
+                rows: updatedRows,
+                changeType: "update",
+              }));
+              dispatch(appendWorkspaceResultLog({
+                tabId: tab.id,
+                entry: createLogEntry(
+                  `Updated ${updatedRows.length} row${updatedRows.length === 1 ? "" : "s"}.`,
+                  "info",
+                  user?.username,
+                  msg,
+                ),
+              }));
+            } else {
+              // INSERT
+              const insertedRows = normalizeLiveRows(msg.rows ?? []);
+              dispatch(appendWorkspaceLiveRows({
+                tabId: tab.id,
+                rows: insertedRows,
+                changeType: "insert",
+              }));
+              dispatch(appendWorkspaceResultLog({
+                tabId: tab.id,
+                entry: createLogEntry(
+                  `Inserted ${insertedRows.length} row${insertedRows.length === 1 ? "" : "s"}.`,
+                  "info",
+                  user?.username,
+                  msg,
+                ),
+              }));
+            }
+            updateTab(tab.id, { liveStatus: "connected", resultView: "results" });
+            return;
+          }
+
+          default:
+            // Unknown message type — ignore
+            break;
         }
       });
 

@@ -419,6 +419,13 @@ node_id = 1
 # 
 # # API address for client HTTP requests (should match server.host:server.port)
 # api_addr = "0.0.0.0:8080"
+# #
+# # Optional mTLS for inter-node gRPC (Raft + cluster RPC)
+# # [cluster.rpc_tls]
+# # enabled = true
+# # ca_cert_path = "/etc/kalamdb/certs/cluster-ca.pem"
+# # node_cert_path = "/etc/kalamdb/certs/node1.pem"
+# # node_key_path = "/etc/kalamdb/certs/node1.key"
 # 
 # # Number of user data shards (default: 32)
 # # MEMORY OPTIMIZATION: Reduced from 32 to 8 (saves ~5-8 MB)
@@ -480,8 +487,10 @@ user_shards = 8
 # # node_id = 2
 # # rpc_addr = "10.0.0.2:9100"
 # # api_addr = "http://10.0.0.2:8080"
+# # rpc_server_name = "node2.cluster.local"
 # #
 # # [[cluster.peers]]
 # # node_id = 3
 # # rpc_addr = "10.0.0.3:9100"
 # # api_addr = "http://10.0.0.3:8080"
+# # rpc_server_name = "node3.cluster.local"

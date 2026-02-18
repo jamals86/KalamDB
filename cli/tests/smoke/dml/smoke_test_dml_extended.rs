@@ -84,6 +84,9 @@ fn smoke_test_multi_row_insert() {
     );
 
     println!("✅ Verified all 4 rows inserted correctly");
+
+    // Cleanup
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 }
 
 /// Test soft DELETE for USER tables
@@ -187,6 +190,9 @@ fn smoke_test_soft_delete_user_table() {
     println!(
         "✅ Verified soft delete behavior: row hidden by default, visible with _deleted = true"
     );
+
+    // Cleanup
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 }
 
 /// Test soft DELETE for SHARED tables
@@ -245,6 +251,9 @@ fn smoke_test_soft_delete_shared_table() {
     assert!(count_output.contains('1'), "Expected 1 row after soft delete in SHARED table");
 
     println!("✅ Verified SHARED table uses soft delete");
+
+    // Cleanup
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 }
 
 /// Test hard DELETE for STREAM tables
@@ -336,6 +345,9 @@ fn smoke_test_hard_delete_stream_table() {
         assert!(all_output.contains("hover"), "Expected hover event still exists");
         println!("✅ Verified STREAM table uses hard delete (rows physically removed)");
     }
+
+    // Cleanup
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 }
 
 /// Test aggregation queries (COUNT, SUM, GROUP BY)
@@ -460,6 +472,9 @@ fn smoke_test_aggregation_queries() {
     println!("✅ AVG, MIN, MAX work");
 
     println!("✅ All aggregation queries successful");
+
+    // Cleanup
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 }
 
 /// Test multi-row UPDATE
@@ -545,4 +560,7 @@ fn smoke_test_multi_row_update() {
     );
 
     println!("✅ Verified multi-row UPDATE affected all matching rows");
+
+    // Cleanup
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 }

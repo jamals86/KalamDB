@@ -4,15 +4,43 @@
 
 use crate::cluster_common::*;
 use crate::common::*;
+use std::time::Duration;
 
 fn assert_rows_on_all_nodes(urls: &[String], sql: &str, expected: &[String]) {
     let mut expected_rows = expected.to_vec();
     expected_rows.sort();
 
-    for (idx, url) in urls.iter().enumerate() {
-        let rows = fetch_normalized_rows(url, sql)
-            .unwrap_or_else(|e| panic!("Node {} query failed: {}", idx, e));
-        assert_eq!(rows, expected_rows, "Node {} data mismatch for query: {}", idx, sql);
+    // Retry with backoff for Raft replication lag (writes auto-forwarded to
+    // shard leaders via HTTP may take extra time to replicate to all nodes)
+    for attempt in 0..20 {
+        let mut all_match = true;
+        let mut last_mismatch = String::new();
+
+        for (idx, url) in urls.iter().enumerate() {
+            match fetch_normalized_rows(url, sql) {
+                Ok(rows) => {
+                    if rows != expected_rows {
+                        all_match = false;
+                        last_mismatch =
+                            format!("Node {} data mismatch: got {:?}, expected {:?}", idx, rows, expected_rows);
+                    }
+                },
+                Err(e) => {
+                    all_match = false;
+                    last_mismatch = format!("Node {} query failed: {}", idx, e);
+                },
+            }
+        }
+
+        if all_match {
+            return;
+        }
+
+        if attempt < 19 {
+            std::thread::sleep(Duration::from_millis(500));
+        } else {
+            panic!("{} for query: {}", last_mismatch, sql);
+        }
     }
 }
 
@@ -26,10 +54,35 @@ fn assert_rows_on_all_nodes_as_user(
     let mut expected_rows = expected.to_vec();
     expected_rows.sort();
 
-    for (idx, url) in urls.iter().enumerate() {
-        let rows = fetch_normalized_rows_as_user(url, username, password, sql)
-            .unwrap_or_else(|e| panic!("Node {} query failed: {}", idx, e));
-        assert_eq!(rows, expected_rows, "Node {} data mismatch for query: {}", idx, sql);
+    for attempt in 0..20 {
+        let mut all_match = true;
+        let mut last_mismatch = String::new();
+
+        for (idx, url) in urls.iter().enumerate() {
+            match fetch_normalized_rows_as_user(url, username, password, sql) {
+                Ok(rows) => {
+                    if rows != expected_rows {
+                        all_match = false;
+                        last_mismatch =
+                            format!("Node {} data mismatch: got {:?}, expected {:?}", idx, rows, expected_rows);
+                    }
+                },
+                Err(e) => {
+                    all_match = false;
+                    last_mismatch = format!("Node {} query failed: {}", idx, e);
+                },
+            }
+        }
+
+        if all_match {
+            return;
+        }
+
+        if attempt < 19 {
+            std::thread::sleep(Duration::from_millis(500));
+        } else {
+            panic!("{} for query: {}", last_mismatch, sql);
+        }
     }
 }
 

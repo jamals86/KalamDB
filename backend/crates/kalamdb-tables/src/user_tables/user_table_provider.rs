@@ -23,6 +23,7 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::catalog::Session;
 use datafusion::datasource::TableProvider;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
+use kalamdb_commons::NotLeaderError;
 use datafusion::logical_expr::dml::InsertOp;
 use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
 use datafusion::physical_plan::{ExecutionPlan, Statistics};
@@ -1181,19 +1182,20 @@ impl TableProvider for UserTableProvider {
 
         // Check if this is a client read that requires leader
         // Skip check for internal reads (jobs, live query notifications, etc.)
+        // Route to the Meta group leader where ALL DML data lives
+        // (DML writes go through forward_sql_if_follower to Meta leader)
         if read_context.requires_leader()
             && self.core.services.cluster_coordinator.is_cluster_mode().await
         {
             let is_leader =
-                self.core.services.cluster_coordinator.is_leader_for_user(user_id).await;
+                self.core.services.cluster_coordinator.is_meta_leader().await;
             if !is_leader {
-                // Get leader hint for client redirection
+                // Get Meta leader address for client redirection
                 let leader_addr =
-                    self.core.services.cluster_coordinator.leader_addr_for_user(user_id).await;
-                return Err(DataFusionError::Execution(format!(
-                    "NOT_LEADER: This node is not the leader for user {}. Leader: {:?}",
-                    user_id, leader_addr
-                )));
+                    self.core.services.cluster_coordinator.meta_leader_addr().await;
+                return Err(DataFusionError::External(
+                    Box::new(NotLeaderError::new(leader_addr)),
+                ));
             }
         }
 
@@ -1219,6 +1221,7 @@ impl TableProvider for UserTableProvider {
 
         let (user_id, _role) =
             extract_user_context(state).map_err(|e| DataFusionError::Execution(e.to_string()))?;
+
         let rows = crate::utils::datafusion_dml::collect_input_rows(state, input).await?;
         let inserted = self
             .insert_batch(user_id, rows)
@@ -1237,14 +1240,15 @@ impl TableProvider for UserTableProvider {
             .map_err(DataFusionError::from)?;
         crate::utils::datafusion_dml::validate_where_clause(&filters, "DELETE")?;
 
+        let (user_id, _role) =
+            extract_user_context(state).map_err(|e| DataFusionError::Execution(e.to_string()))?;
+
         let rows = self.collect_matching_rows_for_subject(state, &filters).await?;
         if rows.is_empty() {
             return crate::utils::datafusion_dml::rows_affected_plan(state, 0).await;
         }
 
         let pk_column = self.primary_key_field_name().to_string();
-        let (user_id, _role) =
-            extract_user_context(state).map_err(|e| DataFusionError::Execution(e.to_string()))?;
         let mut seen = HashSet::new();
         let mut deleted: u64 = 0;
 
@@ -1279,14 +1283,15 @@ impl TableProvider for UserTableProvider {
         let pk_column = self.primary_key_field_name().to_string();
         crate::utils::datafusion_dml::validate_update_assignments(&assignments, &pk_column)?;
 
+        let (user_id, _role) =
+            extract_user_context(state).map_err(|e| DataFusionError::Execution(e.to_string()))?;
+
         let rows = self.collect_matching_rows_for_subject(state, &filters).await?;
         if rows.is_empty() {
             return crate::utils::datafusion_dml::rows_affected_plan(state, 0).await;
         }
 
         let schema = self.schema_ref();
-        let (user_id, _role) =
-            extract_user_context(state).map_err(|e| DataFusionError::Execution(e.to_string()))?;
         let mut seen = HashSet::new();
         let mut updated: u64 = 0;
 

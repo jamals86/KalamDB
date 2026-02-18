@@ -13,7 +13,7 @@ use std::fmt;
 ///
 /// Uses u64 to match OpenRaft's NodeId type for seamless integration.
 /// Configured via server.toml `[cluster] node_id = 1`
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, )]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct NodeId(u64);
 
 impl Serialize for NodeId {
@@ -134,5 +134,18 @@ mod tests {
         let node_id = NodeId::new(789);
         let value: u64 = node_id.into();
         assert_eq!(value, 789);
+    }
+
+    #[test]
+    fn test_node_id_ordering() {
+        let a = NodeId::new(1);
+        let b = NodeId::new(2);
+        let c = NodeId::new(3);
+        assert!(a < b);
+        assert!(b < c);
+        // Verify BTreeSet ordering
+        let set: std::collections::BTreeSet<NodeId> = [c, a, b].into_iter().collect();
+        let ordered: Vec<NodeId> = set.into_iter().collect();
+        assert_eq!(ordered, vec![a, b, c]);
     }
 }

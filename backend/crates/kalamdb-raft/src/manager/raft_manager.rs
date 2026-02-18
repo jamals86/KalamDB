@@ -6,6 +6,7 @@
 //! - DataSharedShard(0..M): Shared table data shards (default 1)
 
 use std::collections::BTreeSet;
+use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -15,13 +16,19 @@ use kalamdb_store::raft_storage::RAFT_PARTITION_NAME;
 use kalamdb_store::{Partition, StorageBackend};
 use openraft::RaftMetrics;
 use parking_lot::RwLock;
+use tonic::transport::{Certificate, ClientTlsConfig, Identity};
 
 use crate::manager::config::RaftManagerConfig;
 use crate::manager::RaftGroup;
+use crate::network::cluster_service::cluster_client::ClusterServiceClient;
+use crate::network::cluster_service::PingRequest;
 use crate::state_machine::KalamStateMachine;
 use crate::state_machine::{MetaStateMachine, SharedDataStateMachine, UserDataStateMachine};
 use crate::storage::KalamNode;
 use crate::{GroupId, RaftError};
+
+const RPC_CLUSTER_ID_HEADER: &str = "x-kalamdb-cluster-id";
+const RPC_NODE_ID_HEADER: &str = "x-kalamdb-node-id";
 
 /// Information about a snapshot operation result
 #[derive(Debug, Clone)]
@@ -58,6 +65,14 @@ pub struct SnapshotsSummary {
     pub snapshots_dir: String,
     /// Details for each group
     pub group_details: Vec<(GroupId, Option<u64>)>,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ClusterAction {
+    TriggerElection,
+    PurgeLogs { upto: u64 },
+    TransferLeadership { target_node_id: NodeId },
+    StepDown,
 }
 
 /// Central manager for all Raft groups
@@ -112,24 +127,24 @@ impl std::fmt::Debug for RaftManager {
 /// Add a node as a learner to a Raft group and wait for it to catch up
 async fn add_learner_and_wait<SM: KalamStateMachine + Send + Sync + 'static>(
     group: &Arc<RaftGroup<SM>>,
-    node_id_u64: u64,
+    node_id: NodeId,
     node: &KalamNode,
     timeout: Duration,
 ) -> Result<(), RaftError> {
     if !group.is_leader() {
-        return Err(RaftError::not_leader(group.group_id().to_string(), group.current_leader()));
+        return Err(RaftError::not_leader(group.group_id().to_string(), group.current_leader().map(|id| id.as_u64())));
     }
-    group.add_learner(node_id_u64, node.clone()).await?;
-    group.wait_for_learner_catchup(node_id_u64, timeout).await?;
+    group.add_learner(node_id, node.clone()).await?;
+    group.wait_for_learner_catchup(node_id, timeout).await?;
     Ok(())
 }
 
 /// Promote a learner node to a voting member of the Raft group
 async fn promote_learner<SM: KalamStateMachine + Send + Sync + 'static>(
     group: &Arc<RaftGroup<SM>>,
-    node_id_u64: u64,
+    node_id: NodeId,
 ) -> Result<(), RaftError> {
-    group.promote_learner(node_id_u64).await
+    group.promote_learner(node_id).await
 }
 
 impl RaftManager {
@@ -262,11 +277,6 @@ impl RaftManager {
         self.node_id
     }
 
-    /// Get this node's ID as u64 (for OpenRaft API compatibility)
-    pub fn node_id_u64(&self) -> u64 {
-        self.node_id.as_u64()
-    }
-
     /// Get OpenRaft metrics for the Meta group
     pub fn meta_metrics(&self) -> Option<RaftMetrics<u64, KalamNode>> {
         self.meta.metrics()
@@ -333,20 +343,20 @@ impl RaftManager {
 
         // Start unified meta group
         log::debug!("Starting unified meta group...");
-        self.meta.start(self.node_id.as_u64(), &self.config).await?;
+        self.meta.start(self.node_id, &self.config).await?;
         log::debug!("  ✓ Meta group started");
 
         // Start all user data shards
         log::debug!("Starting {} user data shards...", self.user_data_shards.len());
         for (i, shard) in self.user_data_shards.iter().enumerate() {
-            shard.start(self.node_id.as_u64(), &self.config).await?;
+            shard.start(self.node_id, &self.config).await?;
             log::debug!("  ✓ UserDataShard[{}] started", i);
         }
 
         // Start all shared data shards
         log::debug!("Starting {} shared data shards...", self.shared_data_shards.len());
         for (i, shard) in self.shared_data_shards.iter().enumerate() {
-            shard.start(self.node_id.as_u64(), &self.config).await?;
+            shard.start(self.node_id, &self.config).await?;
             log::debug!("  ✓ SharedDataShard[{}] started", i);
         }
 
@@ -406,18 +416,18 @@ impl RaftManager {
         } else {
             // Initialize unified meta group
             log::debug!("Initializing unified meta group...");
-            self.meta.initialize(self.node_id.as_u64(), self_node.clone()).await?;
+            self.meta.initialize(self.node_id, self_node.clone()).await?;
             log::debug!("  ✓ Meta initialized");
 
             log::debug!("Initializing user data shards...");
             for (i, shard) in self.user_data_shards.iter().enumerate() {
-                shard.initialize(self.node_id.as_u64(), self_node.clone()).await?;
+                shard.initialize(self.node_id, self_node.clone()).await?;
                 log::debug!("  ✓ UserDataShard[{}] initialized", i);
             }
 
             log::debug!("Initializing shared data shards...");
             for (i, shard) in self.shared_data_shards.iter().enumerate() {
-                shard.initialize(self.node_id.as_u64(), self_node.clone()).await?;
+                shard.initialize(self.node_id, self_node.clone()).await?;
                 log::debug!("  ✓ SharedDataShard[{}] initialized", i);
             }
 
@@ -451,15 +461,46 @@ impl RaftManager {
             let peer_wait_max_retries = self.config.peer_wait_max_retries;
             let peer_wait_initial_delay_ms = self.config.peer_wait_initial_delay_ms;
             let peer_wait_max_delay_ms = self.config.peer_wait_max_delay_ms;
+            let cluster_id = self.config.cluster_id.clone();
+            let rpc_tls = self.config.rpc_tls.clone();
 
             let join_handle = tokio::spawn(async move {
-                // Only perform membership operations when we lead all groups.
-                let leader_for_all_groups = meta.is_leader()
-                    && user_data_shards.iter().all(|g| g.is_leader())
-                    && shared_data_shards.iter().all(|g| g.is_leader());
+                // Wait for this node to win elections on all groups before adding peers.
+                // After initialize(), OpenRaft still needs to complete an election cycle
+                // (up to election_timeout_max, typically 500-1000ms). Without this wait,
+                // the leadership check races against Raft election and almost always fails.
+                let max_leadership_wait = 30; // 30 × 200ms = 6s max
+                let mut leader_for_all_groups = false;
+                for attempt in 1..=max_leadership_wait {
+                    let is_meta_leader = meta.is_leader();
+                    let all_user_leaders = user_data_shards.iter().all(|g| g.is_leader());
+                    let all_shared_leaders = shared_data_shards.iter().all(|g| g.is_leader());
+                    leader_for_all_groups =
+                        is_meta_leader && all_user_leaders && all_shared_leaders;
+                    if leader_for_all_groups {
+                        log::info!(
+                            "Node {} confirmed leader for all groups (after {} attempts)",
+                            node_id,
+                            attempt
+                        );
+                        break;
+                    }
+                    if attempt == 1 || attempt % 5 == 0 {
+                        log::debug!(
+                            "Waiting for node {} to become leader for all groups (attempt {}/{}, meta={}, user={}, shared={})...",
+                            node_id, attempt, max_leadership_wait,
+                            is_meta_leader, all_user_leaders, all_shared_leaders
+                        );
+                    }
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                }
 
                 if !leader_for_all_groups {
-                    log::info!("Skipping peer join: node {} is not leader for all groups", node_id);
+                    log::warn!(
+                        "Skipping peer join: node {} is not leader for all groups after {}s",
+                        node_id,
+                        max_leadership_wait * 200 / 1000
+                    );
                     return;
                 }
 
@@ -476,7 +517,10 @@ impl RaftManager {
 
                     // Wait for the peer's RPC endpoint to respond
                     match RaftManager::wait_for_peer_online(
-                        &peer.rpc_addr,
+                        peer,
+                        &cluster_id,
+                        node_id,
+                        &rpc_tls,
                         peer_wait_max_retries,
                         peer_wait_initial_delay_ms,
                         peer_wait_max_delay_ms,
@@ -554,11 +598,12 @@ impl RaftManager {
 
     /// Wait for a peer node to be online and ready to join the cluster
     ///
-    /// This checks if the peer's RPC endpoint is responding before attempting to add it.
-    /// This prevents OpenRaft from generating thousands of connection errors when trying
-    /// to replicate to an offline node.
+    /// This checks if authenticated cluster `Ping` succeeds before attempting to add the peer.
     async fn wait_for_peer_online(
-        rpc_addr: &str,
+        peer: &crate::manager::PeerNode,
+        cluster_id: &str,
+        source_node_id: NodeId,
+        rpc_tls: &crate::manager::RpcTlsConfig,
         max_retries: u32,
         initial_delay_ms: u64,
         max_delay_ms: u64,
@@ -569,40 +614,140 @@ impl RaftManager {
         loop {
             attempt += 1;
 
-            // Try to connect to the peer's RPC endpoint using tonic
-            let uri = format!("http://{}", rpc_addr);
-            match tonic::transport::Endpoint::from_shared(uri.clone())
-                .map_err(|e| {
-                    RaftError::Internal(format!("Invalid RPC address {}: {}", rpc_addr, e))
-                })?
+            let scheme = if rpc_tls.enabled { "https" } else { "http" };
+            let uri = format!("{}://{}", scheme, peer.rpc_addr);
+            let mut endpoint = tonic::transport::Endpoint::from_shared(uri.clone())
+                .map_err(|e| RaftError::Internal(format!("Invalid RPC address {}: {}", peer.rpc_addr, e)))?
+                .connect_timeout(Duration::from_secs(5))
+                .timeout(Duration::from_secs(10));
+
+            if rpc_tls.enabled {
+                let ca_cert_path = rpc_tls.ca_cert_path.as_deref().ok_or_else(|| {
+                    RaftError::Config(
+                        "rpc_tls.enabled=true but ca_cert_path is not configured".to_string(),
+                    )
+                })?;
+                let node_cert_path = rpc_tls.node_cert_path.as_deref().ok_or_else(|| {
+                    RaftError::Config(
+                        "rpc_tls.enabled=true but node_cert_path is not configured".to_string(),
+                    )
+                })?;
+                let node_key_path = rpc_tls.node_key_path.as_deref().ok_or_else(|| {
+                    RaftError::Config(
+                        "rpc_tls.enabled=true but node_key_path is not configured".to_string(),
+                    )
+                })?;
+
+                let ca_pem = std::fs::read(ca_cert_path).map_err(|e| {
+                    RaftError::Config(format!(
+                        "Failed reading cluster CA cert '{}': {}",
+                        ca_cert_path, e
+                    ))
+                })?;
+                let cert_pem = std::fs::read(node_cert_path).map_err(|e| {
+                    RaftError::Config(format!(
+                        "Failed reading node cert '{}': {}",
+                        node_cert_path, e
+                    ))
+                })?;
+                let key_pem = std::fs::read(node_key_path).map_err(|e| {
+                    RaftError::Config(format!(
+                        "Failed reading node key '{}': {}",
+                        node_key_path, e
+                    ))
+                })?;
+
+                let server_name = if let Some(name) = peer.rpc_server_name.as_ref() {
+                    name.clone()
+                } else {
+                    peer.rpc_addr
+                        .rsplit_once(':')
+                        .map(|(host, _)| host.to_string())
+                        .ok_or_else(|| {
+                            RaftError::Config(format!(
+                                "Invalid peer rpc_addr '{}': expected host:port",
+                                peer.rpc_addr
+                            ))
+                        })?
+                };
+                let tls_config = ClientTlsConfig::new()
+                    .ca_certificate(Certificate::from_pem(ca_pem))
+                    .identity(Identity::from_pem(cert_pem, key_pem))
+                    .domain_name(server_name);
+                endpoint = endpoint
+                    .tls_config(tls_config)
+                    .map_err(|e| RaftError::Network(format!("Failed to configure RPC TLS: {}", e)))?;
+            }
+
+            let channel = endpoint
                 .connect()
                 .await
-            {
-                Ok(_channel) => {
-                    // Connection successful - peer is online
-                    log::debug!("[CLUSTER] Peer {} is online and accepting connections", rpc_addr);
-                    return Ok(());
+                .map_err(|e| RaftError::Network(format!("Failed to connect to peer {}: {}", peer.node_id, e)));
+
+            match channel {
+                Ok(channel) => {
+                    let mut client = ClusterServiceClient::new(channel);
+                    let mut request = tonic::Request::new(PingRequest {
+                        from_node_id: source_node_id.as_u64(),
+                    });
+                    let cluster_id_header =
+                        tonic::metadata::MetadataValue::try_from(cluster_id).map_err(|e| {
+                            RaftError::Internal(format!("Invalid cluster_id metadata: {}", e))
+                        })?;
+                    let node_id_header = tonic::metadata::MetadataValue::try_from(
+                        source_node_id.as_u64().to_string(),
+                    )
+                    .map_err(|e| RaftError::Internal(format!("Invalid node_id metadata: {}", e)))?;
+                    request
+                        .metadata_mut()
+                        .insert(RPC_CLUSTER_ID_HEADER, cluster_id_header);
+                    request.metadata_mut().insert(RPC_NODE_ID_HEADER, node_id_header);
+
+                    match client.ping(request).await {
+                        Ok(resp) if resp.get_ref().success => {
+                            log::debug!("[CLUSTER] Peer {} is online (ping ok)", peer.rpc_addr);
+                            return Ok(());
+                        },
+                        Ok(resp) => {
+                            if attempt >= max_retries {
+                                return Err(RaftError::Internal(format!(
+                                    "Peer {} ping returned error after {} attempts: {}",
+                                    peer.rpc_addr,
+                                    max_retries,
+                                    resp.get_ref().error
+                                )));
+                            }
+                        },
+                        Err(_) => {
+                            if attempt >= max_retries {
+                                return Err(RaftError::Internal(format!(
+                                    "Peer {} not reachable after {} attempts",
+                                    peer.rpc_addr, max_retries
+                                )));
+                            }
+                        },
+                    }
                 },
                 Err(_) => {
-                    // Connection failed - peer not ready
                     if attempt >= max_retries {
                         return Err(RaftError::Internal(format!(
                             "Peer {} not reachable after {} attempts",
-                            rpc_addr, max_retries
+                            peer.rpc_addr, max_retries
                         )));
                     }
-                    if attempt == 1 || attempt % 10 == 0 {
-                        log::debug!(
-                            "[CLUSTER] Waiting for peer {} to be online (attempt {}/{})...",
-                            rpc_addr,
-                            attempt,
-                            max_retries
-                        );
-                    }
-                    tokio::time::sleep(Duration::from_millis(delay_ms)).await;
-                    delay_ms = (delay_ms * 2).min(max_delay_ms);
-                },
+                }
             }
+
+            if attempt == 1 || attempt % 10 == 0 {
+                log::debug!(
+                    "[CLUSTER] Waiting for peer {} to be online (attempt {}/{})...",
+                    peer.rpc_addr,
+                    attempt,
+                    max_retries
+                );
+            }
+            tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+            delay_ms = (delay_ms * 2).min(max_delay_ms);
         }
     }
 
@@ -615,7 +760,6 @@ impl RaftManager {
         shared_data_shards: Vec<Arc<RaftGroup<SharedDataStateMachine>>>,
         replication_timeout: Duration,
     ) -> Result<(), RaftError> {
-        let node_id_u64 = node_id.as_u64();
         log::info!(
             "[CLUSTER] Node {} joining cluster (rpc={}, api={})",
             node_id,
@@ -634,26 +778,26 @@ impl RaftManager {
         );
 
         // Add to unified meta group
-        add_learner_and_wait(&meta, node_id_u64, &node, replication_timeout).await?;
+        add_learner_and_wait(&meta, node_id, &node, replication_timeout).await?;
 
         for shard in &user_data_shards {
-            add_learner_and_wait(shard, node_id_u64, &node, replication_timeout).await?;
+            add_learner_and_wait(shard, node_id, &node, replication_timeout).await?;
         }
 
         for shard in &shared_data_shards {
-            add_learner_and_wait(shard, node_id_u64, &node, replication_timeout).await?;
+            add_learner_and_wait(shard, node_id, &node, replication_timeout).await?;
         }
 
         log::info!("[CLUSTER] Promoting node {} to voter on all groups...", node_id);
 
-        promote_learner(&meta, node_id_u64).await?;
+        promote_learner(&meta, node_id).await?;
 
         for shard in &user_data_shards {
-            promote_learner(shard, node_id_u64).await?;
+            promote_learner(shard, node_id).await?;
         }
 
         for shard in &shared_data_shards {
-            promote_learner(shard, node_id_u64).await?;
+            promote_learner(shard, node_id).await?;
         }
 
         Ok(())
@@ -666,10 +810,8 @@ impl RaftManager {
         rpc_addr: String,
         api_addr: String,
     ) -> Result<(), RaftError> {
-        let node_id_u64 = node_id.as_u64();
-
         // Validate inputs
-        if node_id_u64 == 0 {
+        if node_id.as_u64() == 0 {
             return Err(RaftError::InvalidState("node_id must be > 0".to_string()));
         }
         if rpc_addr.trim().is_empty() {
@@ -682,7 +824,7 @@ impl RaftManager {
         // Check if node already exists in the cluster by checking meta group voters
         if let Some(metrics) = self.meta.metrics() {
             let voters: Vec<u64> = metrics.membership_config.voter_ids().collect();
-            if voters.contains(&node_id_u64) {
+            if voters.contains(&node_id.as_u64()) {
                 return Err(RaftError::InvalidState(format!(
                     "Node {} already exists in cluster",
                     node_id
@@ -708,29 +850,29 @@ impl RaftManager {
         );
 
         // Add to unified meta group
-        add_learner_and_wait(&self.meta, node_id_u64, &node, self.config.replication_timeout)
+        add_learner_and_wait(&self.meta, node_id, &node, self.config.replication_timeout)
             .await?;
 
         for shard in &self.user_data_shards {
-            add_learner_and_wait(shard, node_id_u64, &node, self.config.replication_timeout)
+            add_learner_and_wait(shard, node_id, &node, self.config.replication_timeout)
                 .await?;
         }
 
         for shard in &self.shared_data_shards {
-            add_learner_and_wait(shard, node_id_u64, &node, self.config.replication_timeout)
+            add_learner_and_wait(shard, node_id, &node, self.config.replication_timeout)
                 .await?;
         }
 
         log::info!("[CLUSTER] Promoting node {} to voter on all groups...", node_id);
 
         // Promote on unified meta group
-        promote_learner(&self.meta, node_id_u64).await?;
+        promote_learner(&self.meta, node_id).await?;
 
         for shard in &self.user_data_shards {
-            promote_learner(shard, node_id_u64).await?;
+            promote_learner(shard, node_id).await?;
         }
         for shard in &self.shared_data_shards {
-            promote_learner(shard, node_id_u64).await?;
+            promote_learner(shard, node_id).await?;
         }
 
         log::info!(
@@ -746,14 +888,141 @@ impl RaftManager {
         &self.config
     }
 
-    /// Get the group for a given GroupId
-    fn _get_group_id(&self, group_id: GroupId) -> Result<(), RaftError> {
-        match group_id {
-            GroupId::Meta => Ok(()),
-            GroupId::DataUserShard(shard) if shard < self.user_shards_count => Ok(()),
-            GroupId::DataSharedShard(shard) if shard < self.shared_shards_count => Ok(()),
-            _ => Err(RaftError::InvalidGroup(group_id.to_string())),
+    fn is_known_cluster_node(&self, node_id: NodeId) -> bool {
+        if node_id == self.config.node_id {
+            return true;
         }
+        self.config.peers.iter().any(|peer| peer.node_id == node_id)
+    }
+
+    fn peer_for_node(&self, node_id: NodeId) -> Option<&crate::manager::PeerNode> {
+        self.config.peers.iter().find(|peer| peer.node_id == node_id)
+    }
+
+    fn extract_host_from_rpc_addr(rpc_addr: &str) -> Option<&str> {
+        if rpc_addr.starts_with('[') {
+            let end_bracket = rpc_addr.find(']')?;
+            let host = &rpc_addr[1..end_bracket];
+            let remainder = rpc_addr.get(end_bracket + 1..)?;
+            if remainder.starts_with(':') {
+                return Some(host);
+            }
+            return None;
+        }
+
+        rpc_addr.rsplit_once(':').map(|(host, _)| host)
+    }
+
+    fn parse_ip_or_resolve(host: &str) -> Vec<IpAddr> {
+        if let Ok(ip) = host.parse::<IpAddr>() {
+            return vec![ip];
+        }
+
+        let host_for_dns = host.trim_matches('[').trim_matches(']');
+        match (host_for_dns, 0).to_socket_addrs() {
+            Ok(addrs) => addrs.map(|addr| addr.ip()).collect(),
+            Err(_) => Vec::new(),
+        }
+    }
+
+    fn is_allowed_peer_remote_addr(&self, node_id: NodeId, remote_addr: SocketAddr) -> bool {
+        if node_id == self.config.node_id {
+            return true;
+        }
+
+        let Some(peer) = self.peer_for_node(node_id) else {
+            return false;
+        };
+
+        let Some(host) = Self::extract_host_from_rpc_addr(&peer.rpc_addr) else {
+            return false;
+        };
+
+        let allowed_ips = Self::parse_ip_or_resolve(host);
+        if allowed_ips.is_empty() {
+            return false;
+        }
+
+        allowed_ips.into_iter().any(|ip| ip == remote_addr.ip())
+    }
+
+    /// Add node identity metadata to outgoing gRPC requests.
+    pub fn add_outgoing_rpc_metadata<T>(
+        &self,
+        request: &mut tonic::Request<T>,
+    ) -> Result<(), RaftError> {
+        let cluster_id = tonic::metadata::MetadataValue::try_from(self.config.cluster_id.as_str())
+            .map_err(|e| RaftError::Internal(format!("Invalid cluster_id metadata: {}", e)))?;
+        let node_id = tonic::metadata::MetadataValue::try_from(self.node_id.as_u64().to_string())
+            .map_err(|e| RaftError::Internal(format!("Invalid node_id metadata: {}", e)))?;
+
+        request
+            .metadata_mut()
+            .insert(RPC_CLUSTER_ID_HEADER, cluster_id);
+        request.metadata_mut().insert(RPC_NODE_ID_HEADER, node_id);
+        Ok(())
+    }
+
+    /// Authorize incoming inter-node RPCs.
+    ///
+    /// Rejects unknown cluster IDs and unknown node IDs.
+    pub fn authorize_incoming_rpc<T>(
+        &self,
+        request: &tonic::Request<T>,
+    ) -> Result<(), tonic::Status> {
+        if self.config.rpc_tls.enabled {
+            let peer_certs = request
+                .peer_certs()
+                .ok_or_else(|| tonic::Status::unauthenticated("Missing peer TLS certificate"))?;
+            if peer_certs.is_empty() {
+                return Err(tonic::Status::unauthenticated(
+                    "Missing peer TLS certificate",
+                ));
+            }
+        }
+
+        let cluster_id = request
+            .metadata()
+            .get(RPC_CLUSTER_ID_HEADER)
+            .ok_or_else(|| tonic::Status::unauthenticated("Missing cluster identity header"))?
+            .to_str()
+            .map_err(|_| tonic::Status::unauthenticated("Invalid cluster identity header"))?;
+        if cluster_id != self.config.cluster_id {
+            return Err(tonic::Status::permission_denied(format!(
+                "Cluster mismatch: got '{}'",
+                cluster_id
+            )));
+        }
+
+        let node_id_raw = request
+            .metadata()
+            .get(RPC_NODE_ID_HEADER)
+            .ok_or_else(|| tonic::Status::unauthenticated("Missing node identity header"))?
+            .to_str()
+            .map_err(|_| tonic::Status::unauthenticated("Invalid node identity header"))?;
+        let node_id = node_id_raw
+            .parse::<u64>()
+            .map(NodeId::from)
+            .map_err(|_| tonic::Status::unauthenticated("Invalid node identity value"))?;
+
+        if !self.is_known_cluster_node(node_id) {
+            return Err(tonic::Status::permission_denied(format!(
+                "Unknown cluster node_id '{}'",
+                node_id
+            )));
+        }
+
+        let remote_addr = request
+            .remote_addr()
+            .ok_or_else(|| tonic::Status::unauthenticated("Missing peer remote address"))?;
+        if !self.is_allowed_peer_remote_addr(node_id, remote_addr) {
+            return Err(tonic::Status::permission_denied(format!(
+                "Peer source address '{}' is not allowed for node_id '{}'",
+                remote_addr, node_id
+            )));
+        }
+
+        Ok(())
     }
 
     /// Check if this node is leader for a given group
@@ -772,7 +1041,7 @@ impl RaftManager {
 
     /// Get the current leader for a group
     pub fn current_leader(&self, group_id: GroupId) -> Option<NodeId> {
-        let leader_u64 = match group_id {
+        let leader = match group_id {
             GroupId::Meta => self.meta.current_leader(),
             GroupId::DataUserShard(shard) if shard < self.user_shards_count => {
                 self.user_data_shards[shard as usize].current_leader()
@@ -782,7 +1051,7 @@ impl RaftManager {
             },
             _ => None,
         };
-        leader_u64.map(NodeId::from)
+        leader
     }
 
     /// Get the current Meta group's last applied index
@@ -929,19 +1198,38 @@ impl RaftManager {
 
     /// Register a peer node with all groups
     pub fn register_peer(&self, node_id: NodeId, rpc_addr: String, api_addr: String) {
-        let node_id_u64 = node_id.as_u64();
         let node = KalamNode::new(rpc_addr, api_addr);
 
         // Register with unified meta group
-        self.meta.register_peer(node_id_u64, node.clone());
+        self.meta.register_peer(node_id, node.clone());
 
         // Register with all data shards
         for shard in &self.user_data_shards {
-            shard.register_peer(node_id_u64, node.clone());
+            shard.register_peer(node_id, node.clone());
         }
         for shard in &self.shared_data_shards {
-            shard.register_peer(node_id_u64, node.clone());
+            shard.register_peer(node_id, node.clone());
         }
+    }
+
+    /// Get a gRPC channel to a specific peer node.
+    ///
+    /// Uses the Meta group's network factory channel pool (all groups share
+    /// the same `rpc_addr` per node, so one channel per node is sufficient).
+    ///
+    /// Returns `None` if the node is not registered.
+    pub fn get_peer_channel(
+        &self,
+        node_id: NodeId,
+    ) -> Option<tonic::transport::Channel> {
+        self.meta.network_factory().get_or_create_channel(node_id)
+    }
+
+    /// Get all registered peer nodes (id + node info) from the Meta group.
+    ///
+    /// Used by [`crate::network::cluster_client::ClusterClient`] for broadcasting.
+    pub fn get_all_peers(&self) -> Vec<(NodeId, KalamNode)> {
+        self.meta.network_factory().get_all_peers()
     }
 
     /// Get all group IDs
@@ -1291,215 +1579,81 @@ impl RaftManager {
         Ok(results)
     }
 
-    /// Trigger elections for all Raft groups
-    pub async fn trigger_all_elections(&self) -> Result<Vec<ClusterActionResult>, RaftError> {
-        let mut results = Vec::new();
+    async fn run_action_for_group<SM: KalamStateMachine + Send + Sync + 'static>(
+        group_id: GroupId,
+        group: &Arc<RaftGroup<SM>>,
+        action: ClusterAction,
+    ) -> ClusterActionResult {
+        let result = match action {
+            ClusterAction::TriggerElection => group.trigger_election().await,
+            ClusterAction::PurgeLogs { upto } => group.purge_log(upto).await,
+            ClusterAction::TransferLeadership { target_node_id } => {
+                group.transfer_leadership(target_node_id).await
+            },
+            ClusterAction::StepDown => group.step_down().await,
+        };
 
-        match self.meta.trigger_election().await {
-            Ok(_) => results.push(ClusterActionResult {
-                group_id: GroupId::Meta,
+        match result {
+            Ok(()) => ClusterActionResult {
+                group_id,
                 success: true,
                 error: None,
-            }),
-            Err(e) => results.push(ClusterActionResult {
-                group_id: GroupId::Meta,
+            },
+            Err(err) => ClusterActionResult {
+                group_id,
                 success: false,
-                error: Some(format!("{}", e)),
-            }),
+                error: Some(err.to_string()),
+            },
         }
+    }
+
+    async fn run_action_for_all_groups(&self, action: ClusterAction) -> Vec<ClusterActionResult> {
+        let mut results = Vec::with_capacity(self.group_count());
+
+        results.push(Self::run_action_for_group(GroupId::Meta, &self.meta, action).await);
 
         for (i, shard) in self.user_data_shards.iter().enumerate() {
-            let group_id = GroupId::DataUserShard(i as u32);
-            match shard.trigger_election().await {
-                Ok(_) => results.push(ClusterActionResult {
-                    group_id,
-                    success: true,
-                    error: None,
-                }),
-                Err(e) => results.push(ClusterActionResult {
-                    group_id,
-                    success: false,
-                    error: Some(format!("{}", e)),
-                }),
-            }
+            results.push(
+                Self::run_action_for_group(GroupId::DataUserShard(i as u32), shard, action).await,
+            );
         }
 
         for (i, shard) in self.shared_data_shards.iter().enumerate() {
-            let group_id = GroupId::DataSharedShard(i as u32);
-            match shard.trigger_election().await {
-                Ok(_) => results.push(ClusterActionResult {
-                    group_id,
-                    success: true,
-                    error: None,
-                }),
-                Err(e) => results.push(ClusterActionResult {
-                    group_id,
-                    success: false,
-                    error: Some(format!("{}", e)),
-                }),
-            }
+            results.push(
+                Self::run_action_for_group(GroupId::DataSharedShard(i as u32), shard, action).await,
+            );
         }
 
-        Ok(results)
+        results
+    }
+
+    /// Trigger elections for all Raft groups
+    pub async fn trigger_all_elections(&self) -> Result<Vec<ClusterActionResult>, RaftError> {
+        Ok(self
+            .run_action_for_all_groups(ClusterAction::TriggerElection)
+            .await)
     }
 
     /// Purge logs up to the given index for all Raft groups
     pub async fn purge_all_logs(&self, upto: u64) -> Result<Vec<ClusterActionResult>, RaftError> {
-        let mut results = Vec::new();
-
-        match self.meta.purge_log(upto).await {
-            Ok(_) => results.push(ClusterActionResult {
-                group_id: GroupId::Meta,
-                success: true,
-                error: None,
-            }),
-            Err(e) => results.push(ClusterActionResult {
-                group_id: GroupId::Meta,
-                success: false,
-                error: Some(format!("{}", e)),
-            }),
-        }
-
-        for (i, shard) in self.user_data_shards.iter().enumerate() {
-            let group_id = GroupId::DataUserShard(i as u32);
-            match shard.purge_log(upto).await {
-                Ok(_) => results.push(ClusterActionResult {
-                    group_id,
-                    success: true,
-                    error: None,
-                }),
-                Err(e) => results.push(ClusterActionResult {
-                    group_id,
-                    success: false,
-                    error: Some(format!("{}", e)),
-                }),
-            }
-        }
-
-        for (i, shard) in self.shared_data_shards.iter().enumerate() {
-            let group_id = GroupId::DataSharedShard(i as u32);
-            match shard.purge_log(upto).await {
-                Ok(_) => results.push(ClusterActionResult {
-                    group_id,
-                    success: true,
-                    error: None,
-                }),
-                Err(e) => results.push(ClusterActionResult {
-                    group_id,
-                    success: false,
-                    error: Some(format!("{}", e)),
-                }),
-            }
-        }
-
-        Ok(results)
+        Ok(self
+            .run_action_for_all_groups(ClusterAction::PurgeLogs { upto })
+            .await)
     }
 
     /// Attempt to transfer leadership for all Raft groups
     pub async fn transfer_leadership_all(
         &self,
-        target_node_id: u64,
+        target_node_id: NodeId,
     ) -> Result<Vec<ClusterActionResult>, RaftError> {
-        let mut results = Vec::new();
-
-        match self.meta.transfer_leadership(target_node_id).await {
-            Ok(_) => results.push(ClusterActionResult {
-                group_id: GroupId::Meta,
-                success: true,
-                error: None,
-            }),
-            Err(e) => results.push(ClusterActionResult {
-                group_id: GroupId::Meta,
-                success: false,
-                error: Some(format!("{}", e)),
-            }),
-        }
-
-        for (i, shard) in self.user_data_shards.iter().enumerate() {
-            let group_id = GroupId::DataUserShard(i as u32);
-            match shard.transfer_leadership(target_node_id).await {
-                Ok(_) => results.push(ClusterActionResult {
-                    group_id,
-                    success: true,
-                    error: None,
-                }),
-                Err(e) => results.push(ClusterActionResult {
-                    group_id,
-                    success: false,
-                    error: Some(format!("{}", e)),
-                }),
-            }
-        }
-
-        for (i, shard) in self.shared_data_shards.iter().enumerate() {
-            let group_id = GroupId::DataSharedShard(i as u32);
-            match shard.transfer_leadership(target_node_id).await {
-                Ok(_) => results.push(ClusterActionResult {
-                    group_id,
-                    success: true,
-                    error: None,
-                }),
-                Err(e) => results.push(ClusterActionResult {
-                    group_id,
-                    success: false,
-                    error: Some(format!("{}", e)),
-                }),
-            }
-        }
-
-        Ok(results)
+        Ok(self
+            .run_action_for_all_groups(ClusterAction::TransferLeadership { target_node_id })
+            .await)
     }
 
     /// Attempt to step down leaders for all Raft groups
     pub async fn step_down_all(&self) -> Result<Vec<ClusterActionResult>, RaftError> {
-        let mut results = Vec::new();
-
-        match self.meta.step_down().await {
-            Ok(_) => results.push(ClusterActionResult {
-                group_id: GroupId::Meta,
-                success: true,
-                error: None,
-            }),
-            Err(e) => results.push(ClusterActionResult {
-                group_id: GroupId::Meta,
-                success: false,
-                error: Some(format!("{}", e)),
-            }),
-        }
-
-        for (i, shard) in self.user_data_shards.iter().enumerate() {
-            let group_id = GroupId::DataUserShard(i as u32);
-            match shard.step_down().await {
-                Ok(_) => results.push(ClusterActionResult {
-                    group_id,
-                    success: true,
-                    error: None,
-                }),
-                Err(e) => results.push(ClusterActionResult {
-                    group_id,
-                    success: false,
-                    error: Some(format!("{}", e)),
-                }),
-            }
-        }
-
-        for (i, shard) in self.shared_data_shards.iter().enumerate() {
-            let group_id = GroupId::DataSharedShard(i as u32);
-            match shard.step_down().await {
-                Ok(_) => results.push(ClusterActionResult {
-                    group_id,
-                    success: true,
-                    error: None,
-                }),
-                Err(e) => results.push(ClusterActionResult {
-                    group_id,
-                    success: false,
-                    error: Some(format!("{}", e)),
-                }),
-            }
-        }
-
-        Ok(results)
+        Ok(self.run_action_for_all_groups(ClusterAction::StepDown).await)
     }
 
     /// Get summary information about existing snapshots
@@ -1580,7 +1734,7 @@ impl RaftManager {
             // Attempt leadership transfer for each group where we're leader
             // Find the first available peer to transfer leadership to
             if let Some(target_node) = self.config.peers.first() {
-                let target_node_id = target_node.node_id.as_u64();
+                let target_node_id = target_node.node_id;
                 log::info!("[CLUSTER] Transferring leadership to node {}...", target_node.node_id);
 
                 // Transfer leadership for Meta group
@@ -1630,9 +1784,11 @@ impl RaftManager {
                     }
                 }
 
-                // Give time for leadership transfer to complete
+                // Give time for any leadership-transition side effects to settle.
                 tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
-                log::info!("[CLUSTER] Leadership transfer completed");
+                log::info!(
+                    "[CLUSTER] Leadership transfer attempts completed (explicit transfer may be unsupported by current OpenRaft version)"
+                );
             } else {
                 log::warn!("[CLUSTER] No peers available for leadership transfer - cluster may experience brief unavailability");
             }

@@ -1,65 +1,213 @@
-//! SQL forwarding to leader node in cluster mode
+//! SQL forwarding to leader node in cluster mode.
 
 use actix_web::{HttpRequest, HttpResponse};
-use kalamdb_commons::models::NamespaceId;
+use kalamdb_commons::models::{NamespaceId, NodeId};
 use kalamdb_commons::Role;
-use kalamdb_raft::GroupId;
-use reqwest::Client;
+use kalamdb_core::app_context::AppContext;
+use kalamdb_core::error::KalamDbError;
+use kalamdb_raft::{ClusterClient, ForwardSqlRequest, GroupId, RaftExecutor};
 use std::sync::Arc;
 use std::time::Instant;
 
 use super::models::{ErrorCode, QueryRequest, SqlResponse};
 
+fn header_to_string(req: &HttpRequest, name: &str) -> Option<String> {
+    req.headers()
+        .get(name)
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.to_string())
+}
+
+fn normalize_addr(addr: &str) -> String {
+    addr.trim()
+        .trim_start_matches("http://")
+        .trim_start_matches("https://")
+        .trim_end_matches('/')
+        .to_string()
+}
+
+fn resolve_node_id_from_cluster_addr(app_context: &AppContext, addr: &str) -> Option<NodeId> {
+    let target = normalize_addr(addr);
+    let cluster_info = app_context.executor().get_cluster_info();
+    cluster_info
+        .nodes
+        .iter()
+        .find(|n| {
+            normalize_addr(&n.api_addr) == target || normalize_addr(&n.rpc_addr) == target
+        })
+        .map(|n| n.node_id)
+}
+
+fn cluster_client_for(app_context: &AppContext) -> Result<ClusterClient, HttpResponse> {
+    let executor = app_context.executor();
+    let raft_executor = executor
+        .as_any()
+        .downcast_ref::<RaftExecutor>()
+        .ok_or_else(|| {
+            HttpResponse::ServiceUnavailable().json(SqlResponse::error(
+                ErrorCode::ClusterUnavailable,
+                "Cluster forwarding requires Raft executor",
+                0.0,
+            ))
+        })?;
+    Ok(ClusterClient::new(Arc::clone(raft_executor.manager())))
+}
+
+async fn forward_sql_to_leader_grpc(
+    http_req: &HttpRequest,
+    req: &QueryRequest,
+    app_context: &AppContext,
+    start_time: Instant,
+) -> Option<HttpResponse> {
+    let client = match cluster_client_for(app_context) {
+        Ok(c) => c,
+        Err(resp) => return Some(resp),
+    };
+
+    let params_json = match serde_json::to_vec(&req.params) {
+        Ok(v) => v,
+        Err(e) => {
+            return Some(HttpResponse::BadRequest().json(SqlResponse::error(
+                ErrorCode::InvalidParameter,
+                &format!("Failed to encode query parameters: {}", e),
+                start_time.elapsed().as_secs_f64() * 1000.0,
+            )));
+        },
+    };
+
+    let grpc_req = ForwardSqlRequest {
+        sql: req.sql.clone(),
+        namespace_id: req.namespace_id.as_ref().map(|ns| ns.to_string()),
+        params_json,
+        authorization_header: header_to_string(http_req, "Authorization"),
+        request_id: header_to_string(http_req, "X-Request-ID"),
+    };
+
+    let response = match client.forward_sql_to_leader(grpc_req).await {
+        Ok(resp) => resp,
+        Err(err) => {
+            log::warn!("Failed to forward SQL to leader over gRPC: {}", err);
+            return Some(HttpResponse::ServiceUnavailable().json(SqlResponse::error(
+                ErrorCode::ForwardFailed,
+                "Failed to forward request to cluster leader",
+                start_time.elapsed().as_secs_f64() * 1000.0,
+            )));
+        },
+    };
+
+    if !response.error.is_empty() && response.body.is_empty() {
+        return Some(HttpResponse::BadGateway().json(SqlResponse::error(
+            ErrorCode::ForwardFailed,
+            &response.error,
+            start_time.elapsed().as_secs_f64() * 1000.0,
+        )));
+    }
+
+    let status = actix_web::http::StatusCode::from_u16(response.status_code as u16)
+        .unwrap_or(actix_web::http::StatusCode::BAD_GATEWAY);
+    Some(
+        HttpResponse::build(status)
+            .content_type("application/json")
+            .body(response.body),
+    )
+}
+
+async fn forward_sql_to_node_grpc(
+    target_node_id: NodeId,
+    http_req: &HttpRequest,
+    req: &QueryRequest,
+    app_context: &AppContext,
+    start_time: Instant,
+) -> Option<HttpResponse> {
+    let client = match cluster_client_for(app_context) {
+        Ok(c) => c,
+        Err(resp) => return Some(resp),
+    };
+
+    let params_json = match serde_json::to_vec(&req.params) {
+        Ok(v) => v,
+        Err(e) => {
+            return Some(HttpResponse::BadRequest().json(SqlResponse::error(
+                ErrorCode::InvalidParameter,
+                &format!("Failed to encode query parameters: {}", e),
+                start_time.elapsed().as_secs_f64() * 1000.0,
+            )));
+        },
+    };
+
+    let grpc_req = ForwardSqlRequest {
+        sql: req.sql.clone(),
+        namespace_id: req.namespace_id.as_ref().map(|ns| ns.to_string()),
+        params_json,
+        authorization_header: header_to_string(http_req, "Authorization"),
+        request_id: header_to_string(http_req, "X-Request-ID"),
+    };
+
+    let response = match client.forward_sql_to_node(target_node_id, grpc_req).await {
+        Ok(resp) => resp,
+        Err(err) => {
+            log::warn!(
+                "Failed to forward SQL to node {} over gRPC: {}",
+                target_node_id,
+                err
+            );
+            return Some(HttpResponse::ServiceUnavailable().json(SqlResponse::error(
+                ErrorCode::ForwardFailed,
+                "Failed to forward request to shard leader",
+                start_time.elapsed().as_secs_f64() * 1000.0,
+            )));
+        },
+    };
+
+    if !response.error.is_empty() && response.body.is_empty() {
+        return Some(HttpResponse::BadGateway().json(SqlResponse::error(
+            ErrorCode::ForwardFailed,
+            &response.error,
+            start_time.elapsed().as_secs_f64() * 1000.0,
+        )));
+    }
+
+    let status = actix_web::http::StatusCode::from_u16(response.status_code as u16)
+        .unwrap_or(actix_web::http::StatusCode::BAD_GATEWAY);
+    Some(
+        HttpResponse::build(status)
+            .content_type("application/json")
+            .body(response.body),
+    )
+}
+
 /// Forwards write operations to the leader node in cluster mode.
-///
-/// This function checks if we're running in cluster mode and if so, determines
-/// whether the SQL statement is a write operation that needs to go to the leader.
 pub async fn forward_sql_if_follower(
     http_req: &HttpRequest,
     req: &QueryRequest,
-    app_context: &Arc<kalamdb_core::app_context::AppContext>,
+    app_context: &Arc<AppContext>,
     default_namespace: &NamespaceId,
 ) -> Option<HttpResponse> {
+    let start_time = Instant::now();
     let executor = app_context.executor();
 
     if executor.is_leader(GroupId::Meta).await {
         return None;
     }
 
-    // We are a follower - check if this is a write operation
     let statements = match kalamdb_sql::split_statements(&req.sql) {
         Ok(stmts) => stmts,
         Err(_) => {
-            let cluster_info = executor.get_cluster_info();
-            let leader_api_addr = executor.get_leader(GroupId::Meta).await.and_then(|leader_id| {
-                cluster_info
-                    .nodes
-                    .iter()
-                    .find(|node| node.node_id == leader_id)
-                    .map(|node| node.api_addr.clone())
-            });
-
-            return match leader_api_addr {
-                Some(api_addr) => forward_to_leader(http_req, req, &api_addr).await,
-                None => Some(HttpResponse::ServiceUnavailable().json(SqlResponse::error(
-                    ErrorCode::LeaderNotAvailable,
-                    "No cluster leader available",
-                    0.0,
-                ))),
-            };
+            return forward_sql_to_leader_grpc(http_req, req, app_context.as_ref(), start_time).await
         },
     };
 
-    // Classify each statement to check if any are writes
     let has_write = statements.iter().any(|sql| {
+        let classify_sql =
+            kalamdb_sql::execute_as::extract_inner_sql(sql).unwrap_or_else(|| sql.to_string());
         let stmt = kalamdb_sql::statement_classifier::SqlStatement::classify_and_parse(
-            sql,
+            &classify_sql,
             default_namespace,
             Role::System,
         )
         .unwrap_or_else(|_| {
             kalamdb_sql::statement_classifier::SqlStatement::new(
-                sql.to_string(),
+                classify_sql,
                 kalamdb_sql::statement_classifier::SqlStatementKind::Unknown,
             )
         });
@@ -67,137 +215,43 @@ pub async fn forward_sql_if_follower(
     });
 
     if has_write {
-        let cluster_info = executor.get_cluster_info();
-        let leader_api_addr = executor.get_leader(GroupId::Meta).await.and_then(|leader_id| {
-            cluster_info
-                .nodes
-                .iter()
-                .find(|node| node.node_id == leader_id)
-                .map(|node| node.api_addr.clone())
-        });
-
-        if let Some(api_addr) = leader_api_addr {
-            log::debug!(
-                "Forwarding write operation to leader {}: {}...",
-                api_addr,
-                req.sql.chars().take(50).collect::<String>()
-            );
-            return forward_to_leader(http_req, req, &api_addr).await;
-        }
-
-        return Some(HttpResponse::ServiceUnavailable().json(SqlResponse::error(
-            ErrorCode::ClusterUnavailable,
-            "No cluster leader available",
-            0.0,
-        )));
+        return forward_sql_to_leader_grpc(http_req, req, app_context.as_ref(), start_time).await;
     }
 
-    // Read-only operations can be served locally on the follower
-    log::debug!(
-        "Serving read operation locally on follower: {}...",
-        req.sql.chars().take(50).collect::<String>()
-    );
     None
 }
 
-/// Forward the request to the leader node
-pub async fn forward_to_leader(
-    http_req: &HttpRequest,
-    req: &QueryRequest,
-    leader_api_addr: &str,
-) -> Option<HttpResponse> {
-    let leader_url = format!("{}/v1/api/sql", leader_api_addr.trim_end_matches('/'));
-    let client = Client::new();
-    let mut request = client.post(&leader_url).json(req);
-
-    if let Some(auth_header) = http_req.headers().get("Authorization") {
-        if let Ok(value) = auth_header.to_str() {
-            request = request.header("Authorization", value);
-        }
-    }
-    if let Some(request_id) = http_req.headers().get("X-Request-ID") {
-        if let Ok(value) = request_id.to_str() {
-            request = request.header("X-Request-ID", value);
-        }
-    }
-
-    let response = match request.send().await {
-        Ok(resp) => resp,
-        Err(err) => {
-            log::warn!("Failed to forward SQL request to leader {}: {}", leader_url, err);
-            return Some(HttpResponse::ServiceUnavailable().json(SqlResponse::error(
-                ErrorCode::ForwardFailed,
-                "Failed to forward request to cluster leader",
-                0.0,
-            )));
-        },
-    };
-
-    let status = actix_web::http::StatusCode::from_u16(response.status().as_u16())
-        .unwrap_or(actix_web::http::StatusCode::BAD_GATEWAY);
-    let body = response.bytes().await.unwrap_or_default();
-
-    Some(HttpResponse::build(status).content_type("application/json").body(body))
-}
-
-/// Extract leader address from NOT_LEADER error message
-#[inline]
-pub fn extract_leader_addr_from_error(error_msg: &str) -> Option<String> {
-    // Fast path: Early exit if NOT_LEADER not present
-    if !error_msg.contains("NOT_LEADER") {
-        return None;
-    }
-
-    // Look for "Leader: Some("url")" pattern (from Debug formatting of Option<String>)
-    if let Some(start) = error_msg.find("Leader: Some(") {
-        let after_prefix = &error_msg[start + 13..]; // Skip "Leader: Some("
-        if let Some(paren_end) = after_prefix.find(')') {
-            let content = &after_prefix[..paren_end];
-            let url = content.trim().trim_matches('"');
-            if !url.is_empty() && url.starts_with("http") {
-                return Some(url.to_string());
-            }
-        }
-    }
-    None
-}
-
-/// Handle NOT_LEADER error by automatically forwarding to leader
+/// Handle typed NOT_LEADER errors by forwarding to the known shard leader over gRPC.
 pub async fn handle_not_leader_error(
-    err: &kalamdb_core::error::KalamDbError,
+    err: &KalamDbError,
     http_req: &HttpRequest,
     req: &QueryRequest,
-    app_context: &kalamdb_core::app_context::AppContext,
+    app_context: &AppContext,
     start_time: Instant,
 ) -> Option<HttpResponse> {
-    // Fast path: Only process in cluster mode
     if !app_context.is_cluster_mode() {
         return None;
     }
 
-    let err_msg = err.to_string();
+    let leader_addr = match err {
+        KalamDbError::NotLeader { leader_addr } => leader_addr.as_ref(),
+        _ => return None,
+    };
 
-    // Fast path: Check if NOT_LEADER
-    if !err_msg.contains("NOT_LEADER") {
-        return None;
+    // If we have a specific leader address, try to forward directly to that node.
+    if let Some(addr) = leader_addr {
+        if let Some(target_node_id) = resolve_node_id_from_cluster_addr(app_context, addr) {
+            return forward_sql_to_node_grpc(target_node_id, http_req, req, app_context, start_time).await;
+        }
+        // Leader address known but node not yet in cluster info — fall through to generic leader forward.
+        log::debug!(
+            target: "sql::forward",
+            "NOT_LEADER: leader addr '{}' not found in cluster info, falling back to generic leader forward",
+            addr
+        );
     }
 
-    // Extract leader address from error message
-    let leader_addr = extract_leader_addr_from_error(&err_msg)?;
-
-    log::info!("Auto-forwarding to shard leader {} due to NOT_LEADER error", leader_addr);
-
-    // Forward entire request to the shard leader
-    match forward_to_leader(http_req, req, &leader_addr).await {
-        Some(response) => Some(response),
-        None => {
-            // Forward failed, return error
-            let took = start_time.elapsed().as_secs_f64() * 1000.0;
-            Some(HttpResponse::ServiceUnavailable().json(SqlResponse::error(
-                ErrorCode::ForwardFailed,
-                &format!("Failed to forward request to leader: {}", err),
-                took,
-            )))
-        },
-    }
+    // Leader unknown (election in progress) or not resolvable: forward to whoever the
+    // Raft manager currently considers the leader for the Meta group.
+    forward_sql_to_leader_grpc(http_req, req, app_context, start_time).await
 }

@@ -58,6 +58,10 @@ pub struct ClusterConfig {
     #[serde(default)]
     pub peers: Vec<PeerConfig>,
 
+    /// TLS/mTLS settings for inter-node RPC.
+    #[serde(default)]
+    pub rpc_tls: ClusterRpcTlsConfig,
+
     /// Number of user data shards (default: 12)
     /// Each shard is a separate Raft group for user table data.
     #[serde(default = "default_user_shards")]
@@ -133,6 +137,26 @@ pub struct PeerConfig {
     pub rpc_addr: String,
     /// Peer's API address for client requests (e.g., "10.0.0.2:8080")
     pub api_addr: String,
+    /// Optional TLS server name override for this peer's RPC endpoint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rpc_server_name: Option<String>,
+}
+
+/// TLS/mTLS settings for inter-node RPC.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ClusterRpcTlsConfig {
+    /// Enable TLS/mTLS for Raft and cluster gRPC.
+    #[serde(default)]
+    pub enabled: bool,
+    /// PEM-encoded CA certificate path used to validate peer certificates.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ca_cert_path: Option<String>,
+    /// PEM-encoded node certificate path for this node identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_cert_path: Option<String>,
+    /// PEM-encoded private key path for `node_cert_path`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_key_path: Option<String>,
 }
 
 // Default value functions for serde
@@ -243,6 +267,60 @@ impl ClusterConfig {
             return Err("reconnect_interval_ms must be > 0".to_string());
         }
 
+        if self.rpc_tls.enabled {
+            if self
+                .rpc_tls
+                .ca_cert_path
+                .as_deref()
+                .unwrap_or("")
+                .trim()
+                .is_empty()
+            {
+                return Err(
+                    "cluster.rpc_tls.ca_cert_path is required when rpc_tls.enabled=true".to_string()
+                );
+            }
+            if self
+                .rpc_tls
+                .node_cert_path
+                .as_deref()
+                .unwrap_or("")
+                .trim()
+                .is_empty()
+            {
+                return Err(
+                    "cluster.rpc_tls.node_cert_path is required when rpc_tls.enabled=true".to_string()
+                );
+            }
+            if self
+                .rpc_tls
+                .node_key_path
+                .as_deref()
+                .unwrap_or("")
+                .trim()
+                .is_empty()
+            {
+                return Err(
+                    "cluster.rpc_tls.node_key_path is required when rpc_tls.enabled=true".to_string()
+                );
+            }
+
+            for peer in &self.peers {
+                if peer
+                    .rpc_server_name
+                    .as_deref()
+                    .unwrap_or("")
+                    .trim()
+                    .is_empty()
+                {
+                    return Err(format!(
+                        "cluster.peers(node_id={}) requires rpc_server_name when rpc_tls.enabled=true",
+                        peer.node_id
+                    ));
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -273,7 +351,9 @@ mod tests {
                 node_id: 2,
                 rpc_addr: "127.0.0.2:9100".to_string(),
                 api_addr: "127.0.0.2:8080".to_string(),
+                rpc_server_name: None,
             }],
+            rpc_tls: ClusterRpcTlsConfig::default(),
             user_shards: 12,
             shared_shards: 1,
             heartbeat_interval_ms: 250,
@@ -319,6 +399,21 @@ mod tests {
         let mut config = valid_config();
         config.election_timeout_ms = (200, 100);
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_tls_requires_paths() {
+        let mut config = valid_config();
+        config.rpc_tls.enabled = true;
+        assert!(config.validate().is_err());
+
+        config.rpc_tls.ca_cert_path = Some("/tmp/ca.pem".to_string());
+        config.rpc_tls.node_cert_path = Some("/tmp/node.pem".to_string());
+        config.rpc_tls.node_key_path = Some("/tmp/node.key".to_string());
+        assert!(config.validate().is_err());
+
+        config.peers[0].rpc_server_name = Some("node2.cluster.local".to_string());
+        assert!(config.validate().is_ok());
     }
 
     #[test]

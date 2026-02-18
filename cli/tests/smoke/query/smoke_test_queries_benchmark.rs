@@ -162,4 +162,5 @@ fn smoke_queries_benchmark() {
 
     // Best-effort cleanup to keep the namespace tidy between runs
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full));
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 }

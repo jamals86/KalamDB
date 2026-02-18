@@ -44,6 +44,31 @@ impl SqlExecutor {
         )
     }
 
+    /// Try to extract a typed `KalamDbError::NotLeader` from a `DataFusionError`.
+    ///
+    /// Table providers wrap [`kalamdb_commons::NotLeaderError`] inside
+    /// `DataFusionError::External(...)`.  This method downcasts back to the
+    /// concrete type — no string parsing required.
+    fn try_not_leader_error(e: &datafusion::error::DataFusionError) -> Option<KalamDbError> {
+        if let datafusion::error::DataFusionError::External(inner) = e {
+            if let Some(nle) = inner.downcast_ref::<kalamdb_commons::NotLeaderError>() {
+                return Some(KalamDbError::NotLeader {
+                    leader_addr: nle.leader_addr.clone(),
+                });
+            }
+        }
+        None
+    }
+
+    /// Convert a `DataFusionError` into a `KalamDbError`, preserving
+    /// `NotLeader` semantics when the error wraps a [`kalamdb_commons::NotLeaderError`].
+    fn datafusion_to_execution_error(e: datafusion::error::DataFusionError) -> KalamDbError {
+        if let Some(not_leader) = Self::try_not_leader_error(&e) {
+            return not_leader;
+        }
+        KalamDbError::ExecutionError(e.to_string())
+    }
+
     fn is_table_not_found_error(e: &datafusion::error::DataFusionError) -> bool {
         let msg = e.to_string().to_lowercase();
         (msg.contains("table") && msg.contains("not found"))
@@ -367,7 +392,7 @@ impl SqlExecutor {
                                 session
                                     .execute_logical_plan(rebound_plan)
                                     .await
-                                    .map_err(|e2| KalamDbError::ExecutionError(e2.to_string()))?
+                                    .map_err(|e2| Self::datafusion_to_execution_error(e2))?
                             },
                             Err(e) => {
                                 if Self::is_table_not_found_error(&e) {
@@ -390,7 +415,7 @@ impl SqlExecutor {
                                     let rebound_plan =
                                         replace_placeholders_in_plan(template_plan, &params)?;
                                     retry_session.execute_logical_plan(rebound_plan).await.map_err(
-                                        |e3| KalamDbError::ExecutionError(e3.to_string()),
+                                        |e3| Self::datafusion_to_execution_error(e3),
                                     )?
                                 } else {
                                     return Err(self.log_sql_error(sql, exec_ctx, e));
@@ -408,7 +433,7 @@ impl SqlExecutor {
                         session
                             .execute_logical_plan(bound_plan)
                             .await
-                            .map_err(|e2| KalamDbError::ExecutionError(e2.to_string()))?
+                            .map_err(|e2| Self::datafusion_to_execution_error(e2))?
                     },
                     Err(e) => {
                         if Self::is_table_not_found_error(&e) {
@@ -432,7 +457,7 @@ impl SqlExecutor {
                             retry_session
                                 .execute_logical_plan(bound_plan)
                                 .await
-                                .map_err(|e3| KalamDbError::ExecutionError(e3.to_string()))?
+                                .map_err(|e3| Self::datafusion_to_execution_error(e3))?
                         } else {
                             return Err(self.log_sql_error(sql, exec_ctx, e));
                         }
@@ -443,6 +468,10 @@ impl SqlExecutor {
 
         let collect_start = std::time::Instant::now();
         let batches = df.collect().await.map_err(|e| {
+            // Propagate NOT_LEADER as a typed error so the HTTP layer can forward to leader.
+            if let Some(not_leader_err) = Self::try_not_leader_error(&e) {
+                return not_leader_err;
+            }
             KalamDbError::Other(format!("Error executing DML statement '{}': {}", sql, e))
         })?;
         tracing::info!(collect_ms = %format!("{:.3}", collect_start.elapsed().as_micros() as f64 / 1000.0), "sql.dml_collect");
@@ -550,7 +579,7 @@ impl SqlExecutor {
                                 params.len(),
                                 e
                             );
-                            return Err(KalamDbError::ExecutionError(e.to_string()));
+                            return Err(Self::datafusion_to_execution_error(e));
                         },
                     }
                 },
@@ -609,7 +638,7 @@ impl SqlExecutor {
                         params.len(),
                         e
                     );
-                    return Err(KalamDbError::ExecutionError(e.to_string()));
+                    return Err(Self::datafusion_to_execution_error(e));
                 },
             }
         };
@@ -627,6 +656,10 @@ impl SqlExecutor {
         let batches = match df.collect().await {
             Ok(batches) => batches,
             Err(e) => {
+                // Propagate NOT_LEADER as a typed error so the HTTP layer can forward to leader.
+                if let Some(not_leader_err) = Self::try_not_leader_error(&e) {
+                    return Err(not_leader_err);
+                }
                 log::error!(
                     target: "sql::exec",
                     "❌ SQL execution failed | sql='{}' | user='{}' | role='{:?}' | error='{}'",
@@ -677,7 +710,7 @@ impl SqlExecutor {
                     exec_ctx.user_role(),
                     e
                 );
-                return Err(KalamDbError::ExecutionError(e.to_string()));
+                return Err(Self::datafusion_to_execution_error(e));
             },
         };
 
@@ -689,6 +722,9 @@ impl SqlExecutor {
         let batches = match df.collect().await {
             Ok(batches) => batches,
             Err(e) => {
+                if let Some(not_leader_err) = Self::try_not_leader_error(&e) {
+                    return Err(not_leader_err);
+                }
                 log::error!(
                     target: "sql::meta",
                     "❌ Meta command execution failed | sql='{}' | user='{}' | error='{}'",
@@ -723,6 +759,11 @@ impl SqlExecutor {
         exec_ctx: &ExecutionContext,
         e: datafusion::error::DataFusionError,
     ) -> KalamDbError {
+        // Propagate NOT_LEADER as a typed error so the HTTP handler can forward to leader.
+        if let Some(not_leader_err) = Self::try_not_leader_error(&e) {
+            return not_leader_err;
+        }
+
         let error_msg = e.to_string().to_lowercase();
         let is_table_not_found = error_msg.contains("table") && error_msg.contains("not found")
             || error_msg.contains("relation") && error_msg.contains("does not exist")

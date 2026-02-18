@@ -38,6 +38,9 @@ pub struct RaftManagerConfig {
     /// Peer nodes in the cluster
     pub peers: Vec<PeerNode>,
 
+    /// TLS/mTLS settings for inter-node RPC.
+    pub rpc_tls: RpcTlsConfig,
+
     /// Number of user data shards (default: 32)
     pub user_shards: u32,
 
@@ -83,6 +86,7 @@ impl Default for RaftManagerConfig {
             rpc_addr: "127.0.0.1:9100".to_string(),
             api_addr: "127.0.0.1:8080".to_string(),
             peers: vec![],
+            rpc_tls: RpcTlsConfig::default(),
             user_shards: DEFAULT_USER_DATA_SHARDS,
             shared_shards: DEFAULT_SHARED_DATA_SHARDS,
             heartbeat_interval_ms: 250,
@@ -118,6 +122,7 @@ impl RaftManagerConfig {
             rpc_addr: "127.0.0.1:0".to_string(), // Port 0 = OS assigns random available port
             api_addr,
             peers: vec![],    // No peers - single node cluster
+            rpc_tls: RpcTlsConfig::default(),
             user_shards: 1,   // Single shard - no distribution needed
             shared_shards: 1, // Single shard - no distribution needed
             heartbeat_interval_ms: 250,
@@ -143,6 +148,12 @@ impl From<kalamdb_configs::ClusterConfig> for RaftManagerConfig {
             rpc_addr: config.rpc_addr,
             api_addr: config.api_addr,
             peers: config.peers.into_iter().map(PeerNode::from).collect(),
+            rpc_tls: RpcTlsConfig {
+                enabled: config.rpc_tls.enabled,
+                ca_cert_path: config.rpc_tls.ca_cert_path,
+                node_cert_path: config.rpc_tls.node_cert_path,
+                node_key_path: config.rpc_tls.node_key_path,
+            },
             user_shards: config.user_shards,
             shared_shards: config.shared_shards,
             heartbeat_interval_ms: config.heartbeat_interval_ms,
@@ -170,6 +181,22 @@ pub struct PeerNode {
 
     /// Peer's API address for client requests
     pub api_addr: String,
+
+    /// Optional TLS server-name override for this peer.
+    pub rpc_server_name: Option<String>,
+}
+
+/// Runtime TLS/mTLS settings for inter-node RPC.
+#[derive(Debug, Clone, Default)]
+pub struct RpcTlsConfig {
+    /// Enable TLS for cluster RPC.
+    pub enabled: bool,
+    /// PEM-encoded CA certificate path.
+    pub ca_cert_path: Option<String>,
+    /// PEM-encoded node certificate path.
+    pub node_cert_path: Option<String>,
+    /// PEM-encoded node private key path.
+    pub node_key_path: Option<String>,
 }
 
 impl From<kalamdb_configs::PeerConfig> for PeerNode {
@@ -178,6 +205,7 @@ impl From<kalamdb_configs::PeerConfig> for PeerNode {
             node_id: NodeId::new(peer.node_id),
             rpc_addr: peer.rpc_addr,
             api_addr: peer.api_addr,
+            rpc_server_name: peer.rpc_server_name,
         }
     }
 }
@@ -202,6 +230,7 @@ mod tests {
             node_id: 2,
             rpc_addr: "127.0.0.1:9101".to_string(),
             api_addr: "127.0.0.1:8081".to_string(),
+            rpc_server_name: Some("node2.cluster.local".to_string()),
         };
 
         let peer = PeerNode::from(peer_config);
@@ -209,5 +238,6 @@ mod tests {
         assert_eq!(peer.node_id, NodeId::new(2));
         assert_eq!(peer.rpc_addr, "127.0.0.1:9101");
         assert_eq!(peer.api_addr, "127.0.0.1:8081");
+        assert_eq!(peer.rpc_server_name.as_deref(), Some("node2.cluster.local"));
     }
 }

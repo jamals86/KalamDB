@@ -1279,6 +1279,18 @@ Query OK, 0 rows affected
 
 186) make this: const VISIBILITY_TIMEOUT: Duration = Duration::from_secs(60); confugurable per topic
 
+187) subscription id is too long   "subscription_id": "u_ec6f250a2c094e2492ee61a83d0839d4-bc83de82331b416fb0f54be67759f55b-sub-359870fa18caeb70",
+come uop with a better and shorter one without causing issues in the future
+
+
+
+
+
+
+
+
+
+
 
 
 

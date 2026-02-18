@@ -728,6 +728,11 @@ pub struct RateLimitSettings {
 /// Authentication settings (T105 - Phase 7, User Story 5)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthSettings {
+    /// Root password set via config file (alternative to KALAMDB_ROOT_PASSWORD env var)
+    /// If set, root user will have remote access enabled with this password.
+    #[serde(default)]
+    pub root_password: Option<String>,
+
     /// JWT secret for token validation (required for JWT auth)
     #[serde(default = "default_auth_jwt_secret")]
     pub jwt_secret: String,
@@ -851,6 +856,7 @@ impl Default for OAuthProviderConfig {
 impl Default for AuthSettings {
     fn default() -> Self {
         Self {
+            root_password: None,
             jwt_secret: default_auth_jwt_secret(),
             jwt_trusted_issuers: default_auth_jwt_trusted_issuers(),
             jwt_expiry_hours: default_auth_jwt_expiry_hours(),

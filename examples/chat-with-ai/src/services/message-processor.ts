@@ -456,14 +456,23 @@ async function main(): Promise<void> {
   console.log(`✓ Authenticated as ${loginResp.user.username} (role: ${loginResp.user.role})`);
 
   // ── Quick health check: verify topic exists ───────────────────────────
-  const topicCheck = await client.query(
-    `SELECT * FROM system.topics WHERE name = '${TOPIC_NAME}'`
-  );
-  if (!topicCheck.results?.[0]?.row_count) {
-    console.error(`✗ Topic "${TOPIC_NAME}" not found. Run the setup script first: bash setup.sh`);
-    process.exit(1);
+  // Note: Service role may not have access to system.topics - this is optional
+  try {
+    const topicCheck = await client.query(
+      `SELECT * FROM system.topics WHERE name = '${TOPIC_NAME}'`
+    );
+    if (!topicCheck.results?.[0]?.row_count) {
+      console.error(`✗ Topic "${TOPIC_NAME}" not found. Run the setup script first: bash setup.sh`);
+      process.exit(1);
+    }
+    console.log(`✓ Topic "${TOPIC_NAME}" exists`);
+  } catch (err: any) {
+    if (err?.error?.code === 'SQL_EXECUTION_ERROR' && err?.error?.message?.includes('Access denied')) {
+      console.log(`⚠ Skipping topic check (service role cannot access system.topics)`);
+    } else {
+      console.warn(`⚠ Topic check failed (${err?.error?.message || err?.message || 'unknown error'})`);
+    }
   }
-  console.log(`✓ Topic "${TOPIC_NAME}" exists`);
 
   console.log('');
   console.log('🚀 Service started — waiting for messages...');
@@ -476,7 +485,7 @@ async function main(): Promise<void> {
     group_id: CONSUMER_GROUP,
     batch_size: 1,
     auto_ack: false,
-    start: 'latest',
+    start: 'earliest',  // Changed from 'latest' to process all messages including existing ones
   });
 
   // Wire up graceful shutdown

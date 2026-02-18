@@ -10,6 +10,10 @@ import Jobs from "./pages/Jobs";
 import LiveQueries from "./pages/LiveQueries";
 import Logging from "./pages/Logging";
 import Settings from "./pages/Settings";
+import StreamingTopics from "./pages/StreamingTopics";
+import StreamingTopicDetail from "./pages/StreamingTopicDetail";
+import StreamingGroups from "./pages/StreamingGroups";
+import StreamingOffsets from "./pages/StreamingOffsets";
 import ProtectedRoute from "./components/auth/ProtectedRoute";
 import SetupGuard from "./components/auth/SetupGuard";
 import Layout from "./components/layout/Layout";
@@ -37,6 +41,11 @@ function App() {
               <Route path="users" element={<Users />} />
               <Route path="jobs" element={<Jobs />} />
               <Route path="live-queries" element={<LiveQueries />} />
+              <Route path="streaming" element={<Navigate to="/streaming/topics" replace />} />
+              <Route path="streaming/topics" element={<StreamingTopics />} />
+              <Route path="streaming/topics/:topicId" element={<StreamingTopicDetail />} />
+              <Route path="streaming/groups" element={<StreamingGroups />} />
+              <Route path="streaming/offsets" element={<StreamingOffsets />} />
               <Route path="logging" element={<Logging />} />
               <Route path="logging/:tab" element={<Logging />} />
               <Route path="settings" element={<Settings />} />

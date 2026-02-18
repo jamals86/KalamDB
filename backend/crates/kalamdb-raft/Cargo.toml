@@ -19,7 +19,7 @@ kalamdb-sharding = { path = "../kalamdb-sharding" }
 openraft = { workspace = true }
 
 # gRPC network layer
-tonic = { workspace = true }
+tonic = { workspace = true, features = ["tls-webpki-roots", "tls-ring"] }
 tonic-prost = { workspace = true }
 prost = { workspace = true }
 
@@ -47,9 +47,6 @@ chrono = { workspace = true }
 dashmap = { workspace = true }
 parking_lot = { workspace = true }
 hostname = { workspace = true }
-
-[build-dependencies]
-tonic-build = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

@@ -439,7 +439,7 @@ pub enum ChangeType {
 }
 
 /// Change notification for live query subscribers
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChangeNotification {
     pub change_type: ChangeType,
     pub table_id: crate::models::TableId,

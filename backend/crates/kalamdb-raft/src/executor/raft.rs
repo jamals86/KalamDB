@@ -7,12 +7,16 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use dashmap::DashMap;
 use openraft::ServerState;
 
 use kalamdb_commons::models::{NodeId, UserId};
 use kalamdb_sharding::ShardRouter;
 
 use crate::cluster_types::NodeStatus;
+use crate::network::cluster_handler::ClusterMessageHandler;
+use crate::network::cluster_client::ClusterClient;
+use crate::network::models::GetNodeInfoResponse;
 use crate::{
     manager::RaftManager, ClusterInfo, ClusterNodeInfo, CommandExecutor, DataResponse, GroupId,
     KalamNode, MetaCommand, MetaResponse, RaftError, SharedDataCommand, UserDataCommand,
@@ -25,16 +29,44 @@ type Result<T> = std::result::Result<T, RaftError>;
 ///
 /// Routes commands through the appropriate Raft group leader,
 /// waits for consensus, then returns the result.
-#[derive(Debug)]
 pub struct RaftExecutor {
     /// Reference to the Raft manager
     manager: Arc<RaftManager>,
+    /// Cluster message handler (set before `start()`)
+    cluster_handler: tokio::sync::OnceCell<Arc<dyn ClusterMessageHandler>>,
+    /// Per-peer live statistics cache, refreshed on `\cluster list` / `system.cluster` queries.
+    ///
+    /// Keyed by `NodeId`. Only populated in cluster mode when the node has peers.
+    /// Stale entries are acceptable — they are replaced on the next refresh.
+    peer_stats_cache: Arc<DashMap<NodeId, GetNodeInfoResponse>>,
+}
+
+impl std::fmt::Debug for RaftExecutor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RaftExecutor")
+            .field("manager", &self.manager)
+            .finish_non_exhaustive()
+    }
 }
 
 impl RaftExecutor {
     /// Create a new RaftExecutor with a RaftManager.
     pub fn new(manager: Arc<RaftManager>) -> Self {
-        Self { manager }
+        Self {
+            manager,
+            cluster_handler: tokio::sync::OnceCell::new(),
+            peer_stats_cache: Arc::new(DashMap::new()),
+        }
+    }
+
+    /// Set the cluster message handler.
+    ///
+    /// Must be called **before** `start()`. The handler dispatches incoming
+    /// cluster gRPC messages (e.g. notification forwarding) to the application layer.
+    pub fn set_cluster_handler(&self, handler: Arc<dyn ClusterMessageHandler>) {
+        if self.cluster_handler.set(handler).is_err() {
+            log::warn!("ClusterMessageHandler already set in RaftExecutor");
+        }
     }
 
     /// Get a reference to the underlying RaftManager
@@ -43,6 +75,22 @@ impl RaftExecutor {
     /// after the full context is created.
     pub fn manager(&self) -> &Arc<RaftManager> {
         &self.manager
+    }
+
+    /// Refresh the per-peer statistics cache by fanning out `GetNodeInfo` RPCs
+    /// to all known peers in parallel.
+    ///
+    /// Successful responses overwrite any previously cached entry.  Peers that
+    /// fail or time out keep their old cached value (if any).
+    ///
+    /// This is called by `\cluster list` and future callers that need
+    /// fresh per-node data before rendering cluster state.
+    pub async fn refresh_peer_stats(&self) {
+        let client = ClusterClient::new(Arc::clone(&self.manager));
+        let fresh = client.gather_all_node_infos(2_000).await;
+        for (node_id, resp) in fresh {
+            self.peer_stats_cache.insert(node_id, resp);
+        }
     }
 
     /// Compute the shard for a user based on their ID
@@ -274,29 +322,85 @@ impl CommandExecutor for RaftExecutor {
                 (NodeStatus::Unknown, None, None, None)
             };
 
+            // For remote nodes, merge live data from the peer stats cache
+            // (populated by `refresh_peer_stats()` before this call).
+            let peer_cache_entry = if !is_self {
+                self.peer_stats_cache.get(&NodeId::from(node_id))
+            } else {
+                None
+            };
+
             nodes.push(ClusterNodeInfo {
                 node_id: NodeId::from(node_id),
                 role,
-                status,
+                // Prefer live status from cache for remote nodes (more accurate)
+                status: if let Some(ref p) = peer_cache_entry {
+                    match p.status.as_str() {
+                        "active" => NodeStatus::Active,
+                        "offline" => NodeStatus::Offline,
+                        "joining" => NodeStatus::Joining,
+                        "catching_up" => NodeStatus::CatchingUp,
+                        _ => status,
+                    }
+                } else {
+                    status
+                },
                 rpc_addr: node.rpc_addr.clone(),
                 api_addr: node.api_addr.clone(),
                 is_self,
                 is_leader,
-                groups_leading: if is_self { self_groups_leading } else { 0 },
+                // Prefer live groups_leading from cache for remote nodes
+                groups_leading: if is_self {
+                    self_groups_leading
+                } else if let Some(ref p) = peer_cache_entry {
+                    p.groups_leading
+                } else {
+                    0
+                },
                 total_groups,
-                current_term: Some(current_term),
-                last_applied_log,
+                // Prefer live term from cache for remote nodes
+                current_term: if let Some(ref p) = peer_cache_entry {
+                    p.current_term.or(Some(current_term))
+                } else {
+                    Some(current_term)
+                },
+                // Prefer live last_applied from cache (more accurate than replication lag proxy)
+                last_applied_log: if let Some(ref p) = peer_cache_entry {
+                    p.last_applied_log.or(last_applied_log)
+                } else {
+                    last_applied_log
+                },
                 leader_last_log_index: last_log_index,
-                snapshot_index: snapshot_idx,
+                // Prefer live snapshot from cache for remote nodes
+                snapshot_index: if let Some(ref p) = peer_cache_entry {
+                    p.snapshot_index.or(snapshot_idx)
+                } else {
+                    snapshot_idx
+                },
                 catchup_progress_pct,
                 millis_since_last_heartbeat: None, // TODO: heartbeat metrics are in OpenRaft 0.10+
                 replication_lag,
-                // Node metadata from KalamNode (replicated via membership)
-                hostname: node.hostname.clone(),
-                version: node.version.clone(),
-                memory_mb: node.memory_mb,
-                os: node.os.clone(),
-                arch: node.arch.clone(),
+                // Node metadata: prefer live cache, fall back to KalamNode membership data
+                hostname: peer_cache_entry
+                    .as_ref()
+                    .and_then(|p| p.hostname.clone())
+                    .or_else(|| node.hostname.clone()),
+                version: peer_cache_entry
+                    .as_ref()
+                    .and_then(|p| p.version.clone())
+                    .or_else(|| node.version.clone()),
+                memory_mb: peer_cache_entry
+                    .as_ref()
+                    .and_then(|p| p.memory_mb)
+                    .or(node.memory_mb),
+                os: peer_cache_entry
+                    .as_ref()
+                    .and_then(|p| p.os.clone())
+                    .or_else(|| node.os.clone()),
+                arch: peer_cache_entry
+                    .as_ref()
+                    .and_then(|p| p.arch.clone())
+                    .or_else(|| node.arch.clone()),
             });
         }
 
@@ -316,9 +420,19 @@ impl CommandExecutor for RaftExecutor {
     }
 
     async fn start(&self) -> Result<()> {
+        // Get the cluster handler, falling back to no-op if not set
+        let handler: Arc<dyn ClusterMessageHandler> = match self.cluster_handler.get() {
+            Some(h) => Arc::clone(h),
+            None => {
+                log::debug!("No ClusterMessageHandler set, using NoOpClusterHandler");
+                Arc::new(crate::network::cluster_handler::NoOpClusterHandler)
+            },
+        };
+
         // First start the RPC server so we can receive incoming Raft RPCs
+        // and cluster messages (both services share the same port)
         let rpc_addr = self.manager.config().rpc_addr.clone();
-        crate::network::start_rpc_server(self.manager.clone(), rpc_addr).await?;
+        crate::network::start_rpc_server(self.manager.clone(), rpc_addr, handler).await?;
 
         // Then start the Raft groups
         self.manager.start().await

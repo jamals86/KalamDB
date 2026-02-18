@@ -406,4 +406,168 @@ mod tests {
         let result = verify_issuer("any-issuer.com", &trusted);
         assert!(matches!(result, Err(AuthError::UntrustedIssuer(_))));
     }
+
+    // ─── Token-type security tests ──────────────────────────────────────────
+
+    /// Refresh tokens must carry `token_type = "refresh"` so the bearer-auth
+    /// layer can detect and reject them when used on the SQL / API endpoints.
+    #[test]
+    fn test_refresh_token_type_claim_is_preserved() {
+        let secret = "test-secret-key";
+        let trusted = vec!["kalamdb".to_string()];
+
+        let user_id = kalamdb_commons::UserId::new("u_refresh");
+        let username = kalamdb_commons::UserName::new("refresh_user");
+        let role = kalamdb_commons::Role::User;
+
+        let (refresh_token, _) = create_and_sign_refresh_token(
+            &user_id, &username, &role, None, None, secret,
+        )
+        .expect("Failed to create refresh token");
+
+        let claims =
+            validate_jwt_token(&refresh_token, secret, &trusted).expect("Token validation failed");
+
+        assert_eq!(
+            claims.token_type,
+            Some(TokenType::Refresh),
+            "Refresh token must carry token_type=Refresh claim"
+        );
+    }
+
+    /// Access tokens must carry `token_type = "access"` so consumers can
+    /// distinguish them from refresh tokens.
+    #[test]
+    fn test_access_token_type_claim_is_preserved() {
+        let secret = "test-secret-key";
+        let trusted = vec!["kalamdb".to_string()];
+
+        let user_id = kalamdb_commons::UserId::new("u_access");
+        let username = kalamdb_commons::UserName::new("access_user");
+        let role = kalamdb_commons::Role::User;
+
+        let (access_token, _) = create_and_sign_token(
+            &user_id, &username, &role, None, None, secret,
+        )
+        .expect("Failed to create access token");
+
+        let claims =
+            validate_jwt_token(&access_token, secret, &trusted).expect("Token validation failed");
+
+        assert_eq!(
+            claims.token_type,
+            Some(TokenType::Access),
+            "Access token must carry token_type=Access claim"
+        );
+    }
+
+    /// Refresh and access tokens signed with the same secret must NOT be
+    /// interchangeable at the validation layer — their `token_type` claims
+    /// must differ so calling code can enforce the separation.
+    #[test]
+    fn test_refresh_and_access_token_types_are_distinct() {
+        let secret = "shared-secret";
+        let trusted = vec!["kalamdb".to_string()];
+        let user_id = kalamdb_commons::UserId::new("u_distinct");
+        let username = kalamdb_commons::UserName::new("distinct_user");
+        let role = kalamdb_commons::Role::User;
+
+        let (access, _) = create_and_sign_token(
+            &user_id, &username, &role, None, None, secret,
+        )
+        .unwrap();
+
+        let (refresh, _) = create_and_sign_refresh_token(
+            &user_id, &username, &role, None, None, secret,
+        )
+        .unwrap();
+
+        let access_claims = validate_jwt_token(&access, secret, &trusted).unwrap();
+        let refresh_claims = validate_jwt_token(&refresh, secret, &trusted).unwrap();
+
+        assert_ne!(
+            access_claims.token_type,
+            refresh_claims.token_type,
+            "Access and refresh tokens must have different token_type claims"
+        );
+    }
+
+    /// An empty string is not a valid JWT and must return an error, not panic.
+    #[test]
+    fn test_validate_empty_string_returns_error() {
+        let trusted = vec!["kalamdb.io".to_string()];
+        let result = validate_jwt_token("", "any-secret", &trusted);
+        assert!(result.is_err(), "Empty token string must be rejected");
+    }
+
+    /// A token with only two segments ("header.payload", missing signature)
+    /// must be rejected.
+    #[test]
+    fn test_validate_truncated_jwt_returns_error() {
+        let trusted = vec!["kalamdb.io".to_string()];
+        let result = validate_jwt_token("eyJhbGciOiJIUzI1NiJ9.e30", "any-secret", &trusted);
+        assert!(
+            result.is_err(),
+            "Truncated JWT (missing signature) must be rejected"
+        );
+    }
+
+    /// A JWT whose `sub` claim contains SQL-injection text must still be
+    /// parsed correctly by the JWT library without any panic.  The attacker
+    /// cannot bypass validation by injecting SQL into claims.
+    #[test]
+    fn test_validate_jwt_sql_injection_in_sub_is_safe() {
+        let secret = "some-secret";
+        let trusted = vec!["kalamdb-test".to_string()];
+
+        // Construct a well-signed JWT with a payloaded sub/username.
+        let sqli_username = "'; DROP TABLE users; --";
+        let now = chrono::Utc::now().timestamp() as usize;
+        let claims = JwtClaims {
+            sub: sqli_username.to_string(),
+            iss: "kalamdb-test".to_string(),
+            exp: now + 3600,
+            iat: now,
+            username: Some(kalamdb_commons::UserName::new(sqli_username)),
+            email: None,
+            role: None,
+            token_type: Some(TokenType::Access),
+        };
+
+        let token = generate_jwt_token(&claims, secret).unwrap();
+
+        // The token validates (valid signature, not expired, trusted issuer)
+        let parsed = validate_jwt_token(&token, secret, &trusted).unwrap();
+
+        // The SQL injection string is preserved literally — it's the auth and SQL
+        // layers' job to sanitise inputs, not the JWT validator.
+        assert_eq!(
+            parsed.sub, sqli_username,
+            "JWT validator must preserve sub claims verbatim"
+        );
+    }
+
+    /// A token signed with the cluster's secret but containing a higher role
+    /// (`system`) than the user actually has must still validate at the JWT
+    /// level — the role-DB-mismatch check is the responsibility of the auth
+    /// service layer (`authenticate_bearer`), not the JWT validator itself.
+    ///
+    /// This test documents the boundary: `validate_jwt_token` validates
+    /// *cryptographic* integrity only; *semantic* authorization (role match)
+    /// is a separate step.
+    #[test]
+    fn test_validate_jwt_role_claim_is_returned_for_caller_to_check() {
+        let secret = "secure-secret";
+        let trusted = vec!["kalamdb-test".to_string()];
+
+        let token =
+            create_test_token_with_type(secret, 3600, Some(TokenType::Access));
+
+        let claims = validate_jwt_token(&token, secret, &trusted).unwrap();
+
+        // claims.role may be Some(role) — the *caller* (authenticate_bearer)
+        // must verify it matches the DB.  The JWT validator must not silently drop it.
+        // We just ensure validation succeeded and role is accessible.
+        let _ = claims.role; // accessible without panic
+    }
 }

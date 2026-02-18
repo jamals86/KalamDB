@@ -20,15 +20,6 @@ use super::error::ApplierError;
 use super::executor::CommandExecutorImpl;
 use crate::app_context::AppContext;
 
-/// Information about the current leader (for cluster mode)
-#[derive(Debug, Clone)]
-pub struct LeaderInfo {
-    /// Node ID of the leader
-    pub node_id: u64,
-    /// Address for forwarding commands
-    pub address: String,
-}
-
 /// Unified Applier trait - the single interface for all command execution
 ///
 /// All commands flow through Raft consensus (even in single-node mode).
@@ -155,9 +146,6 @@ pub trait UnifiedApplier: Send + Sync {
 
     /// Check if this node can accept writes (always true - forwards to leader)
     fn can_accept_writes(&self) -> bool;
-
-    /// Get leader info for forwarding (if not leader)
-    fn get_leader_info(&self) -> Option<LeaderInfo>;
 }
 
 /// Raft Applier - routes all commands through Raft consensus
@@ -183,31 +171,6 @@ impl RaftApplier {
     /// Get the executor
     fn executor(&self) -> &CommandExecutorImpl {
         &self.executor
-    }
-
-    /// Get leader info for meta group
-    fn get_meta_leader_info(&self) -> Option<LeaderInfo> {
-        let app_ctx = self.executor().app_context();
-        let executor = app_ctx.executor();
-        let raft_exec = executor.as_any().downcast_ref::<RaftExecutor>()?;
-        let mgr = raft_exec.manager();
-        let leader_node_id = mgr.current_leader(GroupId::Meta)?;
-
-        let config = mgr.config();
-        let leader_addr = if leader_node_id == config.node_id {
-            config.rpc_addr.clone()
-        } else {
-            config
-                .peers
-                .iter()
-                .find(|p| p.node_id == leader_node_id)
-                .map(|p| p.rpc_addr.clone())?
-        };
-
-        Some(LeaderInfo {
-            node_id: leader_node_id.as_u64(),
-            address: leader_addr,
-        })
     }
 
     /// Propose a meta command to the Meta Raft group
@@ -467,9 +430,5 @@ impl UnifiedApplier for RaftApplier {
     fn can_accept_writes(&self) -> bool {
         // Always accept writes - they'll be forwarded to leader if needed
         true
-    }
-
-    fn get_leader_info(&self) -> Option<LeaderInfo> {
-        self.get_meta_leader_info()
     }
 }

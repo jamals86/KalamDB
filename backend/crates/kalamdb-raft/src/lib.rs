@@ -68,5 +68,10 @@ pub use manager::{
     DEFAULT_SHARED_DATA_SHARDS, DEFAULT_USER_DATA_SHARDS,
 };
 pub use network::{start_rpc_server, RaftNetwork, RaftNetworkFactory, RaftService};
+pub use network::{
+    ClusterClient, ClusterMessageHandler, ClusterServiceImpl, ForwardSqlRequest,
+    ForwardSqlResponse, ForwardSqlResponsePayload, GetNodeInfoRequest, GetNodeInfoResponse,
+    NoOpClusterHandler, NotifyFollowersRequest, NotifyFollowersResponse, PingRequest, PingResponse,
+};
 pub use state_machine::{serde_helpers, ApplyResult, KalamStateMachine, StateMachineSnapshot};
 pub use storage::{KalamNode, KalamRaftStorage, KalamTypeConfig};

@@ -151,6 +151,7 @@ fn test_hot_cold_storage_data_integrity() {
 
     // === Cleanup ===
     let _ = execute_sql(&format!("DROP TABLE IF EXISTS {}", full_table_name));
+    let _ = execute_sql(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 
     println!("✅ Hot/cold storage data integrity test passed!");
 }
@@ -256,6 +257,7 @@ fn test_duplicate_primary_key_insert_fails() {
 
     // === Cleanup ===
     let _ = execute_sql(&format!("DROP TABLE IF EXISTS {}", full_table_name));
+    let _ = execute_sql(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 
     println!("✅ Duplicate primary key constraint test passed!");
 }
@@ -359,6 +361,7 @@ fn test_update_operations_hot_and_cold() {
 
     // === Cleanup ===
     let _ = execute_sql(&format!("DROP TABLE IF EXISTS {}", full_table_name));
+    let _ = execute_sql(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 
     println!("✅ UPDATE operations on hot and cold storage test passed!");
 }

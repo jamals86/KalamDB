@@ -55,6 +55,8 @@ mod smoke_test_as_user_impersonation;
 mod smoke_test_stream_subscription;
 #[path = "smoke/subscription/smoke_test_subscription_advanced.rs"]
 mod smoke_test_subscription_advanced;
+#[path = "smoke/subscription/smoke_test_subscription_delete.rs"]
+mod smoke_test_subscription_delete;
 #[path = "smoke/subscription/smoke_test_user_table_subscription.rs"]
 mod smoke_test_user_table_subscription;
 
@@ -137,3 +139,5 @@ mod smoke_test_system_tables_extended;
 // Security tests
 #[path = "smoke/security/smoke_test_security_access.rs"]
 mod smoke_test_security_access;
+#[path = "smoke/security/smoke_test_rpc_auth.rs"]
+mod smoke_test_rpc_auth;

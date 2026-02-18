@@ -68,7 +68,7 @@ async fn wait_for_topic_ready(topic: &str, expected_routes: usize) {
                             let route_count =
                                 routes_json.as_array().map(|routes| routes.len()).unwrap_or(0);
                             if route_count >= expected_routes {
-                                tokio::time::sleep(Duration::from_millis(500)).await;
+                                tokio::time::sleep(Duration::from_millis(100)).await;
                                 return;
                             }
                         }
@@ -76,7 +76,7 @@ async fn wait_for_topic_ready(topic: &str, expected_routes: usize) {
                 }
             }
         }
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
     panic!(

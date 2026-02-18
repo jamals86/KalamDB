@@ -6,6 +6,9 @@
 //! Topic pub/sub publishing is now handled synchronously in table providers
 //! via the TopicPublisher trait — see kalamdb-publisher crate.
 //!
+//! In cluster mode, the leader broadcasts notifications to follower nodes
+//! via the gRPC ClusterService (see `kalamdb_raft::ClusterClient`).
+//!
 //! Used by:
 //! - WebSocket live query subscribers
 
@@ -19,6 +22,8 @@ use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::rows::Row;
 use kalamdb_commons::models::{LiveQueryId, TableId, UserId};
+use kalamdb_raft::ClusterClient;
+use kalamdb_raft::NotifyFollowersRequest;
 use kalamdb_system::NotificationService as NotificationServiceTrait;
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -68,6 +73,10 @@ fn apply_projections<'a>(row: &'a Row, projections: &Option<Arc<Vec<String>>>) -
 /// uses DashMap for lock-free concurrent access - no RwLock wrapper needed.
 ///
 /// Also handles topic pub/sub routing via TopicPublisherService.
+///
+/// In cluster mode, the leader node broadcasts notifications to follower nodes
+/// via cluster gRPC so followers can dispatch to their locally-connected
+/// WebSocket subscribers.
 pub struct NotificationService {
     /// Manager uses DashMap internally for lock-free access
     registry: Arc<ConnectionsManager>,
@@ -75,6 +84,9 @@ pub struct NotificationService {
     /// AppContext for leadership checks (set after initialization to avoid circular dependency)
     /// Required for Raft cluster mode to ensure only leader fires notifications
     app_context: OnceCell<std::sync::Weak<crate::app_context::AppContext>>,
+    /// gRPC cluster client for broadcasting notifications to follower nodes.
+    /// Set after initialization when Raft cluster mode is active.
+    cluster_client: OnceCell<Arc<ClusterClient>>,
 }
 
 impl NotificationService {
@@ -93,12 +105,22 @@ impl NotificationService {
         }
     }
 
+    /// Set the gRPC cluster client for cross-node notification broadcasting.
+    ///
+    /// Called after Raft initialization when cluster mode is active.
+    pub fn set_cluster_client(&self, client: Arc<ClusterClient>) {
+        if self.cluster_client.set(client).is_err() {
+            log::warn!("ClusterClient already set in NotificationService");
+        }
+    }
+
     pub fn new(registry: Arc<ConnectionsManager>) -> Arc<Self> {
         let (notify_tx, mut notify_rx) = mpsc::channel(NOTIFY_QUEUE_CAPACITY);
         let service = Arc::new(Self {
             registry,
             notify_tx,
             app_context: OnceCell::new(),
+            cluster_client: OnceCell::new(),
         });
 
         // Notification worker (single task, no per-notification spawn)
@@ -107,9 +129,9 @@ impl NotificationService {
             while let Some(task) = notify_rx.recv().await {
                 // Step 0: Leadership check (Raft cluster mode)
                 //
-                // Keep notifications strictly leader-only to prevent duplicates across the cluster.
-                // This runs in the background worker to avoid spawning a per-notification task in
-                // the hot path (higher throughput under load).
+                // Only the leader processes and broadcasts notifications.
+                // Followers silently drop locally-generated notifications because
+                // writes only land on the leader (user/stream tables).
                 if let Some(weak_ctx) = notify_service.app_context.get() {
                     if let Some(ctx) = weak_ctx.upgrade() {
                         let is_leader = match task.user_id.as_ref() {
@@ -123,6 +145,20 @@ impl NotificationService {
                                 task.table_id
                             );
                             continue;
+                        }
+
+                        // Leader: broadcast to all other cluster nodes via gRPC
+                        // so followers can dispatch to their locally-connected subscribers.
+                        if ctx.is_cluster_mode() {
+                            if let Some(cluster_client) = notify_service.cluster_client.get() {
+                                Self::broadcast_to_followers(
+                                    cluster_client,
+                                    task.user_id.as_ref(),
+                                    &task.table_id,
+                                    &task.notification,
+                                )
+                                .await;
+                            }
                         }
                     }
                 }
@@ -168,6 +204,72 @@ impl NotificationService {
         });
 
         service
+    }
+
+    /// Handle a notification forwarded from the leader node.
+    ///
+    /// This bypasses the leadership check because the leader already validated
+    /// ownership and is broadcasting to followers.  The follower dispatches
+    /// to any locally-connected WebSocket subscribers.
+    pub async fn notify_forwarded(
+        &self,
+        user_id: UserId,
+        table_id: TableId,
+        notification: ChangeNotification,
+    ) {
+        let handles = self.registry.get_subscriptions_for_table(&user_id, &table_id);
+        if handles.is_empty() {
+            log::trace!(
+                "notify_forwarded: no local subscriptions for user={}, table={}",
+                user_id,
+                table_id
+            );
+            return;
+        }
+        log::debug!(
+            "notify_forwarded: dispatching to {} local subscriptions for user={}, table={}",
+            handles.len(),
+            user_id,
+            table_id
+        );
+        if let Err(e) =
+            self.notify_table_change_with_handles(&user_id, &table_id, notification, handles).await
+        {
+            log::warn!(
+                "Failed to dispatch forwarded notification for table {}: {}",
+                table_id,
+                e
+            );
+        }
+    }
+
+    /// Broadcast a notification to all other cluster nodes via gRPC.
+    ///
+    /// Called on the leader after local notification dispatch.  Uses
+    /// fire-and-forget semantics — errors are logged but don't fail the
+    /// local notification path.
+    async fn broadcast_to_followers(
+        cluster_client: &ClusterClient,
+        user_id: Option<&UserId>,
+        table_id: &TableId,
+        notification: &ChangeNotification,
+    ) {
+        let payload = match kalamdb_raft::network::cluster_serde::serialize(notification) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                log::warn!("Failed to serialize notification for forwarding: {}", e);
+                return;
+            },
+        };
+
+        let request = NotifyFollowersRequest {
+            user_id: user_id.map(|u| u.to_string()),
+            table_namespace: table_id.namespace_id().to_string(),
+            table_name: table_id.table_name().to_string(),
+            payload,
+        };
+
+        cluster_client.broadcast_notify(request).await;
     }
 
     /// Notify subscribers about a table change (fire-and-forget async)

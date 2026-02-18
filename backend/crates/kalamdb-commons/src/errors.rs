@@ -18,6 +18,40 @@
 
 use std::fmt;
 
+/// Typed NOT_LEADER signal for cluster-mode forwarding.
+///
+/// Table providers wrap this in `DataFusionError::External(Box::new(NotLeaderError { .. }))`
+/// when a request is received by a follower node.  The SQL execution layer can then
+/// losslessly downcast the `External` payload to decide whether to forward the
+/// request to the leader — no string parsing required.
+///
+/// Lives in `kalamdb-commons` so that both `kalamdb-tables` (the producer) and
+/// `kalamdb-core` / `kalamdb-api` (the consumers) can reference the same type.
+#[derive(Debug, Clone)]
+pub struct NotLeaderError {
+    /// API address of the current leader (e.g., "http://127.0.0.1:8081").
+    /// `None` when the leader is unknown (election in progress).
+    pub leader_addr: Option<String>,
+}
+
+impl NotLeaderError {
+    /// Convenience constructor.
+    pub fn new(leader_addr: Option<String>) -> Self {
+        Self { leader_addr }
+    }
+}
+
+impl fmt::Display for NotLeaderError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.leader_addr {
+            Some(addr) => write!(f, "Not leader for shard. Leader: {}", addr),
+            None => write!(f, "Not leader for shard. Leader unknown"),
+        }
+    }
+}
+
+impl std::error::Error for NotLeaderError {}
+
 /// Common error type for KalamDB operations.
 ///
 /// This enum provides basic error variants that can be shared across all crates
