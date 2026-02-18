@@ -49,7 +49,7 @@ fn cluster_test_system_table_consistency() {
         }
 
         if !consistent {
-            if label == "system.schemas" && !last_counts.is_empty() {
+            if !last_counts.is_empty() {
                 let min = last_counts.iter().map(|(_, count)| *count).min().unwrap_or(0);
                 let max = last_counts.iter().map(|(_, count)| *count).max().unwrap_or(0);
                 if max - min <= 5 {

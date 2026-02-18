@@ -6,6 +6,8 @@
 //! - Raft consensus RPCs (vote, append_entries, install_snapshot)
 //! - Client proposal forwarding (forward proposals from followers to leader)
 
+use tokio::sync::oneshot;
+use tonic::transport::{Certificate, Identity, ServerTlsConfig};
 use tonic::{Request, Response, Status};
 use tonic_prost::ProstCodec;
 
@@ -277,6 +279,7 @@ impl raft_server::Raft for RaftService {
         &self,
         request: Request<RaftRpcRequest>,
     ) -> Result<Response<RaftRpcResponse>, Status> {
+        self.manager.authorize_incoming_rpc(&request)?;
         let req = request.into_inner();
 
         // Parse group ID
@@ -316,6 +319,7 @@ impl raft_server::Raft for RaftService {
         &self,
         request: Request<ClientProposalRequest>,
     ) -> Result<Response<ClientProposalResponse>, Status> {
+        self.manager.authorize_incoming_rpc(&request)?;
         let req = request.into_inner();
 
         // Parse group ID
@@ -372,13 +376,18 @@ impl raft_server::Raft for RaftService {
 /// This function binds to the advertised address when possible; if the address
 /// is not a valid socket address (e.g., hostname), it falls back to
 /// "0.0.0.0:PORT" to listen on all interfaces.
+///
+/// The `cluster_handler` is used to dispatch incoming cluster messages
+/// (notifications, cache invalidation, etc.) to the application layer.
+/// Both the Raft consensus service and the cluster messaging service
+/// are hosted on the same gRPC port.
+///
 /// Returns an error if the server fails to start (e.g., port already in use).
 pub async fn start_rpc_server(
     manager: Arc<RaftManager>,
     advertise_addr: String,
+    cluster_handler: Arc<dyn super::cluster_handler::ClusterMessageHandler>,
 ) -> Result<(), crate::RaftError> {
-    use tokio::sync::oneshot;
-
     // Extract port from advertise_addr (e.g., "kalamdb-node1:9090" -> 9090)
     let port = advertise_addr.rsplit(':').next().ok_or_else(|| {
         crate::RaftError::Internal(format!(
@@ -406,8 +415,60 @@ pub async fn start_rpc_server(
         ))
     })?;
 
-    let service = RaftService::new(manager);
-    let server = raft_server::RaftServer::new(service);
+    // Raft consensus service (vote, append_entries, install_snapshot, client_proposal)
+    let raft_service = RaftService::new(Arc::clone(&manager));
+    let raft_server = raft_server::RaftServer::new(raft_service);
+
+    // Cluster messaging service (notify_followers, forward_sql, ping)
+    let cluster_service =
+        super::cluster_handler::ClusterServiceImpl::new(cluster_handler, Arc::clone(&manager));
+    let cluster_server = super::cluster_service::cluster_server::ClusterServer::new(cluster_service);
+
+    let rpc_tls = manager.config().rpc_tls.clone();
+    let server_tls = if rpc_tls.enabled {
+        let ca_cert_path = rpc_tls.ca_cert_path.as_deref().ok_or_else(|| {
+            crate::RaftError::Config(
+                "rpc_tls.enabled=true but ca_cert_path is not configured".to_string(),
+            )
+        })?;
+        let node_cert_path = rpc_tls.node_cert_path.as_deref().ok_or_else(|| {
+            crate::RaftError::Config(
+                "rpc_tls.enabled=true but node_cert_path is not configured".to_string(),
+            )
+        })?;
+        let node_key_path = rpc_tls.node_key_path.as_deref().ok_or_else(|| {
+            crate::RaftError::Config(
+                "rpc_tls.enabled=true but node_key_path is not configured".to_string(),
+            )
+        })?;
+
+        let ca_pem = std::fs::read(ca_cert_path).map_err(|e| {
+            crate::RaftError::Config(format!(
+                "Failed reading cluster CA cert '{}': {}",
+                ca_cert_path, e
+            ))
+        })?;
+        let cert_pem = std::fs::read(node_cert_path).map_err(|e| {
+            crate::RaftError::Config(format!(
+                "Failed reading node cert '{}': {}",
+                node_cert_path, e
+            ))
+        })?;
+        let key_pem = std::fs::read(node_key_path).map_err(|e| {
+            crate::RaftError::Config(format!(
+                "Failed reading node key '{}': {}",
+                node_key_path, e
+            ))
+        })?;
+
+        Some(
+            ServerTlsConfig::new()
+                .identity(Identity::from_pem(cert_pem, key_pem))
+                .client_ca_root(Certificate::from_pem(ca_pem)),
+        )
+    } else {
+        None
+    };
 
     log::debug!("Starting Raft RPC server on {} (advertising as {})", addr, advertise_addr);
 
@@ -421,8 +482,22 @@ pub async fn start_rpc_server(
         let _ = tx.send(Ok(()));
 
         let incoming = tokio_stream::wrappers::TcpListenerStream::new(listener);
-        if let Err(e) = tonic::transport::Server::builder()
-            .add_service(server)
+        let mut server_builder = tonic::transport::Server::builder();
+        if let Some(tls) = server_tls {
+            match server_builder.tls_config(tls) {
+                Ok(builder) => {
+                    server_builder = builder;
+                },
+                Err(e) => {
+                    log::error!("Failed to configure Raft RPC TLS on {}: {}", bind_addr_clone, e);
+                    return;
+                },
+            }
+        }
+
+        if let Err(e) = server_builder
+            .add_service(raft_server)
+            .add_service(cluster_server)
             .serve_with_incoming(incoming)
             .await
         {

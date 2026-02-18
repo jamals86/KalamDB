@@ -35,6 +35,7 @@ pub mod classifier;
 pub mod compatibility;
 pub mod ddl;
 pub mod ddl_parent;
+pub mod execute_as;
 pub mod parser;
 pub mod query_cache;
 pub mod statement_classifier;

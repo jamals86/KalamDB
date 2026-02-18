@@ -106,10 +106,6 @@ pub enum ExtensionStatement {
     ClusterClear,
     /// CLUSTER LIST command
     ClusterList,
-    /// CLUSTER JOIN command (not implemented yet)
-    ClusterJoin(String),
-    /// CLUSTER LEAVE command (not implemented yet)
-    ClusterLeave,
 }
 
 impl ExtensionStatement {
@@ -315,17 +311,10 @@ impl ExtensionStatement {
                     "STEPDOWN" | "STEP-DOWN" => return Ok(ExtensionStatement::ClusterStepdown),
                     "CLEAR" => return Ok(ExtensionStatement::ClusterClear),
                     "LIST" | "LS" | "STATUS" => return Ok(ExtensionStatement::ClusterList),
-                    "JOIN" => {
-                        // Get the address from the original SQL to preserve case
-                        let original_parts: Vec<&str> = sql.split_whitespace().collect();
-                        if original_parts.len() >= 3 {
-                            return Ok(ExtensionStatement::ClusterJoin(original_parts[2].to_string()));
-                        } else {
-                            return Err("CLUSTER JOIN requires a node address".to_string());
-                        }
-                    }
-                    "LEAVE" => return Ok(ExtensionStatement::ClusterLeave),
-                    _ => return Err("Unknown CLUSTER subcommand. Supported: SNAPSHOT, PURGE, TRIGGER ELECTION, TRANSFER-LEADER, STEPDOWN, CLEAR, LIST, JOIN, LEAVE".to_string()),
+                    "JOIN" | "LEAVE" => {
+                        return Err("CLUSTER JOIN/LEAVE commands were removed".to_string());
+                    },
+                    _ => return Err("Unknown CLUSTER subcommand. Supported: SNAPSHOT, PURGE, TRIGGER ELECTION, TRANSFER-LEADER, STEPDOWN, CLEAR, LIST".to_string()),
                 }
             }
         }
@@ -401,5 +390,25 @@ mod tests {
         let result = ExtensionStatement::parse(sql);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Unknown KalamDB extension command"));
+    }
+
+    #[test]
+    fn test_parse_cluster_join_removed() {
+        let sql = "CLUSTER JOIN 10.0.0.2:9100";
+        let result = ExtensionStatement::parse(sql);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("CLUSTER JOIN/LEAVE commands were removed"));
+    }
+
+    #[test]
+    fn test_parse_cluster_leave_removed() {
+        let sql = "CLUSTER LEAVE";
+        let result = ExtensionStatement::parse(sql);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("CLUSTER JOIN/LEAVE commands were removed"));
     }
 }

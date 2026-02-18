@@ -131,6 +131,9 @@ fn smoke_user_table_dml_wide_columns() {
     execute_sql_as_root_via_client(&create_sql).expect("create user table should succeed");
 
     run_dml_sequence(&full, false);
+
+    // Cleanup
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
 }
 
 #[ntest::timeout(180000)]
@@ -167,6 +170,9 @@ fn smoke_shared_table_dml_wide_columns() {
     execute_sql_as_root_via_client(&create_sql).expect("create shared table should succeed");
 
     run_dml_sequence(&full, true);
+
+    // Cleanup
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
 }
 
 // Subscription coverage for UPDATE and DELETE notifications on a user table with
@@ -315,4 +321,7 @@ fn smoke_subscription_update_delete_notifications() {
     );
 
     listener.stop().ok();
+
+    // Cleanup
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
 }

@@ -71,7 +71,7 @@ async fn wait_for_topic_ready(topic: &str, expected_routes: usize) {
                             let route_count =
                                 routes_json.as_array().map(|routes| routes.len()).unwrap_or(0);
                             if route_count >= expected_routes {
-                                tokio::time::sleep(Duration::from_millis(500)).await;
+                                tokio::time::sleep(Duration::from_millis(100)).await;
                                 return;
                             }
                         }
@@ -79,7 +79,7 @@ async fn wait_for_topic_ready(topic: &str, expected_routes: usize) {
                 }
             }
         }
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
     panic!(
@@ -204,7 +204,7 @@ async fn test_topic_high_load_concurrent_publishers() {
     eprintln!("[TEST] Topic ready with {} routes", total_routes);
 
     // Give the topic routing system time to fully initialize
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
 
     // Track expected events
     let expected_events = Arc::new(TokioMutex::new(HashMap::<String, EventInfo>::new()));
@@ -253,19 +253,19 @@ async fn test_topic_high_load_concurrent_publishers() {
                             consecutive_empty += 1;
                             // Stop if no new records for 10 seconds
                             if publishers_done.load(Ordering::Relaxed)
-                                && last_new_record_time.elapsed() > Duration::from_secs(10)
+                                && last_new_record_time.elapsed() > Duration::from_secs(3)
                                 && !all_records.is_empty()
                             {
                                 eprintln!(
-                                    "[CONSUMER] No new records for 10s, stopping (unique: {})",
+                                    "[CONSUMER] No new records for 3s, stopping (unique: {})",
                                     seen_offsets.len()
                                 );
                                 break;
                             }
                             if consecutive_empty >= 20 {
-                                tokio::time::sleep(Duration::from_millis(500)).await;
-                            } else {
                                 tokio::time::sleep(Duration::from_millis(200)).await;
+                            } else {
+                                tokio::time::sleep(Duration::from_millis(100)).await;
                             }
                             continue;
                         }
@@ -301,7 +301,7 @@ async fn test_topic_high_load_concurrent_publishers() {
                             consecutive_all_dups += 1;
                             if publishers_done.load(Ordering::Relaxed)
                                 && (consecutive_all_dups >= 3
-                                    || last_new_record_time.elapsed() > Duration::from_secs(10))
+                                    || last_new_record_time.elapsed() > Duration::from_secs(3))
                             {
                                 eprintln!(
                                     "[CONSUMER] No new records, stopping (unique: {}, time_since_new: {}s)",
@@ -342,7 +342,7 @@ async fn test_topic_high_load_concurrent_publishers() {
     };
 
     // Give consumer time to start
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Spawn 20+ concurrent publishers
     let num_publishers = 24;
@@ -395,7 +395,7 @@ async fn test_topic_high_load_concurrent_publishers() {
                             .await;
                         }
 
-                        tokio::time::sleep(Duration::from_millis(50)).await;
+                        tokio::time::sleep(Duration::from_millis(10)).await;
 
                         let update_sql = format!(
                             "UPDATE {} SET value = {}, counter = {} WHERE id = {}",
@@ -441,7 +441,7 @@ async fn test_topic_high_load_concurrent_publishers() {
                             .await;
                         }
 
-                        tokio::time::sleep(Duration::from_millis(50)).await;
+                        tokio::time::sleep(Duration::from_millis(10)).await;
 
                         let update_sql = format!(
                             "UPDATE {} SET score = {}, level = {} WHERE id = {}",
@@ -487,7 +487,7 @@ async fn test_topic_high_load_concurrent_publishers() {
                             .await;
                         }
 
-                        tokio::time::sleep(Duration::from_millis(50)).await;
+                        tokio::time::sleep(Duration::from_millis(10)).await;
 
                         // Another INSERT for stream
                         let record_id2 = record_id + 100000;
@@ -537,7 +537,7 @@ async fn test_topic_high_load_concurrent_publishers() {
                             .await;
                         }
 
-                        tokio::time::sleep(Duration::from_millis(50)).await;
+                        tokio::time::sleep(Duration::from_millis(10)).await;
 
                         let update_sql = format!(
                             "UPDATE {} SET price = {}, stock = {} WHERE product_id = {}",
@@ -583,7 +583,7 @@ async fn test_topic_high_load_concurrent_publishers() {
                             .await;
                         }
 
-                        tokio::time::sleep(Duration::from_millis(50)).await;
+                        tokio::time::sleep(Duration::from_millis(10)).await;
 
                         let update_sql = format!(
                             "UPDATE {} SET duration = {}, score = {} WHERE session_id = {}",
@@ -609,7 +609,7 @@ async fn test_topic_high_load_concurrent_publishers() {
                 }
 
                 // Small delay between operations
-                tokio::time::sleep(Duration::from_millis(20)).await;
+                tokio::time::sleep(Duration::from_millis(5)).await;
             }
 
             eprintln!("[PUBLISHER-{}] Completed all operations", publisher_id);
@@ -627,7 +627,7 @@ async fn test_topic_high_load_concurrent_publishers() {
     eprintln!("[TEST] All publishers completed, waiting for consumer...");
 
     // Give extra time for all events to propagate through the topic system
-    tokio::time::sleep(Duration::from_secs(5)).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
     // Wait for consumer to finish
     let records = consumer_handle.await.expect("Consumer task failed");
 

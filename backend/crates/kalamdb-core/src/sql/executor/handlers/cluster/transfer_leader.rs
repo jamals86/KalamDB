@@ -7,6 +7,7 @@ use crate::error::KalamDbError;
 use crate::sql::executor::handlers::{
     ExecutionContext, ExecutionResult, ScalarValue, StatementHandler,
 };
+use kalamdb_commons::models::NodeId;
 use kalamdb_raft::RaftExecutor;
 use kalamdb_sql::statement_classifier::{SqlStatement, SqlStatementKind};
 use std::sync::Arc;
@@ -51,7 +52,7 @@ impl StatementHandler for ClusterTransferLeaderHandler {
         };
 
         let manager = raft_executor.manager();
-        let results = manager.transfer_leadership_all(*node_id).await.map_err(|e| {
+        let results = manager.transfer_leadership_all(NodeId::from(*node_id)).await.map_err(|e| {
             KalamDbError::InvalidOperation(format!("Failed to transfer leadership: {}", e))
         })?;
 
@@ -59,10 +60,17 @@ impl StatementHandler for ClusterTransferLeaderHandler {
         let total_count = results.len();
         let failed_count = total_count - success_count;
 
-        let mut message = format!(
-            "Cluster transfer-leader completed: {}/{} groups requested (target={})",
-            success_count, total_count, node_id
-        );
+        let mut message = if success_count == 0 && failed_count == total_count {
+            format!(
+                "CLUSTER TRANSFER-LEADER is unsupported in the current OpenRaft version (target={}).",
+                node_id
+            )
+        } else {
+            format!(
+                "Cluster transfer-leader completed: {}/{} groups requested (target={})",
+                success_count, total_count, node_id
+            )
+        };
 
         if failed_count > 0 {
             message.push_str("\n\nFailed groups:");

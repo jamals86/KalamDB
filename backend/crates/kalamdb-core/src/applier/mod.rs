@@ -48,7 +48,7 @@ pub mod events;
 pub mod raft;
 
 // Re-exports
-pub use applier::{LeaderInfo, RaftApplier, UnifiedApplier};
+pub use applier::{RaftApplier, UnifiedApplier};
 pub use command::{CommandResult, CommandType, Validate};
 pub use error::ApplierError;
 pub use executor::CommandExecutorImpl;

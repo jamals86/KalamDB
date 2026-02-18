@@ -6,6 +6,7 @@ import {
   ChevronRight,
   FileText,
   LayoutDashboard,
+  RadioTower,
   Settings,
   Terminal,
   Users,
@@ -18,6 +19,7 @@ const SIDEBAR_COLLAPSED_STORAGE_KEY = "kalamdb-admin-sidebar-collapsed";
 const navigation = [
   { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { name: "SQL Studio", href: "/sql", icon: Terminal },
+  { name: "Streaming", href: "/streaming/topics", icon: RadioTower },
   { name: "Users", href: "/users", icon: Users },
   { name: "Jobs", href: "/jobs", icon: Briefcase },
   { name: "Live Queries", href: "/live-queries", icon: Wifi },

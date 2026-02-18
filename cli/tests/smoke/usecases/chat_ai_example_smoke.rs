@@ -154,4 +154,7 @@ fn smoke_chat_ai_example_from_readme() {
 
     assert!(events_output.contains("typing"), "expected 'typing' event in stream table");
     assert!(events_output.contains("thinking"), "expected 'thinking' event in stream table");
+
+    // Cleanup
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
 }

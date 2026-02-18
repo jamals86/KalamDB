@@ -372,6 +372,11 @@ impl TestAuthManager {
 
         if !response.status().is_success() {
             let body = response.text().await?;
+            // In cluster mode, another node may have already created the admin user
+            // via Raft replication between our SELECT check and CREATE attempt
+            if body.contains("already exists") {
+                return Ok(());
+            }
             return Err(format!("Failed to ensure admin user: {}", body).into());
         }
 
@@ -1248,7 +1253,11 @@ pub fn test_context() -> &'static TestContext {
             },
         }
 
-        ensure_server_ready_sync(&server_url);
+        // For Cluster mode, defer the reachability check until after cluster URL
+        // resolution so we check the actual cluster node, not the default 8080.
+        if !matches!(server_type, Some(ServerType::Cluster)) {
+            ensure_server_ready_sync(&server_url);
+        }
 
         let username = parse_test_arg("--user")
             .or_else(|| std::env::var("KALAMDB_USER").ok())
@@ -1319,6 +1328,12 @@ pub fn test_context() -> &'static TestContext {
         let cluster_urls_raw = cluster_urls.clone();
         if is_cluster {
             cluster_urls = reorder_cluster_urls_by_leader(cluster_urls, &username, &password);
+        }
+
+        // Now that cluster URLs are resolved, verify the primary node is reachable.
+        if matches!(server_type, Some(ServerType::Cluster)) {
+            let check_url = cluster_urls.first().map(|s| s.as_str()).unwrap_or(&server_url);
+            ensure_server_ready_sync(check_url);
         }
 
         TestContext {

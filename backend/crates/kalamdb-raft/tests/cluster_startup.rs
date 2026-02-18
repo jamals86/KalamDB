@@ -100,11 +100,13 @@ async fn test_three_node_cluster_config() {
                 node_id: NodeId::new(2),
                 rpc_addr: "127.0.0.1:9011".to_string(),
                 api_addr: "127.0.0.1:8091".to_string(),
+                rpc_server_name: None,
             },
             PeerNode {
                 node_id: NodeId::new(3),
                 rpc_addr: "127.0.0.1:9012".to_string(),
                 api_addr: "127.0.0.1:8092".to_string(),
+                rpc_server_name: None,
             },
         ],
         ..Default::default()

@@ -176,6 +176,7 @@ async fn execute_query_with_retry(
 }
 
 /// Test: Subscription on leader receives changes from leader writes
+///
 #[test]
 fn cluster_test_subscription_leader_to_leader() {
     if !require_cluster_running() {
@@ -214,19 +215,19 @@ fn cluster_test_subscription_leader_to_leader() {
     cluster_runtime().block_on(async {
         let client = create_ws_client(&leader_url);
 
-        let mut subscription =
-            client.subscribe(&query).await.expect("Failed to subscribe on leader");
+        // Use subscribe_with_retry to ensure subscription is fully registered
+        // (waits for Ack/InitialDataBatch) before inserting data, avoiding
+        // a race where the INSERT fires before the subscription is indexed.
+        let mut subscription = subscribe_with_retry(&client, &query, 3).await;
 
         // Insert data on leader
-        client
-            .execute_query(
-                &format!("INSERT INTO {} (id, value) VALUES (1, '{}')", full, insert_value),
-                None,
-                None,
-                None,
-            )
-            .await
-            .expect("Failed to insert on leader");
+        execute_query_with_retry(
+            &client,
+            &format!("INSERT INTO {} (id, value) VALUES (1, '{}')", full, insert_value),
+            5,
+        )
+        .await
+        .expect("Failed to insert on leader");
 
         let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
         let mut received = false;
@@ -261,6 +262,7 @@ fn cluster_test_subscription_leader_to_leader() {
 }
 
 /// Test: Subscription on follower receives changes from leader writes
+///
 #[test]
 fn cluster_test_subscription_follower_to_leader() {
     if !require_cluster_running() {
@@ -354,6 +356,7 @@ fn cluster_test_subscription_follower_to_leader() {
 }
 
 /// Test: Multiple subscriptions across nodes receive identical events
+///
 #[test]
 fn cluster_test_subscription_multi_node_identical() {
     if !require_cluster_running() {
@@ -454,6 +457,7 @@ fn cluster_test_subscription_multi_node_identical() {
 }
 
 /// Test: Initial data is identical when subscribing to any node
+///
 #[test]
 fn cluster_test_subscription_initial_data_consistency() {
     if !require_cluster_running() {

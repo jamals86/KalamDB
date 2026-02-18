@@ -47,6 +47,11 @@ impl StatementHandler for ClusterListHandler {
             ));
         };
 
+        // Fan-out GetNodeInfo to all peers so get_cluster_info() can return full data.
+        // This is fire-and-update: each peer response populates the cache before
+        // get_cluster_info() reads it below.
+        raft_executor.refresh_peer_stats().await;
+
         let manager = raft_executor.manager();
         let cluster_info = executor.get_cluster_info();
 

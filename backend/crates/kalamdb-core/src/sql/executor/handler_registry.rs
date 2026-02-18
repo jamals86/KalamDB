@@ -23,9 +23,8 @@ use tracing::Instrument;
 
 // Import all typed handlers
 use crate::sql::executor::handlers::cluster::{
-    ClusterClearHandler, ClusterJoinHandler, ClusterLeaveHandler, ClusterListHandler,
-    ClusterPurgeHandler, ClusterSnapshotHandler, ClusterStepdownHandler,
-    ClusterTransferLeaderHandler, ClusterTriggerElectionHandler,
+    ClusterClearHandler, ClusterListHandler, ClusterPurgeHandler, ClusterSnapshotHandler,
+    ClusterStepdownHandler, ClusterTransferLeaderHandler, ClusterTriggerElectionHandler,
 };
 use crate::sql::executor::handlers::compact::{CompactAllTablesHandler, CompactTableHandler};
 use crate::sql::executor::handlers::flush::{FlushAllTablesHandler, FlushTableHandler};
@@ -470,18 +469,6 @@ impl HandlerRegistry {
         registry.register_dynamic(
             SqlStatementKind::ClusterList,
             ClusterListHandler::new(app_context.clone()),
-        );
-
-        // ClusterJoin carries the address in the variant - use dynamic registration
-        // since the handler extracts the address from the statement
-        registry.register_dynamic(
-            SqlStatementKind::ClusterJoin(String::new()),
-            ClusterJoinHandler::new(app_context.clone()),
-        );
-
-        registry.register_dynamic(
-            SqlStatementKind::ClusterLeave,
-            ClusterLeaveHandler::new(app_context.clone()),
         );
 
         // ============================================================================

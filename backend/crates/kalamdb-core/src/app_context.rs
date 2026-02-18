@@ -461,6 +461,23 @@ impl AppContext {
             // This ensures only the leader fires notifications, preventing duplicates
             notification_service.set_app_context(Arc::downgrade(&app_ctx));
 
+            // Wire gRPC cluster client + handler for cross-node notification broadcasting.
+            // Only effective in cluster mode (RaftExecutor); single-node mode skips this.
+            if let Some(raft_executor) =
+                app_ctx.executor().as_any().downcast_ref::<kalamdb_raft::RaftExecutor>()
+            {
+                let cluster_client =
+                    Arc::new(kalamdb_raft::ClusterClient::new(raft_executor.manager().clone()));
+                notification_service.set_cluster_client(cluster_client);
+
+                let cluster_handler = Arc::new(crate::live::CoreClusterHandler::new(
+                    Arc::clone(&app_ctx),
+                    Arc::clone(&notification_service),
+                ));
+                raft_executor.set_cluster_handler(cluster_handler);
+                log::info!("Wired gRPC ClusterClient and CoreClusterHandler for cluster RPC");
+            }
+
             let job_manager = Arc::new(crate::jobs::JobsManager::new(
                 jobs_provider,
                 job_nodes_provider,
@@ -938,6 +955,21 @@ impl AppContext {
         self.executor.is_leader(group_id).await
     }
 
+    /// Get the API address of the current leader for shared data
+    ///
+    /// Returns `None` if the leader is unknown or address not available.
+    pub async fn leader_addr_for_shared(&self) -> Option<String> {
+        let router = ShardRouter::from_optional_cluster_config(self.config.cluster.as_ref());
+        let group_id = router.shared_group_id();
+        let leader_node_id = self.executor.get_leader(group_id).await?;
+        let cluster_info = self.executor.get_cluster_info();
+        cluster_info
+            .nodes
+            .iter()
+            .find(|node| node.node_id == leader_node_id)
+            .map(|node| node.api_addr.clone())
+    }
+
     /// Compute the Raft group ID for a user's data shard
     ///
     /// Maps user_id → shard number → GroupId using consistent hashing.
@@ -1073,6 +1105,23 @@ impl ClusterCoordinator for AppContext {
         self.is_cluster_mode()
     }
 
+    async fn is_meta_leader(&self) -> bool {
+        if !self.is_cluster_mode() {
+            return true; // Single-node mode: always the leader
+        }
+        self.executor.is_leader(kalamdb_raft::GroupId::Meta).await
+    }
+
+    async fn meta_leader_addr(&self) -> Option<String> {
+        let leader_id = self.executor.get_leader(kalamdb_raft::GroupId::Meta).await?;
+        let cluster_info = self.executor.get_cluster_info();
+        cluster_info
+            .nodes
+            .iter()
+            .find(|node| node.node_id == leader_id)
+            .map(|node| node.api_addr.clone())
+    }
+
     async fn is_leader_for_user(&self, user_id: &UserId) -> bool {
         self.is_leader_for_user(user_id).await
     }
@@ -1083,5 +1132,9 @@ impl ClusterCoordinator for AppContext {
 
     async fn leader_addr_for_user(&self, user_id: &UserId) -> Option<String> {
         self.leader_addr_for_user(user_id).await
+    }
+
+    async fn leader_addr_for_shared(&self) -> Option<String> {
+        self.leader_addr_for_shared().await
     }
 }

@@ -453,7 +453,8 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
             },
             TableType::Shared => {
                 if !coordinator.is_leader_for_shared().await {
-                    return Err(KalamDbError::NotLeader { leader_addr: None });
+                    let leader_addr = coordinator.leader_addr_for_shared().await;
+                    return Err(KalamDbError::NotLeader { leader_addr });
                 }
             },
             TableType::System => {},

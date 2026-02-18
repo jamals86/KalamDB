@@ -324,6 +324,9 @@ fn smoke_test_current_user_default() {
 
     // TODO: Parse created_by value and verify it matches session user
     // For localhost tests, this should be "root" or the system user
+
+    // Cleanup
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 }
 
 /// Test all custom functions together in one table
@@ -394,4 +397,7 @@ fn smoke_test_all_custom_functions_combined() {
     assert!(output.contains("Test Document"), "Expected title in output");
 
     println!("✅ Verified all custom function defaults work together");
+
+    // Cleanup
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 }

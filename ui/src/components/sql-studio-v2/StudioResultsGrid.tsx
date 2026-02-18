@@ -17,6 +17,7 @@ import { CodeBlock } from "@/components/ui/code-block";
 import {
   Dialog,
   DialogContent,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -28,6 +29,7 @@ import { extractTableContext } from "@/components/sql-studio/utils/sqlParser";
 import { useSqlPreview } from "@/components/sql-preview";
 import { CellDisplay } from "@/components/datatype-display";
 import { executeSql } from "@/lib/kalam-client";
+import { LIVE_META, LIVE_HIGHLIGHT_DURATION_MS } from "@/features/sql-studio/state/sqlStudioWorkspaceSlice";
 import { cn } from "@/lib/utils";
 import { StudioExecutionLog } from "./StudioExecutionLog";
 import type { QueryResultData, SqlStudioResultView, StudioTable } from "./types";
@@ -53,7 +55,12 @@ interface CellViewerState {
   open: boolean;
   title: string;
   content: unknown;
+  editedValue: unknown;
+  isNull: boolean;
   dataType?: string;
+  rowIndex?: number;
+  columnName?: string;
+  canEdit: boolean;
 }
 
 const PAGE_SIZE = 50;
@@ -122,7 +129,12 @@ export function StudioResultsGrid({
     open: false,
     title: "",
     content: "",
+    editedValue: "",
+    isNull: false,
     dataType: undefined,
+    rowIndex: undefined,
+    columnName: undefined,
+    canEdit: false,
   });
   const [hasUnseenResults, setHasUnseenResults] = useState(false);
   const [hasUnseenLogs, setHasUnseenLogs] = useState(false);
@@ -155,7 +167,12 @@ export function StudioResultsGrid({
       open: false,
       title: "",
       content: "",
+      editedValue: "",
+      isNull: false,
       dataType: undefined,
+      rowIndex: undefined,
+      columnName: undefined,
+      canEdit: false,
     });
   }, [result, discardAll]);
 
@@ -188,7 +205,11 @@ export function StudioResultsGrid({
     previousResultRef.current = result;
   }, [result, resultView]);
 
-  const schema = result?.schema ?? [];
+  const rawSchema = result?.schema ?? [];
+  // In live mode, hide internal _live_* metadata columns (last_change is visible, not prefixed with _live_)
+  const schema = isLiveMode
+    ? rawSchema.filter((f) => !f.name.startsWith("_live_"))
+    : rawSchema;
   const sourceRows =
     result?.status === "success"
       ? result.rows.slice(0, MAX_RENDERED_ROWS)
@@ -199,19 +220,51 @@ export function StudioResultsGrid({
 
   const sortedRowIndices = useMemo(() => {
     const indices = sourceRows.map((_, rowIndex) => rowIndex);
-    if (!sortState) {
+    
+    if (sortState) {
+      // Manual sort active - use it
+      const { columnName, direction } = sortState;
+      indices.sort((leftIndex, rightIndex) => {
+        const leftValue = getCellEditedValue(leftIndex, columnName) ?? sourceRows[leftIndex]?.[columnName];
+        const rightValue = getCellEditedValue(rightIndex, columnName) ?? sourceRows[rightIndex]?.[columnName];
+        const comparison = compareValues(leftValue, rightValue);
+        return direction === "asc" ? comparison : comparison * -1;
+      });
       return indices;
     }
 
-    const { columnName, direction } = sortState;
-    indices.sort((leftIndex, rightIndex) => {
-      const leftValue = getCellEditedValue(leftIndex, columnName) ?? sourceRows[leftIndex]?.[columnName];
-      const rightValue = getCellEditedValue(rightIndex, columnName) ?? sourceRows[rightIndex]?.[columnName];
-      const comparison = compareValues(leftValue, rightValue);
-      return direction === "asc" ? comparison : comparison * -1;
-    });
+    if (isLiveMode) {
+      // Live mode: sort by PK with new inserts at top
+      const pkColumns = schema
+        .filter((f) => f.isPrimaryKey)
+        .sort((a, b) => a.index - b.index)
+        .map((f) => f.name);
+      
+      indices.sort((leftIndex, rightIndex) => {
+        const leftRow = sourceRows[leftIndex];
+        const rightRow = sourceRows[rightIndex];
+        const leftChangeType = leftRow?.[LIVE_META.CHANGE_TYPE] as string | undefined;
+        const rightChangeType = rightRow?.[LIVE_META.CHANGE_TYPE] as string | undefined;
+        
+        // New inserts go to top
+        const leftIsInsert = leftChangeType === "insert";
+        const rightIsInsert = rightChangeType === "insert";
+        if (leftIsInsert && !rightIsInsert) return -1;
+        if (!leftIsInsert && rightIsInsert) return 1;
+        
+        // Otherwise sort by PK ascending
+        for (const pkCol of pkColumns) {
+          const leftValue = leftRow?.[pkCol];
+          const rightValue = rightRow?.[pkCol];
+          const comparison = compareValues(leftValue, rightValue);
+          if (comparison !== 0) return comparison;
+        }
+        return 0;
+      });
+    }
+    
     return indices;
-  }, [sourceRows, sortState, edits, getCellEditedValue]);
+  }, [sourceRows, sortState, edits, getCellEditedValue, isLiveMode, schema]);
 
   const pageCount = Math.max(1, Math.ceil(sortedRowIndices.length / PAGE_SIZE));
   const currentPageStart = pageIndex * PAGE_SIZE;
@@ -293,20 +346,7 @@ export function StudioResultsGrid({
   };
 
   const handleEditCell = (rowIndex: number, columnName: string, currentValue: unknown) => {
-    const cell = document.querySelector(
-      `[data-row-index="${rowIndex}"][data-column-name="${columnName}"]`,
-    ) as HTMLElement | null;
-
-    if (!cell) {
-      return;
-    }
-
-    setInlineEditContext({
-      rowIndex,
-      columnName,
-      value: currentValue,
-      rect: cell.getBoundingClientRect(),
-    });
+    openCellViewer(currentValue, columnName, rowIndex, true);
   };
 
   const handleSaveInlineEdit = (
@@ -349,16 +389,21 @@ export function StudioResultsGrid({
   };
 
   const openCellViewer = useCallback(
-    (value: unknown, columnName: string, rowIndex: number) => {
+    (value: unknown, columnName: string, rowIndex: number, editable = false) => {
       const dataType = schema.find((field) => field.name === columnName)?.dataType;
       setCellViewer({
         open: true,
         title: `${columnName} · Row ${rowIndex + 1}${dataType ? ` (${dataType})` : ""}`,
         content: value,
+        editedValue: value === null ? "" : stringifyCellValue(value),
+        isNull: value === null,
         dataType,
+        rowIndex,
+        columnName,
+        canEdit: editable && !isLiveMode,
       });
     },
-    [schema],
+    [schema, isLiveMode],
   );
 
   const moveSelectionByArrow = useCallback(
@@ -600,28 +645,32 @@ export function StudioResultsGrid({
               <thead className="sticky top-0 z-10">
                 <tr>
                   <th className="w-10 border-r border-slate-200 bg-slate-50 px-2 py-2 text-left dark:border-[#1e293b] dark:bg-[#151e29]">
-                    <div className="flex items-center justify-center">
-                      <input
-                        type="checkbox"
-                        checked={allVisibleRowsSelected}
-                        disabled={isLiveMode}
-                        onChange={(event) => {
-                          if (isLiveMode) {
-                            return;
-                          }
-                          setSelectedRows((previous) => {
-                            const next = new Set(previous);
-                            if (event.target.checked) {
-                              currentPageRows.forEach((rowIndex) => next.add(rowIndex));
-                            } else {
-                              currentPageRows.forEach((rowIndex) => next.delete(rowIndex));
-                            }
-                            return next;
-                          });
-                        }}
-                        className="h-3.5 w-3.5 rounded border-slate-500 bg-transparent disabled:opacity-40"
-                      />
-                    </div>
+                    {isLiveMode ? (
+                      <div className="flex items-center justify-center">
+                        <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-400">
+                          Change
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-center">
+                        <input
+                          type="checkbox"
+                          checked={allVisibleRowsSelected}
+                          onChange={(event) => {
+                            setSelectedRows((previous) => {
+                              const next = new Set(previous);
+                              if (event.target.checked) {
+                                currentPageRows.forEach((rowIndex) => next.add(rowIndex));
+                              } else {
+                                currentPageRows.forEach((rowIndex) => next.delete(rowIndex));
+                              }
+                              return next;
+                            });
+                          }}
+                          className="h-3.5 w-3.5 rounded border-slate-500 bg-transparent disabled:opacity-40"
+                        />
+                      </div>
+                    )}
                   </th>
                   {schema.map((field) => {
                     const isSorted = sortState?.columnName === field.name;
@@ -674,39 +723,84 @@ export function StudioResultsGrid({
                   const rowStatus = getRowStatus(rowIndex);
                   const rowSelected = selectedRows.has(rowIndex);
 
+                  // Live change metadata
+                  const liveChangeType = isLiveMode
+                    ? (row[LIVE_META.CHANGE_TYPE] as string | undefined)
+                    : undefined;
+                  const liveChangedAt = isLiveMode
+                    ? (row[LIVE_META.CHANGED_AT] as string | undefined)
+                    : undefined;
+                  const liveChangedCols = isLiveMode && liveChangeType === "update"
+                    ? new Set((row[LIVE_META.CHANGED_COLS] as string | undefined)?.split(",").filter(Boolean) ?? [])
+                    : null;
+                  // Determine if the change highlight is still fresh
+                  const isRecentChange = (() => {
+                    if (!liveChangedAt || !liveChangeType || liveChangeType === "initial") return false;
+                    const elapsed = Date.now() - new Date(liveChangedAt).getTime();
+                    return elapsed < LIVE_HIGHLIGHT_DURATION_MS;
+                  })();
+                  const isLiveDelete = isLiveMode && liveChangeType === "delete";
+                  const isLiveInsert = isLiveMode && isRecentChange && liveChangeType === "insert";
+                  const isLiveUpdate = isLiveMode && isRecentChange && liveChangeType === "update";
+
                   return (
                     <tr
                       key={rowIndex}
                       className={cn(
-                        "border-b border-slate-200 dark:border-[#1e293b]",
+                        "border-b border-slate-200 transition-colors duration-500 dark:border-[#1e293b]",
                         rowSelected && "bg-sky-500/10",
                         rowStatus === "edited" && "bg-amber-500/5",
                         rowStatus === "deleted" && "bg-red-500/10 opacity-60",
+                        // Live mode row indicators
+                        isLiveDelete && "bg-red-500/10 line-through opacity-60",
+                        isLiveInsert && "bg-sky-500/10",
+                        isLiveUpdate && "bg-amber-500/5",
                       )}
                     >
                       <td className="border-r border-slate-200 px-2 py-1 dark:border-[#1e293b]">
-                        <div className="flex items-center justify-center">
-                          <input
-                            type="checkbox"
-                            checked={rowSelected}
-                            disabled={isLiveMode}
-                            onChange={(event) => {
-                              if (isLiveMode) {
-                                return;
-                              }
-                              setSelectedRows((previous) => {
-                                const next = new Set(previous);
-                                if (event.target.checked) {
-                                  next.add(rowIndex);
-                                } else {
-                                  next.delete(rowIndex);
-                                }
-                                return next;
-                              });
-                            }}
-                            className="h-3.5 w-3.5 rounded border-slate-500 bg-transparent disabled:opacity-40"
-                          />
-                        </div>
+                        {isLiveMode ? (
+                          <div className="flex flex-col items-center justify-center gap-0.5 min-w-[60px]">
+                            {liveChangeType && (
+                              <>
+                                <span
+                                  className={cn(
+                                    "rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide",
+                                    liveChangeType === "initial" && "bg-slate-500/20 text-slate-700 dark:text-slate-300",
+                                    liveChangeType === "insert" && "bg-sky-500/20 text-sky-700 dark:text-sky-300",
+                                    liveChangeType === "update" && "bg-amber-500/20 text-amber-700 dark:text-amber-300",
+                                    liveChangeType === "delete" && "bg-red-500/20 text-red-700 dark:text-red-300",
+                                  )}
+                                >
+                                  {liveChangeType}
+                                </span>
+                                {liveChangedAt && (
+                                  <span className="text-[9px] text-slate-500 dark:text-slate-400">
+                                    {new Date(liveChangedAt).toLocaleTimeString()}
+                                  </span>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-center">
+                            <input
+                              type="checkbox"
+                              checked={rowSelected}
+                              onChange={(event) => {
+                                setSelectedRows((previous) => {
+                                  const next = new Set(previous);
+                                  if (event.target.checked) {
+                                    next.add(rowIndex);
+                                  } else {
+                                    next.delete(rowIndex);
+                                  }
+                                  return next;
+                                });
+                              }}
+                              className="h-3.5 w-3.5 rounded border-slate-500 bg-transparent disabled:opacity-40"
+                            />
+                          </div>
+                        )}
                       </td>
 
                       {schema.map((field) => {
@@ -726,7 +820,7 @@ export function StudioResultsGrid({
                                 });
                               }}
                               onDoubleClick={() => {
-                                openCellViewer(value, field.name, rowIndex);
+                                openCellViewer(value, field.name, rowIndex, true);
                               }}
                               onContextMenu={(event) => {
                                 event.preventDefault();
@@ -745,10 +839,12 @@ export function StudioResultsGrid({
                                 });
                               }}
                               className={cn(
-                                "min-h-6 px-1 py-0.5 font-mono text-xs outline-none",
+                                "min-h-6 px-1 py-0.5 font-mono text-xs outline-none transition-colors duration-500",
                                 value === null && "italic text-slate-500",
                                 cellEdited && "bg-amber-500/20",
                                 selectedCellKey === cellKey && "ring-1 ring-sky-400",
+                                // Highlight changed cells during live updates
+                                isLiveUpdate && liveChangedCols?.has(field.name) && "bg-amber-400/25 ring-1 ring-amber-400/40",
                               )}
                               tabIndex={0}
                             >
@@ -825,7 +921,7 @@ export function StudioResultsGrid({
             onViewData={(value) => {
               const columnName = cellContextMenu?.columnName ?? "value";
               const rowIndex = cellContextMenu?.rowIndex ?? 0;
-              openCellViewer(value, columnName, rowIndex);
+              openCellViewer(value, columnName, rowIndex, true);
             }}
             onCopyValue={(value) => {
               navigator.clipboard.writeText(stringifyCellValue(value)).catch(console.error);
@@ -841,19 +937,105 @@ export function StudioResultsGrid({
 
           <Dialog
             open={cellViewer.open}
-            onOpenChange={(open) => setCellViewer((previous) => ({ ...previous, open }))}
+            onOpenChange={(open) => {
+              if (!open) {
+                setCellViewer((prev) => ({ ...prev, open: false }));
+              }
+            }}
           >
-            <DialogContent className="max-h-[85vh] max-w-4xl overflow-hidden flex flex-col">
+            <DialogContent className="flex max-h-[85vh] max-w-4xl flex-col overflow-hidden">
               <DialogHeader className="shrink-0">
                 <DialogTitle>{cellViewer.title}</DialogTitle>
               </DialogHeader>
-              <div className="flex-1 min-h-0 overflow-hidden">
-                <CodeBlock
-                  value={cellViewer.content}
-                  jsonPreferred={(cellViewer.dataType?.toLowerCase() ?? "").includes("json")}
-                  maxHeightClassName="max-h-full h-full"
-                />
-              </div>
+
+              {cellViewer.canEdit ? (
+                <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
+                  {/* Null toggle */}
+                  <label className="flex shrink-0 cursor-pointer items-center gap-2 text-sm text-slate-300">
+                    <input
+                      type="checkbox"
+                      checked={cellViewer.isNull}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setCellViewer((prev) => ({
+                          ...prev,
+                          isNull: checked,
+                          editedValue: checked ? "" : prev.editedValue,
+                        }));
+                      }}
+                      className="h-4 w-4 rounded border-slate-500 bg-transparent"
+                    />
+                    Set to <span className="font-mono italic text-slate-400">NULL</span>
+                  </label>
+
+                  {/* Editor textarea or NULL placeholder */}
+                  {cellViewer.isNull ? (
+                    <div className="flex min-h-[120px] flex-1 items-center justify-center rounded-md border border-slate-700 bg-black font-mono text-sm italic text-slate-500">
+                      NULL
+                    </div>
+                  ) : (
+                    <textarea
+                      className="min-h-[120px] flex-1 resize-none rounded-md border border-slate-700 bg-black p-3 font-mono text-xs leading-5 text-slate-200 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
+                      value={typeof cellViewer.editedValue === "string" ? cellViewer.editedValue : stringifyCellValue(cellViewer.editedValue)}
+                      onChange={(e) => {
+                        setCellViewer((prev) => ({ ...prev, editedValue: e.target.value }));
+                      }}
+                      spellCheck={false}
+                    />
+                  )}
+                </div>
+              ) : (
+                <div className="min-h-0 flex-1 overflow-hidden">
+                  <CodeBlock
+                    value={cellViewer.content}
+                    jsonPreferred={(cellViewer.dataType?.toLowerCase() ?? "").includes("json")}
+                    maxHeightClassName="max-h-full h-full"
+                  />
+                </div>
+              )}
+
+              <DialogFooter className="shrink-0 border-t border-slate-700 pt-3">
+                <Button
+                  variant="ghost"
+                  onClick={() => setCellViewer((prev) => ({ ...prev, open: false }))}
+                >
+                  Cancel
+                </Button>
+                {cellViewer.canEdit && (
+                  <Button
+                    onClick={() => {
+                      const { rowIndex, columnName, content, isNull, editedValue } = cellViewer;
+                      if (rowIndex === undefined || !columnName) return;
+
+                      let newValue: unknown;
+                      if (isNull) {
+                        newValue = null;
+                      } else {
+                        const raw = typeof editedValue === "string" ? editedValue : stringifyCellValue(editedValue);
+                        if (
+                          (cellViewer.dataType?.toLowerCase() ?? "").includes("json") ||
+                          (raw.trim().startsWith("{") && raw.trim().endsWith("}")) ||
+                          (raw.trim().startsWith("[") && raw.trim().endsWith("]"))
+                        ) {
+                          try {
+                            newValue = JSON.parse(raw);
+                          } catch {
+                            newValue = raw;
+                          }
+                        } else {
+                          newValue = raw;
+                        }
+                      }
+
+                      const pkValues = getPrimaryKeyValues(rowIndex);
+                      editCell(rowIndex, columnName, content, newValue, pkValues);
+                      setCellViewer((prev) => ({ ...prev, open: false }));
+                    }}
+                  >
+                    Save
+                  </Button>
+                )}
+              </DialogFooter>
             </DialogContent>
           </Dialog>
         </>

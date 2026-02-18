@@ -8,12 +8,8 @@
 //! - CLUSTER STEPDOWN: Attempt leader stepdown
 //! - CLUSTER CLEAR: Clear old snapshots
 //! - CLUSTER LIST: List cluster nodes
-//! - CLUSTER JOIN: Join an existing cluster (stub - not implemented)
-//! - CLUSTER LEAVE: Leave the cluster (stub - not implemented)
 
 pub mod clear;
-pub mod join;
-pub mod leave;
 pub mod list;
 pub mod purge;
 pub mod snapshot;
@@ -22,8 +18,6 @@ pub mod transfer_leader;
 pub mod trigger_election;
 
 pub use clear::ClusterClearHandler;
-pub use join::ClusterJoinHandler;
-pub use leave::ClusterLeaveHandler;
 pub use list::ClusterListHandler;
 pub use purge::ClusterPurgeHandler;
 pub use snapshot::ClusterSnapshotHandler;

@@ -55,6 +55,20 @@ impl TableId {
         }
     }
 
+    /// Create from string components with validation errors instead of panics.
+    #[inline]
+    pub fn try_from_strings(namespace_id: &str, table_name: &str) -> Result<Self, String> {
+        let namespace_id = NamespaceId::try_new(namespace_id)
+            .map_err(|e| format!("invalid namespace_id '{}': {}", namespace_id, e))?;
+        let table_name = TableName::try_new(table_name)
+            .map_err(|e| format!("invalid table_name '{}': {}", table_name, e))?;
+
+        Ok(Self {
+            namespace_id,
+            table_name,
+        })
+    }
+
     /// Create a prefix for scanning all tables in a namespace.
     #[inline]
     pub fn namespace_prefix(namespace_id: &NamespaceId) -> Vec<u8> {
@@ -219,6 +233,19 @@ mod tests {
         let table_id = TableId::from_strings("ns1", "users");
         assert_eq!(table_id.namespace_id().as_str(), "ns1");
         assert_eq!(table_id.table_name().as_str(), "users");
+    }
+
+    #[test]
+    fn test_table_id_try_from_strings() {
+        let table_id = TableId::try_from_strings("ns1", "users").unwrap();
+        assert_eq!(table_id.namespace_id().as_str(), "ns1");
+        assert_eq!(table_id.table_name().as_str(), "users");
+    }
+
+    #[test]
+    fn test_table_id_try_from_strings_invalid() {
+        let err = TableId::try_from_strings("../ns1", "users").unwrap_err();
+        assert!(err.contains("invalid namespace_id"));
     }
 
     #[test]

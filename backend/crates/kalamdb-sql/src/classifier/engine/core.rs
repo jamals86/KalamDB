@@ -440,43 +440,11 @@ impl SqlStatement {
                 // Read-only, allowed for all users
                 Ok(Self::new(sql.to_string(), SqlStatementKind::ClusterList))
             },
-            ["CLUSTER", "JOIN", addr, ..] => {
-                if !is_admin {
-                    return Err(StatementClassificationError::Unauthorized(
-                        "Admin privileges (DBA or System role) required for cluster operations"
-                            .to_string(),
-                    ));
-                }
-                Ok(Self::new(sql.to_string(), SqlStatementKind::ClusterJoin(addr.to_string())))
-            },
-            ["CLUSTER", "JOIN"] => {
-                if !is_admin {
-                    return Err(StatementClassificationError::Unauthorized(
-                        "Admin privileges (DBA or System role) required for cluster operations"
-                            .to_string(),
-                    ));
-                }
-
-                let addr =
-                    sql.split_whitespace().nth(2).unwrap_or("").trim_end_matches(';').to_string();
-
-                if addr.is_empty() {
-                    return Err(StatementClassificationError::InvalidSql {
-                        sql: sql.to_string(),
-                        message: "CLUSTER JOIN requires a node address".to_string(),
-                    });
-                }
-
-                Ok(Self::new(sql.to_string(), SqlStatementKind::ClusterJoin(addr)))
-            },
-            ["CLUSTER", "LEAVE", ..] => {
-                if !is_admin {
-                    return Err(StatementClassificationError::Unauthorized(
-                        "Admin privileges (DBA or System role) required for cluster operations"
-                            .to_string(),
-                    ));
-                }
-                Ok(Self::new(sql.to_string(), SqlStatementKind::ClusterLeave))
+            ["CLUSTER", "JOIN", ..] | ["CLUSTER", "LEAVE", ..] => {
+                Err(StatementClassificationError::InvalidSql {
+                    sql: sql.to_string(),
+                    message: "CLUSTER JOIN/LEAVE commands were removed".to_string(),
+                })
             },
 
             // Transaction control (no parsing needed - just markers)
@@ -704,9 +672,7 @@ impl SqlStatement {
             | SqlStatementKind::ClusterTransferLeader(_)
             | SqlStatementKind::ClusterStepdown
             | SqlStatementKind::ClusterClear
-            | SqlStatementKind::ClusterList
-            | SqlStatementKind::ClusterJoin(_)
-            | SqlStatementKind::ClusterLeave => Err(
+            | SqlStatementKind::ClusterList => Err(
                 "Admin privileges (DBA or System role) required for storage and cluster operations"
                     .to_string(),
             ),

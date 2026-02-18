@@ -47,7 +47,7 @@ fn make_test_row() -> Row {
 
 /// A test node in the cluster
 struct TestNode {
-    node_id: u64,
+    node_id: NodeId,
     manager: Arc<RaftManager>,
     rpc_port: u16,
 }
@@ -69,7 +69,7 @@ impl TestNode {
         let manager = Arc::new(RaftManager::new(config));
 
         Self {
-            node_id,
+            node_id: NodeId::new(node_id),
             manager,
             rpc_port,
         }
@@ -78,9 +78,11 @@ impl TestNode {
     async fn start(&self) -> Result<(), kalamdb_raft::RaftError> {
         self.manager.start().await?;
 
-        // Start the RPC server for this node
+        // Start the RPC server for this node (with no-op cluster handler for tests)
         let rpc_addr = format!("127.0.0.1:{}", self.rpc_port);
-        kalamdb_raft::network::start_rpc_server(self.manager.clone(), rpc_addr).await?;
+        let cluster_handler: std::sync::Arc<dyn kalamdb_raft::ClusterMessageHandler> =
+            std::sync::Arc::new(kalamdb_raft::network::cluster_handler::NoOpClusterHandler);
+        kalamdb_raft::network::start_rpc_server(self.manager.clone(), rpc_addr, cluster_handler).await?;
 
         Ok(())
     }
@@ -239,6 +241,7 @@ impl TestCluster {
                 node_id: NodeId::new(id),
                 rpc_addr: format!("127.0.0.1:{}", base_rpc_port + id as u16 - 1),
                 api_addr: format!("127.0.0.1:{}", base_api_port + id as u16 - 1),
+                rpc_server_name: None,
             })
             .collect();
 
@@ -624,7 +627,7 @@ async fn test_leader_election_on_failure() {
     sleep(Duration::from_millis(300)).await;
 
     // Record current leaders
-    let initial_leaders: HashMap<GroupId, u64> = cluster
+    let initial_leaders: HashMap<GroupId, NodeId> = cluster
         .all_group_ids()
         .into_iter()
         .filter_map(|g| cluster.get_leader_node(g).map(|n| (g, n.node_id)))
@@ -1082,7 +1085,7 @@ async fn test_shard_distribution() {
     sleep(Duration::from_millis(200)).await;
 
     // Count leaders per node
-    let mut leader_count: HashMap<u64, usize> = HashMap::new();
+    let mut leader_count: HashMap<NodeId, usize> = HashMap::new();
 
     for group in cluster.all_group_ids() {
         if let Some(leader) = cluster.get_leader_node(group) {

@@ -21,7 +21,7 @@
 //!
 //! **Schema**: TableDefinition provides consistent metadata for views
 
-use super::view_base::{ViewTableProvider, VirtualView};
+use super::view_base::VirtualView;
 use crate::schema_registry::RegistryError;
 use datafusion::arrow::array::{
     ArrayRef, BooleanArray, Int16Array, Int32Array, Int64Array, StringArray,
@@ -33,7 +33,7 @@ use kalamdb_commons::schemas::{
     ColumnDefault, ColumnDefinition, TableDefinition, TableOptions, TableType,
 };
 use kalamdb_commons::{NamespaceId, TableName};
-use kalamdb_raft::{ClusterInfo, CommandExecutor, ServerStateExt};
+use kalamdb_raft::{ClusterInfo, CommandExecutor, RaftExecutor, ServerStateExt};
 use kalamdb_system::SystemTable;
 use std::sync::{Arc, OnceLock};
 
@@ -458,14 +458,70 @@ impl VirtualView for ClusterView {
     }
 }
 
-/// Type alias for the cluster table provider
-pub type ClusterTableProvider = ViewTableProvider<ClusterView>;
+/// Type for the cluster table provider (custom to enable async peer refresh in scan)
+pub struct ClusterTableProvider {
+    view: Arc<ClusterView>,
+}
+
+impl std::fmt::Debug for ClusterTableProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClusterTableProvider").finish_non_exhaustive()
+    }
+}
+
+#[async_trait::async_trait]
+impl datafusion::datasource::TableProvider for ClusterTableProvider {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn schema(&self) -> SchemaRef {
+        self.view.schema()
+    }
+
+    fn table_type(&self) -> datafusion::datasource::TableType {
+        datafusion::datasource::TableType::View
+    }
+
+    async fn scan(
+        &self,
+        state: &dyn datafusion::catalog::Session,
+        projection: Option<&Vec<usize>>,
+        _filters: &[datafusion::logical_expr::Expr],
+        limit: Option<usize>,
+    ) -> datafusion::error::Result<Arc<dyn datafusion::physical_plan::ExecutionPlan>> {
+        use datafusion::datasource::MemTable;
+        use datafusion::error::DataFusionError;
+
+        // Refresh peer stats so remote nodes show full data.
+        // Downcast is safe: ClusterTableProvider is only created in cluster mode.
+        if let Some(raft_executor) = self.view.executor.as_any().downcast_ref::<RaftExecutor>() {
+            raft_executor.refresh_peer_stats().await;
+        }
+
+        let schema = self.view.schema();
+        let batch = self.view.compute_batch().map_err(|e| {
+            DataFusionError::Execution(format!(
+                "Failed to compute cluster batch: {}",
+                e
+            ))
+        })?;
+
+        let partitions = vec![vec![batch]];
+        let table = MemTable::try_new(schema, partitions)
+            .map_err(|e| DataFusionError::Execution(format!("Failed to create MemTable: {}", e)))?;
+
+        table.scan(state, projection, &[], limit).await
+    }
+}
 
 /// Helper function to create a cluster table provider
 ///
 /// **Usage**: Only called in cluster mode during AppContext initialization
 pub fn create_cluster_provider(executor: Arc<dyn CommandExecutor>) -> ClusterTableProvider {
-    ViewTableProvider::new(Arc::new(ClusterView::new(executor)))
+    ClusterTableProvider {
+        view: Arc::new(ClusterView::new(executor)),
+    }
 }
 
 #[cfg(test)]

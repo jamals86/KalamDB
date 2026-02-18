@@ -105,4 +105,7 @@ fn smoke_system_tables_and_user_lifecycle() {
         );
     }
     println!("[FLUSH ALL] Verified {} jobs recorded in system.jobs", job_ids.len());
+
+    // Cleanup
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", test_ns));
 }

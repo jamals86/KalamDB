@@ -180,6 +180,12 @@ create_user() {
 }
 
 generate_env_file() {
+    if [[ -f "$ENV_FILE" ]]; then
+        log_warn ".env.local already exists - skipping generation"
+        log_info "Delete $ENV_FILE to regenerate it"
+        return 0
+    fi
+    
     log_info "Generating .env.local file..."
     
     cat > "$ENV_FILE" << EOF
@@ -195,7 +201,7 @@ KALAMDB_USERNAME=ai-service
 KALAMDB_PASSWORD=service123
 
 # Gemini API (required for AI replies)
-# Set one key value below before running `npm run service`
+# Set one key value below before running npm run service
 GEMINI_API_KEY=
 # GOOGLE_GENERATIVE_AI_API_KEY=
 GEMINI_MODEL=gemini-2.5-flash

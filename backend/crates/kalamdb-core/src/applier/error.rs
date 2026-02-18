@@ -10,28 +10,9 @@ pub enum ApplierError {
     #[error("Validation error: {0}")]
     Validation(String),
 
-    /// Failed to serialize command
-    #[error("Serialization error: {0}")]
-    Serialization(String),
-
-    /// Failed to deserialize command
-    #[error("Deserialization error: {0}")]
-    Deserialization(String),
-
     /// No leader available for the Raft group
     #[error("No leader available for Raft group")]
     NoLeader,
-
-    /// Need to forward to leader (cluster mode)
-    #[error("Forward to leader: {leader_id}")]
-    ForwardToLeader {
-        leader_id: u64,
-        leader_addr: Option<String>,
-    },
-
-    /// Error forwarding to leader
-    #[error("Forward error: {0}")]
-    Forward(String),
 
     /// Raft consensus error
     #[error("Raft error: {0}")]
@@ -53,13 +34,6 @@ pub enum ApplierError {
     #[error("Unauthorized: {0}")]
     Unauthorized(String),
 
-    /// Internal error
-    #[error("Internal error: {0}")]
-    Internal(String),
-
-    /// Timeout
-    #[error("Timeout: {0}")]
-    Timeout(String),
 }
 
 impl ApplierError {

@@ -1,4 +1,4 @@
-use super::cluster::{ClusterConfig, PeerConfig};
+use super::cluster::{ClusterConfig, ClusterRpcTlsConfig, PeerConfig};
 use super::types::ServerConfig;
 use std::env;
 use std::path::Path;
@@ -28,6 +28,10 @@ impl ServerConfig {
     /// - KALAMDB_CLUSTER_RPC_ADDR: Override cluster.rpc_addr
     /// - KALAMDB_CLUSTER_API_ADDR: Override cluster.api_addr
     /// - KALAMDB_CLUSTER_PEERS: Override cluster.peers
+    /// - KALAMDB_CLUSTER_RPC_TLS_ENABLED: Override cluster.rpc_tls.enabled
+    /// - KALAMDB_CLUSTER_RPC_TLS_CA_CERT_PATH: Override cluster.rpc_tls.ca_cert_path
+    /// - KALAMDB_CLUSTER_RPC_TLS_NODE_CERT_PATH: Override cluster.rpc_tls.node_cert_path
+    /// - KALAMDB_CLUSTER_RPC_TLS_NODE_KEY_PATH: Override cluster.rpc_tls.node_key_path
     /// - KALAMDB_JWT_SECRET: Override auth.jwt_secret
     /// - KALAMDB_JWT_TRUSTED_ISSUERS: Override auth.jwt_trusted_issuers
     /// - KALAMDB_JWT_EXPIRY_HOURS: Override auth.jwt_expiry_hours
@@ -160,12 +164,20 @@ impl ServerConfig {
         let rpc_addr = env::var("KALAMDB_CLUSTER_RPC_ADDR").ok();
         let api_addr = env::var("KALAMDB_CLUSTER_API_ADDR").ok();
         let peers_env = env::var("KALAMDB_CLUSTER_PEERS").ok();
+        let rpc_tls_enabled = env::var("KALAMDB_CLUSTER_RPC_TLS_ENABLED").ok();
+        let rpc_tls_ca_cert_path = env::var("KALAMDB_CLUSTER_RPC_TLS_CA_CERT_PATH").ok();
+        let rpc_tls_node_cert_path = env::var("KALAMDB_CLUSTER_RPC_TLS_NODE_CERT_PATH").ok();
+        let rpc_tls_node_key_path = env::var("KALAMDB_CLUSTER_RPC_TLS_NODE_KEY_PATH").ok();
 
         let has_cluster_env = cluster_id.is_some()
             || node_id.is_some()
             || rpc_addr.is_some()
             || api_addr.is_some()
-            || peers_env.is_some();
+            || peers_env.is_some()
+            || rpc_tls_enabled.is_some()
+            || rpc_tls_ca_cert_path.is_some()
+            || rpc_tls_node_cert_path.is_some()
+            || rpc_tls_node_key_path.is_some();
 
         if has_cluster_env {
             let parsed_node_id = match node_id {
@@ -183,6 +195,7 @@ impl ServerConfig {
                 rpc_addr: rpc_addr.clone().unwrap_or_else(|| "0.0.0.0:9100".to_string()),
                 api_addr: api_addr.clone().unwrap_or_else(|| "0.0.0.0:8080".to_string()),
                 peers: Vec::new(),
+                rpc_tls: ClusterRpcTlsConfig::default(),
                 user_shards: 12,
                 shared_shards: 1,
                 heartbeat_interval_ms: 250,
@@ -213,6 +226,20 @@ impl ServerConfig {
             if let Some(val) = peers_env {
                 cluster.peers = parse_cluster_peers(&val)?;
             }
+
+            if let Some(val) = rpc_tls_enabled {
+                cluster.rpc_tls.enabled =
+                    val.eq_ignore_ascii_case("true") || val == "1" || val.eq_ignore_ascii_case("yes");
+            }
+            if let Some(val) = rpc_tls_ca_cert_path {
+                cluster.rpc_tls.ca_cert_path = Some(val);
+            }
+            if let Some(val) = rpc_tls_node_cert_path {
+                cluster.rpc_tls.node_cert_path = Some(val);
+            }
+            if let Some(val) = rpc_tls_node_key_path {
+                cluster.rpc_tls.node_key_path = Some(val);
+            }
         }
 
         Ok(())
@@ -228,9 +255,9 @@ fn parse_cluster_peers(value: &str) -> anyhow::Result<Vec<PeerConfig>> {
     let mut peers = Vec::new();
     for entry in trimmed.split(';') {
         let parts: Vec<&str> = entry.split('@').collect();
-        if parts.len() != 3 {
+        if parts.len() < 3 || parts.len() > 4 {
             return Err(anyhow::anyhow!(
-                "Invalid KALAMDB_CLUSTER_PEERS entry '{}'. Expected format: node_id@rpc_addr@api_addr",
+                "Invalid KALAMDB_CLUSTER_PEERS entry '{}'. Expected format: node_id@rpc_addr@api_addr[@rpc_server_name]",
                 entry
             ));
         }
@@ -244,6 +271,7 @@ fn parse_cluster_peers(value: &str) -> anyhow::Result<Vec<PeerConfig>> {
             node_id,
             rpc_addr: parts[1].trim().to_string(),
             api_addr: parts[2].trim().to_string(),
+            rpc_server_name: parts.get(3).map(|v| v.trim().to_string()).filter(|v| !v.is_empty()),
         });
     }
 

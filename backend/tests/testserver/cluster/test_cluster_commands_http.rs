@@ -30,18 +30,20 @@ async fn test_cluster_commands_over_http() -> Result<()> {
             resp.error
         );
 
+        // CLUSTER JOIN and CLUSTER LEAVE were removed from the command set.
+        // Verify they fail gracefully with an informative error rather than panicking.
         let resp = server.execute_sql("CLUSTER JOIN 127.0.0.1:9001").await?;
         anyhow::ensure!(
-            resp.status == ResponseStatus::Success,
-            "CLUSTER JOIN failed: {:?}",
-            resp.error
+            resp.status == ResponseStatus::Error,
+            "CLUSTER JOIN should return Error (command removed), got {:?}",
+            resp.status
         );
 
         let resp = server.execute_sql("CLUSTER LEAVE").await?;
         anyhow::ensure!(
-            resp.status == ResponseStatus::Success,
-            "CLUSTER LEAVE failed: {:?}",
-            resp.error
+            resp.status == ResponseStatus::Error,
+            "CLUSTER LEAVE should return Error (command removed), got {:?}",
+            resp.status
         );
 
         Ok(())

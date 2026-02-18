@@ -5,6 +5,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use kalamdb_commons::models::NodeId;
 use kalamdb_store::StorageBackend;
 use openraft::storage::Adaptor;
 use openraft::{Config, Raft, RaftMetrics};
@@ -111,7 +112,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
     /// This initializes the Raft instance and begins participating in consensus.
     pub async fn start(
         &self,
-        node_id: u64,
+        node_id: NodeId,
         config: &crate::manager::RaftManagerConfig,
     ) -> Result<(), RaftError> {
         // Check if already started
@@ -124,6 +125,10 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
 
         self.network_factory
             .set_reconnect_interval(Duration::from_millis(config.reconnect_interval_ms));
+        self.network_factory
+            .configure_rpc_auth_identity(node_id, config.cluster_id.clone());
+        self.network_factory
+            .configure_rpc_tls(&config.rpc_tls, &config.peers)?;
 
         // Parse snapshot policy from configuration
         let snapshot_policy =
@@ -190,7 +195,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
 
         // Create the Raft instance
         let raft =
-            Raft::new(node_id, config, self.network_factory.clone(), log_store, state_machine)
+            Raft::new(node_id.as_u64(), config, self.network_factory.clone(), log_store, state_machine)
                 .await
                 .map_err(|e| RaftError::Internal(format!("Failed to create Raft: {:?}", e)))?;
 
@@ -208,7 +213,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
     ///
     /// This bootstraps the cluster with an initial membership containing only this node.
     /// If the cluster is already initialized (has existing log entries), this is a no-op.
-    pub async fn initialize(&self, node_id: u64, node: KalamNode) -> Result<(), RaftError> {
+    pub async fn initialize(&self, node_id: NodeId, node: KalamNode) -> Result<(), RaftError> {
         let raft = {
             let guard = self.raft.read();
             guard.clone().ok_or_else(|| RaftError::NotStarted(self.group_id.to_string()))?
@@ -216,7 +221,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
 
         // Create initial membership with just this node
         let mut members = std::collections::BTreeMap::new();
-        members.insert(node_id, node);
+        members.insert(node_id.as_u64(), node);
 
         match raft.initialize(members).await {
             Ok(_) => {
@@ -239,13 +244,13 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
     }
 
     /// Add a learner (non-voting member) to the cluster
-    pub async fn add_learner(&self, node_id: u64, node: KalamNode) -> Result<(), RaftError> {
+    pub async fn add_learner(&self, node_id: NodeId, node: KalamNode) -> Result<(), RaftError> {
         let raft = {
             let guard = self.raft.read();
             guard.clone().ok_or_else(|| RaftError::NotStarted(self.group_id.to_string()))?
         };
 
-        raft.add_learner(node_id, node, true)
+        raft.add_learner(node_id.as_u64(), node, true)
             .await
             .map_err(|e| RaftError::Internal(format!("Failed to add learner: {:?}", e)))?;
 
@@ -255,7 +260,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
     /// Wait for a learner to catch up to the leader's commit index
     pub async fn wait_for_learner_catchup(
         &self,
-        node_id: u64,
+        node_id: NodeId,
         timeout: Duration,
     ) -> Result<(), RaftError> {
         let raft = {
@@ -293,7 +298,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
             }
 
             if let Some(ref replication) = metrics.replication {
-                if let Some(matched) = replication.get(&node_id) {
+                if let Some(matched) = replication.get(&node_id.as_u64()) {
                     let matched_index = matched.map(|log_id| log_id.index).unwrap_or(0);
                     if matched_index >= target_index {
                         return Ok(());
@@ -306,13 +311,13 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
     }
 
     /// Change membership to include the given voters
-    pub async fn change_membership(&self, members: Vec<u64>) -> Result<(), RaftError> {
+    pub async fn change_membership(&self, members: Vec<NodeId>) -> Result<(), RaftError> {
         let raft = {
             let guard = self.raft.read();
             guard.clone().ok_or_else(|| RaftError::NotStarted(self.group_id.to_string()))?
         };
 
-        let member_set: std::collections::BTreeSet<u64> = members.into_iter().collect();
+        let member_set: std::collections::BTreeSet<u64> = members.into_iter().map(|id| id.as_u64()).collect();
         raft.change_membership(member_set, false)
             .await
             .map_err(|e| RaftError::Internal(format!("Failed to change membership: {:?}", e)))?;
@@ -321,7 +326,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
     }
 
     /// Promote a learner to a voter using the current membership configuration
-    pub async fn promote_learner(&self, node_id: u64) -> Result<(), RaftError> {
+    pub async fn promote_learner(&self, node_id: NodeId) -> Result<(), RaftError> {
         let raft = {
             let guard = self.raft.read();
             guard.clone().ok_or_else(|| RaftError::NotStarted(self.group_id.to_string()))?
@@ -334,11 +339,11 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
 
         let mut voters: std::collections::BTreeSet<u64> =
             metrics.membership_config.voter_ids().collect();
-        if voters.contains(&node_id) {
+        if voters.contains(&node_id.as_u64()) {
             return Ok(());
         }
 
-        voters.insert(node_id);
+        voters.insert(node_id.as_u64());
         raft.change_membership(voters, false)
             .await
             .map_err(|e| RaftError::Internal(format!("Failed to change membership: {:?}", e)))?;
@@ -374,9 +379,9 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
     }
 
     /// Get the current leader node ID, if known
-    pub fn current_leader(&self) -> Option<u64> {
+    pub fn current_leader(&self) -> Option<NodeId> {
         let raft = self.raft.read();
-        raft.as_ref().and_then(|r| r.metrics().borrow().current_leader)
+        raft.as_ref().and_then(|r| r.metrics().borrow().current_leader.map(NodeId::from))
     }
 
     /// Get the latest OpenRaft metrics for this group, if started
@@ -507,7 +512,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
                             let cmd_bytes = command_bytes.clone();
 
                             // Try to forward
-                            match self.forward_to_leader(&leader_node.rpc_addr, cmd_bytes).await {
+                            match self.forward_to_leader(leader_id, cmd_bytes).await {
                                 Ok((response_bytes, log_index)) => {
                                     // Deserialize the response using serdes_helpers
                                     let response =
@@ -607,31 +612,27 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
     /// of the applied entry (for read-your-writes consistency).
     async fn forward_to_leader(
         &self,
-        leader_addr: &str,
+        leader_node_id: NodeId,
         command: Vec<u8>,
     ) -> Result<(Vec<u8>, u64), RaftError> {
         use crate::network::{ClientProposalRequest, RaftClient};
-        use tonic::transport::Channel;
-
-        // Connect to leader
-        let endpoint = format!("http://{}", leader_addr);
-        let channel = Channel::from_shared(endpoint.clone())
-            .map_err(|e| RaftError::Network(format!("Invalid leader URI: {}", e)))?
-            .connect_timeout(std::time::Duration::from_secs(5))
-            .timeout(std::time::Duration::from_secs(30))
-            .connect()
-            .await
-            .map_err(|e| {
-                RaftError::Network(format!("Failed to connect to leader at {}: {}", leader_addr, e))
+        let channel = self
+            .network_factory
+            .get_or_create_channel(leader_node_id)
+            .ok_or_else(|| {
+                RaftError::Network(format!("No channel available for leader node {}", leader_node_id))
             })?;
 
         let mut client = RaftClient::new(channel);
 
         // Send the proposal
-        let request = tonic::Request::new(ClientProposalRequest {
+        let mut request = tonic::Request::new(ClientProposalRequest {
             group_id: self.group_id.to_string(),
             command,
         });
+        self.network_factory
+            .add_outgoing_rpc_metadata(&mut request)
+            .map_err(|e| RaftError::Network(format!("Failed to add RPC metadata: {}", e)))?;
 
         let response = client
             .client_proposal(request)
@@ -651,7 +652,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
     }
 
     /// Register a peer node
-    pub fn register_peer(&self, node_id: u64, node: KalamNode) {
+    pub fn register_peer(&self, node_id: NodeId, node: KalamNode) {
         self.network_factory.register_node(node_id, node);
     }
 
@@ -671,15 +672,11 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
     /// Instead, we trigger an election by sending heartbeats with a hint
     /// that another node should take over. If leadership transfer is not
     /// supported, we just log and continue - the cluster will re-elect.
-    pub async fn transfer_leadership(&self, _target_node_id: u64) -> Result<(), RaftError> {
-        // OpenRaft v0.9 doesn't have direct leadership transfer
-        // The Raft protocol will handle re-election when this node shuts down
-        // Other nodes will detect the leader is gone and start an election
-        log::debug!(
-            "Leadership transfer requested for group {} - relying on automatic re-election on shutdown",
-            self.group_id
-        );
-        Ok(())
+    pub async fn transfer_leadership(&self, target_node_id: NodeId) -> Result<(), RaftError> {
+        Err(RaftError::InvalidState(format!(
+            "Leadership transfer is unsupported in current OpenRaft version for group {} (target node {})",
+            self.group_id, target_node_id
+        )))
     }
 
     /// Trigger election for this Raft group

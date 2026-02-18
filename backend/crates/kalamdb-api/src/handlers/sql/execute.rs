@@ -47,14 +47,12 @@ use super::file_utils::{
     extract_file_placeholders, parse_sql_payload, stage_and_finalize_files,
     substitute_file_placeholders,
 };
-use super::forward::{forward_sql_if_follower, handle_not_leader_error};
+use super::forward::{
+    forward_sql_if_follower, handle_not_leader_error,
+};
 use super::helpers::{cleanup_files, execute_single_statement, parse_scalar_params};
 use super::models::{ErrorCode, QueryRequest, QueryResult, SqlResponse};
 use crate::limiter::RateLimiter;
-
-const EXECUTE_AS_PREFIX: &str = "EXECUTE AS USER";
-/// Byte length of the prefix — used for fast slice comparisons.
-const EXECUTE_AS_PREFIX_LEN: usize = EXECUTE_AS_PREFIX.len(); // 15
 
 // ---------------------------------------------------------------------------
 // Internal types
@@ -130,100 +128,26 @@ fn is_multipart_content_type(content_type: &str) -> bool {
 // ---------------------------------------------------------------------------
 
 /// Extract the username and parenthesised body from an `EXECUTE AS USER`
-/// envelope.  The username may be quoted (`'alice'`) or bare (`alice`).
-/// Bare usernames extend up to the first whitespace or `(` character.
+/// envelope.  Delegates to the canonical parser in `kalamdb_sql::execute_as`.
 fn parse_execute_statement(statement: &str) -> Result<ParsedExecutionStatement, String> {
     let trimmed = statement.trim().trim_end_matches(';').trim();
     if trimmed.is_empty() {
         return Err("Empty SQL statement".to_string());
     }
 
-    // Fast prefix check without allocating an uppercased copy.
-    if trimmed.len() < EXECUTE_AS_PREFIX_LEN
-        || !trimmed.as_bytes()[..EXECUTE_AS_PREFIX_LEN]
-            .eq_ignore_ascii_case(EXECUTE_AS_PREFIX.as_bytes())
-    {
-        return Ok(ParsedExecutionStatement {
+    match kalamdb_sql::execute_as::parse_execute_as(statement)? {
+        Some(envelope) => Ok(ParsedExecutionStatement {
+            sql: envelope.inner_sql,
+            execute_as_username: Some(
+                Username::try_new(&envelope.username)
+                    .map_err(|e| format!("Invalid execute-as username: {}", e))?,
+            ),
+        }),
+        None => Ok(ParsedExecutionStatement {
             sql: trimmed.to_string(),
             execute_as_username: None,
-        });
+        }),
     }
-
-    let after_prefix = trimmed[EXECUTE_AS_PREFIX_LEN..].trim_start();
-
-    // --- Username extraction (quoted or bare) ---
-    let (username, rest) = if after_prefix.starts_with('\'') {
-        // Quoted: EXECUTE AS USER 'some name' (...)
-        let after_quote = &after_prefix[1..];
-        let end_quote = after_quote
-            .find('\'')
-            .ok_or_else(|| "EXECUTE AS USER username quote was not closed".to_string())?;
-        let uname = after_quote[..end_quote].trim();
-        if uname.is_empty() {
-            return Err("EXECUTE AS USER username cannot be empty".to_string());
-        }
-        (uname, after_quote[end_quote + 1..].trim_start())
-    } else {
-        // Bare: EXECUTE AS USER alice (...)
-        // Username extends until whitespace or '('.
-        let end = after_prefix
-            .find(|c: char| c.is_whitespace() || c == '(')
-            .unwrap_or(after_prefix.len());
-        let uname = after_prefix[..end].trim();
-        if uname.is_empty() {
-            return Err("EXECUTE AS USER username cannot be empty".to_string());
-        }
-        (uname, after_prefix[end..].trim_start())
-    };
-
-    // --- Parenthesised SQL body ---
-    if !rest.starts_with('(') {
-        return Err("EXECUTE AS USER must wrap SQL in parentheses".to_string());
-    }
-
-    let mut depth = 0usize;
-    let mut close_idx = None;
-    for (idx, ch) in rest.char_indices() {
-        match ch {
-            '(' => depth += 1,
-            ')' => {
-                if depth == 0 {
-                    return Err("EXECUTE AS USER contains unbalanced parentheses".to_string());
-                }
-                depth -= 1;
-                if depth == 0 {
-                    close_idx = Some(idx);
-                    break;
-                }
-            },
-            _ => {},
-        }
-    }
-
-    let close_idx = close_idx.ok_or_else(|| "EXECUTE AS USER missing closing ')'".to_string())?;
-    let inner_sql = rest[1..close_idx].trim();
-    if inner_sql.is_empty() {
-        return Err("EXECUTE AS USER requires a non-empty inner SQL statement".to_string());
-    }
-
-    let trailing = rest[close_idx + 1..].trim();
-    if !trailing.is_empty() {
-        return Err("EXECUTE AS USER must contain exactly one wrapped SQL statement".to_string());
-    }
-
-    let inner_statements = kalamdb_sql::split_statements(inner_sql)
-        .map_err(|e| format!("Failed to parse inner SQL for EXECUTE AS USER: {}", e))?;
-    if inner_statements.len() != 1 {
-        return Err("EXECUTE AS USER can only wrap a single SQL statement".to_string());
-    }
-
-    Ok(ParsedExecutionStatement {
-        sql: inner_statements[0].trim().to_string(),
-        execute_as_username: Some(
-            Username::try_new(username)
-                .map_err(|e| format!("Invalid execute-as username: {}", e))?,
-        ),
-    })
 }
 
 // ---------------------------------------------------------------------------

@@ -49,6 +49,20 @@ import {
   type User,
   updateUser,
 } from "@/services/userService";
+import {
+  consumeTopicMessages,
+  fetchStreamingConsumerGroups,
+  fetchStreamingOffsets,
+  fetchStreamingTopics,
+} from "@/features/streaming/service";
+import type { StreamingOffsetsFilter } from "@/features/streaming/sql";
+import type {
+  ConsumedMessageBatch,
+  ConsumeMessagesInput,
+  StreamingConsumerGroup,
+  StreamingOffset,
+  StreamingTopic,
+} from "@/features/streaming/types";
 import type { JobFilters } from "@/services/sql/queries/jobQueries";
 
 interface CustomQueryError {
@@ -59,7 +73,22 @@ interface CustomQueryError {
 export const apiSlice = createApi({
   reducerPath: "api",
   baseQuery: fakeBaseQuery<CustomQueryError>(),
-  tagTypes: ["Settings", "Stats", "Users", "Jobs", "AuditLogs", "ServerLogs", "LiveQueries", "Notifications", "Cluster", "Storages", "SqlStudioSchema"],
+  tagTypes: [
+    "Settings",
+    "Stats",
+    "Users",
+    "Jobs",
+    "AuditLogs",
+    "ServerLogs",
+    "LiveQueries",
+    "Notifications",
+    "Cluster",
+    "Storages",
+    "SqlStudioSchema",
+    "StreamingTopics",
+    "StreamingGroups",
+    "StreamingOffsets",
+  ],
   endpoints: (builder) => ({
     getSettings: builder.query<Record<string, unknown>[], void>({
       async queryFn() {
@@ -280,6 +309,54 @@ export const apiSlice = createApi({
       },
       providesTags: ["SqlStudioSchema"],
     }),
+    getStreamingTopics: builder.query<StreamingTopic[], void>({
+      async queryFn() {
+        try {
+          const data = await fetchStreamingTopics();
+          return { data };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Failed to fetch streaming topics";
+          return { error: { status: "CUSTOM_ERROR", error: message } };
+        }
+      },
+      providesTags: ["StreamingTopics"],
+    }),
+    getStreamingConsumerGroups: builder.query<StreamingConsumerGroup[], void>({
+      async queryFn() {
+        try {
+          const data = await fetchStreamingConsumerGroups();
+          return { data };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Failed to fetch streaming consumer groups";
+          return { error: { status: "CUSTOM_ERROR", error: message } };
+        }
+      },
+      providesTags: ["StreamingGroups"],
+    }),
+    getStreamingOffsets: builder.query<StreamingOffset[], StreamingOffsetsFilter | void>({
+      async queryFn(filters) {
+        try {
+          const normalizedFilters = filters && typeof filters === "object" ? filters : undefined;
+          const data = await fetchStreamingOffsets(normalizedFilters);
+          return { data };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Failed to fetch streaming offsets";
+          return { error: { status: "CUSTOM_ERROR", error: message } };
+        }
+      },
+      providesTags: ["StreamingOffsets"],
+    }),
+    consumeStreamingMessages: builder.mutation<ConsumedMessageBatch, ConsumeMessagesInput>({
+      async queryFn(input) {
+        try {
+          const data = await consumeTopicMessages(input);
+          return { data };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Failed to consume topic messages";
+          return { error: { status: "CUSTOM_ERROR", error: message } };
+        }
+      },
+    }),
   }),
 });
 
@@ -302,4 +379,8 @@ export const {
   useUpdateStorageMutation,
   useCheckStorageHealthMutation,
   useGetSqlStudioSchemaTreeQuery,
+  useGetStreamingTopicsQuery,
+  useGetStreamingConsumerGroupsQuery,
+  useGetStreamingOffsetsQuery,
+  useConsumeStreamingMessagesMutation,
 } = apiSlice;

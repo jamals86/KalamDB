@@ -26,70 +26,218 @@ const initialState: SqlStudioWorkspaceState = {
   history: [],
 };
 
-function appendLiveRowsToResult(
+/**
+ * Live change metadata stored on each row for visual indicators.
+ *
+ * All metadata fields are prefixed with `_live_` so they're hidden from the schema.
+ * The grid displays these as visual indicators instead of columns.
+ */
+const LIVE_META = {
+  /** Change type: "insert" | "update" | "delete" | "initial" */
+  CHANGE_TYPE: "_live_change_type",
+  /** ISO timestamp when the change was received */
+  CHANGED_AT: "_live_changed_at",
+  /** Comma-separated list of columns that changed (for update highlighting) */
+  CHANGED_COLS: "_live_changed_cols",
+} as const;
+
+/** How long (ms) a change highlight persists before fading. */
+export const LIVE_HIGHLIGHT_DURATION_MS = 5_000;
+
+/**
+ * Find the primary key column names from the schema.
+ * Falls back to common PK column names if none are explicitly flagged.
+ */
+function findPkColumns(schema: QueryResultSchemaField[]): string[] {
+  const explicit = schema
+    .filter((f) => f.isPrimaryKey)
+    .map((f) => f.name);
+  if (explicit.length > 0) return explicit;
+
+  // Heuristic: look for common PK column names
+  const common = ["id", "ID", "_id", "pk"];
+  for (const name of common) {
+    if (schema.some((f) => f.name === name)) return [name];
+  }
+  return [];
+}
+
+/**
+ * Build a composite PK string for a row so we can look it up in O(1).
+ */
+function rowPk(row: Record<string, unknown>, pkCols: string[]): string | null {
+  if (pkCols.length === 0) return null;
+  return pkCols.map((c) => String(row[c] ?? "")).join("\x00");
+}
+
+/**
+ * Smart live-row merge with PK-based dedup.
+ *
+ * Instead of blindly appending every incoming row, this function:
+ *  - INSERT: appends the row (or updates if PK already exists – server may resend)
+ *  - UPDATE: finds the existing row by PK and updates it in-place
+ *  - DELETE: finds the existing row by PK and marks it as deleted
+ *  - initial: bulk-appends (initial snapshot load)
+ *
+ * Each row carries `_live_change_type`, `_live_changed_at`, and
+ * `_live_changed_cols` metadata that the grid uses for visual indicators.
+ */
+function mergeLiveRowsIntoResult(
   previous: QueryResultData | null,
-  rows: Record<string, unknown>[],
+  incomingRows: Record<string, unknown>[],
   changeType: string,
   incomingSchema?: QueryResultSchemaField[],
 ): QueryResultData {
-  const receivedAt = new Date().toLocaleTimeString();
-  const liveRows = rows.map((row) => ({
-    _received_at: receivedAt,
-    _change_type: changeType,
-    ...row,
-  }));
+  const now = new Date().toISOString();
   const existingRows = previous?.rows ?? [];
-  const mergedRows = [...existingRows, ...liveRows];
-  const fallbackSchema = (() => {
-    const orderedKeys = mergedRows.length > 0 ? Object.keys(mergedRows[0]) : [];
-    return orderedKeys.map((name, index) => ({
-      name,
-      dataType: name === "_received_at" ? "timestamp" : "text",
-      index,
-      isPrimaryKey: false,
-    }));
-  })();
-  const orderedIncomingSchema = incomingSchema
-    ? [...incomingSchema].sort((left, right) => left.index - right.index)
+
+  // ── Resolve schema ──────────────────────────────────────────────
+  const orderedIncoming = incomingSchema
+    ? [...incomingSchema].sort((a, b) => a.index - b.index)
     : undefined;
-  const sourceSchema =
-    orderedIncomingSchema && orderedIncomingSchema.length > 0
-      ? orderedIncomingSchema
-      : (previous?.schema.length ?? 0) > 0
-        ? previous?.schema
-        : fallbackSchema;
-  const hasReceivedAt = sourceSchema?.some((field) => field.name === "_received_at");
-  const hasChangeType = sourceSchema?.some((field) => field.name === "_change_type");
-  const baseSchema = sourceSchema ?? [];
-  const schemaWithMeta: QueryResultSchemaField[] = [
-    ...(hasReceivedAt ? [] : [{
-      name: "_received_at",
-      dataType: "timestamp",
-      index: -1,
-      isPrimaryKey: false,
-    }]),
-    ...(hasChangeType ? [] : [{
-      name: "_change_type",
-      dataType: "text",
-      index: -1,
-      isPrimaryKey: false,
-    }]),
-    ...baseSchema,
-  ];
-  const schema = schemaWithMeta.map((field, index) => ({
-    ...field,
-    index,
-    isPrimaryKey: field.isPrimaryKey ?? false,
-  }));
+  const baseSchema =
+    orderedIncoming && orderedIncoming.length > 0
+      ? orderedIncoming
+      : (previous?.schema?.length ?? 0) > 0
+        ? previous!.schema
+        : buildFallbackSchema([...existingRows, ...incomingRows]);
+
+  const schema = ensureLiveMetaCols(baseSchema);
+  const pkCols = findPkColumns(schema);
+
+  // ── Build PK → index map for O(1) lookups ──────────────────────
+  const pkIndex = new Map<string, number>();
+  if (pkCols.length > 0) {
+    existingRows.forEach((row, idx) => {
+      const key = rowPk(row, pkCols);
+      if (key !== null) pkIndex.set(key, idx);
+    });
+  }
+
+  // Clone rows so Redux Toolkit's Immer proxy doesn't cause issues
+  let rows = existingRows.map((r) => ({ ...r }));
+
+  for (const incoming of incomingRows) {
+    const key = rowPk(incoming, pkCols);
+    const existingIdx = key !== null ? pkIndex.get(key) : undefined;
+
+    if (changeType === "delete") {
+      if (existingIdx !== undefined) {
+        // Mark existing row as deleted (preserve data for display)
+        rows[existingIdx] = {
+          ...rows[existingIdx],
+          [LIVE_META.CHANGE_TYPE]: "delete",
+          [LIVE_META.CHANGED_AT]: now,
+          [LIVE_META.CHANGED_COLS]: "",
+        };
+      } else {
+        // Row not in table yet — add it as deleted
+        rows.push({
+          ...incoming,
+          [LIVE_META.CHANGE_TYPE]: "delete",
+          [LIVE_META.CHANGED_AT]: now,
+          [LIVE_META.CHANGED_COLS]: "",
+        });
+      }
+    } else if (changeType === "update") {
+      if (existingIdx !== undefined) {
+        // Compute which columns actually changed
+        const prev = rows[existingIdx];
+        const changedCols: string[] = [];
+        for (const col of Object.keys(incoming)) {
+          if (col.startsWith("_live_")) continue;
+          if (String(prev[col] ?? "") !== String(incoming[col] ?? "")) {
+            changedCols.push(col);
+          }
+        }
+        rows[existingIdx] = {
+          ...prev,
+          ...incoming,
+          [LIVE_META.CHANGE_TYPE]: "update",
+          [LIVE_META.CHANGED_AT]: now,
+          [LIVE_META.CHANGED_COLS]: changedCols.join(","),
+        };
+      } else {
+        // PK not found — treat as insert
+        rows.push({
+          ...incoming,
+          [LIVE_META.CHANGE_TYPE]: "update",
+          [LIVE_META.CHANGED_AT]: now,
+          [LIVE_META.CHANGED_COLS]: "",
+        });
+      }
+    } else if (changeType === "insert") {
+      if (existingIdx !== undefined) {
+        // PK collision on insert — overwrite (server resend / reconnect)
+        rows[existingIdx] = {
+          ...incoming,
+          [LIVE_META.CHANGE_TYPE]: "insert",
+          [LIVE_META.CHANGED_AT]: now,
+          [LIVE_META.CHANGED_COLS]: "",
+        };
+      } else {
+        rows.push({
+          ...incoming,
+          [LIVE_META.CHANGE_TYPE]: "insert",
+          [LIVE_META.CHANGED_AT]: now,
+          [LIVE_META.CHANGED_COLS]: "",
+        });
+        if (key !== null) pkIndex.set(key, rows.length - 1);
+      }
+    } else {
+      // "initial" or other — just append, no highlight
+      rows.push({
+        ...incoming,
+        [LIVE_META.CHANGE_TYPE]: changeType,
+        [LIVE_META.CHANGED_AT]: "",
+        [LIVE_META.CHANGED_COLS]: "",
+      });
+      if (key !== null) pkIndex.set(key, rows.length - 1);
+    }
+  }
 
   return {
     status: "success",
-    rows: mergedRows,
+    rows,
     schema,
     tookMs: previous?.tookMs ?? 0,
-    rowCount: mergedRows.length,
+    rowCount: rows.length,
     logs: previous?.logs ?? [],
   };
+}
+
+/** Build a simple schema from row keys when no schema is available. */
+function buildFallbackSchema(
+  rows: Record<string, unknown>[],
+): QueryResultSchemaField[] {
+  const keys = rows.length > 0 ? Object.keys(rows[0]) : [];
+  return keys
+    .filter((k) => !k.startsWith("_live_"))
+    .map((name, index) => ({
+      name,
+      dataType: "text",
+      index,
+      isPrimaryKey: false,
+    }));
+}
+
+/** Ensure the schema includes the live-meta columns (hidden from display by the grid). */
+function ensureLiveMetaCols(
+  schema: QueryResultSchemaField[],
+): QueryResultSchemaField[] {
+  const metaCols = [LIVE_META.CHANGE_TYPE, LIVE_META.CHANGED_AT, LIVE_META.CHANGED_COLS];
+  const missing = metaCols.filter((c) => !schema.some((f) => f.name === c));
+  if (missing.length === 0) return schema;
+
+  // Append meta columns at the end (they'll be hidden by the grid)
+  const extra: QueryResultSchemaField[] = missing.map((name) => ({
+    name,
+    dataType: "text",
+    index: -1,
+    isPrimaryKey: false,
+  }));
+
+  return [...schema, ...extra].map((f, i) => ({ ...f, index: i }));
 }
 
 function appendLogToResult(
@@ -224,7 +372,7 @@ const sqlStudioWorkspaceSlice = createSlice({
         changeType,
         schema,
       } = action.payload;
-      state.tabResults[tabId] = appendLiveRowsToResult(
+      state.tabResults[tabId] = mergeLiveRowsIntoResult(
         state.tabResults[tabId] ?? null,
         rows,
         changeType,
@@ -270,5 +418,7 @@ export const {
   setWorkspaceLiveSchema,
   prependWorkspaceHistory,
 } = sqlStudioWorkspaceSlice.actions;
+
+export { LIVE_META };
 
 export default sqlStudioWorkspaceSlice.reducer;
