@@ -7,10 +7,91 @@ use kalamdb_core::metrics::{BUILD_DATE, SERVER_VERSION};
 
 mod logging;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use kalamdb_configs::ServerConfig;
 use kalamdb_server::lifecycle::{bootstrap, run};
 use log::info;
+use std::collections::HashSet;
+use std::net::{SocketAddr, TcpListener, ToSocketAddrs};
+
+fn resolve_bind_addrs(addr: &str, label: &str) -> Result<HashSet<SocketAddr>> {
+    let addrs: Vec<SocketAddr> = addr
+        .to_socket_addrs()
+        .map_err(|e| anyhow!("Invalid {} address '{}': {}", label, addr, e))?
+        .collect();
+
+    if addrs.is_empty() {
+        return Err(anyhow!(
+            "Invalid {} address '{}': resolved to no socket addresses",
+            label,
+            addr
+        ));
+    }
+
+    Ok(addrs.into_iter().collect())
+}
+
+fn ensure_any_addr_bindable(addrs: &HashSet<SocketAddr>, label: &str, original_addr: &str) -> Result<()> {
+    let mut last_error: Option<(SocketAddr, std::io::Error)> = None;
+
+    for addr in addrs {
+        match TcpListener::bind(addr) {
+            Ok(listener) => {
+                drop(listener);
+                return Ok(());
+            },
+            Err(err) => last_error = Some((*addr, err)),
+        }
+    }
+
+    if let Some((addr, err)) = last_error {
+        if err.kind() == std::io::ErrorKind::AddrInUse {
+            return Err(anyhow!(
+                "{} port check failed: '{}' (resolved as {}) is already in use",
+                label,
+                original_addr,
+                addr
+            ));
+        }
+
+        return Err(anyhow!(
+            "{} port check failed: unable to bind '{}' (resolved as {}): {}",
+            label,
+            original_addr,
+            addr,
+            err
+        ));
+    }
+
+    Err(anyhow!(
+        "{} port check failed: unable to bind '{}'",
+        label,
+        original_addr
+    ))
+}
+
+fn validate_startup_ports(config: &ServerConfig) -> Result<()> {
+    let http_addr = format!("{}:{}", config.server.host, config.server.port);
+    let http_addrs = resolve_bind_addrs(&http_addr, "HTTP")?;
+
+    if let Some(cluster) = &config.cluster {
+        let rpc_addrs = resolve_bind_addrs(&cluster.rpc_addr, "Raft RPC")?;
+
+        if !http_addrs.is_disjoint(&rpc_addrs) {
+            return Err(anyhow!(
+                "Invalid configuration: HTTP '{}' and Raft RPC '{}' resolve to at least one identical socket address. Configure distinct ports.",
+                http_addr,
+                cluster.rpc_addr
+            ));
+        }
+
+        ensure_any_addr_bindable(&rpc_addrs, "Raft RPC", &cluster.rpc_addr)?;
+    }
+
+    ensure_any_addr_bindable(&http_addrs, "HTTP", &http_addr)?;
+
+    Ok(())
+}
 
 #[cfg(all(feature = "jemalloc", not(target_env = "msvc")))]
 #[global_allocator]
@@ -72,6 +153,12 @@ async fn main() -> Result<()> {
     if let Err(e) = config.finalize() {
         eprintln!("❌ FATAL: Invalid configuration after overrides: {}", e);
         eprintln!("❌ Server cannot start without valid configuration");
+        std::process::exit(1);
+    }
+
+    if let Err(e) = validate_startup_ports(&config) {
+        eprintln!("❌ FATAL: Port preflight check failed: {}", e);
+        eprintln!("❌ Server cannot start until both HTTP and Raft RPC ports are available");
         std::process::exit(1);
     }
 
