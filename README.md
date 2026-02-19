@@ -1,4 +1,4 @@
-# KalamDB (IN DEVELOPMENT)
+# KalamDB (ALPHA PREVIEW)
 
 KalamDB is designed for speed, efficiency, and minimal resource use.
 We aim to store and process data with the smallest possible footprint, reducing CPU, memory, storage, and token costs while improving performance.
