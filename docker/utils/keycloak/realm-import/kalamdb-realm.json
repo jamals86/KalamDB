@@ -1,0 +1,44 @@
+{
+  "realm": "kalamdb",
+  "enabled": true,
+  "registrationAllowed": false,
+  "clients": [
+    {
+      "clientId": "kalamdb-api",
+      "name": "KalamDB API",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "*"
+      ],
+      "webOrigins": [
+        "*"
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "kalamdb-user",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "kalamdb-user@example.com",
+      "firstName": "Kalam",
+      "lastName": "User",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "kalamdb123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "offline_access"
+      ]
+    }
+  ]
+}

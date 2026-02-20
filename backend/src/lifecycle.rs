@@ -563,10 +563,7 @@ pub async fn run(
     let connection_registry_for_handler = connection_registry.clone();
 
     // Initialize shared JWT configuration for kalamdb-auth
-    kalamdb_auth::services::unified::init_jwt_config(
-        &config.auth.jwt_secret,
-        &config.auth.jwt_trusted_issuers,
-    );
+    kalamdb_auth::services::unified::init_auth_config(&config.auth);
 
     // Share auth settings with HTTP handlers
     let auth_settings = config.auth.clone();
@@ -806,10 +803,7 @@ pub async fn run_for_tests(
     let app_context_for_handler = app_context.clone();
     let connection_registry_for_handler = connection_registry.clone();
 
-    kalamdb_auth::services::unified::init_jwt_config(
-        &config.auth.jwt_secret,
-        &config.auth.jwt_trusted_issuers,
-    );
+    kalamdb_auth::services::unified::init_auth_config(&config.auth);
     let auth_settings = config.auth.clone();
     let ui_path = config.server.ui_path.clone();
 

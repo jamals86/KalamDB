@@ -35,6 +35,18 @@ services:
       # - "14268:14268"   # Jaeger collector HTTP
       # - "14250:14250"   # Jaeger collector gRPC
 
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+    ports:
+      - "8081:8080"
+    volumes:
+      - ./keycloak/realm-import:/opt/keycloak/data/import:ro
+      - ./keycloak/data:/opt/keycloak/data
+
   # webdav:
   #   image: bytemark/webdav:latest
   #   restart: unless-stopped

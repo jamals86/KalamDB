@@ -1,573 +1,324 @@
 # KalamDB WebSocket Protocol
 
-**Version**: 0.1.3  
-**Endpoint**: `ws://localhost:8080/v1/ws`
+**Endpoint**: `ws://<host>:8080/v1/ws`  
+**Transport**: RFC 6455 WebSocket  
+**Message encoding**: JSON text frames, plus optional gzip-compressed binary frames for large server messages
 
-## Overview
+This document is aligned with the current server implementation in `kalamdb-api` + `kalamdb-commons`.
 
-KalamDB provides real-time data streaming via WebSocket connections. Clients can subscribe to live queries and receive immediate notifications when data changes (INSERT, UPDATE, DELETE).
+## 1) Connection and Authentication
 
----
+### 1.1 HTTP Upgrade
 
-## Connection Flow
+- Client opens `GET /v1/ws`
+- Connection can be rejected before upgrade when:
+  - Server is shutting down (`503 Service Unavailable`)
+  - Origin is not allowed (`403 Forbidden`)
+  - Origin header is required (strict mode) but missing (`403 Forbidden`)
 
-```
-1. Client connects to ws://localhost:8080/v1/ws
-2. Client must authenticate (default timeout: 3 seconds)
-3. Client subscribes to a live query (SELECT)
-4. Server sends SubscriptionAck and InitialDataBatch messages
-5. Client requests more batches via NextBatch until ready
-6. Server sends change notifications after initial load completes
-```
+### 1.2 Origin validation
 
----
+Origin allow-list is resolved as:
 
-## Authentication
+1. `security.allowed_ws_origins` (if non-empty), else
+2. `security.cors.allowed_origins`
 
-WebSocket connections are established unauthenticated, then the client must send an
-`authenticate` message immediately after connecting.
+Behavior:
 
-**JWT auth**:
-```json
-{"type": "authenticate", "method": "jwt", "token": "<JWT_TOKEN>"}
-```
+- Empty allow-list = no origin restriction
+- Allow-list containing `"*"` = any origin
+- Otherwise origin must exactly match an allowed value
+- If `security.strict_ws_origin_check = true`, missing `Origin` header is rejected
 
-Server replies with either:
+### 1.3 Post-connect authentication (required)
 
-```json
-{"type": "auth_success", "user_id": "alice", "role": "dba"}
-```
-
-or:
+A connection is **unauthenticated** after upgrade. Client must send:
 
 ```json
-{"type": "auth_error", "message": "Invalid username or password"}
+{
+  "type": "authenticate",
+  "method": "jwt",
+  "token": "<JWT_TOKEN>"
+}
 ```
 
----
+Important:
 
-## Message Types
+- Only JWT auth is supported for WebSocket auth messages
+- If authentication fails, server sends `auth_error` and closes the connection
+- Auth timeout is controlled by `websocket.auth_timeout_secs` (default `3` seconds)
 
-### 1. Subscribe (Client → Server)
+Success message:
 
-Subscribe to a live query.
+```json
+{
+  "type": "auth_success",
+  "user_id": "u_...",
+  "role": "Dba"
+}
+```
 
-**Message**:
+Failure message:
+
+```json
+{
+  "type": "auth_error",
+  "message": "Invalid username or password"
+}
+```
+
+## 2) Frame Behavior and Compression
+
+Server sends JSON in two frame styles:
+
+- **Text frames**: normal JSON
+- **Binary frames**: gzip-compressed JSON when payload is large enough and compression is beneficial
+
+Current compression behavior:
+
+- Compression threshold: `512` bytes
+- Compression format: gzip
+- If compressed payload is not smaller, server keeps plain text frame
+
+Client requirements:
+
+- Must handle both text JSON and binary gzip JSON from server
+- Must not send binary frames to server (binary client frames are rejected)
+
+## 3) Client → Server Messages
+
+All client messages use `{"type": ...}` tagged JSON.
+
+### 3.1 Authenticate
+
+```json
+{
+  "type": "authenticate",
+  "method": "jwt",
+  "token": "<JWT_TOKEN>"
+}
+```
+
+### 3.2 Subscribe
+
 ```json
 {
   "type": "subscribe",
   "subscription": {
-    "id": "messages_recent",
-    "sql": "SELECT * FROM app.messages WHERE timestamp > NOW() - INTERVAL '1 hour'",
-    "options": {"last_rows": 10}
+    "id": "orders_live",
+    "sql": "SELECT id, status, _seq FROM app.orders WHERE status = 'open'",
+    "options": {
+      "batch_size": 500,
+      "last_rows": 100,
+      "from_seq_id": 12345
+    }
   }
 }
 ```
 
-**Fields**:
-- `subscription.id`: Client-generated subscription identifier
-- `subscription.sql`: A SELECT statement to monitor for changes
-- `subscription.options.last_rows` (optional): Fetch N most recent rows for initial load
-- `subscription.options.batch_size` (optional): Hint for server batch sizing
-- `subscription.options.from_seq_id` (optional): Resume from a sequence id
+`subscription` fields:
 
-**Server Response (Acknowledgement)**:
+- `id` (string, required, must not be empty/blank)
+- `sql` (string, required)
+- `options` (optional object)
+  - `batch_size?: number`
+  - `last_rows?: number`
+  - `from_seq_id?: number`
+
+Option precedence used by server:
+
+1. If `from_seq_id` exists: resume from that sequence
+2. Else if `last_rows` exists: fetch last N rows
+3. Else: default batch mode
+
+### 3.3 Next batch
+
+```json
+{
+  "type": "next_batch",
+  "subscription_id": "orders_live",
+  "last_seq_id": 12345
+}
+```
+
+`last_seq_id` is optional.
+
+### 3.4 Unsubscribe
+
+```json
+{
+  "type": "unsubscribe",
+  "subscription_id": "orders_live"
+}
+```
+
+No unsubscribe acknowledgement message is currently emitted.
+
+## 4) Server → Client Messages
+
+### 4.1 Authentication result
+
+- `auth_success`
+- `auth_error`
+
+(see examples above)
+
+### 4.2 Subscription acknowledgment
+
 ```json
 {
   "type": "subscription_ack",
-  "subscription_id": "messages_recent",
+  "subscription_id": "orders_live",
   "total_rows": 0,
-  "batch_control": {"batch_num": 0, "has_more": true, "status": "loading", "last_seq_id": null, "snapshot_end_seq": null},
+  "batch_control": {
+    "batch_num": 0,
+    "has_more": true,
+    "status": "loading",
+    "last_seq_id": 12345,
+    "snapshot_end_seq": 13000
+  },
   "schema": [
     {"name": "id", "data_type": "BigInt", "index": 0},
-    {"name": "content", "data_type": "Text", "index": 1},
+    {"name": "status", "data_type": "Text", "index": 1},
     {"name": "_seq", "data_type": "BigInt", "index": 2}
   ]
 }
 ```
 
-The `schema` field is only included in the `subscription_ack` message (not subsequent batches) and describes each column's name, data type, and position in the result.
+Notes:
 
-**Server Response (Initial Data Batch)**:
+- `schema` is included in `subscription_ack`
+- `total_rows` is currently set to `0` by handler path
+
+### 4.3 Initial data batch
+
 ```json
 {
   "type": "initial_data_batch",
-  "subscription_id": "messages_recent",
-  "rows": [{"id": 100, "content": "Recent message"}],
-  "batch_control": {"batch_num": 0, "has_more": true, "status": "loading", "last_seq_id": 100, "snapshot_end_seq": 123456}
+  "subscription_id": "orders_live",
+  "rows": [
+    {"id": 1, "status": "open", "_seq": 12346}
+  ],
+  "batch_control": {
+    "batch_num": 0,
+    "has_more": true,
+    "status": "loading",
+    "last_seq_id": 12346,
+    "snapshot_end_seq": 13000
+  }
 }
 ```
 
-If `batch_control.has_more` is `true`, request the next batch.
+`batch_control.status` values:
 
-**Message (Next Batch Request)**:
-```json
-{
-  "type": "next_batch",
-  "subscription_id": "messages_recent",
-  "last_seq_id": 100
-}
-```
+- `loading` (first batch, more pending)
+- `loading_batch` (subsequent batch, more pending)
+- `ready` (initial load complete, live streaming active)
 
----
-
-### 2. Unsubscribe (Client → Server)
-
-Cancel an active subscription.
-
-**Message**:
-```json
-{
-  "type": "unsubscribe",
-  "subscription_id": "messages_recent"
-}
-```
-
-The server stops sending updates for that subscription.
-
----
-
-### 3. Change Notification (Server → Client)
-
-Sent when a change matching a subscribed query occurs.
-
-#### INSERT Notification
+### 4.4 Change notification
 
 ```json
 {
   "type": "change",
-  "subscription_id": "messages_recent",
+  "subscription_id": "orders_live",
   "change_type": "insert",
   "rows": [
-    {
-      "id": 101,
-      "content": "New message",
-      "timestamp": "2025-10-20T15:30:00Z"
-    }
+    {"id": 2, "status": "open", "_seq": 13001}
   ]
 }
 ```
 
-**Fields**:
-- `type`: Always `"change"`
-- `subscription_id`: Identifier of the subscription that matched
-- `change_type`: `"insert"`, `"update"`, or `"delete"`
-- `rows`: New/current row values (for INSERT and UPDATE)
-- `old_values`: Previous row values (for UPDATE and DELETE)
+`change_type` is one of:
 
-#### UPDATE Notification
+- `insert`
+- `update`
+- `delete`
 
-```json
-{
-  "type": "change",
-  "subscription_id": "messages_recent",
-  "change_type": "update",
-  "rows": [
-    {
-      "id": 100,
-      "content": "Updated message",
-      "timestamp": "2025-10-20T14:00:00Z"
-    }
-  ],
-  "old_values": [
-    {
-      "id": 100,
-      "content": "Original message",
-      "timestamp": "2025-10-20T14:00:00Z"
-    }
-  ]
-}
-```
+Shape rules:
 
-**Note**: UPDATE notifications include both `old_values` (before) and `rows` (after).
+- `insert`: `rows` present, `old_values` absent
+- `update`: both `rows` and `old_values` present
+- `delete`: `old_values` present, `rows` absent
 
-#### DELETE Notification (Soft Delete)
+### 4.5 WebSocket error notification
 
-```json
-{
-  "type": "change",
-  "subscription_id": "messages_recent",
-  "change_type": "delete",
-  "old_values": [
-    {
-      "id": 100,
-      "content": "Deleted message",
-      "timestamp": "2025-10-20T14:00:00Z"
-    }
-  ]
-}
-```
-
-### 4. Error (Server → Client)
-
-Sent when an error occurs processing a client request.
-
-**Message**:
 ```json
 {
   "type": "error",
-  "subscription_id": "messages_recent",
+  "subscription_id": "orders_live",
   "code": "INVALID_SQL",
-  "message": "Table not found: app.nonexistent"
+  "message": "..."
 }
 ```
 
-**Fields**:
-- `type`: Always `"error"`
-- `subscription_id`: Identifier of the subscription related to the error
-- `code`: Stable error code string (examples below)
-- `message`: Human-readable error message
-
----
-
-### 5. Ping/Pong (Keepalive)
-
-KalamDB uses standard WebSocket ping/pong control frames for keepalive. Clients do not send JSON `ping`/`pong` messages.
-
----
-
-## Subscription Filters
-
-Subscriptions support SQL WHERE clauses to filter notifications.
-
-### Example: Filter by Timestamp
-
-```json
-{
-  "type": "subscribe",
-  "subscription": {
-    "id": "recent_only",
-    "sql": "SELECT * FROM app.messages WHERE timestamp > NOW() - INTERVAL '5 minutes'",
-    "options": {}
-  }
-}
-```
-
-**Result**: Only rows with `timestamp` in the last 5 minutes trigger notifications.
-
-### Example: Filter by Author
-
-```json
-{
-  "type": "subscribe",
-  "subscription": {
-    "id": "alice_messages",
-    "sql": "SELECT * FROM app.messages WHERE author = 'alice'",
-    "options": {}
-  }
-}
-```
-
-**Result**: Only rows where `author = 'alice'` trigger notifications.
-
-### Example: Complex Filter
-
-```json
-{
-  "type": "subscribe",
-  "subscription": {
-    "id": "urgent_messages",
-    "sql": "SELECT * FROM app.messages WHERE priority > 5 AND status = 'active'",
-    "options": {}
-  }
-}
-```
-
-**Result**: Only rows matching both conditions trigger notifications.
-
----
-
-## User Isolation
-
-**For User Tables**:
-- Users automatically receive only their own data changes
-- System enforces `user_id` filtering at storage layer
-- No need to specify user_id in SQL WHERE clause
-
-**For Shared Tables**:
-- All users receive all changes
-- Use WHERE clauses to filter if needed
-
-**For Stream Tables**:
-- All users receive all changes
-- Stream tables are global by design
-
----
-
-## Initial Data Fetch
-
-Use the `last_rows` option to fetch recent data before receiving real-time notifications.
-
-**Example**:
-```json
-{
-  "type": "subscribe",
-  "subscription": {
-    "id": "messages_with_history",
-    "sql": "SELECT * FROM app.messages",
-    "options": {"last_rows": 50}
-  }
-}
-```
-
-**Server Response**:
-1. **SubscriptionAck**:
-   ```json
-   {
-     "type": "subscription_ack",
-     "subscription_id": "messages_with_history",
-     "total_rows": 0,
-     "batch_control": {"batch_num": 0, "has_more": true, "status": "loading", "last_seq_id": null, "snapshot_end_seq": null},
-     "schema": [{"name": "id", "data_type": "BigInt", "index": 0}, {"name": "content", "data_type": "Text", "index": 1}]
-   }
-   ```
-
-2. **InitialDataBatch** (first batch):
-   ```json
-   {
-     "type": "initial_data_batch",
-     "subscription_id": "messages_with_history",
-     "rows": [{"id": 1, "content": "..."}],
-     "batch_control": {"batch_num": 0, "has_more": true, "status": "loading", "last_seq_id": 100, "snapshot_end_seq": 123456}
-   }
-   ```
-
-3. **Real-time change notifications** (after `batch_control.status` becomes `ready`):
-   ```json
-   {
-     "type": "change",
-     "subscription_id": "messages_with_history",
-     "change_type": "insert",
-     "rows": [{"id": 101, "content": "New message"}]
-   }
-   ```
-
----
-
-## Error Types
-
-KalamDB sends errors as `{"type":"error", "subscription_id": "...", "code": "...", "message": "..."}`.
-
-Common `code` values:
-
-| Code | Description |
-|------|-------------|
-| `INVALID_SUBSCRIPTION_ID` | Subscription ID cannot be empty |
-| `SUBSCRIPTION_LIMIT_EXCEEDED` | User has too many active subscriptions |
-| `INVALID_SQL` | SQL parsing failed |
-| `UNAUTHORIZED` | Permission denied |
-| `NOT_FOUND` | Referenced table/object not found |
-| `UNSUPPORTED` | Unsupported operation (e.g., non-SELECT subscription) |
-| `MESSAGE_TOO_LARGE` | Message exceeds `security.max_ws_message_size` |
-| `RATE_LIMIT_EXCEEDED` | Too many messages per connection |
-| `UNSUPPORTED_DATA` | Binary frames from client are not supported |
-| `BATCH_FETCH_FAILED` | Failed to fetch a requested batch |
-
----
-
-## Rate Limiting
-
-Rate limiting is enabled for WebSocket connections.
-
-Defaults (configurable via `rate_limit.*` in `server.toml`):
-- Max subscriptions per user: 10
-- Max messages per second per connection: 50
-- Max WebSocket message size: 1 MB (`security.max_ws_message_size`)
-
-**Example (rate limit exceeded)**:
-```json
-{
-  "type": "error",
-  "subscription_id": "rate_limit",
-  "code": "RATE_LIMIT_EXCEEDED",
-  "message": "Too many messages"
-}
-```
-
----
-
-## Reconnection Strategy
-
-If the WebSocket connection drops, clients should:
-
-1. **Wait before reconnecting**: Exponential backoff (1s, 2s, 4s, 8s, max 30s)
-2. **Resubscribe with `last_rows`**: Fetch missed data during downtime
-3. **Deduplicate data**: Use `_updated` timestamp to avoid duplicates
-
-**Example Reconnection**:
-```javascript
-let retryDelay = 1000; // Start with 1 second
-
-function connect() {
-  const ws = new WebSocket('ws://localhost:8080/v1/ws');
-  
-  ws.onopen = () => {
-    console.log('Connected');
-    retryDelay = 1000; // Reset retry delay
-
-    // Authenticate immediately after connecting
-    ws.send(JSON.stringify({
-      type: 'authenticate',
-      method: 'jwt',
-      token: '<JWT_TOKEN>'
-    }));
-    
-    // Resubscribe with recent data
-    ws.send(JSON.stringify({
-      type: 'subscribe',
-      subscription: {
-        id: 'messages',
-        sql: 'SELECT * FROM app.messages',
-        options: { last_rows: 100 }
-      }
-    }));
-  };
-  
-  ws.onclose = () => {
-    console.log('Disconnected. Reconnecting in', retryDelay, 'ms');
-    setTimeout(connect, retryDelay);
-    retryDelay = Math.min(retryDelay * 2, 30000); // Max 30s
-  };
-  
-  ws.onmessage = (event) => {
-    const msg = JSON.parse(event.data);
-    handleMessage(msg);
-  };
-}
-
-connect();
-```
-
----
-
-## Example Client Implementation
-
-### JavaScript/TypeScript
-
-```javascript
-class KalamDBClient {
-  constructor(url, userId) {
-    this.url = url;
-    this.userId = userId;
-    this.ws = null;
-    this.subscriptions = new Map();
-  }
-
-  connect() {
-    return new Promise((resolve, reject) => {
-      this.ws = new WebSocket(this.url);
-      
-      this.ws.onopen = () => {
-        console.log('WebSocket connected');
-        resolve();
-      };
-      
-      this.ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
-        reject(error);
-      };
-      
-      this.ws.onmessage = (event) => {
-        const msg = JSON.parse(event.data);
-        this.handleMessage(msg);
-      };
-      
-      this.ws.onclose = () => {
-        console.log('WebSocket closed');
-        // Implement reconnection logic here
-      };
-    });
-  }
-
-  subscribe(queryId, sql, options = {}) {
-    const subscription = { id: queryId, sql, options };
-    
-    this.ws.send(JSON.stringify({
-      type: 'subscribe',
-      subscription
-    }));
-    
-    return new Promise((resolve) => {
-      this.subscriptions.set(queryId, { resolve, handlers: [] });
-    });
-  }
-
-  onNotification(queryId, handler) {
-    const sub = this.subscriptions.get(queryId);
-    if (sub) {
-      sub.handlers.push(handler);
-    }
-  }
-
-  handleMessage(msg) {
-    switch (msg.type) {
-      case 'subscription_ack':
-        console.log('Subscription ack for', msg.subscription_id);
-        break;
-
-      case 'initial_data_batch':
-        console.log('Initial batch for', msg.subscription_id, ':', msg.rows);
-
-        // Request next batch if available
-        if (msg.batch_control?.has_more && msg.batch_control?.last_seq_id != null) {
-          this.ws.send(JSON.stringify({
-            type: 'next_batch',
-            subscription_id: msg.subscription_id,
-            last_seq_id: msg.batch_control.last_seq_id
-          }));
-        }
-        break;
-        
-      case 'change':
-        const handlers = this.subscriptions.get(msg.subscription_id)?.handlers || [];
-        handlers.forEach(handler => handler(msg));
-        break;
-        
-      case 'error':
-        console.error('Subscription error:', msg.code, msg.message);
-        break;
-    }
-  }
-
-  unsubscribe(subscriptionIds) {
-    subscriptionIds.forEach(id => {
-      this.ws.send(JSON.stringify({
-        type: 'unsubscribe',
-        subscription_id: id
-      }));
-      this.subscriptions.delete(id);
-    });
-  }
-
-  disconnect() {
-    this.ws.close();
-  }
-}
-
-// Usage example
-const client = new KalamDBClient('ws://localhost:8080/v1/ws', 'alice');
-
-await client.connect();
-
-await client.subscribe('messages', 'SELECT * FROM app.messages', { last_rows: 10 });
-
-client.onNotification('messages', (notification) => {
-  console.log('Change detected:', notification.change_type, notification.rows, notification.old_values);
-});
-```
-
----
-
-## Performance Considerations
-
-1. **Batched initial load**: large initial result sets are streamed in batches using `initial_data_batch` + `next_batch`.
-
-2. **Compression**: JSON payloads larger than ~512 bytes may be gzip-compressed and sent as binary frames.
-
----
-
-## See Also
-
-- [REST API Reference](api-reference.md) - SQL command documentation
-- [SQL Syntax Reference](../reference/sql.md) - Complete SQL command list
-- [Quick Start Guide](../getting-started/quick-start.md) - Getting started tutorial
+For protocol/rate-limit level errors, `subscription_id` may be synthetic values like `"protocol"`, `"rate_limit"`, or `"subscribe"`.
+
+## 5) Validation and Authorization Rules
+
+### 5.1 Authentication gating
+
+- `subscribe` before auth: returns error `AUTH_REQUIRED`
+- `next_batch` or `unsubscribe` before auth: currently ignored (no response)
+
+### 5.2 Subscription SQL constraints
+
+Current server-side constraints include:
+
+- SQL must resolve to `namespace.table` format
+- System namespace subscriptions require `dba` or `system` role
+- Shared tables are rejected for live subscriptions
+- User and stream tables are allowed (subject to role/permissions)
+
+### 5.3 Subscription limits
+
+Two limits can apply:
+
+- Per-user configured limit: `rate_limit.max_subscriptions_per_user` (default `10`)
+- Hard per-connection cap: `100` subscriptions
+
+### 5.4 Message limits and rate limiting
+
+- Max incoming message size: `security.max_ws_message_size` (default `1MB`)
+- Max message rate per connection: `rate_limit.max_messages_per_sec` (default `50`)
+- Client binary message frames are rejected (`UNSUPPORTED_DATA`)
+
+## 6) Error Codes
+
+WebSocket error codes currently used:
+
+- `AUTH_REQUIRED`
+- `INVALID_SUBSCRIPTION_ID`
+- `SUBSCRIPTION_LIMIT_EXCEEDED`
+- `UNAUTHORIZED`
+- `NOT_FOUND`
+- `INVALID_SQL`
+- `UNSUPPORTED`
+- `SUBSCRIPTION_FAILED`
+- `CONVERSION_ERROR`
+- `BATCH_FETCH_FAILED`
+- `MESSAGE_TOO_LARGE`
+- `RATE_LIMIT_EXCEEDED`
+- `UNSUPPORTED_DATA`
+- `PROTOCOL`
+
+## 7) Timeouts and Keepalive
+
+Connection manager settings:
+
+- `websocket.auth_timeout_secs` (default `3`)
+- `websocket.client_timeout_secs` (default `10`)
+- `websocket.heartbeat_interval_secs` (default `5`)
+
+Behavior:
+
+- Server sends ping control frames
+- Client should respond with pong (standard WebSocket behavior)
+- Heartbeat timeout leads to connection close
+
+## 8) Failure Behavior Summary
+
+- Invalid JSON message payload: connection is closed with error close code
+- Auth timeout: `auth_error` then close
+- Auth failure: `auth_error` then close
+- Server shutdown: connection closed with shutdown reason
+- Oversized/rate-limited/binary client message: server sends `type=error` notification

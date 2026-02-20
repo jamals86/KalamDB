@@ -24,7 +24,7 @@
 use chrono::Utc;
 use kalamdb_commons::models::{JobId, NodeId};
 use kalamdb_system::providers::jobs::models::Job;
-use kalamdb_system::{JobStatus, JobType};
+use kalamdb_system::{JobFilter, JobSortField, JobStatus, JobType, SortOrder};
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -152,15 +152,21 @@ impl LeaderFailoverHandler {
         Ok(report)
     }
 
-    /// Find all jobs with Running status
+    /// Find all jobs with Running status.
+    ///
+    /// Uses the JobStatusCreatedAtIndex for efficient lookup instead of
+    /// scanning the entire jobs table.
     async fn find_running_jobs(&self) -> Result<Vec<Job>, KalamDbError> {
-        // Get all jobs and filter by Running status
-        let all_jobs = self
-            .jobs_provider
-            .list_jobs()
-            .map_err(|e| KalamDbError::io_message(format!("Failed to query jobs: {}", e)))?;
-
-        Ok(all_jobs.into_iter().filter(|job| job.status == JobStatus::Running).collect())
+        let filter = JobFilter {
+            status: Some(JobStatus::Running),
+            sort_by: Some(JobSortField::CreatedAt),
+            sort_order: Some(SortOrder::Asc),
+            limit: None,
+            ..Default::default()
+        };
+        self.jobs_provider
+            .list_jobs_filtered(&filter)
+            .map_err(|e| KalamDbError::io_message(format!("Failed to query jobs: {}", e)))
     }
 
     /// Determine recovery action for a job

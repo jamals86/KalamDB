@@ -166,10 +166,7 @@ async fn main() -> Result<()> {
     // JWT CONFIG INITIALIZATION
     // ========================================================================
     // Initialize auth JWT config from server.toml (after env overrides are applied).
-    kalamdb_auth::services::unified::init_jwt_config(
-        &config.auth.jwt_secret,
-        &config.auth.jwt_trusted_issuers,
-    );
+    kalamdb_auth::services::unified::init_auth_config(&config.auth);
 
     // ========================================================================
     // Security: Validate critical configuration at startup

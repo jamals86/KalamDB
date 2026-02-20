@@ -10,6 +10,7 @@ use once_cell::sync::OnceCell;
 pub struct JwtConfig {
     pub secret: String,
     pub trusted_issuers: Vec<String>,
+    pub auto_create_users_from_provider: bool,
 }
 
 static JWT_CONFIG: OnceCell<JwtConfig> = OnceCell::new();
@@ -18,10 +19,15 @@ static JWT_CONFIG: OnceCell<JwtConfig> = OnceCell::new();
 ///
 /// This should be called once at startup after loading server.toml and applying
 /// environment overrides. If not called, defaults are used.
-pub fn init_jwt_config(secret: &str, trusted_issuers: &str) {
+pub fn init_jwt_config(
+    secret: &str,
+    trusted_issuers: &str,
+    auto_create_users_from_provider: bool,
+) {
     let config = JwtConfig {
         secret: secret.to_string(),
         trusted_issuers: parse_trusted_issuers(trusted_issuers),
+        auto_create_users_from_provider,
     };
     let _ = JWT_CONFIG.set(config);
 }
@@ -32,6 +38,8 @@ pub fn get_jwt_config() -> &'static JwtConfig {
         trusted_issuers: parse_trusted_issuers(
             &kalamdb_configs::defaults::default_auth_jwt_trusted_issuers(),
         ),
+        auto_create_users_from_provider:
+            kalamdb_configs::defaults::default_auth_auto_create_users_from_provider(),
     })
 }
 

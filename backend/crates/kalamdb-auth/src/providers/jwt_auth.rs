@@ -44,7 +44,8 @@ pub struct JwtClaims {
     pub exp: usize,
     /// Issued at (Unix timestamp)
     pub iat: usize,
-    /// Username (custom claim)
+    /// Username (custom claim). Also maps provider claim `preferred_username`.
+    #[serde(alias = "preferred_username")]
     pub username: Option<UserName>,
     /// Email (custom claim)
     pub email: Option<String>,

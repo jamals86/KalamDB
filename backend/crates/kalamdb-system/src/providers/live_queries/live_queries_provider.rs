@@ -14,7 +14,7 @@ use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
 use kalamdb_commons::models::ConnectionId;
 use kalamdb_commons::models::rows::SystemTableRow;
 use kalamdb_commons::{LiveQueryId, NodeId, SystemTable, TableId, UserId};
-use kalamdb_store::entity_store::EntityStore;
+use kalamdb_store::entity_store::{EntityStore, EntityStoreAsync};
 use kalamdb_store::{IndexedEntityStore, StorageBackend};
 use std::sync::{Arc, OnceLock};
 
@@ -193,33 +193,39 @@ impl LiveQueriesTableProvider {
             .collect()
     }
 
-    /// Get live queries by user ID
+    /// Get live queries by user ID.
+    ///
+    /// Uses a prefix scan on the user_id portion of the LiveQueryId composite key.
+    /// With max ~10 live queries per user, this is effectively O(1).
     pub fn get_by_user_id(&self, user_id: &UserId) -> Result<Vec<LiveQuery>, SystemError> {
-        let all_queries = self.list_live_queries()?;
-        Ok(all_queries.into_iter().filter(|lq| lq.user_id == *user_id).collect())
+        let prefix_bytes = LiveQueryId::user_prefix(user_id);
+        let results = self
+            .store
+            .scan_with_raw_prefix(&prefix_bytes, None, 100)
+            .into_system_error("prefix scan live queries by user")?;
+        results
+            .into_iter()
+            .map(|(_, row)| Self::decode_live_query_row(&row))
+            .collect()
     }
 
     /// Async version of `get_by_user_id()` - offloads to blocking thread pool.
     ///
-    /// Use this in async contexts to avoid blocking the Tokio runtime.
+    /// Uses a prefix scan on the user_id portion of the LiveQueryId composite key.
     pub async fn get_by_user_id_async(
         &self,
         user_id: &UserId,
     ) -> Result<Vec<LiveQuery>, SystemError> {
-        let user_id = user_id.clone();
-        let all_queries: Vec<(Vec<u8>, SystemTableRow)> = self
+        let prefix_bytes = LiveQueryId::user_prefix(user_id);
+        let results = self
             .store
-            .scan_all_async(None, None, None)
+            .scan_with_raw_prefix_async(&prefix_bytes, None, 100)
             .await
-            .into_system_error("scan_all_async error")?;
-        let mut filtered = Vec::new();
-        for (_, row) in all_queries {
-            let lq = Self::decode_live_query_row(&row)?;
-            if lq.user_id == user_id {
-                filtered.push(lq);
-            }
-        }
-        Ok(filtered)
+            .into_system_error("prefix scan live queries by user async")?;
+        results
+            .into_iter()
+            .map(|(_, row)| Self::decode_live_query_row(&row))
+            .collect()
     }
 
     /// Get live queries by table ID

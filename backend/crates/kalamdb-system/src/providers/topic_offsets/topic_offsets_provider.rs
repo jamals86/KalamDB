@@ -110,34 +110,40 @@ impl TopicOffsetsTableProvider {
         row.map(|value| Self::decode_offset_row(&value)).transpose()
     }
 
-    /// Get all offsets for a topic and consumer group across all partitions
+    /// Get all offsets for a topic and consumer group across all partitions.
+    ///
+    /// Uses a prefix scan on `topic_id:group_id:` for O(partitions) lookup
+    /// instead of scanning the entire offsets table.
     pub fn get_group_offsets(
         &self,
         topic_id: &TopicId,
         group_id: &ConsumerGroupId,
     ) -> Result<Vec<TopicOffset>, SystemError> {
-        let all_offsets = self.store.scan_all_typed(None, None, None)?;
-        let mut offsets = Vec::new();
-        for (_, row) in all_offsets {
-            let offset = Self::decode_offset_row(&row)?;
-            if offset.topic_id == *topic_id && offset.group_id == *group_id {
-                offsets.push(offset);
-            }
-        }
-        Ok(offsets)
+        let prefix = format!("{}:{}:", topic_id.as_str(), group_id.as_str());
+        let entries = self
+            .store
+            .scan_with_raw_prefix(prefix.as_bytes(), None, 10_000)
+            .into_system_error("prefix scan topic offsets")?;
+        entries
+            .into_iter()
+            .map(|(_, row)| Self::decode_offset_row(&row))
+            .collect()
     }
 
-    /// Get all offsets for a topic across all consumer groups
+    /// Get all offsets for a topic across all consumer groups.
+    ///
+    /// Uses a prefix scan on `topic_id:` for O(groups×partitions) lookup
+    /// instead of scanning the entire offsets table.
     pub fn get_topic_offsets(&self, topic_id: &TopicId) -> Result<Vec<TopicOffset>, SystemError> {
-        let all_offsets = self.store.scan_all_typed(None, None, None)?;
-        let mut offsets = Vec::new();
-        for (_, row) in all_offsets {
-            let offset = Self::decode_offset_row(&row)?;
-            if offset.topic_id == *topic_id {
-                offsets.push(offset);
-            }
-        }
-        Ok(offsets)
+        let prefix = format!("{}:", topic_id.as_str());
+        let entries = self
+            .store
+            .scan_with_raw_prefix(prefix.as_bytes(), None, 10_000)
+            .into_system_error("prefix scan topic offsets")?;
+        entries
+            .into_iter()
+            .map(|(_, row)| Self::decode_offset_row(&row))
+            .collect()
     }
 
     /// Acknowledge consumption through a specific offset

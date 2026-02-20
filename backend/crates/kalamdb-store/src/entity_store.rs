@@ -335,7 +335,7 @@ where
     /// }
     /// ```
     fn scan_prefix_typed(&self, prefix: &K, limit: Option<usize>) -> Result<Vec<(K, V)>> {
-        const MAX_SCAN_LIMIT: usize = 100000;
+        const MAX_SCAN_LIMIT: usize = 10000;
         let effective_limit = limit.unwrap_or(MAX_SCAN_LIMIT);
         let partition = self.partition();
         let iter = self.backend().scan(
@@ -394,7 +394,7 @@ where
         prefix: Option<&K>,
         start_key: Option<&K>,
     ) -> Result<Vec<(K, V)>> {
-        const MAX_SCAN_LIMIT: usize = 100000;
+        const MAX_SCAN_LIMIT: usize = 10000;
         let effective_limit = limit.unwrap_or(MAX_SCAN_LIMIT);
 
         let partition = self.partition();

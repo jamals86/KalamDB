@@ -3356,6 +3356,7 @@ dependencies = [
  "dotenv",
  "futures-util",
  "indicatif",
+ "jsonwebtoken",
  "kalam-link",
  "kalamdb-commons",
  "kalamdb-configs",

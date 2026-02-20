@@ -147,49 +147,37 @@ impl SchemasStore {
 
     /// Delete all versions of a table (for DROP TABLE)
     ///
-    /// Deletes both the latest pointer and all versioned entries.
+    /// Uses a prefix scan on the table's composite key to find and delete
+    /// only entries for this table, instead of scanning the entire store.
     pub fn delete_all_versions(
         &self,
         table_id: &TableId,
     ) -> Result<usize, kalamdb_store::StorageError> {
+        let prefix = TableVersionId::table_scan_prefix(table_id);
+        let entries = self.scan_with_raw_prefix(&prefix, None, 10_000)?;
         let mut deleted_count = 0;
-
-        // Delete latest pointer
-        let latest_key = TableVersionId::latest(table_id.clone());
-        self.delete(&latest_key)?;
-        deleted_count += 1;
-
-        // Scan and delete all versioned entries using typed scan
-        let entries = self.scan_all_typed(None, None, None)?;
         for (version_key, _) in entries {
-            // Only delete entries for this table
-            if version_key.table_id() == table_id && !version_key.is_latest() {
-                self.delete(&version_key)?;
-                deleted_count += 1;
-            }
+            self.delete(&version_key)?;
+            deleted_count += 1;
         }
-
         Ok(deleted_count)
     }
 
     /// List all versions of a table (for schema history queries)
     ///
+    /// Uses a prefix scan on the table's versioned key prefix for O(versions) lookup.
     /// Returns versions in ascending order by version number.
     pub fn list_versions(
         &self,
         table_id: &TableId,
     ) -> Result<Vec<(u32, TableDefinition)>, kalamdb_store::StorageError> {
-        // Scan all and filter by table_id
-        let entries = self.scan_all_typed(None, None, None)?;
+        let prefix = TableVersionId::version_scan_prefix(table_id);
+        let entries = self.scan_with_raw_prefix(&prefix, None, 10_000)?;
 
         let mut versions: Vec<(u32, TableDefinition)> = entries
             .into_iter()
             .filter_map(|(version_key, table_def)| {
-                if version_key.table_id() == table_id {
-                    version_key.version().map(|v| (v, table_def))
-                } else {
-                    None
-                }
+                version_key.version().map(|v| (v, table_def))
             })
             .collect();
 
@@ -207,20 +195,22 @@ impl SchemasStore {
         self.get_latest(table_id).map(|opt| opt.map(|def| def.schema_version))
     }
 
-    /// Scan all tables (latest versions only) in a specific namespace
+    /// Scan all tables (latest versions only) in a specific namespace.
+    ///
+    /// Uses a prefix scan on the namespace portion of the key for O(tables-in-ns) lookup.
     pub fn scan_namespace(
         &self,
         namespace_id: &NamespaceId,
     ) -> Result<Vec<(TableId, TableDefinition)>, kalamdb_store::StorageError> {
-        // Scan all and filter by namespace
-        let entries = self.scan_all_typed(None, None, None)?;
+        let prefix = TableVersionId::namespace_scan_prefix(namespace_id);
+        let entries: Vec<(TableVersionId, TableDefinition)> =
+            self.scan_with_raw_prefix(&prefix, None, 10_000)?;
 
         let result: Vec<(TableId, TableDefinition)> = entries
             .into_iter()
             .filter_map(|(version_key, table_def)| {
-                // Only include latest entries for the target namespace
-                if version_key.is_latest() && version_key.table_id().namespace_id() == namespace_id
-                {
+                // Only include latest entries
+                if version_key.is_latest() {
                     Some((version_key.table_id().clone(), table_def))
                 } else {
                     None
