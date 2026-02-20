@@ -4,7 +4,7 @@
 
 use kalamdb_commons::models::LiveQueryId;
 use kalamdb_core::live::{LiveQueryManager, SharedConnectionState};
-use log::{error, info};
+use log::{error, info, debug};
 use std::sync::Arc;
 
 use crate::limiter::RateLimiter;
@@ -40,6 +40,6 @@ pub async fn handle_unsubscribe(
     // Update rate limiter
     rate_limiter.decrement_subscription(&user_id);
 
-    info!("Unsubscribed: {}", subscription_id);
+    debug!("Unsubscribed: {}", subscription_id);
     Ok(())
 }

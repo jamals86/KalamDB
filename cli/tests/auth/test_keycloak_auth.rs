@@ -1,10 +1,20 @@
 //! Keycloak OIDC integration tests
 //!
 //! These tests validate:
-//! - Keycloak realm is reachable and configured correctly
-//! - Token acquisition via Direct Access Grant (Resource Owner Password)
+//! - Keycloak realm is reachable and issues asymmetric (RS256) tokens
+//! - Real RS256 tokens from Keycloak are verified via JWKS (not the shared HS256 secret)
 //! - Auto-provisioning of users from trusted OIDC providers
-//! - Idempotent lookup of existing provider users
+//! - Idempotent lookup of existing provider users on subsequent requests
+//! - HS256 tokens claiming an external issuer are rejected
+//!
+//! ## Security model
+//!
+//! HS256 uses a shared secret. A valid HS256 signature proves OUR server produced
+//! the token — it does NOT prove Keycloak or any external party did. Anyone who
+//! knows our JWT secret can forge `iss=http://keycloak.../realms/kalamdb`.
+//! The correct fix: external tokens must use RS256/ES256. The server fetches the
+//! provider's public key via OIDC discovery (JWKS) and verifies the signature
+//! cryptographically. Only Keycloak (holding the private key) can sign valid tokens.
 //!
 //! ## Prerequisites
 //!
@@ -17,8 +27,7 @@
 //!    cargo run
 //!    ```
 //!
-//! If either server or Keycloak is not running, or if the server is not
-//! configured for provider auto-creation, the tests are skipped gracefully.
+//! If either server or Keycloak is not running, tests are skipped gracefully.
 //!
 //! ## Environment variables
 //!
@@ -148,46 +157,19 @@ async fn get_keycloak_token() -> Result<serde_json::Value, Box<dyn std::error::E
     Ok(body)
 }
 
-/// Craft an HS256 JWT token that mimics a Keycloak token structure.
-///
-/// KalamDB currently only validates HS256 tokens. Real Keycloak tokens use RS256
-/// and cannot be verified by our server. This helper crafts an HS256 token with
-/// the Keycloak issuer and a test subject so we can exercise the auto-provisioning
-/// code path end-to-end.
-///
-/// The server must be configured with:
-/// - `jwt_trusted_issuers` containing the Keycloak issuer URL
-/// - `jwt_secret` matching the secret used here (defaults to server's default secret)
-fn craft_hs256_keycloak_token(
-    subject: &str,
-    preferred_username: &str,
-) -> Result<String, Box<dyn std::error::Error>> {
-    use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
+/// Peek at the `sub` claim of a JWT without verifying the signature.
+/// Used in tests to determine the expected auto-provisioned username.
+fn decode_jwt_sub(token: &str) -> Option<String> {
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use base64::Engine as _;
 
-    let now = chrono::Utc::now();
-    let exp = now + chrono::Duration::hours(1);
-
-    let claims = json!({
-        "sub": subject,
-        "iss": keycloak_issuer(),
-        "exp": exp.timestamp() as usize,
-        "iat": now.timestamp() as usize,
-        "preferred_username": preferred_username,
-        "email": format!("{}@test.kalamdb.dev", preferred_username),
-    });
-
-    // Use the same secret the server uses.
-    // When started with defaults this is "CHANGE_ME_IN_PRODUCTION".
-    let secret = std::env::var("KALAMDB_JWT_SECRET")
-        .unwrap_or_else(|_| "CHANGE_ME_IN_PRODUCTION".to_string());
-
-    let header = Header::new(Algorithm::HS256);
-    let key = EncodingKey::from_secret(secret.as_bytes());
-    let token = encode(&header, &claims, &key)?;
-    Ok(token)
+    let payload_b64 = token.splitn(3, '.').nth(1)?;
+    let payload_bytes = URL_SAFE_NO_PAD.decode(payload_b64).ok()?;
+    let payload: serde_json::Value = serde_json::from_slice(&payload_bytes).ok()?;
+    payload.get("sub")?.as_str().map(|s| s.to_string())
 }
 
-/// Send a SQL request to KalamDB authenticated with an arbitrary Bearer token.
+/// Send a SQL request to KalamDB authenticated with a Bearer token.
 async fn execute_sql_with_bearer(
     token: &str,
     sql: &str,
@@ -202,7 +184,9 @@ async fn execute_sql_with_bearer(
         .await?;
 
     let status = response.status();
-    let body: serde_json::Value = response.json().await?;
+    let raw = response.text().await?;
+    let body: serde_json::Value =
+        serde_json::from_str(&raw).unwrap_or_else(|_| json!({ "raw": raw }));
 
     if !status.is_success() {
         return Err(format!(
@@ -220,10 +204,10 @@ async fn execute_sql_with_bearer(
 // Tests
 // ---------------------------------------------------------------------------
 
-/// Verify Keycloak is alive and the `kalamdb` realm is configured correctly.
+/// Verify Keycloak is alive and issues asymmetric (RS256) tokens.
 ///
-/// Gets a token from Keycloak via Direct Access Grant and asserts the response
-/// contains an `access_token`. This does NOT send the token to KalamDB (RS256 ≠ HS256).
+/// Gets a real token from Keycloak via Direct Access Grant, asserts the response
+/// contains an `access_token`, and verifies the token algorithm is RS256/ES256.
 #[test]
 fn test_keycloak_realm_configured() {
     if !should_run_keycloak_tests() {
@@ -240,8 +224,33 @@ fn test_keycloak_realm_configured() {
                 "Keycloak response should contain an access_token: {:?}",
                 body
             );
+            assert_eq!(
+                body.get("token_type").and_then(|v| v.as_str()),
+                Some("Bearer"),
+                "token_type should be Bearer"
+            );
+
+            // Verify Keycloak uses asymmetric algorithm (not HS256)
+            if let Some(access_token) = body.get("access_token").and_then(|v| v.as_str()) {
+                use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+                use base64::Engine as _;
+                if let Some(header_b64) = access_token.splitn(3, '.').next() {
+                    if let Ok(hdr_bytes) = URL_SAFE_NO_PAD.decode(header_b64) {
+                        if let Ok(hdr) = serde_json::from_slice::<serde_json::Value>(&hdr_bytes) {
+                            let alg = hdr.get("alg").and_then(|v| v.as_str()).unwrap_or("?");
+                            eprintln!("[keycloak] Token algorithm: {}", alg);
+                            assert!(
+                                alg.starts_with("RS") || alg.starts_with("ES"),
+                                "Keycloak must issue asymmetric tokens (RS256/ES256), got alg={}",
+                                alg
+                            );
+                        }
+                    }
+                }
+            }
+
             eprintln!(
-                "[keycloak] Successfully obtained token for user '{}'",
+                "[keycloak] OK: RS256 token obtained for '{}'",
                 keycloak_test_user()
             );
         },
@@ -259,57 +268,61 @@ fn test_keycloak_realm_configured() {
     }
 }
 
-/// Test that an HS256 bearer token with a Keycloak issuer triggers auto-provisioning.
+/// End-to-end: Keycloak RS256 token → JWKS verification → auto-provisioning.
 ///
-/// The server must be started with:
+/// This is the correct, cryptographically sound flow:
+/// 1. Get a real RS256 token from Keycloak (signed with Keycloak's RSA private key).
+/// 2. Send it to KalamDB as a Bearer token.
+/// 3. KalamDB reads `iss`, fetches Keycloak's JWKS, verifies the RS256 signature
+///    using Keycloak's *public* key. Only Keycloak can produce a valid signature.
+/// 4. First request: auto-provision user with username `oidc:kcl:{sub}`.
+/// 5. Second request: reuse existing user via the username index (O(1)).
+///
+/// Server must be started with:
 /// ```sh
 /// KALAMDB_JWT_TRUSTED_ISSUERS="kalamdb,http://localhost:8081/realms/kalamdb" \
 /// KALAMDB_AUTH_AUTO_CREATE_USERS_FROM_PROVIDER=true \
 /// cargo run
 /// ```
-///
-/// The test crafts an HS256 token with:
-/// - `iss` = Keycloak issuer URL
-/// - `sub` = a unique test subject
-/// - `preferred_username` = a display name
-///
-/// On first request, the server should auto-create a user with username
-/// `oidc:kcl:{subject}` and succeed. On second request with the same token,
-/// it should reuse the existing user (index lookup).
 #[test]
 fn test_provider_auto_provisioning_via_bearer() {
     if !should_run_keycloak_tests() {
         return;
     }
 
-    // Use a unique subject per test run to avoid collisions
-    let subject = format!("test-kc-{}", chrono::Utc::now().timestamp_millis());
-    let preferred_username = "keycloak-test-user";
-
-    let token = match craft_hs256_keycloak_token(&subject, preferred_username) {
-        Ok(t) => t,
-        Err(e) => {
-            panic!("Failed to craft HS256 token: {}", e);
-        },
-    };
-
     let rt = tokio::runtime::Runtime::new().unwrap();
 
-    // --- First request: should auto-provision the user ---
-    let result1 = rt.block_on(execute_sql_with_bearer(&token, "SELECT 1 AS probe"));
+    // Step 1: acquire a real RS256 token from Keycloak
+    let token_response =
+        rt.block_on(get_keycloak_token()).expect("Failed to get Keycloak token");
+    let access_token = token_response
+        .get("access_token")
+        .and_then(|v| v.as_str())
+        .expect("No access_token in Keycloak response")
+        .to_string();
+
+    let subject = decode_jwt_sub(&access_token)
+        .expect("Could not read sub from Keycloak token");
+    let expected_username = format!("oidc:kcl:{}", subject);
+
+    eprintln!(
+        "[keycloak] Real RS256 token sub='{}', expected username='{}'",
+        subject, expected_username
+    );
+
+    // Step 2: send to KalamDB — verifies RS256 via JWKS, auto-provisions user
+    let result1 = rt.block_on(execute_sql_with_bearer(&access_token, "SELECT 1 AS probe"));
 
     match &result1 {
         Err(e) => {
-            let err_str = e.to_string().to_lowercase();
-            // If the server has no Keycloak issuer trusted, or auto-create is off,
-            // we get an "untrusted issuer" or "user not found" error. Skip gracefully.
-            if err_str.contains("untrusted issuer")
-                || err_str.contains("no trusted issuers configured")
-                || err_str.contains("user not found")
+            let err = e.to_string().to_lowercase();
+            if err.contains("untrusted issuer")
+                || err.contains("no trusted issuers configured")
+                || err.contains("user not found")
             {
                 eprintln!(
-                    "⚠️  Server not configured for Keycloak auto-provisioning. Skipping.\n\
-                     Start the server with:\n  \
+                    "Server not configured for Keycloak OIDC. Skipping.\n\
+                     Start server with:\n  \
                      KALAMDB_JWT_TRUSTED_ISSUERS=\"kalamdb,{}\" \\\n  \
                      KALAMDB_AUTH_AUTO_CREATE_USERS_FROM_PROVIDER=true \\\n  \
                      cargo run",
@@ -317,73 +330,115 @@ fn test_provider_auto_provisioning_via_bearer() {
                 );
                 return;
             }
-            panic!("First bearer request failed unexpectedly: {}", e);
+            panic!("First bearer request with real Keycloak RS256 token failed unexpectedly: {}", e);
         },
-        Ok(body) => {
-            eprintln!("[keycloak] First request succeeded (user auto-provisioned): {:?}", body);
-        },
+        Ok(_) => eprintln!("[keycloak] First request OK — user auto-provisioned."),
     }
 
-    // --- Second request: should reuse the existing user (index lookup) ---
-    let result2 = rt.block_on(execute_sql_with_bearer(&token, "SELECT 2 AS probe"));
+    // Step 3: same token again — must reuse existing user via index
+    let result2 = rt.block_on(execute_sql_with_bearer(&access_token, "SELECT 2 AS probe"));
     assert!(
         result2.is_ok(),
-        "Second request with same token should succeed (user already exists): {:?}",
+        "Second request with same RS256 token should succeed: {:?}",
         result2.err()
     );
+    eprintln!("[keycloak] Second request OK — existing user found via index.");
 
-    // --- Verify the user was created with the expected oidc:kcl:* username ---
-    let expected_username = format!("oidc:kcl:{}", subject);
+    // Step 4: verify user in system.users
     let check_sql = format!(
         "SELECT username, auth_type FROM system.users WHERE username = '{}'",
         expected_username
     );
-
-    // Query as root to check the system.users table
-    let check_result = rt.block_on(execute_sql_via_http_as_root(&check_sql));
-    match check_result {
-        Ok(body) => {
-            let rows = get_rows_as_hashmaps(&body);
-            assert!(
-                rows.is_some() && !rows.as_ref().unwrap().is_empty(),
-                "User '{}' should exist in system.users after auto-provisioning.\nResponse: {:?}",
-                expected_username,
-                body
-            );
-            let user_row = &rows.unwrap()[0];
-            assert_eq!(
-                user_row.get("username").and_then(|v| v.as_str()),
-                Some(expected_username.as_str()),
-                "Username should be the composed provider username"
-            );
-            assert_eq!(
-                user_row.get("auth_type").and_then(|v| v.as_str()),
-                Some("OAuth"),
-                "auth_type should be 'OAuth' for provider-provisioned users"
-            );
-            eprintln!(
-                "[keycloak] Verified user '{}' exists with auth_type=OAuth",
-                expected_username
-            );
-        },
-        Err(e) => {
-            eprintln!(
-                "[keycloak] Could not verify user in system.users (may require DBA role): {}",
-                e
-            );
-        },
+    if let Ok(body) = rt.block_on(execute_sql_via_http_as_root(&check_sql)) {
+        let rows = get_rows_as_hashmaps(&body);
+        assert!(
+            rows.is_some() && !rows.as_ref().unwrap().is_empty(),
+            "User '{}' should exist in system.users. Body: {:?}",
+            expected_username,
+            body
+        );
+        let row = &rows.unwrap()[0];
+        assert_eq!(
+            row.get("auth_type").and_then(|v| v.as_str()),
+            Some("OAuth"),
+            "auth_type should be OAuth"
+        );
+        eprintln!("[keycloak] Verified user '{}' with auth_type=OAuth.", expected_username);
     }
 
-    // --- Cleanup: delete the test user ---
-    let drop_sql = format!("DROP USER '{}'", expected_username);
-    let _ = rt.block_on(execute_sql_via_http_as_root(&drop_sql));
+    // Cleanup
+    let _ = rt.block_on(execute_sql_via_http_as_root(&format!(
+        "DROP USER '{}'",
+        expected_username
+    )));
 }
 
-/// Test that a bearer token with an untrusted issuer is rejected.
+/// Verify that HS256 tokens claiming an external (Keycloak) issuer are rejected.
 ///
-/// This verifies the server's issuer validation: if the issuer in the JWT
-/// does not match any entry in `jwt_trusted_issuers`, the request must fail
-/// with an appropriate error (not silently succeed).
+/// With HS256, a valid signature proves only that OUR server signed this token.
+/// The `iss` claim is just bytes in the payload — anyone with our secret can set
+/// `iss=http://keycloak/realms/kalamdb`. There is no cryptographic proof that
+/// Keycloak authored the token. The server must detect and reject this.
+#[test]
+fn test_hs256_with_external_issuer_rejected() {
+    if !should_run_keycloak_tests() {
+        return;
+    }
+
+    let now = chrono::Utc::now();
+    let exp = now + chrono::Duration::hours(1);
+
+    let claims = json!({
+        "sub":                "forged-sub-hs256",
+        "iss":                keycloak_issuer(), // external issuer, but HS256 signed with OUR key
+        "exp":                exp.timestamp() as usize,
+        "iat":                now.timestamp() as usize,
+        "preferred_username": "forged-user",
+    });
+
+    let secret = std::env::var("KALAMDB_JWT_SECRET")
+        .unwrap_or_else(|_| "CHANGE_ME_IN_PRODUCTION".to_string());
+
+    let forged_token = {
+        use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
+        encode(
+            &Header::new(Algorithm::HS256),
+            &claims,
+            &EncodingKey::from_secret(secret.as_bytes()),
+        )
+        .expect("Failed to encode forged HS256 token")
+    };
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let (status, body) = rt.block_on(async {
+        let client = Client::new();
+        let resp = client
+            .post(format!("{}/v1/api/sql", server_url()))
+            .header("Authorization", format!("Bearer {}", forged_token))
+            .json(&json!({ "sql": "SELECT 1" }))
+            .timeout(Duration::from_secs(10))
+            .send()
+            .await
+            .expect("HTTP request failed");
+        let s = resp.status();
+        let b = resp.json::<serde_json::Value>().await.ok();
+        (s, b)
+    });
+
+    assert!(
+        status.as_u16() == 401 || status.as_u16() == 403,
+        "HS256 token with Keycloak issuer MUST be rejected (401/403), got {}.\n\
+         If this passed, it means the server accepted a forged HS256 token — \n\
+         anyone with the JWT secret can impersonate any OIDC provider!\n\
+         body={:?}",
+        status,
+        body
+    );
+
+    eprintln!("[keycloak] OK HS256+external-issuer rejected with {}", status);
+}
+
+/// Verify that tokens with a completely unknown / untrusted issuer are rejected.
 #[test]
 fn test_untrusted_issuer_rejected() {
     if !should_run_keycloak_tests() {
@@ -393,13 +448,11 @@ fn test_untrusted_issuer_rejected() {
     let now = chrono::Utc::now();
     let exp = now + chrono::Duration::hours(1);
 
-    // Craft a token with a completely unknown issuer
     let claims = json!({
-        "sub": "untrusted-user-001",
-        "iss": "https://evil-provider.example.com/realms/attack",
+        "sub": "unknown-sub-001",
+        "iss": "https://totally-unknown.example.com/realms/evil",
         "exp": exp.timestamp() as usize,
         "iat": now.timestamp() as usize,
-        "preferred_username": "evil-user",
     });
 
     let secret = std::env::var("KALAMDB_JWT_SECRET")
@@ -407,156 +460,34 @@ fn test_untrusted_issuer_rejected() {
 
     let token = {
         use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
-        let header = Header::new(Algorithm::HS256);
-        let key = EncodingKey::from_secret(secret.as_bytes());
-        encode(&header, &claims, &key).expect("Failed to encode untrusted token")
+        encode(
+            &Header::new(Algorithm::HS256),
+            &claims,
+            &EncodingKey::from_secret(secret.as_bytes()),
+        )
+        .expect("encode")
     };
 
     let rt = tokio::runtime::Runtime::new().unwrap();
-    let result = rt.block_on(async {
+    let (status, body) = rt.block_on(async {
         let client = Client::new();
-        let response = client
+        let resp = client
             .post(format!("{}/v1/api/sql", server_url()))
             .header("Authorization", format!("Bearer {}", token))
             .json(&json!({ "sql": "SELECT 1" }))
             .timeout(Duration::from_secs(10))
             .send()
             .await
-            .expect("HTTP request failed");
-
-        (response.status(), response.json::<serde_json::Value>().await.ok())
+            .expect("HTTP request");
+        (resp.status(), resp.json::<serde_json::Value>().await.ok())
     });
 
-    // The server should reject this token (401 or 403)
     assert!(
-        result.0.as_u16() == 401 || result.0.as_u16() == 403,
-        "Untrusted issuer should be rejected with 401/403, got {} - body: {:?}",
-        result.0,
-        result.1
+        status.as_u16() == 401 || status.as_u16() == 403,
+        "Token with untrusted issuer must be rejected (401/403), got {} body={:?}",
+        status,
+        body
     );
 
-    eprintln!(
-        "[keycloak] Untrusted issuer correctly rejected with status {}",
-        result.0
-    );
-}
-
-/// Test that provider users from different issuers with the same subject
-/// do NOT collide (different provider codes produce different usernames).
-#[test]
-fn test_provider_username_no_collision() {
-    if !should_run_keycloak_tests() {
-        return;
-    }
-
-    let subject = "shared-subject-12345";
-
-    // Keycloak issuer → oidc:kcl:<subject>
-    let keycloak_username = format!("oidc:kcl:{}", subject);
-
-    // Google issuer → oidc:ggl:<subject>
-    let google_issuer = "https://accounts.google.com";
-    let now = chrono::Utc::now();
-    let exp = now + chrono::Duration::hours(1);
-
-    let secret = std::env::var("KALAMDB_JWT_SECRET")
-        .unwrap_or_else(|_| "CHANGE_ME_IN_PRODUCTION".to_string());
-
-    let make_token = |issuer: &str| -> String {
-        use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
-        let claims = json!({
-            "sub": subject,
-            "iss": issuer,
-            "exp": exp.timestamp() as usize,
-            "iat": now.timestamp() as usize,
-            "preferred_username": "collision-test",
-        });
-        let header = Header::new(Algorithm::HS256);
-        let key = EncodingKey::from_secret(secret.as_bytes());
-        encode(&header, &claims, &key).expect("Failed to encode token")
-    };
-
-    let kc_token = make_token(&keycloak_issuer());
-    let google_token = make_token(google_issuer);
-
-    let rt = tokio::runtime::Runtime::new().unwrap();
-
-    // Try Keycloak token first
-    let kc_result = rt.block_on(execute_sql_with_bearer(&kc_token, "SELECT 1 AS kc_probe"));
-    if let Err(e) = &kc_result {
-        let err_str = e.to_string().to_lowercase();
-        if err_str.contains("untrusted issuer")
-            || err_str.contains("no trusted issuers configured")
-            || err_str.contains("user not found")
-        {
-            eprintln!(
-                "⚠️  Server not configured for provider auto-provisioning. Skipping collision test."
-            );
-            return;
-        }
-    }
-
-    // Try Google token - may fail if Google issuer is not trusted, that's OK
-    let google_result =
-        rt.block_on(execute_sql_with_bearer(&google_token, "SELECT 1 AS google_probe"));
-
-    // If both succeeded, verify they created different users
-    if kc_result.is_ok() && google_result.is_ok() {
-        let google_username = format!("oidc:ggl:{}", subject);
-        assert_ne!(
-            keycloak_username, google_username,
-            "Different providers with same subject must produce different usernames"
-        );
-
-        // Verify both users exist
-        let check = |username: &str| -> bool {
-            let sql = format!(
-                "SELECT username FROM system.users WHERE username = '{}'",
-                username
-            );
-            rt.block_on(execute_sql_via_http_as_root(&sql))
-                .ok()
-                .and_then(|body| get_rows_as_hashmaps(&body))
-                .map(|rows| !rows.is_empty())
-                .unwrap_or(false)
-        };
-
-        assert!(
-            check(&keycloak_username),
-            "Keycloak user '{}' should exist",
-            keycloak_username
-        );
-        assert!(
-            check(&google_username),
-            "Google user '{}' should exist",
-            google_username
-        );
-
-        eprintln!(
-            "[keycloak] Confirmed no collision: '{}' != '{}'",
-            keycloak_username, google_username
-        );
-
-        // Cleanup
-        let _ = rt.block_on(execute_sql_via_http_as_root(&format!(
-            "DROP USER '{}'",
-            keycloak_username
-        )));
-        let _ = rt.block_on(execute_sql_via_http_as_root(&format!(
-            "DROP USER '{}'",
-            google_username
-        )));
-    } else {
-        eprintln!(
-            "[keycloak] Collision test partial: kc={}, google={} (some issuers may not be trusted)",
-            kc_result.is_ok(),
-            google_result.is_ok()
-        );
-
-        // Cleanup any user that was created
-        let _ = rt.block_on(execute_sql_via_http_as_root(&format!(
-            "DROP USER '{}'",
-            keycloak_username
-        )));
-    }
+    eprintln!("[keycloak] OK unknown issuer rejected with {}", status);
 }

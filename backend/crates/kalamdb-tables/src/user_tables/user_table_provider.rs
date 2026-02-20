@@ -466,7 +466,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         rows: Vec<Row>,
     ) -> Result<Vec<UserTableRowId>, KalamDbError> {
         let row_count = rows.len();
-        tracing::info!(table_id = %self.core.table_id(), row_count, "table.insert_batch start");
+        tracing::debug!(table_id = %self.core.table_id(), row_count, "table.insert_batch start");
         if rows.is_empty() {
             return Ok(Vec::new());
         }
@@ -497,7 +497,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         let row_count = coerced_rows.len();
 
         // Batch PK validation: collect all user-provided PK values and their prefixes
-        tracing::info!(row_count, "insert_batch.pk_validation start");
+        tracing::debug!(row_count, "insert_batch.pk_validation start");
         let pk_name = self.primary_key_field_name();
         let mut pk_values_to_check: Vec<(String, Vec<u8>)> = Vec::new();
         {
@@ -549,7 +549,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
                 }
             }
         }
-        tracing::info!(row_count, "insert_batch.pk_validation done");
+        tracing::debug!(row_count, "insert_batch.pk_validation done");
 
         // Generate all SeqIds in single mutex acquisition
         let sys_cols = self.core.services.system_columns.clone();
@@ -1208,7 +1208,7 @@ impl TableProvider for UserTableProvider {
         input: Arc<dyn ExecutionPlan>,
         insert_op: InsertOp,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        tracing::info!(table_id = %self.core.table_id(), "table.insert_into");
+        tracing::debug!(table_id = %self.core.table_id(), "table.insert_into");
         check_user_table_write_access(state, self.core.table_id())
             .map_err(DataFusionError::from)?;
 

@@ -1,4 +1,16 @@
 // JWT authentication and validation module
+//
+// This module handles:
+// - HS256 internal token generation, signing, and validation
+// - Internal issuer trust verification (`KALAMDB_ISSUER`, `is_internal_issuer`, `verify_issuer`)
+//
+// The following types are defined in `kalamdb-oidc` and re-exported here so
+// existing call-sites continue to work unchanged:
+//   `JwtClaims`, `TokenType`, `DEFAULT_JWT_EXPIRY_HOURS`
+//   `extract_issuer_unverified`, `extract_algorithm_unverified`
+//
+// External OIDC token validation (RS256/ES256 via JWKS) is handled by
+// `kalamdb-oidc` and orchestrated in `bearer.rs`.
 
 use crate::errors::error::{AuthError, AuthResult};
 use jsonwebtoken::errors::ErrorKind;
@@ -6,101 +18,14 @@ use jsonwebtoken::{
     decode, decode_header, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation,
 };
 use kalamdb_commons::{Role, UserId, UserName};
-use serde::{Deserialize, Serialize};
 
-/// Default JWT expiration time in hours
-pub const DEFAULT_JWT_EXPIRY_HOURS: i64 = 24;
+// ── Types and utilities that live in kalamdb-oidc ───────────────────────────
+// Re-exported here so callers using `jwt_auth::JwtClaims` etc. need no changes.
+pub use kalamdb_oidc::{extract_algorithm_unverified, extract_issuer_unverified};
+pub use kalamdb_oidc::{JwtClaims, TokenType, DEFAULT_JWT_EXPIRY_HOURS};
 
-/// Default issuer for KalamDB tokens
+/// Default issuer for KalamDB-issued tokens.
 pub const KALAMDB_ISSUER: &str = "kalamdb";
-
-/// Token type for distinguishing access from refresh tokens.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum TokenType {
-    Access,
-    Refresh,
-}
-
-impl std::fmt::Display for TokenType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TokenType::Access => write!(f, "access"),
-            TokenType::Refresh => write!(f, "refresh"),
-        }
-    }
-}
-
-/// JWT claims structure for KalamDB tokens.
-///
-/// Standard JWT claims plus custom KalamDB-specific fields.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct JwtClaims {
-    /// Subject (user ID)
-    pub sub: String,
-    /// Issuer
-    pub iss: String,
-    /// Expiration time (Unix timestamp)
-    pub exp: usize,
-    /// Issued at (Unix timestamp)
-    pub iat: usize,
-    /// Username (custom claim). Also maps provider claim `preferred_username`.
-    #[serde(alias = "preferred_username")]
-    pub username: Option<UserName>,
-    /// Email (custom claim)
-    pub email: Option<String>,
-    /// Role (custom claim)
-    pub role: Option<Role>,
-    /// Token type: "access" or "refresh"
-    /// Optional for backward compatibility with tokens issued before this field existed.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub token_type: Option<TokenType>,
-}
-
-impl JwtClaims {
-    /// Create new JWT claims for a user (defaults to access token).
-    ///
-    /// # Arguments
-    /// * `user_id` - User's unique identifier
-    /// * `username` - Username
-    /// * `role` - User's role
-    /// * `email` - Optional email address
-    /// * `expiry_hours` - Token expiration in hours (defaults to DEFAULT_JWT_EXPIRY_HOURS)
-    pub fn new(
-        user_id: &UserId,
-        username: &UserName,
-        role: &Role,
-        email: Option<&str>,
-        expiry_hours: Option<i64>,
-    ) -> Self {
-        Self::with_token_type(user_id, username, role, email, expiry_hours, TokenType::Access)
-    }
-
-    /// Create new JWT claims with an explicit token type.
-    pub fn with_token_type(
-        user_id: &UserId,
-        username: &UserName,
-        role: &Role,
-        email: Option<&str>,
-        expiry_hours: Option<i64>,
-        token_type: TokenType,
-    ) -> Self {
-        let now = chrono::Utc::now();
-        let exp_hours = expiry_hours.unwrap_or(DEFAULT_JWT_EXPIRY_HOURS);
-        let exp = now + chrono::Duration::hours(exp_hours);
-
-        Self {
-            sub: user_id.to_string(),
-            iss: KALAMDB_ISSUER.to_string(),
-            exp: exp.timestamp() as usize,
-            iat: now.timestamp() as usize,
-            username: Some(username.clone()),
-            email: email.map(|e| e.to_string()),
-            role: Some(*role),
-            token_type: Some(token_type),
-        }
-    }
-}
 
 /// Generate a new JWT token.
 ///
@@ -133,8 +58,9 @@ pub fn create_and_sign_token(
     expiry_hours: Option<i64>,
     secret: &str,
 ) -> AuthResult<(String, JwtClaims)> {
-    let claims =
-        JwtClaims::with_token_type(user_id, username, role, email, expiry_hours, TokenType::Access);
+    let claims = JwtClaims::with_token_type(
+        user_id, username, role, email, expiry_hours, TokenType::Access, KALAMDB_ISSUER,
+    );
     let token = generate_jwt_token(&claims, secret)?;
     Ok((token, claims))
 }
@@ -158,6 +84,7 @@ pub fn create_and_sign_refresh_token(
         email,
         expiry_hours,
         TokenType::Refresh,
+        KALAMDB_ISSUER,
     );
     let token = generate_jwt_token(&claims, secret)?;
     Ok((token, claims))
@@ -258,21 +185,7 @@ pub fn validate_jwt_token(
 }
 
 /// Verify JWT issuer is in the trusted list.
-///
-/// # Arguments
-/// * `issuer` - Issuer from JWT claims
-/// * `trusted_issuers` - List of trusted issuer domains
-///
-/// # Returns
-/// `Ok(())` if issuer is trusted
-///
-/// # Errors
-/// Returns `AuthError::UntrustedIssuer` if issuer is not in the list
-///
-/// # Security Note
-/// If no trusted issuers are configured, ALL issuers are rejected.
-/// This is a secure-by-default approach to prevent accepting arbitrary tokens.
-fn verify_issuer(issuer: &str, trusted_issuers: &[String]) -> AuthResult<()> {
+pub fn verify_issuer(issuer: &str, trusted_issuers: &[String]) -> AuthResult<()> {
     // Security: If no issuers configured, reject all (secure by default)
     if trusted_issuers.is_empty() {
         return Err(AuthError::UntrustedIssuer(format!(
@@ -288,36 +201,12 @@ fn verify_issuer(issuer: &str, trusted_issuers: &[String]) -> AuthResult<()> {
     }
 }
 
-/// Extract claims from a JWT token without full validation.
+/// Returns true if the issuer is the internal KalamDB issuer.
 ///
-/// **WARNING**: This does NOT verify the signature! Only use in tests
-/// or when you need to inspect a token before validation.
-///
-/// # Arguments
-/// * `token` - JWT token string
-///
-/// # Returns
-/// JWT claims (unverified)
-///
-/// # Errors
-/// Returns error if token structure is invalid
-///
-/// # Security
-/// This function is gated behind `#[cfg(test)]` to prevent accidental
-/// use in production code paths.
-#[cfg(test)]
-pub fn extract_claims_unverified(token: &str) -> AuthResult<JwtClaims> {
-    // Decode without verification (dangerous!)
-    let mut validation = Validation::new(Algorithm::HS256);
-    #[allow(deprecated)]
-    validation.insecure_disable_signature_validation(); // DANGEROUS - but needed for unverified claim extraction
-    validation.validate_exp = false;
-
-    let decoding_key = DecodingKey::from_secret(b""); // Empty key since we're not validating
-    let token_data = decode::<JwtClaims>(token, &decoding_key, &validation)
-        .map_err(|e| AuthError::MalformedAuthorization(format!("JWT decode error: {}", e)))?;
-
-    Ok(token_data.claims)
+/// Internal tokens (iss = "kalamdb") are signed with the shared HS256 secret
+/// and never come from an external provider.
+pub fn is_internal_issuer(issuer: &str) -> bool {
+    issuer == KALAMDB_ISSUER
 }
 
 #[cfg(test)]

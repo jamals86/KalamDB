@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { ConversationDrawer } from './conversation-drawer';
 import { ChatPanel } from './chat-panel';
 import { WelcomeScreen } from './welcome-screen';
+import { UserMenu } from '@/components/user-menu';
 import { useConversations, useConnectionStatus } from '@/hooks/use-kalamdb';
 
 export default function Design2Page() {
@@ -51,11 +52,14 @@ export default function Design2Page() {
           <h1 className="text-sm font-semibold bg-gradient-to-r from-violet-600 to-rose-500 bg-clip-text text-transparent">
             KalamDB Chat
           </h1>
-          <div className="flex items-center gap-2">
-            <div className={`w-2 h-2 rounded-full ${
-              connectionStatus === 'connected' ? 'bg-green-500' : 'bg-red-500'
-            }`} />
-            <span className="text-xs text-muted-foreground capitalize">{connectionStatus}</span>
+          <div className="flex items-center gap-3">
+            <UserMenu />
+            <div className="flex items-center gap-2">
+              <div className={`w-2 h-2 rounded-full ${
+                connectionStatus === 'connected' ? 'bg-green-500' : 'bg-red-500'
+              }`} />
+              <span className="text-xs text-muted-foreground capitalize">{connectionStatus}</span>
+            </div>
           </div>
         </div>
       </header>

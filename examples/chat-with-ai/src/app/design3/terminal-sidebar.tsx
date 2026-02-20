@@ -1,6 +1,7 @@
 'use client';
 
 import { cn, parseTimestamp } from '@/lib/utils';
+import { UserMenu } from '@/components/user-menu';
 import { Terminal, Plus, Wifi, WifiOff, Trash2 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import type { Conversation, ConnectionStatus } from '@/types';
@@ -118,7 +119,8 @@ export function TerminalSidebar({
       </div>
 
       {/* Footer */}
-      <div className="p-3 border-t border-emerald-900/30">
+      <div className="p-3 border-t border-emerald-900/30 space-y-2">
+        <UserMenu />
         <p className="text-[10px] text-emerald-900 flex items-center gap-1">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-sm shadow-emerald-500/50 animate-pulse" />
           kalamdb://localhost:8080

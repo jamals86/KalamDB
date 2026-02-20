@@ -77,6 +77,7 @@ pub use models::{
     AuditLogId,
     AuthType,
     JobId,
+    OAuthProvider,
     LiveQueryId,
     ManifestId,
     NamespaceId,

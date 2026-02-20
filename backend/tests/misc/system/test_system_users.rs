@@ -28,17 +28,9 @@ async fn create_system_user(
     server: &TestServer,
     username: &str, //TODO: Use UserName type
     password_hash: String,
-    allow_remote: bool,
+    _allow_remote: bool,
 ) -> User {
     let now = chrono::Utc::now().timestamp_millis();
-
-    // Create metadata JSON with allow_remote flag if needed
-    //TODO: This is a security risk we shall remove it
-    let auth_data = if allow_remote {
-        Some(serde_json::json!({"allow_remote": true}).to_string())
-    } else {
-        None
-    };
 
     let user = User {
         user_id: UserId::new(format!("sys_{}", username)),
@@ -47,7 +39,7 @@ async fn create_system_user(
         role: Role::System,
         email: Some(format!("{}@system.local", username)),
         auth_type: AuthType::Internal, // System users use internal auth type
-        auth_data,
+        auth_data: None,
         storage_mode: StorageMode::Table,
         storage_id: Some(StorageId::local()),
         failed_login_attempts: 0,

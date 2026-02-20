@@ -3473,6 +3473,7 @@ dependencies = [
  "jsonwebtoken",
  "kalamdb-commons",
  "kalamdb-configs",
+ "kalamdb-oidc",
  "kalamdb-session",
  "kalamdb-sql",
  "kalamdb-store",
@@ -3525,6 +3526,7 @@ dependencies = [
  "parking_lot",
  "serde",
  "serde_json",
+ "sha2",
  "storekey",
  "thiserror 2.0.18",
  "toml",
@@ -3648,6 +3650,22 @@ dependencies = [
  "log",
  "num_cpus",
  "sysinfo",
+ "thiserror 2.0.18",
+ "tokio",
+]
+
+[[package]]
+name = "kalamdb-oidc"
+version = "0.3.0-alpha2"
+dependencies = [
+ "base64",
+ "chrono",
+ "jsonwebtoken",
+ "kalamdb-commons",
+ "log",
+ "reqwest 0.13.1",
+ "serde",
+ "serde_json",
  "thiserror 2.0.18",
  "tokio",
 ]
@@ -5357,6 +5375,7 @@ dependencies = [
  "rustls-platform-verifier",
  "serde",
  "serde_json",
+ "serde_urlencoded",
  "sync_wrapper",
  "tokio",
  "tokio-rustls",

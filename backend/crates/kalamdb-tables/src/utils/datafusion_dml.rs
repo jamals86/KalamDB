@@ -37,7 +37,7 @@ pub async fn collect_input_rows(
     state: &dyn Session,
     input: Arc<dyn ExecutionPlan>,
 ) -> DataFusionResult<Vec<Row>> {
-    tracing::info!("collect_input_rows");
+    tracing::debug!("collect_input_rows");
     let task_ctx = state.task_ctx();
 
     // Try executing the input plan directly.

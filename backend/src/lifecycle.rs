@@ -933,13 +933,6 @@ async fn create_default_system_user(
             };
             let has_password = !password_hash.is_empty();
 
-            // If password is set via env var, enable remote access
-            let auth_data = if has_password {
-                Some(r#"{"allow_remote":true}"#.to_string())
-            } else {
-                None
-            };
-
             let user = User {
                 user_id,
                 username: username.clone().into(),
@@ -947,7 +940,7 @@ async fn create_default_system_user(
                 role,
                 email: Some(email),
                 auth_type: AuthType::Internal, // System user uses Internal auth
-                auth_data,                     // allow_remote flag if password is set
+                auth_data: None,
                 storage_mode: StorageMode::Table,
                 storage_id: Some(StorageId::local()),
                 failed_login_attempts: 0,

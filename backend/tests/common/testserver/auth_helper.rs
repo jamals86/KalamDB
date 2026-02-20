@@ -223,7 +223,7 @@ pub fn create_jwt_token(username: &str, secret: &str, exp_seconds: i64) -> Strin
     let now = chrono::Utc::now().timestamp() as usize;
     let claims = Claims {
         sub: format!("user_{}", username),
-        iss: "kalamdb-test".to_string(),
+        iss: "kalamdb".to_string(),
         exp: (now as i64 + exp_seconds) as usize,
         iat: now,
         username: username.to_string(),

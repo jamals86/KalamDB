@@ -1,7 +1,8 @@
 {
   "realm": "kalamdb",
   "enabled": true,
-  "registrationAllowed": false,
+  "sslRequired": "none",
+  "registrationAllowed": true,
   "clients": [
     {
       "clientId": "kalamdb-api",
@@ -19,6 +20,26 @@
       "webOrigins": [
         "*"
       ]
+    },
+    {
+      "clientId": "kalamdb-chat",
+      "name": "KalamDB Chat App",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "directAccessGrantsEnabled": false,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "http://localhost:3000/*"
+      ],
+      "webOrigins": [
+        "http://localhost:3000"
+      ],
+      "attributes": {
+        "post.logout.redirect.uris": "http://localhost:3000/*"
+      }
     }
   ],
   "users": [
