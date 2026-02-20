@@ -3,6 +3,7 @@
 //! Represents a database user with authentication and authorization information.
 
 use crate::providers::storages::models::StorageMode;
+use crate::providers::users::models::auth_data::AuthData;
 use kalamdb_commons::datatypes::KalamDataType;
 use kalamdb_commons::models::{ids::UserId, AuthType, Role, StorageId};
 use kalamdb_commons::UserName;
@@ -26,7 +27,7 @@ pub const DEFAULT_LOCKOUT_DURATION_MINUTES: i64 = 15;
 /// - `role`: User role (User, Service, DBA, System)
 /// - `email`: Optional email address
 /// - `auth_type`: Authentication method (Password, OAuth, Internal)
-/// - `auth_data`: JSON blob for auth-specific data (e.g., OAuth provider/subject)
+/// - `auth_data`: Linked OIDC/OAuth provider connections (typed [`AuthData`])
 /// - `storage_mode`: Preferred storage partitioning mode (Table, Region)
 /// - `storage_id`: Optional preferred storage configuration ID
 /// - `failed_login_attempts`: Number of consecutive failed login attempts
@@ -187,7 +188,7 @@ pub struct User {
         default = "None",
         comment = "Authentication data (JSON for OAuth provider/subject)"
     )]
-    pub auth_data: Option<String>,
+    pub auth_data: Option<AuthData>,
     #[column(
         id = 9,
         ordinal = 9,

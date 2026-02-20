@@ -563,10 +563,7 @@ pub async fn run(
     let connection_registry_for_handler = connection_registry.clone();
 
     // Initialize shared JWT configuration for kalamdb-auth
-    kalamdb_auth::services::unified::init_jwt_config(
-        &config.auth.jwt_secret,
-        &config.auth.jwt_trusted_issuers,
-    );
+    kalamdb_auth::services::unified::init_auth_config(&config.auth);
 
     // Share auth settings with HTTP handlers
     let auth_settings = config.auth.clone();
@@ -806,10 +803,7 @@ pub async fn run_for_tests(
     let app_context_for_handler = app_context.clone();
     let connection_registry_for_handler = connection_registry.clone();
 
-    kalamdb_auth::services::unified::init_jwt_config(
-        &config.auth.jwt_secret,
-        &config.auth.jwt_trusted_issuers,
-    );
+    kalamdb_auth::services::unified::init_auth_config(&config.auth);
     let auth_settings = config.auth.clone();
     let ui_path = config.server.ui_path.clone();
 
@@ -939,13 +933,6 @@ async fn create_default_system_user(
             };
             let has_password = !password_hash.is_empty();
 
-            // If password is set via env var, enable remote access
-            let auth_data = if has_password {
-                Some(r#"{"allow_remote":true}"#.to_string())
-            } else {
-                None
-            };
-
             let user = User {
                 user_id,
                 username: username.clone().into(),
@@ -953,7 +940,7 @@ async fn create_default_system_user(
                 role,
                 email: Some(email),
                 auth_type: AuthType::Internal, // System user uses Internal auth
-                auth_data,                     // allow_remote flag if password is set
+                auth_data: None,
                 storage_mode: StorageMode::Table,
                 storage_id: Some(StorageId::local()),
                 failed_login_attempts: 0,

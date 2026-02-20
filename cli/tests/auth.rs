@@ -10,3 +10,6 @@ mod common;
 
 #[path = "auth/test_auth.rs"]
 mod test_auth;
+
+#[path = "auth/test_keycloak_auth.rs"]
+mod test_keycloak_auth;

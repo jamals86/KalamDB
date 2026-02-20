@@ -1,148 +1,177 @@
-# KalamDB REST API Reference
+# KalamDB API Reference
 
-**Version**: 0.1.3  
-**Base URL**: `http://localhost:8080`  
-**API Version**: v1
+**Base URL**: `http://<host>:8080`  
+**Version prefix**: `/v1`
 
-## Overview
+This reference is aligned with the current route + handler implementations.
 
-KalamDB provides a versioned REST API with a single SQL endpoint that accepts SQL commands for all operations. This unified interface simplifies client integration and enables full SQL expressiveness.
+## 1) Route Map
 
-### API Versioning
+### Health and status
 
-All API endpoints are versioned with a `/v1` prefix to ensure backward compatibility as the API evolves.
+- `GET /health` (localhost-only)
+- `GET /v1/api/healthcheck` (localhost-only)
+- `GET /v1/api/cluster/health` (localhost-only)
 
-**Current Version**: v1  
-**Endpoint Prefix**: `/v1`
+### SQL and files
 
-**Versioned Endpoints**:
-- `/v1/api/sql` - Execute SQL commands (JSON or multipart)
-- `/v1/files/{namespace}/{table}/{subfolder}/{file_id}` - Download files stored in FILE columns
-- `/v1/ws` - WebSocket for live query subscriptions
-- `/v1/api/healthcheck` - Server health status
-- `/v1/api/auth/login` - Admin UI login (cookie-based)
-- `/v1/api/auth/refresh` - Refresh auth cookie
-- `/v1/api/auth/logout` - Clear auth cookie
-- `/v1/api/auth/me` - Current user info (from cookie)
+- `POST /v1/api/sql`
+- `GET /v1/files/{namespace}/{table_name}/{subfolder}/{file_id}`
 
-**Version Strategy**:
-- **Breaking changes** require a new version (e.g., `/v2/api/sql`)
-- **Non-breaking changes** (new optional fields, new endpoints) can be added to existing versions
-- **Deprecation policy**: Old versions supported for at least 6 months after new version release
+### WebSocket
 
----
+- `GET /v1/ws`
 
-## Authentication
+### Auth (Admin UI + token management)
 
-`POST /v1/api/sql` requires an `Authorization` header (HTTP Basic or JWT bearer).
+- `POST /v1/api/auth/login`
+- `POST /v1/api/auth/refresh`
+- `POST /v1/api/auth/logout`
+- `GET /v1/api/auth/me`
+- `POST /v1/api/auth/setup`
+- `GET /v1/api/auth/status`
 
-For local development (localhost / `127.0.0.1`), the default `root` user supports an empty password, so you can use Basic auth with `root:`.
+### Topic HTTP API
 
-### HTTP Basic Auth
-```http
-Authorization: Basic <base64(username:password)>
-```
+- `POST /v1/api/topics/consume`
+- `POST /v1/api/topics/ack`
 
-### JWT Token Authentication
+## 2) Authentication Rules by Endpoint
+
+### Bearer-token-only endpoints
+
+These endpoints use `AuthSessionExtractor` and require:
+
 ```http
 Authorization: Bearer <JWT_TOKEN>
 ```
 
----
+Basic auth is rejected on these routes.
 
-## Endpoints
+- `POST /v1/api/sql`
+- `GET /v1/files/...`
+- `POST /v1/api/topics/consume`
+- `POST /v1/api/topics/ack`
 
-### POST /v1/api/sql
+### Cookie or Bearer endpoints
 
-Execute a SQL command and receive results.
+These endpoints accept bearer token in header, or auth cookie fallback:
 
-**Version**: v1  
-**Path**: `/v1/api/sql`
+- `POST /v1/api/auth/refresh`
+- `GET /v1/api/auth/me`
 
-#### Request
+### Public (no auth required)
 
-**Headers**:
+- `POST /v1/api/auth/login`
+- `POST /v1/api/auth/logout` (just clears cookie)
+- `POST /v1/api/auth/setup` (localhost-only unless remote setup allowed)
+- `GET /v1/api/auth/status` (localhost-only unless remote setup allowed)
+- `GET /health` (localhost-only)
+- `GET /v1/api/healthcheck` (localhost-only)
+- `GET /v1/api/cluster/health` (localhost-only)
+
+### WebSocket auth
+
+`GET /v1/ws` upgrades unauthenticated; authentication is done by an in-band WebSocket message:
+
+```json
+{"type":"authenticate","method":"jwt","token":"..."}
+```
+
+See [WebSocket Protocol](websocket-protocol.md).
+
+## 3) SQL API
+
+## `POST /v1/api/sql`
+
+Execute SQL using JSON or multipart payload.
+
+### Request headers
+
+- `Authorization: Bearer <JWT_TOKEN>` (required)
 - `Content-Type: application/json` or `multipart/form-data`
-- `Authorization: Basic <credentials>` or `Authorization: Bearer <token>` (required)
 
-**Body (JSON)**:
+### JSON body
+
 ```json
 {
-  "sql": "SELECT * FROM app.messages LIMIT 10",
-  "params": ["optional", 123],
-  "namespace_id": "optional"
+  "sql": "SELECT * FROM default.users WHERE id = $1",
+  "params": [123],
+  "namespace_id": "default"
 }
 ```
 
-**Body (multipart)**:
-
 Fields:
-- `sql` (text) — SQL statement (single statement only)
-- `params` (optional text) — JSON array of positional params
-- `namespace_id` (optional text)
-- `file:<placeholder>` (file) — file parts mapped to `FILE("placeholder")`
+
+- `sql` (required string)
+- `params` (optional array)
+- `namespace_id` (optional string)
+
+### Multipart body (FILE datatype path)
+
+Expected form parts:
+
+- `sql` (required)
+- `params` (optional; JSON array string)
+- `namespace_id` (optional)
+- `file:<placeholder>` one or more file parts
+
+Placeholder mapping:
+
+- SQL uses `FILE("name")` or `FILE('name')`
+- Multipart part must be named `file:name`
 
 Example:
-```
-POST /v1/api/sql
-Content-Type: multipart/form-data; boundary=...
 
---...
-Content-Disposition: form-data; name="sql"
-
-INSERT INTO app.documents (id, name, attachment)
-VALUES ('doc1', 'My Document', FILE("myfile.txt"));
---...
-Content-Disposition: form-data; name="file:myfile.txt"; filename="test-attachment.txt"
-Content-Type: text/plain
-
-<file bytes>
---...--
+```sql
+INSERT INTO app.docs (id, attachment)
+VALUES ('d1', FILE("contract"));
 ```
 
-Notes:
-- `params` are positional and use `$1`, `$2`, … placeholders.
-- If `params` is provided, the request must contain exactly one SQL statement (parameterized multi-statement batches are rejected).
-- `namespace_id` is used to resolve unqualified table names.
-- Multipart uploads require **one** SQL statement and are only accepted on the leader node in cluster mode.
+Multipart must include part name `file:contract`.
 
-#### Response
+### SQL execution behavior
 
-**Success (200 OK)**:
+- Multiple statements separated by `;` are supported
+- Parameters with multi-statement batches are rejected (`PARAMS_WITH_BATCH`)
+- File uploads require exactly one SQL statement
+- SQL length is bounded by `MAX_SQL_QUERY_LENGTH`
+- In cluster mode:
+  - write operations on followers are forwarded to leader
+  - file uploads must be sent to leader (`NOT_LEADER` if not)
+
+### Success response shape
+
 ```json
 {
   "status": "success",
   "results": [
     {
-      "schema": [
-        {"name": "id", "data_type": "BigInt", "index": 0},
-        {"name": "content", "data_type": "Text", "index": 1}
-      ],
-      "rows": [[1, "Hello World"]],
-      "row_count": 1
+      "schema": [{"name":"id","data_type":"BigInt","index":0}],
+      "rows": [[1]],
+      "row_count": 1,
+      "as_user": "alice"
     }
   ],
-  "took": 42.0
+  "took": 12.34
 }
 ```
 
-**DDL Operations (200 OK)**:
-```json
-{
-  "status": "success",
-  "results": [
-    {"row_count": 0, "message": "Table created successfully"}
-  ],
-  "took": 15.0
-}
-```
+`results[]` fields:
 
-**Error (400 Bad Request)**:
+- `schema` (omitted when empty)
+- `rows` (omitted when none)
+- `row_count` (always present)
+- `message` (optional; e.g. DDL/DML summary)
+- `as_user` (always present)
+
+### Error response shape
+
 ```json
 {
   "status": "error",
   "results": [],
-  "took": 5.0,
+  "took": 1.23,
   "error": {
     "code": "INVALID_SQL",
     "message": "...",
@@ -151,122 +180,305 @@ Notes:
 }
 ```
 
-**Error (429 Too Many Requests)** (rate limiting):
-```json
-{
-  "status": "error",
-  "results": [],
-  "took": 1.0,
-  "error": {
-    "code": "RATE_LIMIT_EXCEEDED",
-    "message": "Too many queries per second. Please slow down.",
-    "details": null
-  }
-}
-```
+### SQL error codes
 
----
+Current `error.code` values include:
 
-### GET /v1/files/{namespace}/{table_name}/{subfolder}/{file_id}
+- `RATE_LIMIT_EXCEEDED`
+- `INVALID_PARAMETER`
+- `BATCH_PARSE_ERROR`
+- `EMPTY_SQL`
+- `PARAMS_WITH_BATCH`
+- `SQL_EXECUTION_ERROR`
+- `FORWARD_FAILED`
+- `NOT_LEADER`
+- `INVALID_SQL`
+- `TABLE_NOT_FOUND`
+- `PERMISSION_DENIED`
+- `CLUSTER_UNAVAILABLE`
+- `LEADER_NOT_AVAILABLE`
+- `INTERNAL_ERROR`
+- `INVALID_INPUT`
+- `FILE_TOO_LARGE`
+- `TOO_MANY_FILES`
+- `MISSING_FILE`
+- `EXTRA_FILE`
+- `FILE_NOT_FOUND`
+- `INVALID_MIME_TYPE`
 
-Download a file stored in a `FILE` column.
+## 4) File Download API
 
-**Headers**:
-- `Authorization: Basic <credentials>` or `Authorization: Bearer <token>` (required)
+## `GET /v1/files/{namespace}/{table_name}/{subfolder}/{file_id}`
 
-**Path Parameters**:
-- `namespace` — Namespace name
-- `table_name` — Table name
-- `subfolder` — FileRef.sub (e.g., `f0001`)
-- `file_id` — Stored filename (server-generated)
+Download previously stored file bytes.
 
-**Success (200 OK)**:
-- `Content-Type` inferred from file extension
-- `Content-Disposition: inline; filename="<file_id>"`
-- Body: file bytes
+### Auth
 
-**Error (401 Unauthorized)**: missing/invalid auth
+- Bearer token required
 
-**Error (404 Not Found)**: file not found
+### Query params
 
-**Notes**:
-- The stored filename is derived from `FileRef`.
-- Stream/System tables do not support downloads.
+- `user_id` (optional)
+  - Only meaningful for **user tables**
+  - Requires impersonation-capable role when different from caller
 
----
+### Behavior by table type
 
-### GET /v1/api/healthcheck
+- `User` table: downloads from effective user scope
+- `Shared` table: allowed only if shared access policy permits; `user_id` query is rejected
+- `Stream`/`System` table: rejected (`file storage not supported`)
 
-Check server health.
+### Validation
 
-```bash
-curl http://localhost:8080/v1/api/healthcheck
-```
+- `subfolder` and `file_id` are path-validated (no traversal patterns)
 
-**Success (200 OK)**:
+### Responses
+
+- `200 OK`: binary content with inferred content-type and `Content-Disposition: inline`
+- `400/403/404` depending on validation/permission/not-found conditions
+
+## 5) Health Endpoints
+
+## `GET /health` and `GET /v1/api/healthcheck`
+
+Both return the same payload and are localhost-only.
+
+Success:
+
 ```json
 {
   "status": "healthy",
-  "api_version": "v1"
+  "version": "...",
+  "api_version": "v1",
+  "build_date": "..."
 }
 ```
 
----
+Remote callers receive `403`.
 
-### WebSocket /v1/ws
+## `GET /v1/api/cluster/health`
 
-Real-time live query subscriptions via WebSocket.
+Localhost-only cluster/raft health summary.
 
-- **URL**: `ws://localhost:8080/v1/ws`
-- **Auth**: send an `authenticate` message after connecting (server enforces a ~3s auth timeout)
+Response shape:
 
-See [WebSocket Protocol](websocket-protocol.md) for the full message schema.
-
----
-
-### Admin UI Auth (cookie-based)
-
-These endpoints are used by the Admin UI and rely on an HttpOnly cookie containing a JWT.
-
-#### POST /v1/api/auth/login
-
-Request body:
-```json
-{"username":"alice","password":"Secret123!"}
-```
-
-Success (200 OK): sets an auth cookie and returns:
 ```json
 {
-  "user": {"id":"...","username":"alice","role":"dba","email":null,"created_at":"...","updated_at":"..."},
-  "expires_at": "2025-12-31T00:00:00Z",
-  "access_token": "<JWT_TOKEN>"
+  "status": "healthy|degraded|unhealthy",
+  "version": "...",
+  "build_date": "...",
+  "is_cluster_mode": true,
+  "cluster_id": "...",
+  "node_id": 1,
+  "is_leader": true,
+  "total_groups": 3,
+  "groups_leading": 2,
+  "current_term": 42,
+  "last_applied": 1234,
+  "millis_since_quorum_ack": 10,
+  "nodes": [
+    {
+      "node_id": 1,
+      "role": "Leader",
+      "status": "Active",
+      "api_addr": "127.0.0.1:8080",
+      "is_self": true,
+      "is_leader": true,
+      "replication_lag": 0,
+      "catchup_progress_pct": null
+    }
+  ]
 }
 ```
 
-#### POST /v1/api/auth/refresh
+## 6) Auth Endpoints
 
-Uses the existing auth cookie, sets a refreshed auth cookie, and returns the same shape as login.
+## `POST /v1/api/auth/login`
 
-#### POST /v1/api/auth/logout
+Authenticates username/password and returns token pair + sets auth cookie.
 
-Clears the auth cookie.
+Request:
 
-#### GET /v1/api/auth/me
+```json
+{
+  "username": "alice",
+  "password": "Secret123!"
+}
+```
 
-Returns the current user info from the auth cookie.
+Constraints:
 
----
+- username max length: `128`
+- password max length: `256`
 
-## SQL Syntax
+Success response:
 
-This document describes the HTTP endpoints and wire formats. For the actual SQL syntax and examples, see:
+```json
+{
+  "user": {
+    "id": "u_...",
+    "username": "alice",
+    "role": "Dba",
+    "email": null,
+    "created_at": "...",
+    "updated_at": "..."
+  },
+  "expires_at": "...",
+  "access_token": "...",
+  "refresh_token": "...",
+  "refresh_expires_at": "..."
+}
+```
 
-- [SQL Syntax Reference](../reference/sql.md)
+Also sets HttpOnly auth cookie for access token.
 
----
+## `POST /v1/api/auth/refresh`
 
-## See Also
+Accepts bearer token header or auth cookie, validates token, issues new access + refresh pair, and resets auth cookie.
 
-- [WebSocket Protocol](websocket-protocol.md) - Real-time subscriptions
-- [Quick Start Guide](../getting-started/quick-start.md) - Getting started tutorial
+Returns same shape as login.
+
+## `POST /v1/api/auth/logout`
+
+Clears auth cookie.
+
+Response:
+
+```json
+{"message":"Logged out successfully"}
+```
+
+## `GET /v1/api/auth/me`
+
+Returns current user info (same `user` object shape as login, without token fields).
+
+## `POST /v1/api/auth/setup`
+
+Initial server bootstrap endpoint.
+
+Allowed only when:
+
+1. root user has no password yet
+2. request is localhost (unless `auth.allow_remote_setup = true`)
+
+Request:
+
+```json
+{
+  "username": "admin",
+  "password": "AdminPass123!",
+  "root_password": "RootPass123!",
+  "email": "admin@example.com"
+}
+```
+
+Behavior:
+
+- sets root password
+- creates new DBA user
+- does **not** log in automatically
+
+## `GET /v1/api/auth/status`
+
+Localhost-only (unless remote setup allowed). Returns setup status:
+
+```json
+{
+  "needs_setup": true,
+  "message": "Server requires initial setup..."
+}
+```
+
+## 7) Topic HTTP API
+
+Both topic endpoints require bearer auth **and** role in `{service, dba, system}`.
+
+### `POST /v1/api/topics/consume`
+
+Request:
+
+```json
+{
+  "topic_id": "orders_topic",
+  "group_id": "worker_group",
+  "start": "Latest",
+  "limit": 100,
+  "partition_id": 0,
+  "timeout_seconds": 10
+}
+```
+
+`start` accepted forms:
+
+- `"Latest"` (default)
+- `"Earliest"`
+- `{ "Offset": 123 }` (also accepts lowercase `offset` key)
+
+Response:
+
+```json
+{
+  "messages": [
+    {
+      "topic_id": "orders_topic",
+      "partition_id": 0,
+      "offset": 10,
+      "payload": "<base64>",
+      "key": "optional-key",
+      "timestamp_ms": 1730000000000,
+      "username": "alice",
+      "op": "Insert"
+    }
+  ],
+  "next_offset": 11,
+  "has_more": false
+}
+```
+
+Notes:
+
+- `payload` is base64-encoded bytes
+- `timeout_seconds` is accepted in request but is not currently used by handler logic
+
+### `POST /v1/api/topics/ack`
+
+Request:
+
+```json
+{
+  "topic_id": "orders_topic",
+  "group_id": "worker_group",
+  "partition_id": 0,
+  "upto_offset": 10
+}
+```
+
+Response:
+
+```json
+{
+  "success": true,
+  "acknowledged_offset": 10
+}
+```
+
+Topic error shape:
+
+```json
+{
+  "error": "...",
+  "code": "FORBIDDEN|NOT_FOUND|INTERNAL_ERROR"
+}
+```
+
+## 8) WebSocket Entry Point
+
+## `GET /v1/ws`
+
+- Performs upgrade if origin/security checks pass
+- Connection then requires `authenticate` message using JWT
+- Subscription/change/error payloads are documented in [WebSocket Protocol](websocket-protocol.md)
+
+## 9) Notes on Non-routed Handlers
+
+`/healthz` and `/readyz` handlers exist in source but are not currently wired into the route configuration. The active health endpoints are `/health` and `/v1/api/healthcheck`.

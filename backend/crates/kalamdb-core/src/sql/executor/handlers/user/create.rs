@@ -8,7 +8,7 @@ use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use kalamdb_auth::security::password::{validate_password_with_policy, PasswordPolicy};
 use kalamdb_commons::{AuthType, UserId};
 use kalamdb_sql::ddl::CreateUserStatement;
-use kalamdb_system::User;
+use kalamdb_system::{AuthData, User};
 use std::sync::Arc;
 
 /// Handler for CREATE USER
@@ -66,30 +66,37 @@ impl TypedStatementHandler<CreateUserStatement> for CreateUserHandler {
             },
             AuthType::OAuth => {
                 // For OAuth, the 'password' field contains the JSON payload
-                let payload = statement.password.clone();
-
-                // Validate payload
-                if let Some(json_str) = &payload {
-                    let json: serde_json::Value = serde_json::from_str(json_str)
-                        .into_invalid_operation("Invalid OAuth JSON")?;
-
-                    if json.get("provider").is_none() {
-                        return Err(KalamDbError::InvalidOperation(
-                            "OAuth user requires 'provider' field".to_string(),
-                        ));
-                    }
-                    if json.get("subject").is_none() {
-                        return Err(KalamDbError::InvalidOperation(
-                            "OAuth user requires 'subject' field".to_string(),
-                        ));
-                    }
-                } else {
-                    return Err(KalamDbError::InvalidOperation(
+                let payload = statement.password.clone().ok_or_else(|| {
+                    KalamDbError::InvalidOperation(
                         "OAuth user requires JSON payload with provider and subject".to_string(),
-                    ));
-                }
+                    )
+                })?;
 
-                ("".to_string(), payload)
+                let json: serde_json::Value = serde_json::from_str(&payload)
+                    .into_invalid_operation("Invalid OAuth JSON")?;
+
+                let provider = json
+                    .get("provider")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        KalamDbError::InvalidOperation(
+                            "OAuth user requires 'provider' field".to_string(),
+                        )
+                    })?
+                    .to_string();
+
+                let subject = json
+                    .get("subject")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        KalamDbError::InvalidOperation(
+                            "OAuth user requires 'subject' field".to_string(),
+                        )
+                    })?
+                    .to_string();
+
+                let auth_data = AuthData::new(provider, subject);
+                ("".to_string(), Some(auth_data))
             },
             AuthType::Internal => ("".to_string(), None),
         };

@@ -344,7 +344,7 @@ impl SqlExecutor {
             let plan_start = std::time::Instant::now();
             match session.sql(sql).await {
                 Ok(df) => {
-                    tracing::info!(plan_ms = %plan_start.elapsed().as_micros() as f64 / 1000.0, "sql.dml_plan");
+                    tracing::debug!(plan_ms = %plan_start.elapsed().as_micros() as f64 / 1000.0, "sql.dml_plan");
                     df
                 },
                 Err(e) => {
@@ -474,7 +474,7 @@ impl SqlExecutor {
             }
             KalamDbError::Other(format!("Error executing DML statement '{}': {}", sql, e))
         })?;
-        tracing::info!(collect_ms = %format!("{:.3}", collect_start.elapsed().as_micros() as f64 / 1000.0), "sql.dml_collect");
+        tracing::debug!(collect_ms = %format!("{:.3}", collect_start.elapsed().as_micros() as f64 / 1000.0), "sql.dml_collect");
 
         let rows_affected = Self::extract_rows_affected(&batches)?;
         tracing::Span::current().record("rows_affected", rows_affected);

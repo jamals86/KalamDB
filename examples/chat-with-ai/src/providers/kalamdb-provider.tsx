@@ -4,7 +4,7 @@
  * KalamDB Provider - React context for kalam-link SDK
  * 
  * Provides a shared KalamDBClient instance with:
- * - Automatic login (Basic Auth → JWT)
+ * - Token-based auth (Keycloak JWT) OR Basic Auth fallback
  * - WebSocket connection for real-time subscriptions
  * - Auto-reconnection support
  * - Connection status tracking
@@ -39,7 +39,19 @@ export function useKalamDB(): KalamDBContextValue {
   return useContext(KalamDBContext);
 }
 
-interface KalamDBProviderProps {
+// ---- Token-based auth props (e.g. Keycloak JWT) ----
+interface TokenAuthProps {
+  /** KalamDB server URL */
+  url: string;
+  /** JWT access token from an external OIDC provider */
+  token: string;
+  children: React.ReactNode;
+  username?: undefined;
+  password?: undefined;
+}
+
+// ---- Basic auth props (legacy / fallback) ----
+interface BasicAuthProps {
   /** KalamDB server URL */
   url: string;
   /** Username for authentication */
@@ -47,32 +59,44 @@ interface KalamDBProviderProps {
   /** Password for authentication */
   password: string;
   children: React.ReactNode;
+  token?: undefined;
 }
 
-export function KalamDBProvider({ url, username, password, children }: KalamDBProviderProps) {
+type KalamDBProviderProps = TokenAuthProps | BasicAuthProps;
+
+export function KalamDBProvider(props: KalamDBProviderProps) {
+  const { url, children } = props;
+
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('connecting');
   const [isReady, setIsReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const clientRef = useRef<KalamDBClient | null>(null);
   const mountedRef = useRef(true);
-  const initializingRef = useRef(false); // Prevent concurrent initialization
+  const initializingRef = useRef(false);
+
+  // Derive a stable key so we re-initialise when credentials change
+  const authKey = props.token
+    ? `jwt:${props.token.slice(0, 16)}`
+    : `basic:${props.username}:${props.password}`;
 
   useEffect(() => {
-    // React 18 Strict Mode: effect runs twice, but cleanup runs DURING async operations
-    // Solution: always reset mountedRef to true when effect runs
     mountedRef.current = true;
-    console.log('[KalamDB] Effect triggered, mountedRef set to true, isReady:', isReady);
+    console.log('[KalamDB] Effect triggered, isReady:', isReady);
 
-    // If already initializing, just restore mountedRef and wait
     if (initializingRef.current) {
-      console.log('[KalamDB] Already initializing, mountedRef restored, waiting...');
+      console.log('[KalamDB] Already initializing, waiting...');
       return;
     }
 
-    // If client already exists and is ready, don't reinit
-    if (clientRef.current && isReady) {
-      console.log('[KalamDB] Client already ready, skipping init');
-      return;
+    // When the token changes we need to re-create the client
+    // so always discard previous client when authKey changes
+    if (clientRef.current) {
+      console.log('[KalamDB] Auth changed, tearing down old client');
+      const old = clientRef.current;
+      clientRef.current = null;
+      setIsReady(false);
+      setConnectionStatus('connecting');
+      old.disconnect().catch(() => {});
     }
 
     initializingRef.current = true;
@@ -80,110 +104,80 @@ export function KalamDBProvider({ url, username, password, children }: KalamDBPr
 
     const initClient = async () => {
       try {
-        console.log('[KalamDB] Starting client initialization...');
         console.log('[KalamDB] URL:', url);
-        console.log('[KalamDB] Username:', username);
-        
-        // Create client with basic auth credentials
+
+        const auth = props.token
+          ? Auth.jwt(props.token)
+          : Auth.basic(props.username!, props.password!);
+
         const client = createClient({
           url,
-          auth: Auth.basic(username, password),
+          auth,
           wasmUrl: '/wasm/kalam_link_bg.wasm',
         });
 
-        console.log('[KalamDB] Client created, setting clientRef');
         clientRef.current = client;
-
         setConnectionStatus('connecting');
 
-        // Login to get JWT token (required for WebSocket)
-        console.log('[KalamDB] Logging in...');
-        await client.login();
-        console.log('[KalamDB] Login successful');
-        
-        // Don't return early - we need to connect even if unmounting
-        // The cleanup will handle disconnection properly
+        // Token auth: skip login(), go straight to connect()
+        // Basic auth: call login() first to obtain a JWT
+        if (!props.token) {
+          console.log('[KalamDB] Logging in with Basic auth...');
+          await client.login();
+          console.log('[KalamDB] Basic auth login successful');
+        } else {
+          console.log('[KalamDB] Using external JWT, skipping login()');
+        }
 
-        // Connect WebSocket (initializes WASM)
         console.log('[KalamDB] Connecting WebSocket...');
         await client.connect();
         console.log('[KalamDB] WebSocket connected');
 
-        // Configure auto-reconnect (must be AFTER connect, needs WASM initialized)
         client.setAutoReconnect(true);
         client.setReconnectDelay(1000, 30000);
-        client.setMaxReconnectAttempts(0); // Infinite retries
-        
-        // Check if client is still valid (not disconnected/removed)
-        // In Strict Mode, mountedRef may be false but component is remounting
-        console.log('[KalamDB] Checking if client still valid:', clientRef.current === client);
+        client.setMaxReconnectAttempts(0);
+
         if (clientRef.current !== client) {
           console.warn('[KalamDB] Client was replaced, skipping state update');
           return;
         }
 
-        console.log('[KalamDB] Setting connection status to connected');
         setConnectionStatus('connected');
-        console.log('[KalamDB] Setting isReady to true');
         setIsReady(true);
-        console.log('[KalamDB] Clearing error');
         setError(null);
-
-        console.log('[KalamDB] ✅ Connected and ready for subscriptions!');
+        console.log('[KalamDB] ✅ Connected and ready!');
       } catch (err) {
         console.error('[KalamDB] Connection failed:', err);
-        console.error('[KalamDB] Error stack:', err instanceof Error ? err.stack : 'no stack');
-        
-        // Check if client is still valid
-        console.log('[KalamDB] Checking if client still valid after error:', !!clientRef.current);
-        if (!clientRef.current) {
-          console.warn('[KalamDB] Client was removed, skipping error state update');
-          return;
-        }
-        
+
+        if (!clientRef.current) return;
+
         setConnectionStatus('error');
         setError(err instanceof Error ? err.message : 'Connection failed');
-
-        // Even if WebSocket fails, the client can still do HTTP queries
-        // Mark as ready for query-only mode
-        console.log('[KalamDB] Setting isReady to true (query-only mode)');
-        setIsReady(true);
+        setIsReady(true); // query-only fallback
       } finally {
         initializingRef.current = false;
-        console.log('[KalamDB] Initialization complete, initializingRef reset');
       }
     };
 
     initClient();
 
     return () => {
-      console.log('[KalamDB] Cleanup triggered');
-      // In Strict Mode, cleanup runs during async operations
-      // We'll set mountedRef to false temporarily, but the next effect will restore it
-      // Only actually cleanup if this is a real unmount (component removed from DOM)
-      const wasReady = isReady;
       mountedRef.current = false;
-      
-      // In development (Strict Mode), keep client alive and don't reset initialization
-      // The next effect run will restore mountedRef and reuse the client
+
       if (process.env.NODE_ENV === 'development') {
-        console.log('[KalamDB] Cleanup: Strict Mode detected, keeping client alive');
+        console.log('[KalamDB] Cleanup: Strict Mode, keeping client alive');
         return;
       }
-      
-      // Production cleanup: actually disconnect
-      console.log('[KalamDB] Cleanup: Production mode, cleaning up...');
+
       const currentClient = clientRef.current;
       clientRef.current = null;
       initializingRef.current = false;
-      
       if (currentClient) {
-        setTimeout(() => {
-          currentClient.disconnect().catch(() => {});
-        }, 100);
+        setTimeout(() => currentClient.disconnect().catch(() => {}), 100);
       }
     };
-  }, [url, username, password]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [url, authKey]);
 
   return (
     <KalamDBContext.Provider

@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { ConnectionBadge } from '@/components/chat';
+import { UserMenu } from '@/components/user-menu';
 import { Plus, MessageSquare, Loader2, Trash2 } from 'lucide-react';
 import { cn, parseTimestamp } from '@/lib/utils';
 import { formatDistanceToNow } from 'date-fns';
@@ -107,7 +108,8 @@ export function Sidebar({
 
       {/* Footer */}
       <Separator />
-      <div className="p-3">
+      <div className="p-3 space-y-2">
+        <UserMenu />
         <p className="text-xs text-muted-foreground text-center">
           Powered by KalamDB
         </p>

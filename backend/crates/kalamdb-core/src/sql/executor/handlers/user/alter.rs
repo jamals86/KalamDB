@@ -6,7 +6,6 @@ use crate::error_extensions::KalamDbResultExt;
 use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use kalamdb_auth::security::password::{validate_password_with_policy, PasswordPolicy};
-use kalamdb_commons::AuthType;
 use kalamdb_sql::ddl::{AlterUserStatement, UserModification};
 use std::sync::Arc;
 
@@ -59,13 +58,6 @@ impl TypedStatementHandler<AlterUserStatement> for AlterUserHandler {
                 }
                 updated.password_hash = bcrypt::hash(new_pw, bcrypt::DEFAULT_COST)
                     .into_kalamdb_error("Password hash error")?;
-
-                // For Internal auth type users (system users like root), automatically enable
-                // remote access when a password is set. This is the expected behavior since
-                // setting a password implies wanting to authenticate remotely.
-                if updated.auth_type == AuthType::Internal {
-                    updated.auth_data = Some(r#"{"allow_remote":true}"#.to_string());
-                }
             },
             UserModification::SetRole(new_role) => {
                 if !context.is_admin() {

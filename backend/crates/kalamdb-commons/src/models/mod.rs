@@ -35,6 +35,7 @@ pub mod schemas; // Table and column schema definitions
 // Standalone type modules (not IDs, not system tables)
 mod auth_type;
 mod connection;
+mod oauth_provider;
 mod payload_mode;
 mod read_context;
 mod role;
@@ -48,6 +49,7 @@ pub mod rows;
 // Re-export all types from submodules for convenience
 pub use auth_type::AuthType;
 pub use ids::*;
+pub use oauth_provider::OAuthProvider;
 pub use payload_mode::PayloadMode;
 pub use read_context::ReadContext;
 pub use role::Role;

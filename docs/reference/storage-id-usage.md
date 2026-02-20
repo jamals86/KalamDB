@@ -1,201 +1,162 @@
-# Storage ID Usage Examples
+# Storage ID Usage
 
-This guide demonstrates how to use `storage_id` when creating tables in KalamDB.
+This guide shows the exact SQL syntax accepted by KalamDB for storage registration and table storage selection.
 
-## Prerequisites
+## 1) Create storage backends first
 
-First, create storage locations using `CREATE STORAGE`:
+Before you can use `STORAGE_ID` in `CREATE TABLE`, that storage must exist in `system.storages`.
+
+### Filesystem storage
 
 ```sql
--- Create a local filesystem storage
-CREATE STORAGE local
+CREATE STORAGE local_archive
     TYPE filesystem
-    NAME 'Local Storage'
-    DESCRIPTION 'Default local storage'
-    BASE_DIRECTORY './data/storage'
-    SHARED_TABLES_TEMPLATE '{namespace}/shared/{tableName}/'
-    USER_TABLES_TEMPLATE '{namespace}/users/{tableName}/{shard}/{userId}/';
+    NAME 'Local Archive'
+    DESCRIPTION 'Filesystem storage for archived tables'
+    PATH './data/storage/local-archive'
+    SHARED_TABLES_TEMPLATE 'shared/{namespace}/{tableName}'
+    USER_TABLES_TEMPLATE 'users/{namespace}/{tableName}/{userId}';
+```
 
--- Create an S3 storage
+`PATH` is supported for filesystem storage. `BASE_DIRECTORY` is also accepted.
+
+### S3 storage
+
+```sql
 CREATE STORAGE s3_prod
     TYPE s3
-    NAME 'Production S3 Storage'
-    DESCRIPTION 'Production S3 bucket'
-    BASE_DIRECTORY 's3://my-bucket/kalamdb/'
-    SHARED_TABLES_TEMPLATE '{namespace}/shared/{tableName}/'
-    USER_TABLES_TEMPLATE '{namespace}/users/{tableName}/{shard}/{userId}/';
+    NAME 'Production S3'
+    DESCRIPTION 'S3 bucket for production data'
+    BUCKET 'my-kalamdb-prod-bucket'
+    REGION 'us-east-1'
+    SHARED_TABLES_TEMPLATE 'shared/{namespace}/{tableName}'
+    USER_TABLES_TEMPLATE 'users/{namespace}/{tableName}/{userId}';
 ```
 
-## Creating Shared Tables with Storage ID
+For S3 you can use either:
+- `BUCKET 'bucket-name'` (optionally with `REGION`), or
+- `BASE_DIRECTORY 's3://bucket/prefix'`
 
-### Using Default Storage (local)
+Useful commands:
+
 ```sql
--- Implicitly uses 'local' storage
-CREATE TABLE config (
+SHOW STORAGES;
+SELECT storage_id, storage_type, storage_name FROM system.storages;
+```
+
+## 2) Use `STORAGE_ID` in `CREATE TABLE`
+
+KalamDB accepts `STORAGE_ID` inside `WITH (...)` options.
+
+### Shared table with explicit storage
+
+```sql
+CREATE TABLE app.config (
     key TEXT PRIMARY KEY,
     value TEXT
-) WITH (TYPE = 'SHARED');
-```
-
-### Specifying Storage Explicitly
-```sql
--- Use specific storage
-CREATE TABLE config (
-    key TEXT PRIMARY KEY,
-    value TEXT
-) WITH (TYPE = 'SHARED', STORAGE_ID = 's3_prod');
-```
-
-### With Other Options
-```sql
--- Storage with flush policy
-CREATE TABLE events (
-    event_id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
-    event_type TEXT,
-    timestamp TIMESTAMP
 ) WITH (
     TYPE = 'SHARED',
-    STORAGE_ID = 's3_prod',
-    FLUSH_POLICY = 'rows:10000'
+    STORAGE_ID = 's3_prod'
 );
 ```
 
-## Creating User Tables with Storage ID
+### User table with explicit storage and flush policy
 
-### Using Default Storage (local)
 ```sql
--- Implicitly uses 'local' storage
-CREATE TABLE messages (
+CREATE TABLE app.messages (
     id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
     content TEXT,
-    created_at TIMESTAMP
-) WITH (TYPE = 'USER');
-```
-
-### Specifying Storage Explicitly
-```sql
--- Use specific storage
-CREATE TABLE messages (
-    id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
-    content TEXT,
-    created_at TIMESTAMP
-) WITH (TYPE = 'USER', STORAGE_ID = 's3_prod');
-```
-
-### With Flush Policy
-```sql
--- Storage with flush policy
-CREATE TABLE activity_log (
-    id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
-    action TEXT,
-    timestamp TIMESTAMP
+    created_at TIMESTAMP DEFAULT NOW()
 ) WITH (
     TYPE = 'USER',
-    STORAGE_ID = 's3_prod',
+    STORAGE_ID = 'local_archive',
     FLUSH_POLICY = 'rows:5000'
 );
 ```
 
-### Opting into per-user storage preferences
+### If `STORAGE_ID` is omitted
+
+If you omit `STORAGE_ID`, KalamDB resolves storage to `local` by default.
+
 ```sql
-CREATE TABLE geo_events (
-        event_id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
-        payload JSON,
-        created_at TIMESTAMP DEFAULT NOW()
+CREATE TABLE app.metrics (
+    id BIGINT PRIMARY KEY,
+    value DOUBLE
+) WITH (TYPE = 'SHARED');
+```
+
+## 3) Verify table storage metadata
+
+Use `system.schemas` to inspect table metadata:
+
+```sql
+SELECT namespace_id, table_name, table_type, storage_id, use_user_storage
+FROM system.schemas
+WHERE namespace_id = 'app' AND is_latest = true
+ORDER BY table_name;
+```
+
+## 4) Per-user storage routing (`USE_USER_STORAGE`)
+
+For `USER` tables, you can enable per-user storage routing metadata:
+
+```sql
+CREATE TABLE app.geo_events (
+    event_id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
+    payload JSON,
+    created_at TIMESTAMP DEFAULT NOW()
 ) WITH (
     TYPE = 'USER',
-    STORAGE_ID = 's3_us',
+    STORAGE_ID = 's3_prod',
     USE_USER_STORAGE = true
 );
-
--- Pin specific users to regional storage
-UPDATE system.users
-SET storage_mode = 'region', storage_id = 's3_eu'
-WHERE username = 'alice';
 ```
 
-The table keeps `storage_id = 's3_us'` as a fallback while users with `storage_mode = 'region'` point to their preferred storage. See `docs/how-to/user-table-storage.md` for the full workflow and current limitations (flush still uses the table storage until the resolver integration lands).
+Important rules:
+- `USE_USER_STORAGE` is valid only for `TYPE = 'USER'`.
+- `STORAGE_ID` is still the fallback storage for the table.
+- User preference fields exist in `system.users` (`storage_mode`, `storage_id`).
 
-## Verifying Storage Configuration
+## 5) Changing storage per user (current status)
 
-Check which storage a table is using:
+Today, SQL DML against `system.*` tables is blocked, and `ALTER USER` currently supports only:
+- `SET PASSWORD`
+- `SET ROLE`
+- `SET EMAIL`
+
+That means there is currently no public SQL command to change a user's `storage_mode` / `storage_id` directly.
+
+Current developer workflow:
+- Decide table-level routing with `STORAGE_ID` (+ optional `USE_USER_STORAGE`).
+- For user-level storage overrides, use internal/admin backend flows that update user records, not direct SQL updates.
+- Track progress and limitations in [docs/development/user-table-storage.md](../development/user-table-storage.md).
+
+## 6) Common failures
+
+### Unknown storage ID
 
 ```sql
-SELECT table_name, storage_id, table_type
-FROM system.tables
-WHERE namespace = 'your_namespace';
+CREATE TABLE app.bad_example (
+    id INT PRIMARY KEY
+) WITH (TYPE = 'SHARED', STORAGE_ID = 'does_not_exist');
 ```
 
-Expected output:
-```
-+-------------+------------+------------+
-| table_name  | storage_id | table_type |
-+-------------+------------+------------+
-| config      | s3_prod    | shared     |
-| messages    | s3_prod    | user       |
-| activity_log| local      | user       |
-+-------------+------------+------------+
+Expected error pattern:
+
+```text
+Storage 'does_not_exist' does not exist
 ```
 
-## Error Handling
-
-### Storage Not Found
-```sql
-CREATE TABLE config (key TEXT PRIMARY KEY) WITH (TYPE='SHARED', STORAGE_ID='nonexistent');
-```
-
-Error:
-```
-Not found: Storage 'nonexistent' does not exist. Create it first with CREATE STORAGE.
-```
-
-### Resolution
-First create the storage, then create the table:
+### Invalid `USE_USER_STORAGE` on non-user table
 
 ```sql
--- 1. Create the storage
-CREATE STORAGE my_storage
-    TYPE filesystem
-    NAME 'My Storage'
-    BASE_DIRECTORY '/path/to/storage'
-    SHARED_TABLES_TEMPLATE '{namespace}/shared/{tableName}/'
-    USER_TABLES_TEMPLATE '{namespace}/users/{tableName}/{userId}/';
-
--- 2. Create the table
-CREATE TABLE config (key TEXT PRIMARY KEY) WITH (TYPE='SHARED', STORAGE_ID='my_storage');
+CREATE TABLE app.bad_shared (
+    id INT PRIMARY KEY
+) WITH (TYPE = 'SHARED', USE_USER_STORAGE = true);
 ```
 
-## Best Practices
+Expected error pattern:
 
-1. **Always create default 'local' storage on system initialization**
-   - This ensures tables without explicit storage work correctly
-
-2. **Use meaningful storage names**
-   - `s3_prod`, `s3_dev`, `local_ssd`, etc.
-
-3. **Document storage usage in your application**
-   - Keep track of which tables use which storage
-
-4. **Validate storage exists before table creation**
-   - The system will error if storage doesn't exist
-
-5. **Consider storage costs and performance**
-   - S3: Cost-effective, slightly higher latency
-   - Local filesystem: Fast, limited by disk space
-
-## Migration Example
-
-Moving from default to explicit storage:
-
-```sql
--- Old way (implicit local)
-CREATE TABLE metrics (id BIGINT PRIMARY KEY, value DOUBLE) WITH (TYPE='SHARED');
-
--- New way (explicit)
-CREATE TABLE metrics (id BIGINT PRIMARY KEY, value DOUBLE) WITH (TYPE='SHARED', STORAGE_ID='local');
-
--- Or use a different storage
-CREATE TABLE metrics (id BIGINT PRIMARY KEY, value DOUBLE) WITH (TYPE='SHARED', STORAGE_ID='s3_prod');
+```text
+USE_USER_STORAGE is only supported for USER tables
 ```
-
-Both approaches work, but explicit is clearer and allows for easier future changes.

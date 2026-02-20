@@ -1,15 +1,25 @@
-// JWT configuration cache and trusted issuer parsing
+// JWT configuration cache, trusted issuer parsing, and OIDC validator registry.
 
+use crate::errors::error::{AuthError, AuthResult};
 use crate::providers::jwt_auth;
+use kalamdb_oidc::{OidcConfig, OidcValidator};
 use once_cell::sync::OnceCell;
+use std::collections::HashMap;
+use tokio::sync::RwLock;
 
-/// Cached JWT configuration for performance
+/// Cached JWT configuration for performance.
 ///
-/// Reading environment variables on every request is expensive.
-/// This lazy static caches the configuration at first use.
+/// Holds the HS256 shared secret for internal tokens, the list of trusted
+/// issuers, and a registry of per-issuer `OidcValidator` instances for
+/// external (RS256/ES256) token verification.
 pub struct JwtConfig {
     pub secret: String,
     pub trusted_issuers: Vec<String>,
+    pub auto_create_users_from_provider: bool,
+
+    /// Per-issuer OIDC validators (lazily populated on first request).
+    /// Key = issuer URL, Value = OidcValidator (owns its own JWKS cache).
+    oidc_validators: RwLock<HashMap<String, OidcValidator>>,
 }
 
 static JWT_CONFIG: OnceCell<JwtConfig> = OnceCell::new();
@@ -18,10 +28,16 @@ static JWT_CONFIG: OnceCell<JwtConfig> = OnceCell::new();
 ///
 /// This should be called once at startup after loading server.toml and applying
 /// environment overrides. If not called, defaults are used.
-pub fn init_jwt_config(secret: &str, trusted_issuers: &str) {
+pub fn init_jwt_config(
+    secret: &str,
+    trusted_issuers: &str,
+    auto_create_users_from_provider: bool,
+) {
     let config = JwtConfig {
         secret: secret.to_string(),
         trusted_issuers: parse_trusted_issuers(trusted_issuers),
+        auto_create_users_from_provider,
+        oidc_validators: RwLock::new(HashMap::new()),
     };
     let _ = JWT_CONFIG.set(config);
 }
@@ -32,19 +48,54 @@ pub fn get_jwt_config() -> &'static JwtConfig {
         trusted_issuers: parse_trusted_issuers(
             &kalamdb_configs::defaults::default_auth_jwt_trusted_issuers(),
         ),
+        auto_create_users_from_provider:
+            kalamdb_configs::defaults::default_auth_auto_create_users_from_provider(),
+        oidc_validators: RwLock::new(HashMap::new()),
     })
 }
 
+impl JwtConfig {
+    /// Get or create an `OidcValidator` for the given issuer.
+    ///
+    /// On first call for an issuer, performs OIDC Discovery to resolve the
+    /// `jwks_uri`, then creates and caches the validator. Subsequent calls
+    /// return the existing validator which maintains its own JWKS key cache.
+    pub async fn get_oidc_validator(&self, issuer: &str) -> AuthResult<OidcValidator> {
+        // Fast path: read lock
+        {
+            let validators = self.oidc_validators.read().await;
+            if let Some(validator) = validators.get(issuer) {
+                return Ok(validator.clone());
+            }
+        }
+
+        // Slow path: OIDC discovery + write lock
+        let config = OidcConfig::discover(issuer.to_string(), None)
+            .await
+            .map_err(|e| AuthError::MalformedAuthorization(format!(
+                "OIDC discovery failed for issuer '{}': {}",
+                issuer, e
+            )))?;
+
+        let validator = OidcValidator::new(config);
+
+        let mut validators = self.oidc_validators.write().await;
+        validators.entry(issuer.to_string()).or_insert_with(|| validator.clone());
+
+        Ok(validator)
+    }
+}
+
 fn parse_trusted_issuers(input: &str) -> Vec<String> {
-    let issuers: Vec<String> = input
+    let mut issuers: Vec<String> = input
         .split(',')
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .collect();
 
-    if issuers.is_empty() {
-        vec![jwt_auth::KALAMDB_ISSUER.to_string()]
-    } else {
-        issuers
+    // Always include the internal issuer so local accounts (admin etc.) keep working
+    if !issuers.contains(&jwt_auth::KALAMDB_ISSUER.to_string()) {
+        issuers.insert(0, jwt_auth::KALAMDB_ISSUER.to_string());
     }
+    issuers
 }

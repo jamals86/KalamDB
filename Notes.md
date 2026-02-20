@@ -1282,6 +1282,19 @@ Query OK, 0 rows affected
 187) subscription id is too long   "subscription_id": "u_ec6f250a2c094e2492ee61a83d0839d4-bc83de82331b416fb0f54be67759f55b-sub-359870fa18caeb70",
 come uop with a better and shorter one without causing issues in the future
 
+188) Instead of notify all followers remember where the user is connected to through the livequerymanager and forward the notification to that exact node only
+
+189) pub fn parse_basic_auth_header(auth_header: &str) -> AuthResult<(String, String)> should return UserId instead of String for the username
+also:     Credentials { username: String, password: String },
+async fn authenticate_credentials(
+    username: &str,
+
+
+190) when auto create user use the userid generation like the rest in the code
+
+191) /// TODO: This will hurt the sharding distribution of provider users, i prefer adding the provider code as a prefix to the username instead of suffixing it, but we can revisit this if it becomes an issue.
+pub(crate) fn compose_provider_username(issuer: &str, subject: &str) -> UserName
+
 
 
 

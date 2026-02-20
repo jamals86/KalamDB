@@ -282,6 +282,9 @@ allow_remote_setup = false
 # Multiple issuers: ["https://accounts.google.com", "https://github.com", "https://kalamdb.io"]
 jwt_trusted_issuers = ""
 
+# Auto-create local OAuth users from trusted provider subject/issuer when not found (default: false)
+auto_create_users_from_provider = false
+
 [shutdown]
 # Timeout settings for graceful shutdown
 

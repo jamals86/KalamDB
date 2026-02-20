@@ -28,7 +28,9 @@ fn smoke_queries_benchmark() {
         return;
     }
 
-    let namespace = "bench_ns";
+    // Use a unique namespace per test run to avoid interference from concurrent
+    // tests that may perform namespace-level DDL or schema-registry invalidation.
+    let namespace = generate_unique_table("bench_ns");
     let table = generate_unique_table("orders");
     let full = format!("{}.{}", namespace, table);
 

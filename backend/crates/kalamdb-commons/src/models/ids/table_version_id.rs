@@ -124,6 +124,24 @@ impl TableVersionId {
         ))
     }
 
+    /// Create prefix for scanning ALL entries (latest + versioned) of a table.
+    ///
+    /// Used by `delete_all_versions` and `list_versions` to find all storage
+    /// entries for a single table without scanning the entire column family.
+    pub fn table_scan_prefix(table_id: &TableId) -> Vec<u8> {
+        encode_prefix(&(
+            table_id.namespace_id().as_str(),
+            table_id.table_name().as_str(),
+        ))
+    }
+
+    /// Create prefix for scanning all tables in a namespace.
+    ///
+    /// Matches both latest pointers and versioned entries within the namespace.
+    pub fn namespace_scan_prefix(namespace_id: &crate::models::ids::NamespaceId) -> Vec<u8> {
+        encode_prefix(&(namespace_id.as_str(),))
+    }
+
     /// Format as bytes for storage
     ///
     /// - Latest: (namespace, table, VERSION_KIND_LATEST)

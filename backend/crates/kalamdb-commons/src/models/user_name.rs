@@ -4,6 +4,7 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+use crate::models::oauth_provider::OAuthProvider;
 use crate::StorageKey;
 
 /// Type-safe wrapper for usernames used as secondary index keys.
@@ -94,6 +95,56 @@ impl UserName {
     /// Root username helper
     pub fn root() -> UserName {
         UserName("root".to_string())
+    }
+
+    // ----- Provider username helpers -----
+
+    /// The prefix that marks a username as provider-originated.
+    const OIDC_PREFIX: &'static str = "oidc";
+
+    /// Construct a provider username: `oidc:{provider_prefix}:{subject}`.
+    ///
+    /// This is the canonical way to create a username for an externally
+    /// authenticated user.  The 3-char provider prefix comes from
+    /// [`OAuthProvider::prefix()`].
+    pub fn from_provider(provider: &OAuthProvider, subject: &str) -> Self {
+        let prefix = provider.prefix();
+        Self::new(format!("{}:{}:{}", Self::OIDC_PREFIX, prefix, subject))
+    }
+
+    /// Returns `true` if this username was created by [`from_provider`](Self::from_provider).
+    pub fn is_provider_user(&self) -> bool {
+        self.0.starts_with("oidc:")
+    }
+
+    /// Extract the [`OAuthProvider`] from a provider username.
+    ///
+    /// Returns `None` for non-provider usernames (those not starting with `oidc:`).
+    /// For well-known providers the exact variant is returned; for custom
+    /// providers [`OAuthProvider::Custom`] carries the 3-char prefix (the
+    /// original issuer URL is not recoverable from the prefix alone — use
+    /// [`AuthData`](kalamdb_system::AuthData) for that).
+    pub fn get_provider(&self) -> Option<OAuthProvider> {
+        if !self.is_provider_user() {
+            return None;
+        }
+        // Format: oidc:{prefix}:{subject}
+        let rest = &self.0[5..]; // skip "oidc:"
+        let sep = rest.find(':')?;
+        let prefix = &rest[..sep];
+        Some(OAuthProvider::from_prefix(prefix))
+    }
+
+    /// Extract the provider subject (external user ID) from a provider username.
+    ///
+    /// Returns `None` for non-provider usernames.
+    pub fn get_subject(&self) -> Option<&str> {
+        if !self.is_provider_user() {
+            return None;
+        }
+        let rest = &self.0[5..]; // skip "oidc:"
+        let sep = rest.find(':')?;
+        Some(&rest[sep + 1..])
     }
 }
 
@@ -220,5 +271,79 @@ mod tests {
         let name2 = UserName::new("alice");
         assert_ne!(name1, name2); // UserName is case-sensitive by default
         assert_eq!(name1.to_lowercase(), name2.to_lowercase()); // But can be compared case-insensitively
+    }
+
+    // -- Provider username tests -------------------------------------------
+
+    #[test]
+    fn test_from_provider_google() {
+        let name = UserName::from_provider(&OAuthProvider::Google, "google_sub_123");
+        assert_eq!(name.as_str(), "oidc:ggl:google_sub_123");
+    }
+
+    #[test]
+    fn test_from_provider_keycloak() {
+        let name = UserName::from_provider(&OAuthProvider::Keycloak, "kc-uuid-456");
+        assert_eq!(name.as_str(), "oidc:kcl:kc-uuid-456");
+    }
+
+    #[test]
+    fn test_from_provider_github() {
+        let name = UserName::from_provider(&OAuthProvider::GitHub, "12345");
+        assert_eq!(name.as_str(), "oidc:ghb:12345");
+    }
+
+    #[test]
+    fn test_is_provider_user() {
+        let provider_user = UserName::from_provider(&OAuthProvider::Google, "sub1");
+        assert!(provider_user.is_provider_user());
+
+        let regular_user = UserName::new("admin");
+        assert!(!regular_user.is_provider_user());
+
+        let root = UserName::root();
+        assert!(!root.is_provider_user());
+    }
+
+    #[test]
+    fn test_get_provider() {
+        let name = UserName::from_provider(&OAuthProvider::GitHub, "sub123");
+        assert_eq!(name.get_provider(), Some(OAuthProvider::GitHub));
+
+        let name = UserName::from_provider(&OAuthProvider::AzureAd, "az-user");
+        assert_eq!(name.get_provider(), Some(OAuthProvider::AzureAd));
+
+        let regular = UserName::new("alice");
+        assert_eq!(regular.get_provider(), None);
+    }
+
+    #[test]
+    fn test_get_subject() {
+        let name = UserName::from_provider(&OAuthProvider::Google, "google_sub_123");
+        assert_eq!(name.get_subject(), Some("google_sub_123"));
+
+        let regular = UserName::new("bob");
+        assert_eq!(regular.get_subject(), None);
+    }
+
+    #[test]
+    fn test_provider_roundtrip() {
+        let provider = OAuthProvider::Okta;
+        let subject = "okta-user-uuid";
+        let name = UserName::from_provider(&provider, subject);
+
+        assert_eq!(name.get_provider(), Some(provider));
+        assert_eq!(name.get_subject(), Some(subject));
+    }
+
+    #[test]
+    fn test_custom_provider_username() {
+        let provider = OAuthProvider::Custom("https://my-idp.corp".to_string());
+        let name = UserName::from_provider(&provider, "custom-sub");
+        assert!(name.is_provider_user());
+        assert_eq!(name.get_subject(), Some("custom-sub"));
+        // Custom round-trip: get_provider returns Custom with the hash prefix, not the original URL
+        let got = name.get_provider().unwrap();
+        assert!(matches!(got, OAuthProvider::Custom(_)));
     }
 }

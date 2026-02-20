@@ -9,7 +9,8 @@
 
 use super::test_support::TestServer;
 use kalam_link::models::ResponseStatus;
-use kalamdb_commons::{models::ConnectionInfo, AuthType, Role};
+use kalamdb_commons::models::ConnectionInfo;
+use kalamdb_commons::{AuthType, OAuthProvider, Role};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static UNIQUE_USER_COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -55,10 +56,9 @@ async fn test_oauth_google_success() {
 
     // Verify auth_data contains provider and subject
     assert!(user.auth_data.is_some(), "auth_data should be set");
-    let auth_data: serde_json::Value =
-        serde_json::from_str(user.auth_data.as_ref().unwrap()).unwrap();
-    assert_eq!(auth_data["provider"], "google");
-    assert_eq!(auth_data["subject"], "google_123456");
+    let auth_data = user.auth_data.as_ref().unwrap();
+    assert_eq!(auth_data.provider_type, OAuthProvider::Google);
+    assert_eq!(auth_data.subject, "google_123456");
 }
 
 #[tokio::test]
@@ -138,17 +138,15 @@ async fn test_oauth_subject_matching() {
     let user1 = users_provider.get_user_by_username(user1_name.as_str()).unwrap().unwrap();
     let user2 = users_provider.get_user_by_username(user2_name.as_str()).unwrap().unwrap();
 
-    let auth_data1: serde_json::Value =
-        serde_json::from_str(user1.auth_data.as_ref().unwrap()).unwrap();
-    let auth_data2: serde_json::Value =
-        serde_json::from_str(user2.auth_data.as_ref().unwrap()).unwrap();
+    let auth_data1 = user1.auth_data.as_ref().unwrap();
+    let auth_data2 = user2.auth_data.as_ref().unwrap();
 
-    assert_eq!(auth_data1["subject"], "google_111");
-    assert_eq!(auth_data2["subject"], "google_222");
+    assert_eq!(auth_data1.subject, "google_111");
+    assert_eq!(auth_data2.subject, "google_222");
 
     // Both should have same provider
-    assert_eq!(auth_data1["provider"], "google");
-    assert_eq!(auth_data2["provider"], "google");
+    assert_eq!(auth_data1.provider_type, OAuthProvider::Google);
+    assert_eq!(auth_data2.provider_type, OAuthProvider::Google);
 }
 
 #[tokio::test]
@@ -230,10 +228,9 @@ async fn test_oauth_azure_provider() {
     // Verify user was created with Azure provider
     let users_provider = server.app_context.system_tables().users();
     let user = users_provider.get_user_by_username(oauth_username.as_str()).unwrap().unwrap();
-    let auth_data: serde_json::Value =
-        serde_json::from_str(user.auth_data.as_ref().unwrap()).unwrap();
+    let auth_data = user.auth_data.as_ref().unwrap();
 
-    assert_eq!(auth_data["provider"], "azure");
-    assert_eq!(auth_data["subject"], "azure_tenant_user");
+    assert_eq!(auth_data.provider_type, OAuthProvider::Custom("azure".to_string()));
+    assert_eq!(auth_data.subject, "azure_tenant_user");
     assert_eq!(user.role, Role::Service);
 }

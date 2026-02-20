@@ -153,3 +153,4 @@ kalamdb-commons = { workspace = true }
 kalamdb-configs = { workspace = true }
 kalamdb-server = { workspace = true }
 object_store = { workspace = true }
+jsonwebtoken = { workspace = true }
