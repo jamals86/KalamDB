@@ -158,11 +158,16 @@ impl QueryParser {
     }
 
     /// Resolve placeholders like CURRENT_USER() in WHERE clause
+    ///
+    /// SECURITY: Escapes single quotes in user_id to prevent SQL injection.
+    /// A malicious user_id like `foo' OR 1=1 --` would be escaped to
+    /// `foo'' OR 1=1 --`, producing a safe string literal.
     pub fn resolve_where_clause_placeholders(
         where_clause: &str,
         user_id: &kalamdb_commons::models::UserId,
     ) -> String {
-        where_clause.replace("CURRENT_USER()", &format!("'{}'", user_id))
+        let escaped_user_id = user_id.as_str().replace('\'', "''");
+        where_clause.replace("CURRENT_USER()", &format!("'{}'", escaped_user_id))
     }
 
     /// Extract projection columns from a parsed Query AST

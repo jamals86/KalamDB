@@ -105,9 +105,20 @@ impl SchemaRegistry {
         log::debug!("SchemaRegistry initialized: loading {} existing tables...", all_defs.len());
 
         let mut loaded_count = 0;
+        let mut skipped_count = 0;
         let mut failed_count = 0;
 
         for def in all_defs {
+            let table_id =
+                TableId::from_strings(def.namespace_id.as_str(), def.table_name.as_str());
+
+            // Skip tables that already have a cached provider — re-creating them would
+            // destroy in-memory state (e.g., MemoryStreamLogStore data for stream tables).
+            if self.table_cache.contains_key(&table_id) {
+                skipped_count += 1;
+                continue;
+            }
+
             let table_name = def.table_name.clone();
             match self.put(def) {
                 Ok(_) => loaded_count += 1,
@@ -119,8 +130,9 @@ impl SchemaRegistry {
         }
 
         log::info!(
-            "SchemaRegistry initialized. Loaded: {}, Failed: {}",
+            "SchemaRegistry initialized. Loaded: {}, Skipped (cached): {}, Failed: {}",
             loaded_count,
+            skipped_count,
             failed_count
         );
         Ok(())

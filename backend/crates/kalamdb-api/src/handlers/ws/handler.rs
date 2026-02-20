@@ -329,6 +329,7 @@ async fn handle_text_message(
                 session,
                 registry,
                 app_context,
+                rate_limiter,
                 user_repo,
             )
             .await

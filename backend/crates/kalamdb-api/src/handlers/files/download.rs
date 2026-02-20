@@ -94,9 +94,11 @@ pub async fn download_file(
         || subfolder.contains("..")
         || subfolder.contains('/')
         || subfolder.contains('\\')
+        || subfolder.contains('\0')
         || file_id.contains("..")
         || file_id.contains('/')
         || file_id.contains('\\')
+        || file_id.contains('\0')
     {
         return HttpResponse::BadRequest().json(SqlResponse::error(
             ErrorCode::InvalidInput,
@@ -117,9 +119,15 @@ pub async fn download_file(
             // Guess content type from file extension in file_id
             let content_type = guess_content_type(&file_id);
 
+            // SECURITY: Sanitize file_id for Content-Disposition header to prevent
+            // HTTP response header injection (CRLF injection) via crafted filenames.
+            let safe_file_id: String = file_id
+                .chars()
+                .filter(|c| *c != '"' && *c != '\r' && *c != '\n' && *c != '\0')
+                .collect();
             HttpResponse::Ok()
                 .content_type(content_type)
-                .append_header(("Content-Disposition", format!("inline; filename=\"{}\"", file_id)))
+                .append_header(("Content-Disposition", format!("inline; filename=\"{}\"", safe_file_id)))
                 .body(data)
         },
         Err(e) => {

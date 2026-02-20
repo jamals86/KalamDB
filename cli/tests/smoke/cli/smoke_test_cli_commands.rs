@@ -266,7 +266,7 @@ fn smoke_cli_system_tables() {
 
     // Test system.users
     let result =
-        execute_sql_as_root_via_client("SELECT user_id, username, role FROM system.users LIMIT 5");
+        execute_sql_as_root_via_client("SELECT user_id, username, role FROM system.users WHERE username = 'root' LIMIT 1");
     assert!(result.is_ok(), "system.users should be queryable: {:?}", result);
     let output = result.unwrap();
     assert!(output.contains("root"), "Should see root user: {}", output);

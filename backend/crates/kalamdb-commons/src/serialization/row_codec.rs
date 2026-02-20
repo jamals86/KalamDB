@@ -263,8 +263,10 @@ fn encode_scalar_payload<'a>(
     builder: &mut flatbuffers::FlatBufferBuilder<'a>,
     value: &ScalarValue,
 ) -> Result<flatbuffers::WIPOffset<fb_row::ScalarValuePayload<'a>>> {
-    let mut args = fb_row::ScalarValuePayloadArgs::default();
-    args.tag = to_scalar_tag(value);
+    let mut args = fb_row::ScalarValuePayloadArgs {
+        tag: to_scalar_tag(value),
+        ..Default::default()
+    };
 
     match value {
         ScalarValue::Null => {

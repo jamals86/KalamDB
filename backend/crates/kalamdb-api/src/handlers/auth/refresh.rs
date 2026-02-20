@@ -67,6 +67,20 @@ pub async fn refresh_handler(
         },
     };
 
+    // SECURITY: Verify the claimed role in the token matches the user's actual
+    // DB role. This prevents a stale token (e.g., after a role downgrade) from
+    // being used to mint new tokens with the old elevated role.
+    if let Some(ref claimed_role) = claims.role {
+        if *claimed_role != user.role {
+            log::warn!(
+                "Refresh token role mismatch: claimed={:?}, actual={:?} for user={}",
+                claimed_role, user.role, user.username
+            );
+            return HttpResponse::Unauthorized()
+                .json(AuthErrorResponse::new("unauthorized", "Token role does not match user role"));
+        }
+    }
+
     // Generate new access token
     let (new_token, _new_claims) = match create_and_sign_token(
         &user.user_id,

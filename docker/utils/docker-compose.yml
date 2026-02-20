@@ -37,15 +37,22 @@ services:
 
   keycloak:
     image: quay.io/keycloak/keycloak:latest
-    command: ["start-dev", "--import-realm"]
+    entrypoint: ["/bin/bash", "/entrypoint.sh"]
     environment:
+      # Keycloak < 26
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: admin
+      # Keycloak >= 26
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME_STRICT: "false"
     ports:
       - "8081:8080"
     volumes:
       - ./keycloak/realm-import:/opt/keycloak/data/import:ro
       - ./keycloak/data:/opt/keycloak/data
+      - ./keycloak/entrypoint.sh:/entrypoint.sh:ro
 
   # webdav:
   #   image: bytemark/webdav:latest

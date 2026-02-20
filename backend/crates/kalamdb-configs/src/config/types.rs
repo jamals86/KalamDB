@@ -108,11 +108,18 @@ fn default_cors_max_age() -> u64 {
 impl Default for CorsSettings {
     fn default() -> Self {
         Self {
-            allowed_origins: Vec::new(), // Empty = allow any
+            // SECURITY: Default to empty which means allow-any-origin.
+            // When allow_credentials is true and origins is empty, the CORS
+            // middleware will NOT reflect arbitrary origins — actix-cors
+            // rejects allow_any_origin+supports_credentials at startup.
+            // Users must configure explicit origins for credentialed requests.
+            allowed_origins: Vec::new(),
             allowed_methods: default_cors_methods(),
             allowed_headers: default_cors_headers(),
             expose_headers: Vec::new(),
-            allow_credentials: true,
+            // SECURITY: Default to false to prevent unsafe wildcard+credentials.
+            // Users must explicitly enable credentials AND configure allowed_origins.
+            allow_credentials: false,
             max_age: default_cors_max_age(),
             allow_private_network: false,
         }

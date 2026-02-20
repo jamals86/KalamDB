@@ -86,6 +86,16 @@ impl UserId {
         Ok(())
     }
 
+    /// Generates a new unique UserId using NanoID (21 URL-safe characters).
+    ///
+    /// Uses the default NanoID alphabet (`A-Za-z0-9_-`) which is safe for
+    /// storage paths, URLs, and database keys.
+    #[inline]
+    #[cfg(feature = "serde")]
+    pub fn generate() -> Self {
+        Self(nanoid::nanoid!())
+    }
+
     /// Creates a UserId without validation (for internal use only).
     ///
     /// # Safety
