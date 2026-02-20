@@ -49,13 +49,23 @@ pub(super) async fn authenticate_bearer(
 
         let claims = validate_bearer_token(token, &alg, &issuer, config).await?;
 
-        if let Some(ref tt) = claims.token_type {
-            if *tt == jwt_auth::TokenType::Refresh {
+        // SECURITY: Only accept tokens explicitly marked as Access.
+        // Tokens with missing token_type (legacy or hand-crafted) are rejected
+        // to prevent refresh tokens or forged tokens from being used as access tokens.
+        match claims.token_type {
+            Some(jwt_auth::TokenType::Access) => { /* OK – expected type */ },
+            Some(jwt_auth::TokenType::Refresh) => {
                 log::warn!("Refresh token used as access token for user={}", claims.sub);
                 return Err(AuthError::InvalidCredentials(
                     "Refresh tokens cannot be used for API authentication".to_string(),
                 ));
-            }
+            },
+            None => {
+                log::warn!("Token missing token_type claim for user={}", claims.sub);
+                return Err(AuthError::InvalidCredentials(
+                    "Token missing required token_type claim".to_string(),
+                ));
+            },
         }
 
         // ── Internal vs external user resolution ─────────────────────────

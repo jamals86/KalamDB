@@ -230,7 +230,7 @@ async fn test_oauth_azure_provider() {
     let user = users_provider.get_user_by_username(oauth_username.as_str()).unwrap().unwrap();
     let auth_data = user.auth_data.as_ref().unwrap();
 
-    assert_eq!(auth_data.provider_type, OAuthProvider::Custom("azure".to_string()));
+    assert_eq!(auth_data.provider_type, OAuthProvider::AzureAd);
     assert_eq!(auth_data.subject, "azure_tenant_user");
     assert_eq!(user.role, Role::Service);
 }

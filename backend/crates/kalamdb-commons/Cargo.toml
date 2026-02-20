@@ -34,6 +34,7 @@ chrono = { workspace = true, optional = true }
 arrow = { workspace = true, optional = true }
 openraft = { workspace = true, optional = true }
 uuid = { workspace = true, optional = true }
+nanoid = { workspace = true, optional = true }
 log = { workspace = true, optional = true }
 tracing = { workspace = true }
 
@@ -49,6 +50,7 @@ serde = [
 	"dep:chrono",
 	"dep:openraft",
 	"dep:uuid",
+	"dep:nanoid",
 	"dep:log",
 ]
 # Full feature set including datafusion (for server use)

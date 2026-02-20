@@ -1,6 +1,7 @@
 //! Readiness probe handler
 
-use actix_web::{web, HttpResponse, Responder};
+use actix_web::{web, HttpRequest, HttpResponse, Responder};
+use kalamdb_auth::extract_client_ip_secure;
 use kalamdb_core::app_context::AppContext;
 use std::sync::Arc;
 
@@ -12,8 +13,17 @@ use super::models::HealthResponse;
 /// 1. Database connection is active (implicit - if we reach here, RocksDB is working)
 /// 2. Raft cluster is healthy (if in cluster mode)
 ///
-/// No authentication required - designed for load balancer health checks.
-pub async fn readyz_handler(app_context: web::Data<Arc<AppContext>>) -> impl Responder {
+/// SECURITY: Localhost-only to prevent infrastructure disclosure to remote clients.
+pub async fn readyz_handler(
+    req: HttpRequest,
+    app_context: web::Data<Arc<AppContext>>,
+) -> impl Responder {
+    let connection_info = extract_client_ip_secure(&req);
+    if !connection_info.is_localhost() {
+        return HttpResponse::Forbidden().json(serde_json::json!({
+            "error": "Access denied. Readiness endpoint is localhost-only."
+        }));
+    }
     // For now, assume healthy if storage backend is accessible
     // The storage backend being available means RocksDB is working
     let db_healthy = true; // If we reach this point, storage is accessible

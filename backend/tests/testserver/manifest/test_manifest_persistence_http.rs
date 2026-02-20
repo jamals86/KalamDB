@@ -70,10 +70,7 @@ async fn test_user_table_manifest_persistence_over_http() -> anyhow::Result<()> 
             .into_iter()
             .filter(|p| {
                 let s = p.to_string_lossy();
-                // Check for namespace, table, and user directory (u_<hash>)
-                s.contains(&ns)
-                    && s.contains(table)
-                    && p.components().any(|c| c.as_os_str().to_string_lossy().starts_with("u_"))
+                s.contains(&ns) && s.contains(table)
             })
             .collect::<Vec<_>>();
         assert!(
@@ -93,10 +90,7 @@ async fn test_user_table_manifest_persistence_over_http() -> anyhow::Result<()> 
             let candidates = find_manifest_files(&storage_root);
             if let Some(path) = candidates.iter().find(|p| {
                 let s = p.to_string_lossy();
-                // Check for namespace, table, and user directory (u_<hash>)
-                s.contains(&ns)
-                    && s.contains(table)
-                    && p.components().any(|c| c.as_os_str().to_string_lossy().starts_with("u_"))
+                s.contains(&ns) && s.contains(table)
             }) {
                 break path.to_path_buf();
             }
@@ -169,10 +163,7 @@ async fn test_user_table_manifest_persistence_over_http() -> anyhow::Result<()> 
             let candidates = find_manifest_files(&storage_root);
             if let Some(path) = candidates.iter().find(|p| {
                 let s = p.to_string_lossy();
-                // Check for namespace, table, and user directory (u_<hash>)
-                s.contains(&ns)
-                    && s.contains(table)
-                    && p.components().any(|c| c.as_os_str().to_string_lossy().starts_with("u_"))
+                s.contains(&ns) && s.contains(table)
             }) {
                 break path.to_path_buf();
             }

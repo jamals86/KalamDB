@@ -19,6 +19,7 @@ use log::error;
 use std::sync::Arc;
 
 use super::{send_auth_error, send_json};
+use crate::limiter::RateLimiter;
 
 /// Handle authentication message with any supported credentials type
 ///
@@ -35,8 +36,16 @@ pub async fn handle_authenticate(
     session: &mut Session,
     registry: &Arc<ConnectionsManager>,
     app_context: &Arc<AppContext>,
+    rate_limiter: &Arc<RateLimiter>,
     user_repo: &Arc<dyn UserRepository>,
 ) -> Result<(), String> {
+    // SECURITY: Rate limit auth attempts per IP to prevent brute-force via WebSocket.
+    // This mirrors the rate limiting applied to the HTTP login endpoint.
+    if !rate_limiter.check_auth_rate(client_ip) {
+        let _ = send_auth_error(session.clone(), "Too many authentication attempts. Please retry shortly.").await;
+        return Err("Auth rate limit exceeded".to_string());
+    }
+
     // Only accept JWT tokens for WebSocket authentication
     let auth_request = match credentials {
         WsAuthCredentials::Jwt { token } => AuthRequest::Jwt { token },

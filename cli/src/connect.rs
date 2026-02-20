@@ -292,6 +292,21 @@ pub async fn create_session(
         instance: &str,
         credential_store: &mut FileCredentialStore,
     ) -> Result<(AuthProvider, Option<String>, bool)> {
+        // Before prompting for credentials, check if the server needs initial setup.
+        // This avoids showing "Username:" when the server has never been configured.
+        if let Ok(temp_client) = KalamLinkClient::builder()
+            .base_url(server_url)
+            .timeout(Duration::from_secs(10))
+            .build()
+        {
+            if let Ok(status) = temp_client.check_setup_status().await {
+                if status.needs_setup {
+                    return setup_and_login(server_url, verbose, instance, credential_store, true)
+                        .await;
+                }
+            }
+        }
+
         println!();
         println!("No authentication credentials found.");
         println!("Please enter your credentials to connect:");

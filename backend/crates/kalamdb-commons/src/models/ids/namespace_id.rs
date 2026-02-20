@@ -126,8 +126,8 @@ impl NamespaceId {
 
     /// Create default namespace ID
     #[inline]
-    pub fn default() -> Self {
-        Self("default".to_string())
+    pub fn default_ns() -> Self {
+        Self::default()
     }
 
     /// Check if this is a system namespace (internal DataFusion/KalamDB namespaces).
@@ -172,6 +172,12 @@ impl NamespaceId {
 impl fmt::Display for NamespaceId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
+    }
+}
+
+impl Default for NamespaceId {
+    fn default() -> Self {
+        Self("default".to_string())
     }
 }
 

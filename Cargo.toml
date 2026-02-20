@@ -82,6 +82,9 @@ actix-multipart = "0.7"
 # UUID generation
 uuid = { version = "1.21.0", features = ["v4", "v7", "serde"] }
 
+# NanoID generation (21-char URL-safe unique IDs)
+nanoid = "0.4.0"
+
 # ULID generation
 ulid = "1.1"
 

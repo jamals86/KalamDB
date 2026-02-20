@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 /// assert_eq!(op.as_str(), "insert");
 /// assert_eq!(op.to_string(), "insert");
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(
     feature = "serde",
     derive(Serialize, Deserialize),
@@ -27,6 +27,7 @@ use serde::{Deserialize, Serialize};
 )]
 pub enum TopicOp {
     /// Captures INSERT operations on source tables
+    #[default]
     Insert,
     /// Captures UPDATE operations on source tables
     Update,
@@ -52,12 +53,6 @@ impl TopicOp {
             "delete" => Some(TopicOp::Delete),
             _ => None,
         }
-    }
-}
-
-impl Default for TopicOp {
-    fn default() -> Self {
-        TopicOp::Insert
     }
 }
 

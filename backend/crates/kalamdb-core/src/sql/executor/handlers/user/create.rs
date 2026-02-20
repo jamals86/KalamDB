@@ -103,7 +103,7 @@ impl TypedStatementHandler<CreateUserStatement> for CreateUserHandler {
 
         let now = chrono::Utc::now().timestamp_millis();
         let user = User {
-            user_id: UserId::new(format!("u_{}", uuid::Uuid::new_v4().simple())),
+            user_id: UserId::generate(),
             username: statement.username.clone().into(),
             password_hash,
             role: statement.role,
