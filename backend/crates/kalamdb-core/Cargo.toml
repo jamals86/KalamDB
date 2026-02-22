@@ -23,6 +23,7 @@ kalamdb-auth = { path = "../kalamdb-auth" }
 kalamdb-system = { path = "../kalamdb-system" }
 kalamdb-tables = { path = "../kalamdb-tables" }
 kalamdb-publisher = { path = "../kalamdb-publisher" }
+kalamdb-views = { path = "../kalamdb-views" }
 
 # Apache Arrow ecosystem
 arrow = { workspace = true }
@@ -45,7 +46,6 @@ tokio-util = { workspace = true }
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }
-bytes = { workspace = true }
 
 # System
 hostname = { workspace = true }
@@ -78,9 +78,7 @@ once_cell = { workspace = true }
 # Regular expressions
 regex = { workspace = true }
 
-# Binary encoding helpers
-base64 = { workspace = true }
-hex = { workspace = true }
+
 
 [dev-dependencies]
 # Testing utilities

@@ -137,8 +137,12 @@ pub fn append_version_sync_with_deps(
             Ok(seq_id)
         },
         TableType::System | TableType::Stream => {
-            // Already handled above, unreachable
-            unreachable!()
+            // The early validation above returns Err for these types;
+            // this arm is a defensive fallback in case the guard is ever bypassed.
+            Err(KalamDbError::InvalidOperation(format!(
+                "{:?} tables cannot be modified via append_version()",
+                table_type
+            )))
         },
     }
 }

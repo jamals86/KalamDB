@@ -426,6 +426,8 @@ impl TopicPublisherService {
                     let key = if key_bytes.is_empty() {
                         None
                     } else {
+                        // SAFETY: key_bytes comes from String::into_bytes() via extract_key(),
+                        // which always produces valid UTF-8.
                         Some(unsafe { String::from_utf8_unchecked(key_bytes) })
                     };
 

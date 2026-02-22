@@ -76,9 +76,11 @@ import { parseRows } from './helpers/query_helpers.js';
 export class KalamDBClient {
   private wasmClient: WasmClient | null = null;
   private initialized = false;
+  private connecting: Promise<void> | null = null;
   private url: string;
   private auth: AuthCredentials;
   private wasmUrl?: string | BufferSource;
+  private autoConnect: boolean;
 
   /** Track active subscriptions for management */
   private subscriptions: Map<string, SubscriptionInfo> = new Map();
@@ -106,6 +108,7 @@ export class KalamDBClient {
     this.url = options.url;
     this.auth = options.auth;
     this.wasmUrl = options.wasmUrl;
+    this.autoConnect = options.autoConnect ?? true;
   }
 
   /* ---------------------------------------------------------------- */
@@ -163,11 +166,34 @@ export class KalamDBClient {
   /**
    * Connect to KalamDB server via WebSocket.
    * Also initialises WASM if not already done.
+   *
+   * When using Basic auth, `login()` is called automatically to exchange
+   * credentials for a JWT before opening the WebSocket.
+   *
+   * This is called lazily by `subscribe()` / `subscribeWithSql()` unless
+   * `autoConnect` was set to `false`.
    */
   async connect(): Promise<void> {
-    await this.initialize();
-    if (!this.wasmClient) throw new Error('WASM client not initialized');
-    await this.wasmClient.connect();
+    // Deduplicate concurrent connect() calls — only one handshake at a time.
+    if (this.connecting) return this.connecting;
+
+    this.connecting = (async () => {
+      try {
+        await this.initialize();
+        if (!this.wasmClient) throw new Error('WASM client not initialized');
+
+        // Auto-login: exchange Basic credentials for JWT before WebSocket connect
+        if (this.auth.type === 'basic') {
+          await this.login();
+        }
+
+        await this.wasmClient.connect();
+      } finally {
+        this.connecting = null;
+      }
+    })();
+
+    return this.connecting;
   }
 
   /** Disconnect and clean up all subscriptions */
@@ -176,6 +202,36 @@ export class KalamDBClient {
       await this.wasmClient.disconnect();
     }
     this.subscriptions.clear();
+  }
+
+  /**
+   * Async dispose — enables `await using client = createClient(...)`.
+   *
+   * Automatically disconnects and cleans up all subscriptions when the
+   * variable goes out of scope. Requires Node 20+ or a modern browser
+   * with Explicit Resource Management support.
+   *
+   * @example
+   * ```typescript
+   * async function demo() {
+   *   await using client = createClient({ url, auth });
+   *   await client.connect();
+   *   // ... use client ...
+   * } // client.disconnect() called automatically here
+   * ```
+   */
+  async [Symbol.asyncDispose](): Promise<void> {
+    await this.disconnect();
+  }
+
+  /**
+   * Sync dispose — enables `using client = createClient(...)`.
+   *
+   * Fires disconnect as fire-and-forget (best-effort) since `using`
+   * does not await. Prefer `await using` for reliable cleanup.
+   */
+  [Symbol.dispose](): void {
+    void this.disconnect();
   }
 
   /** Whether the WebSocket connection is active */
@@ -563,7 +619,11 @@ export class KalamDBClient {
     callback: SubscriptionCallback,
     options?: SubscriptionOptions,
   ): Promise<Unsubscribe> {
-    await this.initialize();
+    if (this.autoConnect && !this.isConnected()) {
+      await this.connect();
+    } else {
+      await this.initialize();
+    }
     if (!this.wasmClient) throw new Error('WASM client not initialized');
 
     const wrappedCallback = (eventJson: string) => {

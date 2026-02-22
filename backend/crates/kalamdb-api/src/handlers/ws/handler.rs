@@ -208,16 +208,16 @@ async fn handle_websocket(
             msg = msg_stream.next() => {
                 match msg {
                     Some(Ok(Message::Ping(bytes))) => {
-                        connection_state.write().update_heartbeat();
+                        connection_state.read().update_heartbeat();
                         if session.pong(&bytes).await.is_err() {
                             break;
                         }
                     }
                     Some(Ok(Message::Pong(_))) => {
-                        connection_state.write().update_heartbeat();
+                        connection_state.read().update_heartbeat();
                     }
                     Some(Ok(Message::Text(text))) => {
-                        connection_state.write().update_heartbeat();
+                        connection_state.read().update_heartbeat();
 
                         // Security: Check message size limit
                         if text.len() > max_message_size {
@@ -259,7 +259,7 @@ async fn handle_websocket(
                         let _ = send_error(&mut session, "protocol", WsErrorCode::UnsupportedData, "Binary not supported").await;
                     }
                     Some(Ok(Message::Close(reason))) => {
-                        info!("Client requested close: {:?}", reason);
+                        debug!("Client requested close: {:?}", reason);
                         let _ = session.close(reason).await;
                         break;
                     }
@@ -282,10 +282,9 @@ async fn handle_websocket(
             notification = notification_rx.recv() => {
                 match notification {
                     Some(notif) => {
-                        if let Ok(json) = serde_json::to_string(notif.as_ref()) {
-                            if session.text(json).await.is_err() {
-                                break;
-                            }
+                        // Use send_json for automatic compression of large payloads
+                        if send_json(&mut session, notif.as_ref()).await.is_err() {
+                            break;
                         }
                     }
                     None => {

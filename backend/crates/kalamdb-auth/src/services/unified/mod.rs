@@ -27,11 +27,33 @@ static LOGIN_TRACKER: Lazy<LoginTracker> = Lazy::new(LoginTracker::new);
 ///
 /// This initializes JWT validation configuration plus provider-driven
 /// auto-provision behavior used in bearer authentication.
-pub fn init_auth_config(auth: &kalamdb_configs::AuthSettings) {
+pub fn init_auth_config(
+    auth: &kalamdb_configs::AuthSettings,
+    oauth: &kalamdb_configs::OAuthSettings,
+) {
+    let mut issuer_audiences = std::collections::HashMap::new();
+    
+    if let Some(client_id) = &oauth.providers.google.client_id {
+        if !oauth.providers.google.issuer.is_empty() {
+            issuer_audiences.insert(oauth.providers.google.issuer.clone(), client_id.clone());
+        }
+    }
+    if let Some(client_id) = &oauth.providers.github.client_id {
+        if !oauth.providers.github.issuer.is_empty() {
+            issuer_audiences.insert(oauth.providers.github.issuer.clone(), client_id.clone());
+        }
+    }
+    if let Some(client_id) = &oauth.providers.azure.client_id {
+        if !oauth.providers.azure.issuer.is_empty() {
+            issuer_audiences.insert(oauth.providers.azure.issuer.clone(), client_id.clone());
+        }
+    }
+
     jwt_config::init_jwt_config(
         &auth.jwt_secret,
         &auth.jwt_trusted_issuers,
         auth.auto_create_users_from_provider,
+        issuer_audiences,
     );
 }
 

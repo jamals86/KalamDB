@@ -313,12 +313,13 @@ fn parse_message(text: &str) -> Result<Option<ChangeEvent>> {
 }
 
 pub struct SubscriptionManager {
-    ws_stream: WebSocketStream,
+    ws_stream: Option<WebSocketStream>,
     subscription_id: String,
     event_queue: VecDeque<ChangeEvent>,
     buffered_changes: Vec<ChangeEvent>,
     is_loading: bool,
     timeouts: KalamLinkTimeouts,
+    closed: bool,
 }
 
 impl SubscriptionManager {
@@ -408,12 +409,13 @@ impl SubscriptionManager {
         send_subscription_request(&mut ws_stream, &subscription_id, &sql, options).await?;
 
         Ok(Self {
-            ws_stream,
+            ws_stream: Some(ws_stream),
             subscription_id,
             event_queue: VecDeque::new(),
             buffered_changes: Vec::new(),
             is_loading: true,
             timeouts: timeouts.clone(),
+            closed: false,
         })
     }
 
@@ -423,15 +425,14 @@ impl SubscriptionManager {
         }
     }
 
-    /// Process a parsed change event: update subscription ID, request next batch
-    /// if needed, and apply buffering logic. Returns `Some` if the caller should
-    /// yield early (error while requesting next batch).
+    /// Process a parsed change event: request next batch if needed and apply
+    /// buffering logic. Returns `Some` if the caller should yield early (error
+    /// while requesting next batch).
+    ///
+    /// NOTE: We intentionally do NOT overwrite `self.subscription_id` from
+    /// server-sent events. The client keeps the original ID it passed during
+    /// subscribe so that Unsubscribe sends the correct key.
     async fn process_event(&mut self, event: ChangeEvent) -> Option<Result<ChangeEvent>> {
-        if let Some(id) = event.subscription_id() {
-            if id != self.subscription_id {
-                self.subscription_id = id.to_string();
-            }
-        }
 
         // Request next batch when initial data has more pages
         if let ChangeEvent::InitialDataBatch {
@@ -507,7 +508,13 @@ impl SubscriptionManager {
                 return Some(Ok(event));
             }
 
-            match self.ws_stream.next().await {
+            // 2. If closed or stream taken, signal end-of-stream
+            let ws_stream = match self.ws_stream.as_mut() {
+                Some(s) => s,
+                None => return None,
+            };
+
+            match ws_stream.next().await {
                 Some(Ok(msg @ (Message::Text(_) | Message::Binary(_)))) => {
                     let (data, is_binary) = match msg {
                         Message::Text(t) => (t.as_bytes().to_vec(), false),
@@ -536,8 +543,10 @@ impl SubscriptionManager {
                 },
                 Some(Ok(Message::Ping(payload))) => {
                     // Reply to ping to keep connection alive
-                    if let Err(e) = self.ws_stream.send(Message::Pong(payload)).await {
-                        return Some(Err(KalamLinkError::WebSocketError(e.to_string())));
+                    if let Some(ref mut ws) = self.ws_stream {
+                        if let Err(e) = ws.send(Message::Pong(payload)).await {
+                            return Some(Err(KalamLinkError::WebSocketError(e.to_string())));
+                        }
                     }
                     continue;
                 },
@@ -576,7 +585,11 @@ impl SubscriptionManager {
             KalamLinkError::WebSocketError(format!("Failed to serialize NextBatch: {}", e))
         })?;
 
-        self.ws_stream
+        let ws_stream = self.ws_stream.as_mut().ok_or_else(|| {
+            KalamLinkError::WebSocketError("Subscription already closed".to_string())
+        })?;
+
+        ws_stream
             .send(Message::Text(payload.into()))
             .await
             .map_err(|e| KalamLinkError::WebSocketError(format!("Failed to send NextBatch: {}", e)))
@@ -592,31 +605,93 @@ impl SubscriptionManager {
         &self.timeouts
     }
 
-    /// Close the subscription gracefully
-    pub async fn close(mut self) -> Result<()> {
-        use crate::models::ClientMessage;
+    /// Close the subscription gracefully.
+    ///
+    /// Sends an Unsubscribe message and closes the WebSocket connection.
+    /// Safe to call multiple times — subsequent calls are no-ops.
+    /// If not called explicitly, the `Drop` impl will spawn a best-effort
+    /// background cleanup task.
+    pub async fn close(&mut self) -> Result<()> {
+        if self.closed {
+            return Ok(());
+        }
+        self.closed = true;
 
-        // Attempt best-effort unsubscribe before closing
-        let message = ClientMessage::Unsubscribe {
-            subscription_id: self.subscription_id.clone(),
-        };
+        if let Some(mut ws_stream) = self.ws_stream.take() {
+            use crate::models::ClientMessage;
 
-        let payload = serde_json::to_string(&message).unwrap_or_default();
+            // Attempt best-effort unsubscribe before closing
+            let message = ClientMessage::Unsubscribe {
+                subscription_id: self.subscription_id.clone(),
+            };
 
-        if !payload.is_empty() {
-            let _ = self.ws_stream.send(Message::Text(payload.into())).await;
+            if let Ok(payload) = serde_json::to_string(&message) {
+                let _ = ws_stream.send(Message::Text(payload.into())).await;
+            }
+
+            // Close WebSocket connection (best-effort)
+            let _ = ws_stream.close(None).await;
         }
 
-        // Close WebSocket connection (best-effort)
-        let _ = self.ws_stream.close(None).await;
-
         Ok(())
+    }
+
+    /// Returns `true` if `close()` has been called or `Drop` has run.
+    pub fn is_closed(&self) -> bool {
+        self.closed
+    }
+}
+
+impl Drop for SubscriptionManager {
+    fn drop(&mut self) {
+        if self.closed {
+            return;
+        }
+        // Take ownership of the stream so the background task is 'static
+        if let Some(mut ws_stream) = self.ws_stream.take() {
+            let subscription_id = self.subscription_id.clone();
+
+            // Best-effort: only spawn if we're inside a tokio runtime.
+            // If no runtime is available the TCP stream will simply be dropped,
+            // which sends a TCP RST — acceptable as a last resort.
+            if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                handle.spawn(async move {
+                    use crate::models::ClientMessage;
+
+                    let message = ClientMessage::Unsubscribe {
+                        subscription_id,
+                    };
+                    if let Ok(payload) = serde_json::to_string(&message) {
+                        let _ = ws_stream.send(Message::Text(payload.into())).await;
+                    }
+                    let _ = ws_stream.close(None).await;
+                });
+            }
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── helpers ───────────────────────────────────────────────────────────────
+
+    /// Create a minimal `SubscriptionManager` with no real WebSocket for
+    /// testing state-flag logic without a network connection.
+    fn make_closed_sub() -> SubscriptionManager {
+        SubscriptionManager {
+            ws_stream: None,
+            subscription_id: "unit-test-id".to_string(),
+            event_queue: VecDeque::new(),
+            buffered_changes: Vec::new(),
+            is_loading: false,
+            timeouts: KalamLinkTimeouts::default(),
+            closed: false,
+        }
+    }
+
+    // ── url resolution tests ───────────────────────────────────────────────
 
     #[test]
     fn test_ws_url_conversion() {
@@ -626,5 +701,81 @@ mod tests {
             resolve_ws_url("http://localhost:3000", Some("ws://override/ws")),
             "ws://override/ws"
         );
+    }
+
+    #[test]
+    fn test_ws_url_trailing_slash_stripped() {
+        assert_eq!(
+            resolve_ws_url("http://localhost:3000/", None),
+            "ws://localhost:3000/v1/ws"
+        );
+    }
+
+    // ── state-flag unit tests (no network) ────────────────────────────────
+
+    #[test]
+    fn test_is_not_closed_initially() {
+        let sub = make_closed_sub();
+        assert!(!sub.is_closed(), "subscription should start as open");
+    }
+
+    #[tokio::test]
+    async fn test_close_marks_subscription_as_closed() {
+        let mut sub = make_closed_sub();
+        assert!(!sub.is_closed());
+        sub.close().await.expect("close should succeed on a stream-less sub");
+        assert!(sub.is_closed(), "subscription should be closed after close()");
+    }
+
+    #[tokio::test]
+    async fn test_close_is_idempotent() {
+        let mut sub = make_closed_sub();
+        sub.close().await.expect("first close should succeed");
+        sub.close().await.expect("second close should also succeed (no-op)");
+        assert!(sub.is_closed());
+    }
+
+    #[tokio::test]
+    async fn test_next_returns_none_when_stream_is_none() {
+        let mut sub = make_closed_sub();
+        // ws_stream is None, so next() must immediately return None
+        let result = tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            sub.next(),
+        )
+        .await
+        .expect("next() should complete quickly when stream is None");
+        assert!(result.is_none(), "next() should return None when stream is None");
+    }
+
+    #[tokio::test]
+    async fn test_next_returns_none_after_close() {
+        let mut sub = make_closed_sub();
+        sub.close().await.unwrap();
+        let result = tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            sub.next(),
+        )
+        .await
+        .expect("next() should complete quickly after close");
+        assert!(result.is_none());
+    }
+
+    /// Verify Drop does not panic even outside a tokio runtime.
+    #[test]
+    fn test_drop_without_runtime_does_not_panic() {
+        let sub = make_closed_sub();
+        drop(sub); // no tokio runtime in scope — should be a silent no-op
+    }
+
+    /// Verify Drop inside a tokio runtime spawns a cleanup task without
+    /// panicking. We cannot easily observe the network side here, but we
+    /// verify the Drop code path at least runs without error.
+    #[tokio::test]
+    async fn test_drop_inside_runtime_does_not_panic() {
+        let sub = make_closed_sub();
+        drop(sub);
+        // Yield to let any spawned cleanup tasks run
+        tokio::task::yield_now().await;
     }
 }

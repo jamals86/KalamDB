@@ -49,34 +49,49 @@ pub(super) async fn authenticate_bearer(
 
         let claims = validate_bearer_token(token, &alg, &issuer, config).await?;
 
-        // SECURITY: Only accept tokens explicitly marked as Access.
-        // Tokens with missing token_type (legacy or hand-crafted) are rejected
-        // to prevent refresh tokens or forged tokens from being used as access tokens.
-        match claims.token_type {
-            Some(jwt_auth::TokenType::Access) => { /* OK – expected type */ },
-            Some(jwt_auth::TokenType::Refresh) => {
-                log::warn!("Refresh token used as access token for user={}", claims.sub);
-                return Err(AuthError::InvalidCredentials(
-                    "Refresh tokens cannot be used for API authentication".to_string(),
-                ));
-            },
-            None => {
-                log::warn!("Token missing token_type claim for user={}", claims.sub);
-                return Err(AuthError::InvalidCredentials(
-                    "Token missing required token_type claim".to_string(),
-                ));
-            },
+        let is_internal = jwt_auth::is_internal_issuer(&claims.iss);
+
+        if is_internal {
+            // SECURITY: Only accept internal tokens explicitly marked as Access.
+            // Tokens with missing token_type (legacy or hand-crafted) are rejected
+            // to prevent refresh tokens or forged tokens from being used as access tokens.
+            match claims.token_type {
+                Some(jwt_auth::TokenType::Access) => { /* OK – expected type */ },
+                Some(jwt_auth::TokenType::Refresh) => {
+                    log::warn!("Refresh token used as access token for user={}", claims.sub);
+                    return Err(AuthError::InvalidCredentials(
+                        "Refresh tokens cannot be used for API authentication".to_string(),
+                    ));
+                },
+                None => {
+                    log::warn!("Token missing token_type claim for user={}", claims.sub);
+                    return Err(AuthError::InvalidCredentials(
+                        "Token missing required token_type claim".to_string(),
+                    ));
+                },
+            }
+        } else {
+            // For external OIDC tokens, we validate the `typ` header if present.
+            // Some providers use "at+jwt" for access tokens.
+            // If it's an ID token, it might just be "JWT" or missing.
+            // We don't strictly reject missing `typ` because many providers don't send it,
+            // but we ensure it's not explicitly a refresh token if they use custom types.
+            let header = jsonwebtoken::decode_header(token).map_err(|e| {
+                AuthError::MalformedAuthorization(format!("Invalid JWT header: {}", e))
+            })?;
+            
+            if let Some(typ) = header.typ {
+                let typ_lower = typ.to_lowercase();
+                if typ_lower.contains("refresh") {
+                    log::warn!("External refresh token used as access token for user={}", claims.sub);
+                    return Err(AuthError::InvalidCredentials(
+                        "Refresh tokens cannot be used for API authentication".to_string(),
+                    ));
+                }
+            }
         }
 
         // ── Internal vs external user resolution ─────────────────────────
-        //
-        // Internal tokens (HS256, iss="kalamdb") carry the real username and
-        // user_id in their claims — look the user up directly.
-        //
-        // External OIDC tokens carry a provider-specific subject; we compose
-        // a deterministic `oidc:{code}:{subject}` username and auto-provision
-        // the user if configured.
-        let is_internal = jwt_auth::is_internal_issuer(&claims.iss);
 
         let user = if is_internal {
             // Internal token: `claims.username` is the actual username set

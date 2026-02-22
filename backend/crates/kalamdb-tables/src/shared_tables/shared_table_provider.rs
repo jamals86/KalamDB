@@ -808,6 +808,77 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         filter: Option<&Expr>,
         limit: Option<usize>,
     ) -> Result<RecordBatch, KalamDbError> {
+        let schema = self.schema_ref();
+        let pk_name = self.primary_key_field_name();
+
+        // ── PK equality fast-path ────────────────────────────────────────────
+        // If the filter is `pk_col = <literal>`, use the PK index for O(1)
+        // lookup instead of scanning the entire table + MVCC resolution.
+        if let Some(expr) = filter {
+            if let Some(pk_literal) = base::extract_pk_equality_literal(expr, pk_name) {
+                // Coerce the literal to the PK column's Arrow data type
+                let pk_field = schema.field_with_name(pk_name).ok();
+                let pk_scalar = if let Some(field) = pk_field {
+                    kalamdb_commons::conversions::parse_string_as_scalar(
+                        &pk_literal.to_string(),
+                        field.data_type(),
+                    )
+                    .ok()
+                    .unwrap_or(pk_literal)
+                } else {
+                    pk_literal
+                };
+
+                // Try hot storage PK index (O(1))
+                let found = self.find_by_pk(&pk_scalar)?;
+                if let Some((row_id, row)) = found {
+                    log::debug!(
+                        "[SharedProvider] PK fast-path hit for {}={}, _seq={}",
+                        pk_name,
+                        pk_scalar,
+                        row_id.as_i64()
+                    );
+                    return crate::utils::base::rows_to_arrow_batch(
+                        &schema,
+                        vec![(row_id, row)],
+                        projection,
+                        |_, _| {},
+                    );
+                }
+
+                // Not in hot storage — check cold storage via manifest-based lookup
+                let cold_found =
+                    base::find_row_by_pk(self, None, &pk_scalar.to_string()).await?;
+                if let Some((row_id, row)) = cold_found {
+                    log::debug!(
+                        "[SharedProvider] PK fast-path cold hit for {}={}",
+                        pk_name,
+                        pk_scalar
+                    );
+                    return crate::utils::base::rows_to_arrow_batch(
+                        &schema,
+                        vec![(row_id, row)],
+                        projection,
+                        |_, _| {},
+                    );
+                }
+
+                // PK not found anywhere — return empty batch
+                log::debug!(
+                    "[SharedProvider] PK fast-path miss for {}={}",
+                    pk_name,
+                    pk_scalar
+                );
+                return crate::utils::base::rows_to_arrow_batch(
+                    &schema,
+                    Vec::<(SharedTableRowId, SharedTableRow)>::new(),
+                    projection,
+                    |_, _| {},
+                );
+            }
+        }
+
+        // ── Full scan path (no PK equality filter) ──────────────────────────
         // Extract sequence bounds from filter to optimize RocksDB scan
         let (since_seq, _until_seq) = if let Some(expr) = filter {
             base::extract_seq_bounds_from_filter(expr)
@@ -829,7 +900,6 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
             .await?;
 
         // Convert to JSON rows aligned with schema
-        let schema = self.schema_ref();
         crate::utils::base::rows_to_arrow_batch(&schema, kvs, projection, |_, _| {})
     }
 

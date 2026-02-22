@@ -60,7 +60,8 @@ impl TypedStatementHandler<CreateUserStatement> for CreateUserHandler {
                     validate_password_with_policy(&raw, &policy)
                         .map_err(|e| KalamDbError::InvalidOperation(e.to_string()))?;
                 }
-                let hash = bcrypt::hash(raw, bcrypt::DEFAULT_COST)
+                let bcrypt_cost = self.app_context.config().auth.bcrypt_cost;
+                let hash = bcrypt::hash(raw, bcrypt_cost)
                     .into_kalamdb_error("Password hash error")?;
                 (hash, None)
             },

@@ -223,4 +223,12 @@ export interface ClientOptions {
    * Required in bundled environments where import.meta.url doesn't resolve.
    */
   wasmUrl?: string | BufferSource;
+  /**
+   * Automatically connect (and login if using Basic auth) the first time
+   * a WebSocket operation is needed (subscribe, subscribeWithSql).
+   *
+   * Defaults to `true`. Set to `false` if you want to control the
+   * connection lifecycle manually via `connect()` / `disconnect()`.
+   */
+  autoConnect?: boolean;
 }

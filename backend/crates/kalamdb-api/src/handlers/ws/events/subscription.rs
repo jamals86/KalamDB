@@ -7,7 +7,7 @@ use kalamdb_commons::websocket::{BatchControl, SubscriptionRequest, MAX_ROWS_PER
 use kalamdb_commons::WebSocketMessage;
 use kalamdb_core::live::{InitialDataOptions, LiveQueryManager, SharedConnectionState};
 use kalamdb_core::providers::arrow_json_conversion::row_to_json_map;
-use log::{error, info};
+use log::{debug, error, warn};
 use std::sync::Arc;
 
 use crate::handlers::ws::models::WsErrorCode;
@@ -92,7 +92,7 @@ pub async fn handle_subscribe(
             //     result.initial_data.is_some()
             // );
             if let Some(ref initial) = result.initial_data {
-                info!("Initial data: {} rows, has_more={}", initial.rows.len(), initial.has_more);
+                debug!("Initial data: {} rows, has_more={}", initial.rows.len(), initial.has_more);
             }
 
             // Update rate limiter
@@ -150,7 +150,7 @@ pub async fn handle_subscribe(
                 if !initial.has_more {
                     let flushed = connection_state.read().complete_initial_load(&subscription_id);
                     if flushed > 0 {
-                        info!(
+                        debug!(
                             "Flushed {} buffered notifications after initial load for {}",
                             flushed, subscription_id
                         );
@@ -161,7 +161,7 @@ pub async fn handle_subscribe(
                 let flushed =
                     connection_state.read().complete_initial_load(&subscription_id.clone());
                 if flushed > 0 {
-                    info!(
+                    debug!(
                         "Flushed {} buffered notifications after initial load for {}",
                         flushed, subscription_id
                     );
@@ -180,10 +180,22 @@ pub async fn handle_subscribe(
                 _ => WsErrorCode::SubscriptionFailed,
             };
             let message = e.to_string();
-            error!(
-                "Failed to register subscription {}: {} (sql: '{}')",
-                subscription_id, e, subscription.sql
-            );
+            // Use warn for "expected" client errors (table gone, bad SQL) to avoid
+            // flooding logs during benchmark teardown; keep error for server-side issues.
+            match &code {
+                WsErrorCode::NotFound | WsErrorCode::InvalidSql | WsErrorCode::Unauthorized => {
+                    warn!(
+                        "Failed to register subscription {}: {} (sql: '{}')",
+                        subscription_id, e, subscription.sql
+                    );
+                }
+                _ => {
+                    error!(
+                        "Failed to register subscription {}: {} (sql: '{}')",
+                        subscription_id, e, subscription.sql
+                    );
+                }
+            }
             let _ = send_error(session, &subscription_id, code, &message).await;
             Ok(())
         },

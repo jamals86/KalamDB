@@ -660,13 +660,27 @@ impl OpenRaftNetworkFactory<KalamTypeConfig> for RaftNetworkFactory {
         } else {
             let ch = self
                 .build_channel(target_node_id, node)
-                .unwrap_or_else(|e| panic!("Failed to build channel for node {}: {}", target_node_id, e));
+                .unwrap_or_else(|e| {
+                    log::error!(
+                        "[group {}] Cannot build gRPC channel to node {}: {}. \
+                        Check network configuration and peer addresses.",
+                        self.group_id, target_node_id, e
+                    );
+                    // Channel creation is a fatal configuration error; the Raft node
+                    // cannot communicate with its peers without a valid channel.
+                    panic!("Failed to build channel for node {}: {}", target_node_id, e)
+                });
 
             self.channels.insert(target_node_id, ch.clone());
             ch
         };
 
         let auth_identity = self.auth_identity.read().clone().unwrap_or_else(|| {
+            log::error!(
+                "[group {}] RPC auth identity is not configured. \
+                Ensure configure_rpc_auth_identity() is called before the Raft node starts.",
+                self.group_id
+            );
             panic!("RPC auth identity is not configured for group {}", self.group_id)
         });
 

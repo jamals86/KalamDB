@@ -8,6 +8,7 @@
 //   cargo test --test connection reconnection
 //   cargo test --test connection resume_seqid
 //   cargo test --test connection timeout
+//   cargo test --test connection concurrent_ws
 //
 // Note: subscription_options_tests and live_connection_tests have been moved to the subscription category
 //
@@ -21,3 +22,5 @@ mod reconnection_tests;
 mod resume_seqid_tests;
 #[path = "connection/timeout_tests.rs"]
 mod timeout_tests;
+#[path = "connection/concurrent_ws_tests.rs"]
+mod concurrent_ws_tests;

@@ -16,6 +16,10 @@ use jsonwebtoken::{decode_header, Algorithm};
 pub fn extract_algorithm_unverified(token: &str) -> Result<Algorithm, OidcError> {
     let header = decode_header(token)
         .map_err(|e| OidcError::JwtValidationFailed(format!("Invalid JWT header: {}", e)))?;
+        
+    // Reject 'none' algorithm explicitly (if it exists in the enum, otherwise we just rely on the fact that it's not in the allowed list later)
+    // jsonwebtoken crate doesn't have a `none` variant in `Algorithm` enum, so it will fail to decode if `alg=none`
+    
     Ok(header.alg)
 }
 

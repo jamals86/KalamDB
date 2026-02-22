@@ -19,16 +19,16 @@ use std::any::Any;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use super::cluster::create_cluster_provider;
-use super::cluster_groups::create_cluster_groups_provider;
-use super::columns_view::create_columns_view_provider;
-use super::datatypes::{DatatypesTableProvider, DatatypesView};
-use super::describe::DescribeView;
-use super::server_logs::create_server_logs_provider;
-use super::settings::{SettingsTableProvider, SettingsView};
-use super::stats::{StatsTableProvider, StatsView};
-use super::tables_view::create_tables_view_provider;
-use super::view_base::ViewTableProvider;
+use kalamdb_views::cluster::create_cluster_provider;
+use kalamdb_views::cluster_groups::create_cluster_groups_provider;
+use kalamdb_views::columns_view::create_columns_view_provider;
+use kalamdb_views::datatypes::{DatatypesTableProvider, DatatypesView};
+use kalamdb_views::describe::DescribeView;
+use kalamdb_views::server_logs::create_server_logs_provider;
+use kalamdb_views::settings::{SettingsTableProvider, SettingsView};
+use kalamdb_views::stats::{StatsTableProvider, StatsView};
+use kalamdb_views::tables_view::create_tables_view_provider;
+use kalamdb_views::view_base::ViewTableProvider;
 use crate::schema_registry::SchemaRegistry;
 
 /// Configuration for view initialization

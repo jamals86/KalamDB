@@ -975,9 +975,75 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         let (user_id, role) = extract_user_context(state)?;
         let allow_all_users = can_read_all_users(role);
 
-        // log::info!("🔍 [AS_USER_DEBUG] scan_rows: user_id='{}' role={:?} allow_all={}",
-        //            user_id.as_str(), role, allow_all_users);
+        let schema = self.schema_ref();
+        let pk_name = self.primary_key_field_name();
 
+        // ── PK equality fast-path ────────────────────────────────────────────
+        // If the filter is `pk_col = <literal>`, use the PK index for O(1)
+        // lookup instead of full table scan + MVCC resolution.
+        // Only for single-user scope (not admin cross-user queries).
+        if !allow_all_users {
+            if let Some(expr) = filter {
+                if let Some(pk_literal) = base::extract_pk_equality_literal(expr, pk_name) {
+                    let pk_field = schema.field_with_name(pk_name).ok();
+                    let pk_scalar = if let Some(field) = pk_field {
+                        kalamdb_commons::conversions::parse_string_as_scalar(
+                            &pk_literal.to_string(),
+                            field.data_type(),
+                        )
+                        .ok()
+                        .unwrap_or(pk_literal)
+                    } else {
+                        pk_literal
+                    };
+
+                    // Hot storage PK index (O(1))
+                    let found = self.find_by_pk(user_id, &pk_scalar)?;
+                    if let Some((row_id, row)) = found {
+                        log::debug!(
+                            "[UserProvider] PK fast-path hit for {}={}, user={}",
+                            pk_name,
+                            pk_scalar,
+                            user_id.as_str()
+                        );
+                        return crate::utils::base::rows_to_arrow_batch(
+                            &schema,
+                            vec![(row_id, row)],
+                            projection,
+                            |_, _| {},
+                        );
+                    }
+
+                    // Cold storage fallback
+                    let cold_found =
+                        base::find_row_by_pk(self, Some(user_id), &pk_scalar.to_string()).await?;
+                    if let Some((row_id, row)) = cold_found {
+                        log::debug!(
+                            "[UserProvider] PK fast-path cold hit for {}={}, user={}",
+                            pk_name,
+                            pk_scalar,
+                            user_id.as_str()
+                        );
+                        return crate::utils::base::rows_to_arrow_batch(
+                            &schema,
+                            vec![(row_id, row)],
+                            projection,
+                            |_, _| {},
+                        );
+                    }
+
+                    // PK not found — return empty batch
+                    return crate::utils::base::rows_to_arrow_batch(
+                        &schema,
+                        Vec::<(UserTableRowId, UserTableRow)>::new(),
+                        projection,
+                        |_, _| {},
+                    );
+                }
+            }
+        }
+
+        // ── Full scan path (no PK equality filter or admin cross-user) ──────
         // Extract sequence bounds from filter to optimize RocksDB scan
         let (since_seq, _until_seq) = if let Some(expr) = filter {
             base::extract_seq_bounds_from_filter(expr)
@@ -1018,7 +1084,6 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         );
 
         // Convert rows to JSON values aligned with schema
-        let schema = self.schema_ref();
         crate::utils::base::rows_to_arrow_batch(&schema, kvs, projection, |_, _| {})
     }
 

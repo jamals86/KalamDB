@@ -67,23 +67,16 @@ pub async fn collect_matching_rows(
     state: &dyn Session,
     filters: &[Expr],
 ) -> DataFusionResult<Vec<Row>> {
+    // Pass filters to scan() which:
+    // 1. Uses PK fast-path if filter is a PK equality
+    // 2. Falls back to full scan with Inexact pushdown
+    // DataFusion adds a FilterExec on top (since pushdown is Inexact),
+    // so the collected results are already fully filtered — no need to
+    // re-apply row_matches_filters.
     let scan_plan = provider.scan(state, None, filters, None).await?;
     let task_ctx = state.task_ctx();
     let batches = collect(scan_plan, task_ctx).await?;
-    let rows = record_batches_to_rows(&batches)?;
-    if filters.is_empty() {
-        return Ok(rows);
-    }
-
-    let schema = provider.schema();
-    let mut matched = Vec::new();
-    for row in rows {
-        if row_matches_filters(state, &schema, &row, filters)? {
-            matched.push(row);
-        }
-    }
-
-    Ok(matched)
+    record_batches_to_rows(&batches)
 }
 
 pub fn row_matches_filters(

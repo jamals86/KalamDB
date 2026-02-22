@@ -19,11 +19,12 @@ members = [
     "backend/crates/kalamdb-auth",
     "backend/crates/kalamdb-oidc",
     "backend/crates/kalamdb-raft",
+    "backend/crates/kalamdb-views",
     "backend",
     "link",
-    "cli",
-    "benchmark",
+    "cli"
 ]
+exclude = ["benchv2"]
 
 [workspace.package]
 version = "0.3.0-alpha2"
@@ -126,6 +127,7 @@ prost-types = "0.14.3"
 bcrypt = "0.18.0"
 rand = "0.10.0"
 kalamdb-commons = { path = "backend/crates/kalamdb-commons" }
+kalamdb-views = { path = "backend/crates/kalamdb-views" }
 cookie = { version = "0.18", features = ["secure"] }
 colored = "3.1.1"
 fern = "0.7"
@@ -217,6 +219,3 @@ incremental = true   # incremental builds
 lto = "off"          # no link-time optimization
 codegen-units = 256  # maximum parallelism for codegen
 split-debuginfo = "unpacked"  # faster on macOS
-
-[profile.dev.package."*"]
-opt-level = 0

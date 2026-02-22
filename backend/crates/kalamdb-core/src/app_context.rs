@@ -321,8 +321,14 @@ impl AppContext {
                 Duration::from_secs(config.websocket.auth_timeout_secs.unwrap_or(10));
             let heartbeat_interval =
                 Duration::from_secs(config.websocket.heartbeat_interval_secs.unwrap_or(5));
-            let connection_registry =
-                ConnectionsManager::new(*node_id, client_timeout, auth_timeout, heartbeat_interval);
+            let ws_max_connections = config.performance.max_connections;
+            let connection_registry = ConnectionsManager::with_max_connections(
+                *node_id,
+                client_timeout,
+                auth_timeout,
+                heartbeat_interval,
+                ws_max_connections,
+            );
 
             // Create slow query logger (Phase 11)
             let slow_log_path = format!("{}/slow.log", config.logging.logs_path);

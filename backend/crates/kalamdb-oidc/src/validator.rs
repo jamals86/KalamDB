@@ -60,9 +60,13 @@ impl OidcValidator {
         ];
 
         validation.set_issuer(&[&self.config.issuer_url]);
+        validation.validate_exp = true;
+        validation.validate_nbf = true;
+        validation.leeway = 60; // 60 seconds clock skew tolerance
 
         if let Some(ref cid) = self.config.client_id {
             validation.set_audience(&[cid]);
+            validation.required_spec_claims.insert("aud".to_string());
         } else {
             validation.validate_aud = false;
         }
@@ -98,6 +102,12 @@ impl OidcValidator {
         // Pin validation to the exact algorithm in the token header.
         // This is required for jsonwebtoken 10.x (especially with aws_lc_rs)
         // because overriding `algorithms` after Validation::new can be unreliable.
+        if !validation.algorithms.contains(&header.alg) {
+            return Err(OidcError::JwtValidationFailed(format!(
+                "Algorithm {:?} is not allowed",
+                header.alg
+            )));
+        }
         let mut pinned = validation.clone();
         pinned.algorithms = vec![header.alg];
 
@@ -107,6 +117,27 @@ impl OidcValidator {
             OidcError::from(e)
         })?;
         log::debug!("Token verified successfully");
+
+        // Validate `iat` (issued at) manually since jsonwebtoken doesn't do it automatically
+        // Reject tokens issued in the future beyond clock skew
+        let parts: Vec<&str> = token.splitn(3, '.').collect();
+        if parts.len() >= 2 {
+            use base64::Engine as _;
+            if let Ok(payload_bytes) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(parts[1]) {
+                if let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&payload_bytes) {
+                    if let Some(iat) = payload.get("iat").and_then(|v| v.as_u64()) {
+                        let now = chrono::Utc::now().timestamp() as u64;
+                        let leeway = pinned.leeway;
+                        if iat > now + leeway {
+                            return Err(OidcError::JwtValidationFailed(format!(
+                                "Token issued in the future (iat: {}, now: {})",
+                                iat, now
+                            )));
+                        }
+                    }
+                }
+            }
+        }
 
         Ok(token_data.claims)
     }

@@ -194,7 +194,7 @@ keepalive_timeout = 75
 # Maximum concurrent connections per worker (default: 25000)
 # Includes both REST API and WebSocket connections
 # INCREASED FOR TEST LOAD: Handles burst connections from concurrent tests
-max_connections = 50000
+max_connections = 200000
 
 # TCP listen backlog - pending connections queue size (default: 2048)
 # Controls how many connections can wait in the kernel queue before being accepted
@@ -235,7 +235,7 @@ max_messages_per_sec = 10000
 
 # Maximum concurrent live query subscriptions per user (default: 10)
 # Limits total active subscriptions to prevent resource exhaustion
-max_subscriptions_per_user = 100
+max_subscriptions_per_user = 200000
 
 # Maximum authentication requests per IP per second (default: 20)
 # Prevents brute force attacks and login flooding
@@ -244,7 +244,7 @@ max_auth_requests_per_ip_per_sec = 200000
 
 # Maximum concurrent connections per IP address (default: 100)
 # Prevents a single IP from exhausting all server connections
-max_connections_per_ip = 10000
+max_connections_per_ip = 200000
 
 # ⚠️ CRITICAL: Maximum requests per second per IP BEFORE authentication (default: 200)
 # This is the main rate limit that triggers IP BANS
@@ -324,10 +324,11 @@ max_age = 3600
 allow_private_network = false
 
 [authentication]
-# Bcrypt cost factor for password hashing (default: 12, range: 10-14)
+# Bcrypt cost factor for password hashing (default: 12, range: 4-31)
 # Higher values = more secure but slower
 # Changing this only affects NEW passwords
-bcrypt_cost = 12
+# Use 4 for development/benchmarking; 12+ for production
+bcrypt_cost = 4
 
 # Minimum password length (default: 8)
 min_password_length = 8

@@ -186,7 +186,12 @@ impl ConnectionsManager {
             is_authenticated: false,
             auth_started: false,
             connected_at: now,
-            last_heartbeat: now,
+            last_heartbeat_ms: std::sync::atomic::AtomicU64::new(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64,
+            ),
             subscriptions: DashMap::new(),
             notification_tx: Arc::new(notification_tx),
             event_tx,
@@ -524,7 +529,10 @@ impl ConnectionsManager {
 
     fn check_all_connections(&self) {
         let now = Instant::now();
-        let mut to_timeout = Vec::new();
+        let client_timeout_ms = self.client_timeout.as_millis() as u64;
+        // Only ping connections that haven't been heard from in half the timeout window.
+        // Recently-active connections don't need a ping — their messages already prove liveness.
+        let ping_threshold_ms = client_timeout_ms / 2;
 
         for entry in self.connections.iter() {
             let conn_id = entry.key();
@@ -538,25 +546,26 @@ impl ConnectionsManager {
             {
                 debug!("Auth timeout for connection: {}", conn_id);
                 let _ = state.event_tx.try_send(ConnectionEvent::AuthTimeout);
-                to_timeout.push(conn_id.clone());
+                // Don't unregister here — the handler task will clean up
+                // after receiving the AuthTimeout event and closing the session.
                 continue;
             }
 
-            // Check heartbeat timeout
-            if now.duration_since(state.last_heartbeat) > self.client_timeout {
-                debug!("Heartbeat timeout for connection: {}", conn_id);
+            // Check heartbeat timeout using lock-free atomic read
+            let ms_since = state.millis_since_heartbeat();
+            if ms_since > client_timeout_ms {
+                debug!("Heartbeat timeout for connection: {} ({}ms since last activity)", conn_id, ms_since);
                 let _ = state.event_tx.try_send(ConnectionEvent::HeartbeatTimeout);
-                to_timeout.push(conn_id.clone());
+                // Don't unregister here — the handler task will clean up
+                // after receiving the HeartbeatTimeout event and closing the session.
                 continue;
             }
 
-            // Request ping
-            let _ = state.event_tx.try_send(ConnectionEvent::SendPing);
-        }
-
-        // Unregister timed-out connections
-        for conn_id in to_timeout {
-            self.unregister_connection(&conn_id);
+            // Only send ping if connection has been quiet for a while.
+            // This avoids flooding connections that are actively sending messages.
+            if ms_since > ping_threshold_ms {
+                let _ = state.event_tx.try_send(ConnectionEvent::SendPing);
+            }
         }
     }
 }

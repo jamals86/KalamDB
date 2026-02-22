@@ -161,7 +161,9 @@ pub fn validate_jwt_token(
     // Decode and validate token
     let mut validation = Validation::new(Algorithm::HS256);
     validation.validate_exp = true; // Check expiration
-    validation.validate_nbf = false; // Don't check "not before"
+    validation.validate_nbf = true; // Check "not before"
+    validation.validate_aud = false; // Internal tokens don't use audience
+    validation.leeway = 60; // 60 seconds clock skew tolerance
 
     let decoding_key = DecodingKey::from_secret(secret.as_bytes());
     let token_data =
@@ -172,6 +174,17 @@ pub fn validate_jwt_token(
         })?;
 
     let claims = token_data.claims;
+
+    // Validate `iat` (issued at) manually since jsonwebtoken doesn't do it automatically
+    // Reject tokens issued in the future beyond clock skew
+    let now = chrono::Utc::now().timestamp() as usize;
+    let leeway = validation.leeway as usize;
+    if claims.iat > now + leeway {
+        return Err(AuthError::MalformedAuthorization(format!(
+            "Token issued in the future (iat: {}, now: {})",
+            claims.iat, now
+        )));
+    }
 
     // Verify issuer is trusted
     verify_issuer(&claims.iss, trusted_issuers)?;

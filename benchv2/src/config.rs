@@ -1,0 +1,55 @@
+use clap::Parser;
+
+/// CLI configuration for the benchmark tool.
+#[derive(Parser, Debug, Clone)]
+#[command(name = "kalamdb-bench", about = "KalamDB benchmark & report generator")]
+pub struct Config {
+    /// KalamDB server URL
+    #[arg(long, default_value = "http://localhost:8080", env = "KALAMDB_URL")]
+    pub url: String,
+
+    /// Username for Basic auth
+    #[arg(long, default_value = "admin", env = "KALAMDB_USER")]
+    pub user: String,
+
+    /// Password for Basic auth
+    #[arg(long, default_value = "kalamdb123", env = "KALAMDB_PASSWORD")]
+    pub password: String,
+
+    /// Number of iterations per benchmark operation
+    #[arg(long, default_value_t = 100)]
+    pub iterations: u32,
+
+    /// Number of warmup iterations (excluded from measurements)
+    #[arg(long, default_value_t = 5)]
+    pub warmup: u32,
+
+    /// Concurrency level for concurrent benchmarks
+    #[arg(long, default_value_t = 10)]
+    pub concurrency: u32,
+
+    /// Output directory for reports
+    #[arg(long, default_value = "results")]
+    pub output_dir: String,
+
+    /// Run only benchmarks matching this filter (substring match)
+    #[arg(long)]
+    pub filter: Option<String>,
+
+    /// Run only these benchmark names (exact match). Repeat flag for multiple benches.
+    /// Example: --bench subscriber_scale --bench reconnect_subscribe
+    #[arg(long, value_delimiter = ',')]
+    pub bench: Vec<String>,
+
+    /// Print all available benchmark names and exit
+    #[arg(long, default_value_t = false)]
+    pub list_benches: bool,
+
+    /// Namespace to use for benchmark tables
+    #[arg(long, default_value = "bench")]
+    pub namespace: String,
+
+    /// Maximum number of subscribers for the subscriber_scale benchmark
+    #[arg(long, default_value_t = 100_000)]
+    pub max_subscribers: u32,
+}

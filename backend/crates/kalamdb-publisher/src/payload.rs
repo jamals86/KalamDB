@@ -40,6 +40,7 @@ impl PreparedRow {
         let is_empty = json_map.is_empty();
         let key_payload = serde_json::to_vec(&json_map)
             .map_err(|e| CommonError::Internal(format!("Failed to serialize keys: {}", e)))?;
+        // SAFETY: serde_json::to_vec() always produces valid UTF-8 JSON bytes.
         let json_string = unsafe { String::from_utf8_unchecked(key_payload.clone()) };
         let partition_hash = {
             use std::collections::hash_map::DefaultHasher;
@@ -61,6 +62,7 @@ impl PreparedRow {
         let is_empty = json_map.is_empty();
         let key_payload = serde_json::to_vec(&json_map)
             .map_err(|e| CommonError::Internal(format!("Failed to serialize keys: {}", e)))?;
+        // SAFETY: serde_json::to_vec() always produces valid UTF-8 JSON bytes.
         let json_string = unsafe { String::from_utf8_unchecked(key_payload.clone()) };
         let partition_hash = {
             use std::collections::hash_map::DefaultHasher;

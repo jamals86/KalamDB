@@ -1,0 +1,36 @@
+{
+  "version": "0.3.0-alpha2",
+  "server_url": "http://localhost:8080",
+  "timestamp": "2026-02-22T20:13:07.644975+00:00",
+  "config": {
+    "iterations": 1,
+    "warmup": 0,
+    "concurrency": 10,
+    "namespace": "bench_201258"
+  },
+  "results": [
+    {
+      "name": "subscriber_scale",
+      "category": "Scale",
+      "description": "Progressive subscriber scale test (up to --max-subscribers, default 100K)",
+      "iterations": 0,
+      "total_us": 0,
+      "mean_us": 0.0,
+      "median_us": 0.0,
+      "p95_us": 0.0,
+      "p99_us": 0.0,
+      "min_us": 0.0,
+      "max_us": 0.0,
+      "stddev_us": 0.0,
+      "ops_per_sec": 0.0,
+      "success": false,
+      "error": "Iteration 0 failed: Write at tier 10 failed: SQL error: Server error (400): {\"status\":\"error\",\"results\":[],\"took\":5.14525,\"error\":{\"code\":\"SQL_EXECUTION_ERROR\",\"message\":\"Statement 1 failed: PK index scan failed: Partition not found: user_bench_201258:scale_sub_pk_idx\",\"details\":\"INSERT INTO bench_201258.scale_sub (id, payload) VALUES (1000010, 'tier_10')\"}}"
+    }
+  ],
+  "summary": {
+    "total_benchmarks": 1,
+    "passed": 0,
+    "failed": 1,
+    "total_duration_ms": 0.0
+  }
+}

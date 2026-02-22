@@ -56,7 +56,7 @@ impl TypedStatementHandler<AlterUserStatement> for AlterUserHandler {
                     validate_password_with_policy(new_pw, &policy)
                         .map_err(|e| KalamDbError::InvalidOperation(e.to_string()))?;
                 }
-                updated.password_hash = bcrypt::hash(new_pw, bcrypt::DEFAULT_COST)
+                updated.password_hash = bcrypt::hash(new_pw, self.app_context.config().auth.bcrypt_cost)
                     .into_kalamdb_error("Password hash error")?;
             },
             UserModification::SetRole(new_role) => {
