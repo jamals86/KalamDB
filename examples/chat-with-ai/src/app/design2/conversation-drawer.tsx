@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Plus, X, MessageCircle, Trash2 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { cn, parseTimestamp } from '@/lib/utils';
+import { motion, AnimatePresence } from 'framer-motion';
 import type { Conversation } from '@/types';
 
 interface ConversationDrawerProps {
@@ -63,56 +64,62 @@ export function ConversationDrawer({
               No conversations yet
             </div>
           ) : (
-            conversations.map((conv) => (
-              <div
-                key={conv.id}
-                className={cn(
-                  'group relative w-full text-left rounded-xl transition-all hover:bg-violet-50',
-                  selectedId === conv.id && 'bg-violet-100 shadow-sm'
-                )}
-              >
-                <button
-                  onClick={() => onSelect(conv.id)}
-                  className="w-full px-4 py-3"
+            <AnimatePresence initial={false}>
+              {conversations.map((conv) => (
+                <motion.div
+                  key={conv.id}
+                  layout
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -20, transition: { duration: 0.2 } }}
+                  className={cn(
+                    'group relative w-full text-left rounded-xl transition-all hover:bg-violet-50',
+                    selectedId === conv.id && 'bg-violet-100 shadow-sm'
+                  )}
                 >
-                  <div className="flex items-start gap-3">
-                    <div className={cn(
-                      'w-8 h-8 rounded-full flex items-center justify-center shrink-0 mt-0.5',
-                      selectedId === conv.id
-                        ? 'bg-violet-500 text-white'
-                        : 'bg-violet-100 text-violet-600'
-                    )}>
-                      <MessageCircle className="h-4 w-4" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium truncate">{conv.title}</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        {(() => {
-                          const updatedAt = parseTimestamp(conv.updated_at);
-                          return updatedAt
-                            ? formatDistanceToNow(updatedAt, { addSuffix: true })
-                            : 'just now';
-                        })()}
-                      </p>
-                    </div>
-                  </div>
-                </button>
-                {onDeleteConversation && (
                   <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (confirm('Delete this conversation and all its messages?')) {
-                        onDeleteConversation(conv.id);
-                      }
-                    }}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 p-1.5 hover:bg-destructive/10 rounded text-destructive transition-opacity"
-                    title="Delete conversation"
+                    onClick={() => onSelect(conv.id)}
+                    className="w-full px-4 py-3"
                   >
-                    <Trash2 className="h-3.5 w-3.5" />
+                    <div className="flex items-start gap-3">
+                      <div className={cn(
+                        'w-8 h-8 rounded-full flex items-center justify-center shrink-0 mt-0.5',
+                        selectedId === conv.id
+                          ? 'bg-violet-500 text-white'
+                          : 'bg-violet-100 text-violet-600'
+                      )}>
+                        <MessageCircle className="h-4 w-4" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium truncate">{conv.title}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {(() => {
+                            const updatedAt = parseTimestamp(conv.updated_at);
+                            return updatedAt
+                              ? formatDistanceToNow(updatedAt, { addSuffix: true })
+                              : 'just now';
+                          })()}
+                        </p>
+                      </div>
+                    </div>
                   </button>
-                )}
-              </div>
-            ))
+                  {onDeleteConversation && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (confirm('Delete this conversation and all its messages?')) {
+                          onDeleteConversation(conv.id);
+                        }
+                      }}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 p-1.5 hover:bg-destructive/10 rounded text-destructive transition-opacity"
+                      title="Delete conversation"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </motion.div>
+              ))}
+            </AnimatePresence>
           )}
         </div>
       </div>

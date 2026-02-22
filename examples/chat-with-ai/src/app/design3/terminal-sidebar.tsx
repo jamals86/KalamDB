@@ -4,6 +4,7 @@ import { cn, parseTimestamp } from '@/lib/utils';
 import { UserMenu } from '@/components/user-menu';
 import { Terminal, Plus, Wifi, WifiOff, Trash2 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
+import { motion, AnimatePresence } from 'framer-motion';
 import type { Conversation, ConnectionStatus } from '@/types';
 
 interface TerminalSidebarProps {
@@ -69,52 +70,58 @@ export function TerminalSidebar({
             <span className="text-xs text-emerald-900">No active sessions</span>
           </div>
         ) : (
-          conversations.map((conv) => (
-            <div
-              key={conv.id}
-              className={cn(
-                'group relative w-full text-left px-3 py-2 rounded text-xs transition-all',
-                selectedId === conv.id
-                  ? 'bg-emerald-500/10 text-emerald-300 border-l-2 border-emerald-400'
-                  : 'text-emerald-700 hover:text-emerald-400 hover:bg-emerald-500/5'
-              )}
-            >
-              <button
-                onClick={() => onSelect(conv.id)}
-                className="w-full text-left"
+          <AnimatePresence initial={false}>
+            {conversations.map((conv) => (
+              <motion.div
+                key={conv.id}
+                layout
+                initial={{ opacity: 0, x: -10 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -10, transition: { duration: 0.2 } }}
+                className={cn(
+                  'group relative w-full text-left px-3 py-2 rounded text-xs transition-all',
+                  selectedId === conv.id
+                    ? 'bg-emerald-500/10 text-emerald-300 border-l-2 border-emerald-400'
+                    : 'text-emerald-700 hover:text-emerald-400 hover:bg-emerald-500/5'
+                )}
               >
-                <div className="flex items-center gap-2">
-                  <span className={cn(
-                    'w-1.5 h-1.5 rounded-full',
-                    selectedId === conv.id ? 'bg-emerald-400 shadow-sm shadow-emerald-400/50' : 'bg-emerald-900'
-                  )} />
-                  <span className="truncate">{conv.title}</span>
-                </div>
-                <p className="text-[10px] text-emerald-900 mt-0.5 ml-3.5">
-                  {(() => {
-                    const updatedAt = parseTimestamp(conv.updated_at);
-                    return updatedAt
-                      ? formatDistanceToNow(updatedAt, { addSuffix: true })
-                      : 'just now';
-                  })()}
-                </p>
-              </button>
-              {onDeleteConversation && (
                 <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (confirm('Terminate session and delete all messages?')) {
-                      onDeleteConversation(conv.id);
-                    }
-                  }}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 p-1 hover:bg-red-500/10 rounded text-red-500 transition-opacity"
-                  title="Terminate session"
+                  onClick={() => onSelect(conv.id)}
+                  className="w-full text-left"
                 >
-                  <Trash2 className="h-3 w-3" />
+                  <div className="flex items-center gap-2">
+                    <span className={cn(
+                      'w-1.5 h-1.5 rounded-full',
+                      selectedId === conv.id ? 'bg-emerald-400 shadow-sm shadow-emerald-400/50' : 'bg-emerald-900'
+                    )} />
+                    <span className="truncate">{conv.title}</span>
+                  </div>
+                  <p className="text-[10px] text-emerald-900 mt-0.5 ml-3.5">
+                    {(() => {
+                      const updatedAt = parseTimestamp(conv.updated_at);
+                      return updatedAt
+                        ? formatDistanceToNow(updatedAt, { addSuffix: true })
+                        : 'just now';
+                    })()}
+                  </p>
                 </button>
-              )}
-            </div>
-          ))
+                {onDeleteConversation && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (confirm('Terminate session and delete all messages?')) {
+                        onDeleteConversation(conv.id);
+                      }
+                    }}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 p-1 hover:bg-red-500/10 rounded text-red-500 transition-opacity"
+                    title="Terminate session"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </button>
+                )}
+              </motion.div>
+            ))}
+          </AnimatePresence>
         )}
       </div>
 

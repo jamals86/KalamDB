@@ -6,7 +6,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useMessages, useTypingIndicator } from '@/hooks/use-kalamdb';
 import { cn, parseTimestamp } from '@/lib/utils';
 import { format } from 'date-fns';
-import { Sparkles, User } from 'lucide-react';
+import { Sparkles, User, Trash2, StopCircle } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import type { Conversation, Message } from '@/types';
 
 interface ChatPanelProps {
@@ -15,7 +16,7 @@ interface ChatPanelProps {
 }
 
 export function ChatPanel({ conversation, onRefreshConversations }: ChatPanelProps) {
-  const { messages, loading, sending, uploadProgress, waitingForAI, sendMessage } = useMessages(conversation.id);
+  const { messages, loading, sending, uploadProgress, waitingForAI, sendMessage, deleteMessage, stopResponse } = useMessages(conversation.id);
   const { typingUsers, setTyping, aiStatus } = useTypingIndicator(conversation.id);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [newMessageIds, setNewMessageIds] = useState<Set<string>>(new Set());
@@ -55,45 +56,71 @@ export function ChatPanel({ conversation, onRefreshConversations }: ChatPanelPro
   return (
     <div className="flex flex-col h-[calc(100vh-3.5rem)]">
       {/* Messages */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto scroll-smooth">
         <div className="max-w-2xl mx-auto px-4 py-8 space-y-4">
           {loading ? (
             <LoadingSkeleton />
           ) : messages.length === 0 ? (
-            <div className="text-center py-20">
-              <div className="w-16 h-16 rounded-full bg-gradient-to-br from-violet-400 to-rose-400 flex items-center justify-center mx-auto mb-4">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="text-center py-20"
+            >
+              <div className="w-16 h-16 rounded-full bg-gradient-to-br from-violet-400 to-rose-400 flex items-center justify-center mx-auto mb-4 shadow-lg shadow-violet-400/20">
                 <Sparkles className="h-8 w-8 text-white" />
               </div>
               <p className="text-muted-foreground">
                 Send a message to begin
               </p>
-            </div>
+            </motion.div>
           ) : (
-            messages.map((msg) => (
-              <MinimalMessage
-                key={msg.id}
-                message={msg}
-                isNew={newMessageIds.has(msg.id)}
-              />
-            ))
+            <AnimatePresence initial={false}>
+              {messages.map((msg) => (
+                <MinimalMessage
+                  key={msg.id}
+                  message={msg}
+                  isNew={newMessageIds.has(msg.id)}
+                  onDelete={() => deleteMessage?.(msg.id)}
+                />
+              ))}
+            </AnimatePresence>
           )}
 
-          {aiTyping && (
-            <div className="flex items-center gap-3 animate-fade-in">
-              <div className="w-7 h-7 rounded-full bg-gradient-to-br from-violet-400 to-rose-400 flex items-center justify-center animate-pulse-slow shadow-lg shadow-violet-400/30">
-                <Sparkles className="h-3.5 w-3.5 text-white" />
-              </div>
-              <div className="bg-muted/60 backdrop-blur-sm rounded-2xl px-4 py-2.5 border border-border/50 shadow-sm">
-                <TypingDots statusText={aiStatus?.label} showThinkingText={!aiStatus} />
-              </div>
-            </div>
-          )}
+          <AnimatePresence>
+            {aiTyping && (
+              <motion.div 
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, transition: { duration: 0.2 } }}
+                className="flex items-center gap-3"
+              >
+                <div className="w-7 h-7 rounded-full bg-gradient-to-br from-violet-400 to-rose-400 flex items-center justify-center animate-pulse-slow shadow-lg shadow-violet-400/30">
+                  <Sparkles className="h-3.5 w-3.5 text-white" />
+                </div>
+                <div className="bg-muted/60 backdrop-blur-sm rounded-2xl px-4 py-2.5 border border-border/50 shadow-sm">
+                  <TypingDots statusText={aiStatus?.label} showThinkingText={!aiStatus} />
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       </div>
 
       {/* Input */}
-      <div className="border-t bg-background/50 backdrop-blur-sm px-4 py-3">
-        <div className="max-w-2xl mx-auto">
+      <div className="border-t bg-background/80 backdrop-blur-md px-4 py-3 sticky bottom-0">
+        <div className="max-w-2xl mx-auto relative">
+          {waitingForAI && stopResponse && (
+            <motion.button
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 10 }}
+              onClick={stopResponse}
+              className="absolute -top-12 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-background/90 backdrop-blur-sm border shadow-sm rounded-full px-4 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <StopCircle className="h-3.5 w-3.5" />
+              Stop generating
+            </motion.button>
+          )}
           <MessageInput
             onSend={handleSend}
             onTypingChange={setTyping}
@@ -107,13 +134,20 @@ export function ChatPanel({ conversation, onRefreshConversations }: ChatPanelPro
   );
 }
 
-function MinimalMessage({ message, isNew }: { message: Message; isNew: boolean }) {
+function MinimalMessage({ message, isNew, onDelete }: { message: Message; isNew: boolean; onDelete?: () => void }) {
   const isUser = message.role === 'user';
 
   return (
-    <div className={cn('flex items-start gap-3 animate-fade-in', isUser && 'flex-row-reverse')}>
+    <motion.div 
+      layout
+      initial={{ opacity: 0, y: 20, scale: 0.95 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.95, transition: { duration: 0.2 } }}
+      transition={{ type: "spring", stiffness: 400, damping: 30 }}
+      className={cn('flex items-start gap-3 group', isUser && 'flex-row-reverse')}
+    >
       <div className={cn(
-        'w-7 h-7 rounded-full flex items-center justify-center shrink-0',
+        'w-7 h-7 rounded-full flex items-center justify-center shrink-0 shadow-sm',
         isUser
           ? 'bg-foreground text-background'
           : 'bg-gradient-to-br from-violet-400 to-rose-400 text-white'
@@ -121,28 +155,34 @@ function MinimalMessage({ message, isNew }: { message: Message; isNew: boolean }
         {isUser ? <User className="h-3.5 w-3.5" /> : <Sparkles className="h-3.5 w-3.5" />}
       </div>
 
-      <div className={cn(
-        'max-w-[75%] rounded-2xl px-4 py-2.5 border border-border/30',
-        isUser
-          ? 'bg-foreground text-background rounded-tr-sm'
-          : 'bg-muted/40 backdrop-blur-sm rounded-tl-sm'
-      )}>
-        <p className="text-sm leading-relaxed whitespace-pre-wrap">
-          {isUser ? (
-            <>
-              {message.content}
-              {message.files && <FileDisplay files={message.files} className="mt-2" />}
-            </>
-          ) : (
-            <>
-              {message.content}
-              {message.files && <FileDisplay files={message.files} className="mt-2" />}
-            </>
+      <div className={cn("flex flex-col gap-1 max-w-[75%]", isUser && "items-end")}>
+        <div className={cn(
+          'rounded-2xl px-4 py-2.5 border border-border/30 shadow-sm relative',
+          isUser
+            ? 'bg-foreground text-background rounded-tr-sm'
+            : 'bg-muted/40 backdrop-blur-sm rounded-tl-sm'
+        )}>
+          <div className="text-sm leading-relaxed whitespace-pre-wrap break-words">
+            {message.content}
+            {message.files && <FileDisplay files={message.files} className="mt-2" />}
+          </div>
+          
+          {onDelete && (
+            <button
+              onClick={onDelete}
+              className={cn(
+                "absolute top-2 opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-md hover:bg-black/10",
+                isUser ? "-left-10 text-muted-foreground" : "-right-10 text-muted-foreground"
+              )}
+              title="Delete message"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
           )}
-        </p>
+        </div>
         <p className={cn(
-          'text-[10px] mt-1.5',
-          isUser ? 'text-background/50' : 'text-muted-foreground/50'
+          'text-[10px] px-1',
+          isUser ? 'text-muted-foreground' : 'text-muted-foreground/50'
         )}>
           {(() => {
             const createdAt = parseTimestamp(message.created_at);
@@ -151,7 +191,7 @@ function MinimalMessage({ message, isNew }: { message: Message; isNew: boolean }
           {message.status === 'sending' && ' · Sending'}
         </p>
       </div>
-    </div>
+    </motion.div>
   );
 }
 
