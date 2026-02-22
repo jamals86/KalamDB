@@ -17,7 +17,7 @@ port = 8080
 # INCREASED FOR TEST LOAD: More workers handle concurrent test connections
 # macOS has limited ephemeral ports (~16K), so more workers help process
 # connections faster, reducing TIME_WAIT port exhaustion
-workers = 8
+workers = 24
 
 # Enable HTTP/2 protocol support (default: true)
 # When true, server uses automatic HTTP/1.1 and HTTP/2 cleartext (h2c) negotiation
@@ -59,7 +59,7 @@ write_buffer_size = 2097152
 
 # Maximum number of write buffers (default: 2)
 # Allows writes to continue while buffers are being flushed
-max_write_buffers = 2
+max_write_buffers = 6
 
 # Block cache size for reads in bytes (default: 4MB)
 # Shared LRU cache across all column families
@@ -194,7 +194,7 @@ keepalive_timeout = 75
 # Maximum concurrent connections per worker (default: 25000)
 # Includes both REST API and WebSocket connections
 # INCREASED FOR TEST LOAD: Handles burst connections from concurrent tests
-max_connections = 200000
+max_connections = 20000000
 
 # TCP listen backlog - pending connections queue size (default: 2048)
 # Controls how many connections can wait in the kernel queue before being accepted
@@ -209,7 +209,7 @@ backlog = 4096
 # Max blocking threads per worker for CPU-intensive operations (default: 512)
 # Used for RocksDB I/O and synchronous operations
 # INCREASED FOR TEST LOAD: More threads handle concurrent blocking operations
-worker_max_blocking_threads = 1024
+worker_max_blocking_threads = 4000
 
 # Client request timeout in seconds (default: 5)
 # Time allowed for client to send complete request headers
@@ -322,6 +322,23 @@ max_age = 3600
 # Allow private network requests (default: false)
 # Enables Access-Control-Request-Private-Network header support
 allow_private_network = false
+
+[websocket]
+# Client heartbeat timeout in seconds (default: 10)
+# How long to wait for client pong/activity before disconnecting.
+# At high connection counts (>10K), increase to avoid false heartbeat timeouts
+# caused by scheduling contention and TCP buffer pressure.
+client_timeout_secs = 60
+
+# Authentication timeout in seconds (default: 3)
+# How long to wait for auth message after WebSocket connect
+auth_timeout_secs = 10
+
+# Heartbeat check interval in seconds (default: 5)
+# How often the background heartbeat task iterates all connections.
+# At high connection counts (>10K), increase to reduce CPU load and
+# avoid thundering-herd ping storms.
+heartbeat_interval_secs = 15
 
 [authentication]
 # Bcrypt cost factor for password hashing (default: 12, range: 4-31)

@@ -331,6 +331,23 @@ max_age = 3600
 # Enables Access-Control-Request-Private-Network header support
 allow_private_network = false
 
+[websocket]
+# Client heartbeat timeout in seconds (default: 10)
+# How long to wait for client pong/activity before disconnecting.
+# Increase for high connection counts (>10K) to avoid false timeouts
+# caused by scheduling contention and TCP buffer pressure.
+client_timeout_secs = 10
+
+# Authentication timeout in seconds (default: 3)
+# How long to wait for auth message after WebSocket connect
+auth_timeout_secs = 3
+
+# Heartbeat check interval in seconds (default: 5)
+# How often the background heartbeat task iterates all connections.
+# Pings are staggered across 4 groups, so each connection is pinged
+# once every heartbeat_interval × 4 seconds.
+heartbeat_interval_secs = 5
+
 [authentication]
 # Bcrypt cost factor for password hashing (default: 12, range: 10-14)
 # Higher values = more secure but slower

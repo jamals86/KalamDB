@@ -12,6 +12,7 @@ use crate::{
     },
     timeouts::KalamLinkTimeouts,
 };
+use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
 use std::collections::VecDeque;
@@ -320,6 +321,8 @@ pub struct SubscriptionManager {
     is_loading: bool,
     timeouts: KalamLinkTimeouts,
     closed: bool,
+    /// Keepalive interval — `None` means keepalive pings are disabled.
+    keepalive_interval: Option<Duration>,
 }
 
 impl SubscriptionManager {
@@ -416,6 +419,11 @@ impl SubscriptionManager {
             is_loading: true,
             timeouts: timeouts.clone(),
             closed: false,
+            keepalive_interval: if timeouts.keepalive_interval.is_zero() {
+                None
+            } else {
+                Some(timeouts.keepalive_interval)
+            },
         })
     }
 
@@ -501,6 +509,8 @@ impl SubscriptionManager {
     ///
     /// Returns `None` when the connection is closed.
     /// Automatically requests next batches when initial data has more batches available.
+    /// Sends periodic keepalive pings when `keepalive_interval` is configured so the
+    /// server-side heartbeat timeout never fires for healthy idle connections.
     pub async fn next(&mut self) -> Option<Result<ChangeEvent>> {
         loop {
             // 1. Drain event queue first
@@ -514,7 +524,25 @@ impl SubscriptionManager {
                 None => return None,
             };
 
-            match ws_stream.next().await {
+            // 3. Await next WS frame, with an optional keepalive timeout.
+            //    If the timeout fires before any frame arrives we send a Ping
+            //    and loop — the server will see the Ping as heartbeat activity.
+            let msg_result = if let Some(interval) = self.keepalive_interval {
+                match tokio::time::timeout(interval, ws_stream.next()).await {
+                    Ok(msg) => msg,
+                    Err(_) => {
+                        // Keepalive timeout: send a Ping to refresh the server heartbeat.
+                        if let Err(e) = ws_stream.send(Message::Ping(Bytes::new())).await {
+                            return Some(Err(KalamLinkError::WebSocketError(e.to_string())));
+                        }
+                        continue;
+                    },
+                }
+            } else {
+                ws_stream.next().await
+            };
+
+            match msg_result {
                 Some(Ok(msg @ (Message::Text(_) | Message::Binary(_)))) => {
                     let (data, is_binary) = match msg {
                         Message::Text(t) => (t.as_bytes().to_vec(), false),

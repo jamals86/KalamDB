@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use kalam_link::{ChangeEvent, SubscriptionConfig};
+use serde_json::Value;
 use tokio::sync::{Mutex, Semaphore, watch};
 
 use crate::benchmarks::Benchmark;
@@ -430,9 +431,35 @@ impl Benchmark for SubscriberScaleBench {
         config: &'a Config,
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
-            // Give the server time to process WebSocket close frames before dropping the table.
-            // Without this, late-arriving subscription requests hit "Table not found".
-            tokio::time::sleep(Duration::from_secs(5)).await;
+            // Wait for live queries on this benchmark table to drain before dropping it.
+            // This avoids noisy "Table not found" races from late in-flight subscribe requests.
+            let drain_deadline = tokio::time::Instant::now() + Duration::from_secs(45);
+            loop {
+                let count_sql = format!(
+                    "SELECT COUNT(*) AS c FROM system.live_queries WHERE namespace_id = '{}' AND table_name = 'scale_sub'",
+                    config.namespace
+                );
+
+                let active = match client.sql(&count_sql).await {
+                    Ok(resp) => extract_first_count(&resp).unwrap_or(0),
+                    Err(_) => break,
+                };
+
+                if active == 0 {
+                    break;
+                }
+
+                if tokio::time::Instant::now() >= drain_deadline {
+                    println!(
+                        "  ⚠ teardown: {} live queries still active; skipping table drop to avoid late subscribe race",
+                        active
+                    );
+                    return Ok(());
+                }
+
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+
             let _ = client
                 .sql(&format!(
                     "DROP USER TABLE IF EXISTS {}.scale_sub",
@@ -441,6 +468,19 @@ impl Benchmark for SubscriberScaleBench {
                 .await;
             Ok(())
         })
+    }
+}
+
+fn extract_first_count(resp: &crate::client::SqlResponse) -> Option<u64> {
+    let result = resp.results.first()?;
+    let rows = result.rows.as_ref()?;
+    let first_row = rows.first()?;
+    let first_cell = first_row.first()?;
+
+    match first_cell {
+        Value::Number(n) => n.as_u64(),
+        Value::String(s) => s.parse::<u64>().ok(),
+        _ => None,
     }
 }
 

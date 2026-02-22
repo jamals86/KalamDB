@@ -226,7 +226,10 @@ async fn check_clean_state(client: &KalamClient) -> CheckResult {
 /// Measure user creation speed as a proxy for bcrypt cost.
 /// If creating a user takes > 50ms, bcrypt cost is likely too high for benchmarks.
 async fn check_bcrypt_cost(client: &KalamClient) -> CheckResult {
-    let test_user = "bench_preflight_bcrypt_test";
+    let test_user = format!(
+        "bench_preflight_bcrypt_test_{}",
+        chrono::Utc::now().timestamp_millis()
+    );
     let test_pass = "TestPass123!";
 
     let start = Instant::now();

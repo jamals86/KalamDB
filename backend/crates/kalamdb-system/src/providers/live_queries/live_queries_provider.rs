@@ -297,27 +297,73 @@ impl LiveQueriesTableProvider {
     /// Live queries don't persist across server restarts since WebSocket connections
     /// are lost on restart.
     pub fn clear_all(&self) -> Result<usize, SystemError> {
-        let all = self.store.scan_all_typed(None, None, None)?;
-        let count = all.len();
-        for (key, _) in all {
-            self.store.delete(&key)?;
+        const BATCH_SIZE: usize = 5000;
+
+        let mut total_deleted = 0usize;
+        let mut start_key: Option<LiveQueryId> = None;
+
+        loop {
+            let batch = self.store.scan_all_typed(
+                Some(BATCH_SIZE),
+                None,
+                start_key.as_ref(),
+            )?;
+
+            if batch.is_empty() {
+                break;
+            }
+
+            for (key, _) in &batch {
+                self.store.delete(key)?;
+            }
+            total_deleted += batch.len();
+
+            if batch.len() < BATCH_SIZE {
+                break;
+            }
+
+            start_key = batch.last().map(|(key, _)| key.clone());
         }
-        Ok(count)
+
+        Ok(total_deleted)
     }
 
     /// Async version of `clear_all()`.
     pub async fn clear_all_async(&self) -> Result<usize, SystemError> {
+        const BATCH_SIZE: usize = 5000;
         let store = self.store.clone();
-        let all: Vec<(LiveQueryId, SystemTableRow)> =
-            tokio::task::spawn_blocking(move || store.scan_all_typed(None, None, None))
-                .await
-                .into_system_error("Join error")??;
 
-        let count = all.len();
-        for (key, _) in all {
-            self.delete_live_query_async(&key).await?;
-        }
-        Ok(count)
+        tokio::task::spawn_blocking(move || -> Result<usize, SystemError> {
+            let mut total_deleted = 0usize;
+            let mut start_key: Option<LiveQueryId> = None;
+
+            loop {
+                let batch = store.scan_all_typed(
+                    Some(BATCH_SIZE),
+                    None,
+                    start_key.as_ref(),
+                )?;
+
+                if batch.is_empty() {
+                    break;
+                }
+
+                for (key, _) in &batch {
+                    store.delete(key)?;
+                }
+                total_deleted += batch.len();
+
+                if batch.len() < BATCH_SIZE {
+                    break;
+                }
+
+                start_key = batch.last().map(|(key, _)| key.clone());
+            }
+
+            Ok(total_deleted)
+        })
+        .await
+        .into_system_error("Join error")?
     }
 
     /// Scan all live queries and return as RecordBatch

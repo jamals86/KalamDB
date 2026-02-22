@@ -164,11 +164,6 @@ async fn handle_websocket(
             // Handle control events from registry (highest priority)
             event = event_rx.recv() => {
                 match event {
-                    Some(ConnectionEvent::SendPing) => {
-                        if session.ping(b"").await.is_err() {
-                            break;
-                        }
-                    }
                     Some(ConnectionEvent::AuthTimeout) => {
                         error!("WebSocket auth timeout: {}", connection_id);
                         let msg = WebSocketMessage::AuthError {

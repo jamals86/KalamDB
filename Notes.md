@@ -1301,8 +1301,6 @@ pub(crate) fn compose_provider_username(issuer: &str, subject: &str) -> UserName
 
 193) force pre-checks before benchmark runs like open files/empty database/permissions and other things to make sure the benchmark runs smoothly without any issues
 
-194) stuck sockets can be more than 10k: Cleared 10000 orphan live queries from previous server run
-
 
 
 

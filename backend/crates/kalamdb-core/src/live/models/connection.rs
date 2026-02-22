@@ -26,8 +26,10 @@ fn epoch_millis() -> u64 {
 /// Maximum pending notifications per connection before dropping new ones
 pub const NOTIFICATION_CHANNEL_CAPACITY: usize = 1000;
 
-/// Maximum pending control events per connection
-pub const EVENT_CHANNEL_CAPACITY: usize = 16;
+/// Maximum pending control events per connection.
+/// At high connection counts, the heartbeat checker may queue multiple events
+/// (ping, timeout, shutdown) before the handler processes them.
+pub const EVENT_CHANNEL_CAPACITY: usize = 64;
 
 /// Type alias for sending notifications to WebSocket or consumer clients
 pub type NotificationSender = mpsc::Sender<Arc<Notification>>;
@@ -47,8 +49,6 @@ pub type SharedConnectionState = Arc<RwLock<ConnectionState>>;
 /// Events sent to connection tasks from the heartbeat checker
 #[derive(Debug, Clone)]
 pub enum ConnectionEvent {
-    /// Send a ping to the client
-    SendPing,
     /// Authentication timeout - close connection
     AuthTimeout,
     /// Heartbeat timeout - close connection

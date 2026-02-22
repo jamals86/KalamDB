@@ -78,6 +78,7 @@ impl KalamClient {
             .subscribe_timeout(Duration::from_secs(45))
             .auth_timeout(Duration::from_secs(30))
             .initial_data_timeout(Duration::from_secs(60))
+            .keepalive_interval_secs(20)
             .build();
 
         let link = KalamLinkClient::builder()

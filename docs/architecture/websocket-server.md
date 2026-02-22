@@ -58,7 +58,7 @@ HTTP endpoint (`GET /v1/ws`) that upgrades to WebSocket. Validates origin, gener
 
 ### 2. `handle_websocket` (kalamdb-api)
 Per-connection `tokio::select!` loop with **biased** priority ordering:
-1. **Events** (highest): `SendPing`, `AuthTimeout`, `HeartbeatTimeout`, `Shutdown` from ConnectionsManager
+1. **Events** (highest): `AuthTimeout`, `HeartbeatTimeout`, `Shutdown` from ConnectionsManager
 2. **Messages**: Client WebSocket frames (Ping/Pong/Text/Binary/Close)
 3. **Notifications** (lowest): Live query change notifications
 
@@ -67,7 +67,7 @@ Shared singleton managing ALL connections:
 - **Primary storage**: `DashMap<ConnectionId, SharedConnectionState>` 
 - **Subscription indices**: `(UserId, TableId) → DashMap<LiveQueryId, SubscriptionHandle>` for O(1) notification routing
 - **Background heartbeat checker**: Single Tokio task, ticks every `heartbeat_interval` (default 5s), iterates ALL connections
-- **Channel-based communication**: Each connection gets bounded `event_tx/rx` (cap 16) and `notification_tx/rx` (cap 1000)
+- **Channel-based communication**: Each connection gets bounded `event_tx/rx` (cap 64) and `notification_tx/rx` (cap 1000)
 
 ### 4. `LiveQueryManager` (kalamdb-core)
 Handles subscription registration/unregistration:
@@ -89,24 +89,29 @@ Receives `ChangeNotification` from table providers when data changes:
 ## Heartbeat System
 
 ```
-ConnectionsManager (background task)
-    │
-    ├── Every 5s: tick
-    │   ├── For each connection:
-    │   │   ├── If not authenticated && !auth_started && elapsed > auth_timeout → AuthTimeout
-    │   │   ├── If elapsed since last_heartbeat > client_timeout → HeartbeatTimeout  
-    │   │   └── Otherwise → SendPing
-    │   └── Unregister timed-out connections immediately
-    │
-    └── MissedTickBehavior::Skip (doesn't queue up missed ticks)
+Client (kalam-link)                         Server (ConnectionsManager)
+    │                                           │
+    ├── Every keepalive_interval (6s):          ├── Every heartbeat_interval (5s):
+    │   └── Send WebSocket Ping frame ──────►   │   ├── For each connection:
+    │                                           │   │   ├── If not authenticated && !auth_started
+    │                                           │   │   │   && elapsed > auth_timeout → AuthTimeout
+    │                                           │   │   └── If millis_since_heartbeat > client_timeout
+    │                                           │   │       → HeartbeatTimeout
+    │                                           │   └── Force-unregister if event channel full
+    │                                           │
+    └── Server Pong auto-reply ◄────────────    └── MissedTickBehavior::Skip
 ```
 
+**Client-driven keepalive**: kalam-link sends periodic WebSocket `Ping` frames (default 6s).
+The server never initiates pings — it only checks for stale connections by reading atomic
+timestamps. This eliminates thundering-herd effects at scale (>40K connections).
+
 **Default Timeouts**:
-- `client_timeout`: 30s (how long since last activity before disconnect)
-- `auth_timeout`: 10s (how long for initial authentication)
+- `client_timeout`: 10s (how long since last activity before disconnect)
+- `auth_timeout`: 3s (how long for initial authentication)
 - `heartbeat_interval`: 5s (how often the checker runs)
 
-**Activity tracking**: `connection_state.write().update_heartbeat()` is called on every Ping, Pong, and Text message received.
+**Activity tracking**: `connection_state.read().update_heartbeat()` is called (lock-free atomic store) on every Ping, Pong, and Text message received.
 
 ---
 

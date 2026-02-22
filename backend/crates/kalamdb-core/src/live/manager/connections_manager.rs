@@ -2,19 +2,22 @@
 //!
 //! Unified manager for both WebSocket and consumer connections:
 //! - Connection lifecycle (connected, authenticated, subscriptions)
-//! - Heartbeat tracking (last activity, auth timeout)  
+//! - Heartbeat tracking (last activity, auth timeout)
 //! - Subscription management
 //! - Notification delivery
 //! - Graceful shutdown coordination
 //!
-//! Architecture:
-//! - `ConnectionsManager` manages connection lifecycle
-//! - `SharedConnectionState` (Arc<RwLock<ConnectionState>>) is returned on registration
-//! - Handlers hold the Arc and can access/mutate state directly without ID lookups
+//! ## Heartbeat Design
 //!
-//! Used by:
-//! - WebSocket handlers for live queries
-//! - Topic consumer handlers for pub/sub
+//! Liveness is driven by the **client** (kalam-link), not the server:
+//! - kalam-link sends a WebSocket `Ping` frame every `keepalive_interval` seconds
+//! - The server handler calls `update_heartbeat()` on every incoming frame (Ping, Pong, Text)
+//! - The background checker only scans for *timed-out* connections — it never initiates pings
+//!
+//! Benefits over server-driven pings:
+//! - No thundering-herd: each client pings on its own schedule, naturally staggered
+//! - Dead TCP detected at the client (write failure) rather than waiting for timeout
+//! - O(N) atomic reads per tick — no mpsc events, no synchronised wakeups
 
 use super::super::models::{
     ConnectionEvent, ConnectionRegistration, ConnectionState, SharedConnectionState,
@@ -455,9 +458,21 @@ impl ConnectionsManager {
         self.is_shutting_down.store(true, Ordering::Release);
 
         // Send shutdown event to all connections
+        let mut force_unregister = Vec::new();
         for entry in self.connections.iter() {
+            let conn_id = entry.key().clone();
             let state = entry.value().read();
-            let _ = state.event_tx.try_send(ConnectionEvent::Shutdown);
+            match state.event_tx.try_send(ConnectionEvent::Shutdown) {
+                Ok(_) => {}
+                Err(mpsc::error::TrySendError::Full(_)) | Err(mpsc::error::TrySendError::Closed(_)) => {
+                    // Handler is likely stalled or gone; unregister immediately so shutdown doesn't wait forever.
+                    force_unregister.push(conn_id);
+                }
+            }
+        }
+
+        for conn_id in force_unregister {
+            self.unregister_connection(&conn_id);
         }
 
         // Wait for connections to close with timeout
@@ -530,9 +545,7 @@ impl ConnectionsManager {
     fn check_all_connections(&self) {
         let now = Instant::now();
         let client_timeout_ms = self.client_timeout.as_millis() as u64;
-        // Only ping connections that haven't been heard from in half the timeout window.
-        // Recently-active connections don't need a ping — their messages already prove liveness.
-        let ping_threshold_ms = client_timeout_ms / 2;
+        let mut force_unregister = Vec::new();
 
         for entry in self.connections.iter() {
             let conn_id = entry.key();
@@ -545,27 +558,33 @@ impl ConnectionsManager {
                 && now.duration_since(state.connected_at) > self.auth_timeout
             {
                 debug!("Auth timeout for connection: {}", conn_id);
-                let _ = state.event_tx.try_send(ConnectionEvent::AuthTimeout);
-                // Don't unregister here — the handler task will clean up
-                // after receiving the AuthTimeout event and closing the session.
+                match state.event_tx.try_send(ConnectionEvent::AuthTimeout) {
+                    Ok(_) => {}
+                    Err(mpsc::error::TrySendError::Full(_)) | Err(mpsc::error::TrySendError::Closed(_)) => {
+                        force_unregister.push(conn_id.clone());
+                    }
+                }
                 continue;
             }
 
-            // Check heartbeat timeout using lock-free atomic read
+            // Check heartbeat timeout using lock-free atomic read.
+            // Clients (kalam-link) send their own Ping frames periodically which
+            // reset this timestamp, so the server never needs to initiate pings.
+            // This check is the last line of defence for crashed / misbehaving clients.
             let ms_since = state.millis_since_heartbeat();
             if ms_since > client_timeout_ms {
                 debug!("Heartbeat timeout for connection: {} ({}ms since last activity)", conn_id, ms_since);
-                let _ = state.event_tx.try_send(ConnectionEvent::HeartbeatTimeout);
-                // Don't unregister here — the handler task will clean up
-                // after receiving the HeartbeatTimeout event and closing the session.
-                continue;
+                match state.event_tx.try_send(ConnectionEvent::HeartbeatTimeout) {
+                    Ok(_) => {}
+                    Err(mpsc::error::TrySendError::Full(_)) | Err(mpsc::error::TrySendError::Closed(_)) => {
+                        force_unregister.push(conn_id.clone());
+                    }
+                }
             }
+        }
 
-            // Only send ping if connection has been quiet for a while.
-            // This avoids flooding connections that are actively sending messages.
-            if ms_since > ping_threshold_ms {
-                let _ = state.event_tx.try_send(ConnectionEvent::SendPing);
-            }
+        for conn_id in force_unregister {
+            self.unregister_connection(&conn_id);
         }
     }
 }
@@ -640,5 +659,158 @@ mod tests {
         let reg =
             registry.register_connection(ConnectionId::new("conn1"), ConnectionInfo::new(None));
         assert!(reg.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_heartbeat_timeout_sends_event() {
+        // Use a very short client timeout so we don't have to sleep long
+        let registry = ConnectionsManager::new(
+            NodeId::new(1),
+            Duration::from_millis(50), // client_timeout
+            Duration::from_secs(60),   // auth_timeout (long, not under test)
+            Duration::from_secs(5),    // heartbeat_interval (unused – we call check manually)
+        );
+
+        let conn_id = ConnectionId::new("timeout_conn");
+        let mut reg = registry
+            .register_connection(conn_id.clone(), ConnectionInfo::new(None))
+            .expect("should register");
+
+        // Mark authenticated so auth-timeout path is skipped
+        {
+            let mut state = reg.state.write();
+            state.mark_auth_started();
+            state.mark_authenticated(
+                UserId::new("u1"),
+                kalamdb_commons::Role::User,
+            );
+        }
+
+        // Wait longer than client_timeout
+        tokio::time::sleep(Duration::from_millis(80)).await;
+
+        // Run the checker – should detect the stale connection
+        registry.check_all_connections();
+
+        // The event channel should contain a HeartbeatTimeout
+        let event = reg.event_rx.try_recv();
+        assert!(
+            matches!(event, Ok(ConnectionEvent::HeartbeatTimeout)),
+            "expected HeartbeatTimeout, got {:?}",
+            event
+        );
+    }
+
+    #[tokio::test]
+    async fn test_heartbeat_refresh_prevents_timeout() {
+        let registry = ConnectionsManager::new(
+            NodeId::new(1),
+            Duration::from_millis(100), // client_timeout
+            Duration::from_secs(60),
+            Duration::from_secs(5),
+        );
+
+        let conn_id = ConnectionId::new("alive_conn");
+        let mut reg = registry
+            .register_connection(conn_id.clone(), ConnectionInfo::new(None))
+            .expect("should register");
+
+        // Mark authenticated
+        {
+            let mut state = reg.state.write();
+            state.mark_auth_started();
+            state.mark_authenticated(
+                UserId::new("u2"),
+                kalamdb_commons::Role::User,
+            );
+        }
+
+        // Simulate client activity before the timeout fires
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        reg.state.read().update_heartbeat();
+
+        // Wait a bit more (total elapsed > 100ms from registration but < 100ms from refresh)
+        tokio::time::sleep(Duration::from_millis(60)).await;
+
+        registry.check_all_connections();
+
+        // Channel should be empty — heartbeat was refreshed
+        let event = reg.event_rx.try_recv();
+        assert!(
+            event.is_err(),
+            "expected no timeout event after heartbeat refresh, got {:?}",
+            event
+        );
+    }
+
+    #[tokio::test]
+    async fn test_auth_timeout_for_unauthenticated() {
+        let registry = ConnectionsManager::new(
+            NodeId::new(1),
+            Duration::from_secs(60),    // client_timeout (long)
+            Duration::from_millis(50),  // auth_timeout (short)
+            Duration::from_secs(5),
+        );
+
+        let conn_id = ConnectionId::new("noauth");
+        let mut reg = registry
+            .register_connection(conn_id.clone(), ConnectionInfo::new(None))
+            .expect("should register");
+        // Don't mark auth_started or authenticated
+
+        tokio::time::sleep(Duration::from_millis(80)).await;
+
+        registry.check_all_connections();
+
+        let event = reg.event_rx.try_recv();
+        assert!(
+            matches!(event, Ok(ConnectionEvent::AuthTimeout)),
+            "expected AuthTimeout, got {:?}",
+            event
+        );
+    }
+
+    #[tokio::test]
+    async fn test_force_unregister_on_full_channel() {
+        // Create manager with very short timeout
+        let registry = ConnectionsManager::new(
+            NodeId::new(1),
+            Duration::from_millis(50),
+            Duration::from_secs(60),
+            Duration::from_secs(5),
+        );
+
+        let conn_id = ConnectionId::new("full_chan");
+        let reg = registry
+            .register_connection(conn_id.clone(), ConnectionInfo::new(None))
+            .expect("should register");
+
+        // Mark authenticated
+        {
+            let mut state = reg.state.write();
+            state.mark_auth_started();
+            state.mark_authenticated(
+                UserId::new("u3"),
+                kalamdb_commons::Role::User,
+            );
+        }
+
+        // Fill the event channel to capacity
+        for _ in 0..EVENT_CHANNEL_CAPACITY {
+            let _ = reg.state.read().event_tx.try_send(ConnectionEvent::Shutdown);
+        }
+
+        // Wait for heartbeat timeout
+        tokio::time::sleep(Duration::from_millis(80)).await;
+
+        assert_eq!(registry.connection_count(), 1);
+        registry.check_all_connections();
+
+        // Connection should be force-unregistered since the channel was full
+        assert_eq!(
+            registry.connection_count(),
+            0,
+            "connection should be force-unregistered when event channel is full"
+        );
     }
 }
