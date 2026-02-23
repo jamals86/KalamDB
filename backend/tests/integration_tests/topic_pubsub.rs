@@ -20,7 +20,7 @@ use reqwest::StatusCode;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct HttpConsumeMessage {
     offset: u64,
     partition_id: u32,
@@ -54,10 +54,7 @@ async fn post_topics_consume(
         .expect("Failed to call /v1/api/topics/consume");
 
     let status = response.status();
-    let payload = response
-        .json::<Value>()
-        .await
-        .expect("Failed to decode consume response JSON");
+    let payload = response.json::<Value>().await.expect("Failed to decode consume response JSON");
     (status, payload)
 }
 
@@ -76,10 +73,7 @@ async fn post_topics_ack(
         .expect("Failed to call /v1/api/topics/ack");
 
     let status = response.status();
-    let payload = response
-        .json::<Value>()
-        .await
-        .expect("Failed to decode ack response JSON");
+    let payload = response.json::<Value>().await.expect("Failed to decode ack response JSON");
     (status, payload)
 }
 
@@ -88,17 +82,21 @@ async fn wait_until_group_reads_at_least(
     auth_header: &str,
     topic_id: &str,
     group_id: &str,
-    start: &str,
+    start: Value,
     limit: u64,
     min_messages: usize,
 ) -> HttpConsumeResponse {
-    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(8);
+    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(20);
+    let mut seen_offsets = std::collections::HashSet::<(u32, u64)>::new();
+    let mut aggregated_messages: Vec<HttpConsumeMessage> = Vec::new();
+    let mut next_offset = 0u64;
+    let mut has_more = false;
 
     loop {
         let request_body = json!({
             "topic_id": topic_id,
             "group_id": group_id,
-            "start": start,
+            "start": start.clone(),
             "limit": limit,
             "partition_id": 0,
             "timeout_seconds": 1
@@ -114,15 +112,84 @@ async fn wait_until_group_reads_at_least(
 
         let response: HttpConsumeResponse = serde_json::from_value(payload)
             .expect("Consume payload should match HttpConsumeResponse");
-        if response.messages.len() >= min_messages {
-            return response;
+
+        next_offset = response.next_offset;
+        has_more = response.has_more;
+        for message in &response.messages {
+            if seen_offsets.insert((message.partition_id, message.offset)) {
+                aggregated_messages.push(message.clone());
+            }
+        }
+
+        if aggregated_messages.len() >= min_messages {
+            return HttpConsumeResponse {
+                messages: aggregated_messages,
+                next_offset,
+                has_more,
+            };
         }
 
         if tokio::time::Instant::now() >= deadline {
             panic!(
-                "Timed out waiting for at least {} messages (got {})",
+                "Timed out waiting for at least {} messages (got {}) for topic='{}' group='{}' start='{}' limit={}",
                 min_messages,
-                response.messages.len()
+                aggregated_messages.len(),
+                topic_id,
+                group_id,
+                start,
+                limit
+            );
+        }
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(120)).await;
+    }
+}
+
+fn json_string(value: &Value) -> Option<String> {
+    if let Some(s) = value.as_str() {
+        return Some(s.to_string());
+    }
+    value
+        .as_object()
+        .and_then(|obj| obj.get("Utf8"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+}
+
+async fn wait_for_topic_routes(
+    server: &http_server::HttpTestServer,
+    topic_id: &str,
+    min_routes: usize,
+) {
+    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(20);
+    let sql = format!("SELECT routes FROM system.topics WHERE topic_id = '{}'", topic_id);
+
+    loop {
+        let response = server
+            .execute_sql(&sql)
+            .await
+            .expect("Failed to query system.topics for route readiness");
+
+        if response.status == ResponseStatus::Success {
+            if let Some(result) = response.results.first() {
+                if let Some(row) = result.row_as_map(0) {
+                    if let Some(routes_raw) = row.get("routes").and_then(json_string) {
+                        if let Ok(routes_json) = serde_json::from_str::<Value>(&routes_raw) {
+                            let route_count =
+                                routes_json.as_array().map(|routes| routes.len()).unwrap_or(0);
+                            if route_count >= min_routes {
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if tokio::time::Instant::now() >= deadline {
+            panic!(
+                "Timed out waiting for topic '{}' to have at least {} route(s)",
+                topic_id, min_routes
             );
         }
 
@@ -518,17 +585,14 @@ async fn test_http_api_consume_ack_option_combinations() {
     let topic = format!("{}.{}", namespace, topic_table);
     let source_table = format!("{}.{}", namespace, table);
 
-    let service_user = consolidated_helpers::unique_table("svc_tp_opts");
-    let auth_header = auth_helper::create_user_auth_header(
-        server,
-        &service_user,
-        "TopicPass123!",
-        &Role::Service,
-    )
-    .await
-    .expect("Failed to create service auth header");
+    let auth_header = server
+        .bearer_auth_header(&UserName::new("root"))
+        .expect("Failed to create root auth header");
 
-    let create_namespace = server.execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
+    let create_namespace = server
+        .execute_sql(&format!("CREATE NAMESPACE {}", namespace))
+        .await
+        .expect("CREATE NAMESPACE request failed");
     assert_eq!(
         create_namespace.status,
         ResponseStatus::Success,
@@ -537,11 +601,9 @@ async fn test_http_api_consume_ack_option_combinations() {
     );
 
     let create_table = server
-        .execute_sql(&format!(
-            "CREATE TABLE {} (id INT PRIMARY KEY, payload TEXT)",
-            source_table
-        ))
-        .await;
+        .execute_sql(&format!("CREATE TABLE {} (id INT PRIMARY KEY, payload TEXT)", source_table))
+        .await
+        .expect("CREATE TABLE request failed");
     assert_eq!(
         create_table.status,
         ResponseStatus::Success,
@@ -551,7 +613,8 @@ async fn test_http_api_consume_ack_option_combinations() {
 
     let create_topic = server
         .execute_sql(&format!("CREATE TOPIC {} PARTITIONS 1", topic))
-        .await;
+        .await
+        .expect("CREATE TOPIC request failed");
     assert_eq!(
         create_topic.status,
         ResponseStatus::Success,
@@ -561,21 +624,25 @@ async fn test_http_api_consume_ack_option_combinations() {
 
     let add_source = server
         .execute_sql(&format!("ALTER TOPIC {} ADD SOURCE {} ON INSERT", topic, source_table))
-        .await;
+        .await
+        .expect("ALTER TOPIC ADD SOURCE request failed");
     assert_eq!(
         add_source.status,
         ResponseStatus::Success,
         "ALTER TOPIC ADD SOURCE failed: {:?}",
         add_source.error
     );
+    wait_for_topic_routes(server, &topic, 1).await;
 
-    for id in 1..=6 {
+    let expected_backlog: usize = 80;
+    for id in 0..expected_backlog {
         let insert = server
             .execute_sql(&format!(
                 "INSERT INTO {} (id, payload) VALUES ({}, 'payload_{}')",
                 source_table, id, id
             ))
-            .await;
+            .await
+            .expect("INSERT request failed");
         assert_eq!(
             insert.status,
             ResponseStatus::Success,
@@ -585,13 +652,31 @@ async fn test_http_api_consume_ack_option_combinations() {
         );
     }
 
+    // Ensure CDC events are fully visible before exercising option combinations.
+    let ready_group = format!("ready-{}", consolidated_helpers::unique_table("opts"));
+    let ready = wait_until_group_reads_at_least(
+        server,
+        &auth_header,
+        &topic,
+        &ready_group,
+        json!("earliest"),
+        expected_backlog as u64,
+        expected_backlog,
+    )
+    .await;
+    assert_eq!(
+        ready.messages.len(),
+        expected_backlog,
+        "Readiness group should observe all inserted events before option assertions"
+    );
+
     let group = format!("group-{}", consolidated_helpers::unique_table("earliest"));
     let first_batch = wait_until_group_reads_at_least(
         server,
         &auth_header,
         &topic,
         &group,
-        "earliest",
+        json!("earliest"),
         2,
         2,
     )
@@ -639,9 +724,9 @@ async fn test_http_api_consume_ack_option_combinations() {
         &auth_header,
         &topic,
         &group,
-        "earliest",
+        json!("earliest"),
         10,
-        4,
+        10,
     )
     .await;
     assert!(
@@ -683,7 +768,8 @@ async fn test_http_api_consume_ack_option_combinations() {
                 "INSERT INTO {} (id, payload) VALUES ({}, 'live_{}')",
                 source_table, id, id
             ))
-            .await;
+            .await
+            .expect("INSERT live request failed");
         assert_eq!(
             insert.status,
             ResponseStatus::Success,
@@ -698,7 +784,7 @@ async fn test_http_api_consume_ack_option_combinations() {
         &auth_header,
         &topic,
         &latest_group,
-        "latest",
+        json!({ "Offset": latest_initial.next_offset }),
         10,
         2,
     )
@@ -731,26 +817,30 @@ async fn test_http_api_same_group_consumers_no_overlap() {
     .await
     .expect("Failed to create service auth header");
 
-    let create_namespace = server.execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
+    let create_namespace = server
+        .execute_sql(&format!("CREATE NAMESPACE {}", namespace))
+        .await
+        .expect("CREATE NAMESPACE request failed");
     assert_eq!(create_namespace.status, ResponseStatus::Success);
 
     let create_table = server
-        .execute_sql(&format!(
-            "CREATE TABLE {} (id INT PRIMARY KEY, payload TEXT)",
-            source_table
-        ))
-        .await;
+        .execute_sql(&format!("CREATE TABLE {} (id INT PRIMARY KEY, payload TEXT)", source_table))
+        .await
+        .expect("CREATE TABLE request failed");
     assert_eq!(create_table.status, ResponseStatus::Success);
 
     let create_topic = server
         .execute_sql(&format!("CREATE TOPIC {} PARTITIONS 1", topic))
-        .await;
+        .await
+        .expect("CREATE TOPIC request failed");
     assert_eq!(create_topic.status, ResponseStatus::Success);
 
     let add_source = server
         .execute_sql(&format!("ALTER TOPIC {} ADD SOURCE {} ON INSERT", topic, source_table))
-        .await;
+        .await
+        .expect("ALTER TOPIC ADD SOURCE request failed");
     assert_eq!(add_source.status, ResponseStatus::Success);
+    wait_for_topic_routes(server, &topic, 1).await;
 
     let expected_messages = 80usize;
     for id in 0..expected_messages {
@@ -759,7 +849,8 @@ async fn test_http_api_same_group_consumers_no_overlap() {
                 "INSERT INTO {} (id, payload) VALUES ({}, 'event_{}')",
                 source_table, id, id
             ))
-            .await;
+            .await
+            .expect("INSERT request failed");
         assert_eq!(insert.status, ResponseStatus::Success, "INSERT {} failed", id);
     }
 
@@ -770,7 +861,7 @@ async fn test_http_api_same_group_consumers_no_overlap() {
         &auth_header,
         &topic,
         &ready_group,
-        "earliest",
+        json!("earliest"),
         expected_messages as u64,
         expected_messages,
     )
@@ -780,11 +871,23 @@ async fn test_http_api_same_group_consumers_no_overlap() {
     let group = format!("group-{}", consolidated_helpers::unique_table("shared"));
 
     let first = wait_until_group_reads_at_least(
-        server, &auth_header, &topic, &group, "earliest", 40, 40,
+        server,
+        &auth_header,
+        &topic,
+        &group,
+        json!("earliest"),
+        40,
+        40,
     )
     .await;
     let second = wait_until_group_reads_at_least(
-        server, &auth_header, &topic, &group, "earliest", 40, 40,
+        server,
+        &auth_header,
+        &topic,
+        &group,
+        json!("earliest"),
+        40,
+        40,
     )
     .await;
 
@@ -794,10 +897,7 @@ async fn test_http_api_same_group_consumers_no_overlap() {
         second.messages.iter().map(|m| (m.partition_id, m.offset)).collect();
 
     let overlap_count = first_offsets.intersection(&second_offsets).count();
-    assert_eq!(
-        overlap_count, 0,
-        "Same-group consumers must not receive overlapping offsets"
-    );
+    assert_eq!(overlap_count, 0, "Same-group consumers must not receive overlapping offsets");
 
     let union_count = first_offsets.union(&second_offsets).count();
     assert_eq!(

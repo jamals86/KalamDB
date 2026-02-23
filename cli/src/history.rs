@@ -28,6 +28,50 @@ pub struct CommandHistory {
     max_size: usize,
 }
 
+/// Return whether a command is safe to persist in local history.
+///
+/// This intentionally errs on the side of skipping persistence to avoid
+/// storing secrets (passwords/tokens/authorization material) on disk.
+pub fn should_persist_command(command: &str) -> bool {
+    let trimmed = command.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    let lower = trimmed.to_ascii_lowercase();
+
+    // Never persist credential-management meta commands.
+    let blocked_meta_prefixes = [
+        "\\history",
+        "\\h",
+        "\\quit",
+        "\\q",
+        "\\update-credentials",
+        "\\show-credentials",
+        "\\credentials",
+        "\\delete-credentials",
+    ];
+    if blocked_meta_prefixes
+        .iter()
+        .any(|prefix| lower == *prefix || lower.starts_with(&format!("{} ", prefix)))
+    {
+        return false;
+    }
+
+    // Skip potentially sensitive SQL/commands that include secret material.
+    let sensitive_markers = [
+        "password",
+        "authorization",
+        "bearer ",
+        "refresh_token",
+        "jwt_token",
+        "api_key",
+        "secret",
+        "client_secret",
+    ];
+    !sensitive_markers.iter().any(|marker| lower.contains(marker))
+}
+
 impl CommandHistory {
     /// Create a new history manager
     pub fn new(max_size: usize) -> Self {
@@ -102,6 +146,16 @@ impl CommandHistory {
         std::fs::write(&self.path, contents)
             .map_err(|e| CLIError::HistoryError(format!("Failed to write history file: {}", e)))?;
 
+        // Restrict history permissions on Unix to avoid accidental disclosure.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let permissions = std::fs::Permissions::from_mode(0o600);
+            std::fs::set_permissions(&self.path, permissions).map_err(|e| {
+                CLIError::HistoryError(format!("Failed to secure history file permissions: {}", e))
+            })?;
+        }
+
         Ok(())
     }
 
@@ -111,6 +165,9 @@ impl CommandHistory {
 
         // Don't add empty or duplicate consecutive commands
         if command.trim().is_empty() {
+            return Ok(());
+        }
+        if !should_persist_command(command) {
             return Ok(());
         }
         if history.last().map(|s| s.as_str()) == Some(command) {
@@ -311,5 +368,41 @@ mod tests {
         let loaded = history.load().unwrap();
         assert_eq!(loaded.len(), 3);
         assert_eq!(loaded[2], "SELECT 3");
+    }
+
+    #[test]
+    fn test_should_persist_command_blocks_sensitive_inputs() {
+        assert!(!should_persist_command("\\update-credentials admin supersecret"));
+        assert!(!should_persist_command("CREATE USER alice WITH PASSWORD 'secret123'"));
+        assert!(!should_persist_command("SELECT * FROM t WHERE authorization = 'Bearer abc'"));
+        assert!(should_persist_command("SELECT * FROM users"));
+    }
+
+    #[test]
+    fn test_append_skips_sensitive_commands() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("history");
+        let history = CommandHistory::with_path(&path, 100);
+
+        history.append("\\update-credentials admin supersecret").unwrap();
+        history.append("CREATE USER alice WITH PASSWORD 'secret123'").unwrap();
+        history.append("SELECT 1").unwrap();
+
+        let loaded = history.load().unwrap();
+        assert_eq!(loaded, vec!["SELECT 1".to_string()]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_history_permissions_are_restricted() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("history");
+        let history = CommandHistory::with_path(&path, 100);
+
+        history.append("SELECT 1").unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
     }
 }

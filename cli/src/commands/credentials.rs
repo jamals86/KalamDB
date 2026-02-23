@@ -37,13 +37,13 @@ pub fn handle_credentials(cli: &Cli, credential_store: &mut FileCredentialStore)
                 if let Some(ref user) = creds.username {
                     println!("Username: {}", user);
                 }
-                println!("JWT Token: {}...", &creds.jwt_token[..creds.jwt_token.len().min(20)]);
+                println!("JWT Token: [redacted]");
                 if let Some(ref expires) = creds.expires_at {
                     let expired = if creds.is_expired() { " (EXPIRED)" } else { "" };
                     println!("Expires: {}{}", expires, expired);
                 }
-                if let Some(ref refresh_token) = creds.refresh_token {
-                    println!("Refresh Token: {}...", &refresh_token[..refresh_token.len().min(20)]);
+                if creds.refresh_token.is_some() {
+                    println!("Refresh Token: [redacted]");
                     if let Some(ref refresh_expires) = creds.refresh_expires_at {
                         let expired = if creds.is_refresh_expired() {
                             " (EXPIRED)"

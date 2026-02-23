@@ -14,6 +14,7 @@ use crate::{
 };
 use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
+use reqwest::Url;
 use serde_json::Value;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::VecDeque;
@@ -36,6 +37,10 @@ use tokio_tungstenite::{
 
 type WebSocketStream =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<TcpStream>>;
+
+const MAX_WS_TEXT_MESSAGE_BYTES: usize = 64 << 20; // 64 MiB
+const MAX_WS_BINARY_MESSAGE_BYTES: usize = 16 << 20; // 16 MiB
+const MAX_WS_DECOMPRESSED_MESSAGE_BYTES: usize = 64 << 20; // 64 MiB
 
 /// Manages WebSocket subscriptions for real-time change notifications.
 ///
@@ -60,24 +65,86 @@ type WebSocketStream =
 /// # Ok(())
 /// # }
 /// ```
-fn resolve_ws_url(base_url: &str, override_url: Option<&str>) -> String {
+fn resolve_ws_url(base_url: &str, override_url: Option<&str>) -> Result<String> {
+    let base = Url::parse(base_url.trim()).map_err(|e| {
+        KalamLinkError::ConfigurationError(format!("Invalid base_url '{}': {}", base_url, e))
+    })?;
+
+    validate_ws_url(&base, false, "base_url")?;
+
     if let Some(url) = override_url {
-        return url.to_string();
+        let override_parsed = Url::parse(url.trim()).map_err(|e| {
+            KalamLinkError::ConfigurationError(format!(
+                "Invalid WebSocket override URL '{}': {}",
+                url, e
+            ))
+        })?;
+
+        validate_ws_url(&override_parsed, true, "WebSocket override URL")?;
+
+        if base.scheme() == "https" && override_parsed.scheme() == "ws" {
+            return Err(KalamLinkError::ConfigurationError(
+                "Refusing insecure ws:// override when base_url uses https://".to_string(),
+            ));
+        }
+
+        return Ok(override_parsed.to_string());
     }
 
-    let normalized = base_url.trim_end_matches('/');
-    let ws_base = normalized.replace("http://", "ws://").replace("https://", "wss://");
-    format!("{}/v1/ws", ws_base)
+    let mut ws_url = base.clone();
+    let ws_scheme = match base.scheme() {
+        "http" | "ws" => "ws",
+        "https" | "wss" => "wss",
+        other => {
+            return Err(KalamLinkError::ConfigurationError(format!(
+                "Unsupported base_url scheme '{}'; expected http(s) or ws(s)",
+                other
+            )));
+        },
+    };
+
+    ws_url.set_scheme(ws_scheme).map_err(|_| {
+        KalamLinkError::ConfigurationError("Failed to set WebSocket URL scheme".to_string())
+    })?;
+    ws_url.set_query(None);
+    ws_url.set_fragment(None);
+    ws_url.set_path("/v1/ws");
+
+    Ok(ws_url.to_string())
 }
 
-/// Build the WebSocket request URL.
-///
-/// SECURITY: JWT tokens are sent exclusively via the Authorization header
-/// and post-connection Authenticate message — **never** as URL query
-/// parameters.  Embedding tokens in URLs risks exposing them in server
-/// access logs, proxy caches and browser history.
-fn build_request_url(ws_url: &str) -> String {
-    ws_url.to_string()
+fn validate_ws_url(url: &Url, require_ws_scheme: bool, context: &str) -> Result<()> {
+    if url.host_str().is_none() {
+        return Err(KalamLinkError::ConfigurationError(format!("{} must include a host", context)));
+    }
+
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(KalamLinkError::ConfigurationError(format!(
+            "{} must not include username/password credentials",
+            context
+        )));
+    }
+
+    if require_ws_scheme {
+        match url.scheme() {
+            "ws" | "wss" => {},
+            other => {
+                return Err(KalamLinkError::ConfigurationError(format!(
+                    "{} must use ws:// or wss:// (found '{}')",
+                    context, other
+                )));
+            },
+        }
+    }
+
+    if url.query().is_some() || url.fragment().is_some() {
+        return Err(KalamLinkError::ConfigurationError(format!(
+            "{} must not include query parameters or fragments",
+            context
+        )));
+    }
+
+    Ok(())
 }
 
 fn hash_start_index(key: &str, len: usize) -> usize {
@@ -500,8 +567,7 @@ impl SubscriptionManager {
             ws_url,
         } = config;
 
-        let ws_endpoint = resolve_ws_url(base_url, ws_url.as_deref());
-        let request_url = build_request_url(&ws_endpoint);
+        let request_url = resolve_ws_url(base_url, ws_url.as_deref())?;
 
         // Connect to WebSocket with connection timeout
         let mut request = request_url.into_client_request().map_err(|e| {
@@ -659,7 +725,19 @@ impl SubscriptionManager {
     /// Decode a raw WebSocket payload (text or binary/gzip) into a UTF-8 string.
     fn decode_ws_payload(data: &[u8], is_binary: bool) -> Result<String> {
         if is_binary {
-            let decompressed = crate::compression::decompress_gzip(data).map_err(|e| {
+            if data.len() > MAX_WS_BINARY_MESSAGE_BYTES {
+                return Err(KalamLinkError::WebSocketError(format!(
+                    "Binary WebSocket message too large ({} bytes > {} bytes)",
+                    data.len(),
+                    MAX_WS_BINARY_MESSAGE_BYTES
+                )));
+            }
+
+            let decompressed = crate::compression::decompress_gzip_with_limit(
+                data,
+                MAX_WS_DECOMPRESSED_MESSAGE_BYTES,
+            )
+            .map_err(|e| {
                 KalamLinkError::WebSocketError(format!("Failed to decompress message: {}", e))
             })?;
             String::from_utf8(decompressed).map_err(|e| {
@@ -714,14 +792,27 @@ impl SubscriptionManager {
             };
 
             match msg_result {
-                Some(Ok(msg @ (Message::Text(_) | Message::Binary(_)))) => {
-                    let (data, is_binary) = match msg {
-                        Message::Text(t) => (t.as_bytes().to_vec(), false),
-                        Message::Binary(b) => (b.to_vec(), true),
-                        _ => unreachable!(),
-                    };
+                Some(Ok(Message::Text(text))) => {
+                    if text.len() > MAX_WS_TEXT_MESSAGE_BYTES {
+                        return Some(Err(KalamLinkError::WebSocketError(format!(
+                            "Text WebSocket message too large ({} bytes > {} bytes)",
+                            text.len(),
+                            MAX_WS_TEXT_MESSAGE_BYTES
+                        ))));
+                    }
 
-                    let text = match Self::decode_ws_payload(&data, is_binary) {
+                    match parse_message(text.as_ref()) {
+                        Ok(Some(event)) => {
+                            if let Some(early) = self.process_event(event).await {
+                                return Some(early);
+                            }
+                        },
+                        Ok(None) => continue,
+                        Err(e) => return Some(Err(e)),
+                    }
+                },
+                Some(Ok(Message::Binary(data))) => {
+                    let text = match Self::decode_ws_payload(data.as_ref(), true) {
                         Ok(s) => s,
                         Err(e) => return Some(Err(e)),
                     };
@@ -893,17 +984,62 @@ mod tests {
 
     #[test]
     fn test_ws_url_conversion() {
-        assert_eq!(resolve_ws_url("http://localhost:3000", None), "ws://localhost:3000/v1/ws");
-        assert_eq!(resolve_ws_url("https://api.example.com", None), "wss://api.example.com/v1/ws");
         assert_eq!(
-            resolve_ws_url("http://localhost:3000", Some("ws://override/ws")),
+            resolve_ws_url("http://localhost:3000", None).unwrap(),
+            "ws://localhost:3000/v1/ws"
+        );
+        assert_eq!(
+            resolve_ws_url("https://api.example.com", None).unwrap(),
+            "wss://api.example.com/v1/ws"
+        );
+        assert_eq!(
+            resolve_ws_url("http://localhost:3000", Some("ws://override/ws")).unwrap(),
             "ws://override/ws"
         );
     }
 
     #[test]
     fn test_ws_url_trailing_slash_stripped() {
-        assert_eq!(resolve_ws_url("http://localhost:3000/", None), "ws://localhost:3000/v1/ws");
+        assert_eq!(
+            resolve_ws_url("http://localhost:3000/", None).unwrap(),
+            "ws://localhost:3000/v1/ws"
+        );
+    }
+
+    #[test]
+    fn test_ws_url_rejects_query_and_fragment() {
+        assert!(resolve_ws_url(
+            "http://localhost:3000",
+            Some("wss://api.example.com/v1/ws?token=secret")
+        )
+        .is_err());
+        assert!(
+            resolve_ws_url("http://localhost:3000", Some("wss://api.example.com/v1/ws#frag"))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn test_ws_url_rejects_userinfo() {
+        assert!(resolve_ws_url(
+            "http://localhost:3000",
+            Some("wss://user:pass@api.example.com/v1/ws")
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn test_ws_url_rejects_https_downgrade() {
+        assert!(
+            resolve_ws_url("https://api.example.com", Some("ws://api.example.com/v1/ws")).is_err()
+        );
+    }
+
+    #[test]
+    fn test_ws_url_rejects_unsupported_scheme() {
+        assert!(
+            resolve_ws_url("http://localhost:3000", Some("ftp://api.example.com/v1/ws")).is_err()
+        );
     }
 
     #[test]

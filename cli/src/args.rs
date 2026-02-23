@@ -38,7 +38,7 @@ pub struct Cli {
     #[arg(short = 'p', long = "port", default_value = "3000")]
     pub port: u16,
 
-    /// JWT authentication token
+    /// JWT authentication token (avoid in shared shells; may appear in process list/history)
     #[arg(long = "token")]
     pub token: Option<String>,
 
@@ -46,7 +46,8 @@ pub struct Cli {
     #[arg(long = "username")]
     pub username: Option<String>,
 
-    /// HTTP Basic Auth password (if flag is present without value, prompts interactively)
+    /// HTTP Basic Auth password (if flag is present without value, prompts interactively;
+    /// avoid passing inline secrets in shared shells)
     #[arg(long = "password", num_args = 0..=1, default_missing_value = "")]
     pub password: Option<String>,
 

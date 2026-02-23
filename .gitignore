@@ -46,6 +46,7 @@ config.toml
 *.tmp
 *.temp
 /tmp/
+.worktrees/
 
 # Build outputs
 *.exe
@@ -97,3 +98,6 @@ cli/results.json
 /target-storage-migration
 /target-storage-rollback
 ui/package-lock.json
+/target_cli_option_matrix
+/target_sec
+/target_cli_smoke_run

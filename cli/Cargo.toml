@@ -102,6 +102,7 @@ colored = { workspace = true }
 
 # Config file parsing
 toml = { workspace = true }
+url = { workspace = true }
 
 # Secure password input
 rpassword = { workspace = true }

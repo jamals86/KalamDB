@@ -130,6 +130,15 @@ fn parse_payload(bytes: &[u8]) -> serde_json::Value {
     serde_json::from_slice(bytes).expect("Failed to parse payload")
 }
 
+fn parse_i64_field(payload: &serde_json::Value, key: &str) -> Option<i64> {
+    let raw = payload.get(key)?;
+    let untyped = common::extract_typed_value(raw);
+    if let Some(value) = untyped.as_i64() {
+        return Some(value);
+    }
+    untyped.as_str().and_then(|value| value.parse::<i64>().ok())
+}
+
 #[tokio::test]
 #[ntest::timeout(120000)]
 async fn test_topic_consume_insert_events() {
@@ -555,4 +564,293 @@ async fn test_topic_consume_from_latest() {
     execute_sql(&format!("DROP TOPIC {}", topic)).await;
     execute_sql(&format!("DROP TABLE {}.{}", namespace, table)).await;
     execute_sql(&format!("DROP NAMESPACE {}", namespace)).await;
+}
+
+#[derive(Clone, Copy)]
+enum StartMode {
+    Earliest,
+    Latest,
+}
+
+impl StartMode {
+    fn as_offset_reset(self) -> AutoOffsetReset {
+        match self {
+            StartMode::Earliest => AutoOffsetReset::Earliest,
+            StartMode::Latest => AutoOffsetReset::Latest,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            StartMode::Earliest => "earliest",
+            StartMode::Latest => "latest",
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ConsumeCase {
+    start: StartMode,
+    batch_size: u32,
+    auto_commit: bool,
+}
+
+/// Exhaustive option matrix for Topic consumer behavior:
+/// - start: earliest / latest
+/// - batch_size: 1 / 20
+/// - auto_ack equivalent: enable_auto_commit true / false
+///
+/// For each case, this validates:
+/// 1) batch size limits are respected on first delivery window
+/// 2) committed offsets advance correctly across a same-group restart
+/// 3) latest start does not replay backlog, only newly inserted records
+#[tokio::test]
+#[ntest::timeout(240000)]
+async fn test_topic_consume_option_matrix_start_batch_auto_ack_modes() {
+    let cases = [
+        ConsumeCase {
+            start: StartMode::Earliest,
+            batch_size: 1,
+            auto_commit: true,
+        },
+        ConsumeCase {
+            start: StartMode::Earliest,
+            batch_size: 1,
+            auto_commit: false,
+        },
+        ConsumeCase {
+            start: StartMode::Earliest,
+            batch_size: 20,
+            auto_commit: true,
+        },
+        ConsumeCase {
+            start: StartMode::Earliest,
+            batch_size: 20,
+            auto_commit: false,
+        },
+        ConsumeCase {
+            start: StartMode::Latest,
+            batch_size: 1,
+            auto_commit: true,
+        },
+        ConsumeCase {
+            start: StartMode::Latest,
+            batch_size: 1,
+            auto_commit: false,
+        },
+        ConsumeCase {
+            start: StartMode::Latest,
+            batch_size: 20,
+            auto_commit: true,
+        },
+        ConsumeCase {
+            start: StartMode::Latest,
+            batch_size: 20,
+            auto_commit: false,
+        },
+    ];
+
+    for test_case in cases {
+        let namespace = common::generate_unique_namespace("smoke_topic_opts");
+        let table = common::generate_unique_table("events");
+        let topic = format!("{}.{}", namespace, table);
+        let table_id = format!("{}.{}", namespace, table);
+        let group_id = format!(
+            "opts-{}-b{}-auto{}-{}",
+            test_case.start.as_str(),
+            test_case.batch_size,
+            test_case.auto_commit,
+            common::random_string(8)
+        );
+
+        execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
+        execute_sql(&format!("CREATE TABLE {} (id INT PRIMARY KEY, payload TEXT)", table_id)).await;
+        create_topic_with_sources(&topic, &table_id, &["INSERT"]).await;
+
+        let backlog_count = 32i64;
+        for id in 0..backlog_count {
+            execute_sql(&format!(
+                "INSERT INTO {} (id, payload) VALUES ({}, 'old_{}_{}')",
+                table_id,
+                id,
+                test_case.start.as_str(),
+                id
+            ))
+            .await;
+        }
+
+        let client = create_test_client().await;
+        let mut consumer = client
+            .consumer()
+            .topic(&topic)
+            .group_id(&group_id)
+            .auto_offset_reset(test_case.start.as_offset_reset())
+            .max_poll_records(test_case.batch_size)
+            .enable_auto_commit(test_case.auto_commit)
+            .auto_commit_interval(Duration::from_secs(300))
+            .poll_timeout(Duration::from_secs(1))
+            .build()
+            .expect("Failed to build option-matrix consumer");
+
+        match test_case.start {
+            StartMode::Earliest => {
+                let first_batch = poll_records_until(&mut consumer, 1, Duration::from_secs(20)).await;
+                assert!(
+                    !first_batch.is_empty(),
+                    "earliest should return backlog (batch_size={}, auto_commit={})",
+                    test_case.batch_size,
+                    test_case.auto_commit
+                );
+                assert!(
+                    first_batch.len() as u32 <= test_case.batch_size,
+                    "first batch len={} exceeded batch_size={} for earliest/auto_commit={}",
+                    first_batch.len(),
+                    test_case.batch_size,
+                    test_case.auto_commit
+                );
+
+                let first_max_offset = first_batch
+                    .iter()
+                    .map(|record| record.offset)
+                    .max()
+                    .expect("first batch should have at least one record");
+
+                for record in &first_batch {
+                    consumer.mark_processed(record);
+                }
+
+                if test_case.auto_commit {
+                    consumer.close().await.expect("close should flush auto commit");
+                } else {
+                    consumer.commit_sync().await.expect("manual commit should succeed");
+                    consumer.close().await.expect("close after manual commit");
+                }
+
+                let client_resume = create_test_client().await;
+                let mut resumed_consumer = client_resume
+                    .consumer()
+                    .topic(&topic)
+                    .group_id(&group_id)
+                    .auto_offset_reset(AutoOffsetReset::Earliest)
+                    .enable_auto_commit(false)
+                    .max_poll_records(10)
+                    .poll_timeout(Duration::from_secs(1))
+                    .build()
+                    .expect("Failed to build resumed consumer");
+
+                let resumed_batch =
+                    poll_records_until(&mut resumed_consumer, 3, Duration::from_secs(20)).await;
+                assert!(
+                    !resumed_batch.is_empty(),
+                    "resumed earliest consumer should continue after committed offset"
+                );
+                assert!(
+                    resumed_batch.iter().all(|record| record.offset > first_max_offset),
+                    "resumed records must start after committed offset (first_max_offset={})",
+                    first_max_offset
+                );
+                for record in &resumed_batch {
+                    resumed_consumer.mark_processed(record);
+                }
+                let _ = resumed_consumer.commit_sync().await;
+                let _ = resumed_consumer.close().await;
+            },
+            StartMode::Latest => {
+                let warmup = consumer
+                    .poll_with_timeout(Duration::from_secs(1))
+                    .await
+                    .expect("latest warmup poll should succeed");
+                assert!(
+                    warmup.is_empty(),
+                    "latest warmup should not replay backlog (batch_size={}, auto_commit={})",
+                    test_case.batch_size,
+                    test_case.auto_commit
+                );
+
+                tokio::time::sleep(Duration::from_millis(150)).await;
+
+                let live_count = test_case.batch_size as i64 + 3;
+                let live_base_id = 1000i64;
+                let mut expected_live_ids = HashSet::new();
+                for i in 0..live_count {
+                    let live_id = live_base_id + i;
+                    expected_live_ids.insert(live_id);
+                    execute_sql(&format!(
+                        "INSERT INTO {} (id, payload) VALUES ({}, 'live_{}_{}')",
+                        table_id,
+                        live_id,
+                        test_case.batch_size,
+                        i
+                    ))
+                    .await;
+                }
+
+                let live_batch =
+                    poll_records_until(&mut consumer, live_count as usize, Duration::from_secs(25))
+                        .await;
+                assert!(
+                    live_batch.len() >= live_count as usize,
+                    "latest consumer should receive all new records (expected>={}, got={})",
+                    live_count,
+                    live_batch.len()
+                );
+
+                let received_live_ids: HashSet<i64> = live_batch
+                    .iter()
+                    .filter_map(|record| {
+                        let payload = parse_payload(&record.payload);
+                        parse_i64_field(&payload, "id")
+                    })
+                    .collect();
+
+                for expected_id in &expected_live_ids {
+                    assert!(
+                        received_live_ids.contains(expected_id),
+                        "latest consumer missed live id={} (batch_size={}, auto_commit={})",
+                        expected_id,
+                        test_case.batch_size,
+                        test_case.auto_commit
+                    );
+                }
+                assert!(
+                    received_live_ids.iter().all(|id| *id >= live_base_id),
+                    "latest consumer should not replay old backlog ids"
+                );
+
+                for record in &live_batch {
+                    consumer.mark_processed(record);
+                }
+
+                if test_case.auto_commit {
+                    consumer.close().await.expect("close should flush auto commit");
+                } else {
+                    consumer.commit_sync().await.expect("manual commit should succeed");
+                    consumer.close().await.expect("close after manual commit");
+                }
+
+                let client_resume = create_test_client().await;
+                let mut resumed_consumer = client_resume
+                    .consumer()
+                    .topic(&topic)
+                    .group_id(&group_id)
+                    .auto_offset_reset(AutoOffsetReset::Earliest)
+                    .enable_auto_commit(false)
+                    .max_poll_records(10)
+                    .poll_timeout(Duration::from_secs(1))
+                    .build()
+                    .expect("Failed to build resumed latest consumer");
+                let resumed_batch =
+                    poll_records_until(&mut resumed_consumer, 1, Duration::from_secs(2)).await;
+                assert!(
+                    resumed_batch.is_empty(),
+                    "no duplicate delivery expected after latest case commit and restart"
+                );
+                let _ = resumed_consumer.close().await;
+            },
+        }
+
+        execute_sql(&format!("DROP TOPIC {}", topic)).await;
+        execute_sql(&format!("DROP TABLE {}", table_id)).await;
+        execute_sql(&format!("DROP NAMESPACE {}", namespace)).await;
+    }
 }

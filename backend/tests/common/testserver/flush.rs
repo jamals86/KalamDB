@@ -44,11 +44,7 @@ fn is_error_terminal_job_status(status: &str) -> bool {
 fn extract_flush_job_id(resp: &QueryResponse) -> Option<String> {
     let message = resp.results.first()?.message.as_deref()?;
     let (_, tail) = message.split_once("Job ID:")?;
-    let candidate = tail
-        .trim()
-        .trim_end_matches('.')
-        .trim_matches('"')
-        .trim_matches('\'');
+    let candidate = tail.trim().trim_end_matches('.').trim_matches('"').trim_matches('\'');
     if candidate.is_empty() {
         None
     } else {
