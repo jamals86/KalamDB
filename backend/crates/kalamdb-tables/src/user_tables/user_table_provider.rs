@@ -175,6 +175,29 @@ impl UserTableProvider {
         }
     }
 
+    /// Returns true if the latest hot-storage version of this PK is a tombstone
+    /// (`_deleted = true`).  Returns false if the PK is absent from hot storage
+    /// or if the latest version is active.
+    ///
+    /// Used in the PK fast-path of `scan_rows` to prevent cold storage (Parquet)
+    /// from surfacing a row that has already been deleted in hot storage.
+    fn pk_tombstoned_in_hot(
+        &self,
+        user_id: &UserId,
+        pk_value: &ScalarValue,
+    ) -> Result<bool, KalamDbError> {
+        let prefix = self.pk_index.build_prefix_for_pk(user_id, pk_value);
+        let index_results = self
+            .store
+            .scan_by_index(0, Some(&prefix), None)
+            .into_kalamdb_error("PK index scan failed")?;
+        Ok(index_results
+            .into_iter()
+            .max_by_key(|(row_id, _)| row_id.seq)
+            .map(|(_, row)| row._deleted)
+            .unwrap_or(false))
+    }
+
     /// Scan Parquet files from cold storage for a specific user (async version).
     ///
     /// Lists all *.parquet files in the user's storage directory and merges them into a single RecordBatch.
@@ -1014,7 +1037,26 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
                         );
                     }
 
-                    // Cold storage fallback
+                    // Check if PK is tombstoned (deleted) in hot storage.
+                    // If so, the row has been deleted — do NOT fall back to cold storage.
+                    // Returning the Parquet version would surface a row whose latest
+                    // version is a tombstone, violating MVCC visibility rules.
+                    if self.pk_tombstoned_in_hot(user_id, &pk_scalar)? {
+                        log::debug!(
+                            "[UserProvider] PK fast-path tombstone for {}={}, user={}",
+                            pk_name,
+                            pk_scalar,
+                            user_id.as_str()
+                        );
+                        return crate::utils::base::rows_to_arrow_batch(
+                            &schema,
+                            Vec::<(UserTableRowId, UserTableRow)>::new(),
+                            projection,
+                            |_, _| {},
+                        );
+                    }
+
+                    // Cold storage fallback (PK absent from hot storage entirely)
                     let cold_found =
                         base::find_row_by_pk(self, Some(user_id), &pk_scalar.to_string()).await?;
                     if let Some((row_id, row)) = cold_found {

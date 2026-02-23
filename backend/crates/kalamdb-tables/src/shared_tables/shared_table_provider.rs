@@ -170,6 +170,25 @@ impl SharedTableProvider {
             Ok(None)
         }
     }
+
+    /// Returns true if the latest hot-storage version of this PK is a tombstone
+    /// (`_deleted = true`).  Returns false if the PK is absent from hot storage
+    /// or if the latest version is active.
+    ///
+    /// Used in the PK fast-path of `scan_rows` to prevent cold storage (Parquet)
+    /// from surfacing a row that has already been deleted in hot storage.
+    fn pk_tombstoned_in_hot(&self, pk_value: &ScalarValue) -> Result<bool, KalamDbError> {
+        let prefix = self.pk_index.build_prefix_for_pk(pk_value);
+        let results = self
+            .store
+            .scan_by_index(0, Some(&prefix), None)
+            .into_kalamdb_error("PK index scan failed")?;
+        Ok(results
+            .into_iter()
+            .max_by_key(|(row_id, _)| row_id.as_i64())
+            .map(|(_, row)| row._deleted)
+            .unwrap_or(false))
+    }
 }
 
 #[async_trait]
@@ -841,6 +860,23 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
                     return crate::utils::base::rows_to_arrow_batch(
                         &schema,
                         vec![(row_id, row)],
+                        projection,
+                        |_, _| {},
+                    );
+                }
+
+                // Not in hot storage — check if it is tombstoned before trying cold storage.
+                // A tombstone in hot storage means the row was deleted; falling back to Parquet
+                // would surface a stale version and violate MVCC visibility rules.
+                if self.pk_tombstoned_in_hot(&pk_scalar)? {
+                    log::debug!(
+                        "[SharedProvider] PK fast-path tombstone for {}={}",
+                        pk_name,
+                        pk_scalar
+                    );
+                    return crate::utils::base::rows_to_arrow_batch(
+                        &schema,
+                        Vec::<(SharedTableRowId, SharedTableRow)>::new(),
                         projection,
                         |_, _| {},
                     );

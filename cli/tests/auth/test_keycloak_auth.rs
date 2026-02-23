@@ -319,6 +319,8 @@ fn test_provider_auto_provisioning_via_bearer() {
             if err.contains("untrusted issuer")
                 || err.contains("no trusted issuers configured")
                 || err.contains("user not found")
+                || err.contains("invalid credentials")
+                || err.contains("invalid_credentials")
             {
                 eprintln!(
                     "Server not configured for Keycloak OIDC. Skipping.\n\

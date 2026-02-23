@@ -716,6 +716,7 @@ mod tests {
             is_loading: false,
             timeouts: KalamLinkTimeouts::default(),
             closed: false,
+            keepalive_interval: None,
         }
     }
 

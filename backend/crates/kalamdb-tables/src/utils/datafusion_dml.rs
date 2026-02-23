@@ -7,6 +7,7 @@ use datafusion::datasource::memory::MemTable;
 use datafusion::datasource::TableProvider;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
+use datafusion::physical_plan::filter::FilterExec;
 use datafusion::physical_plan::{collect, ExecutionPlan};
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::conversions::arrow_json_conversion::{
@@ -67,15 +68,28 @@ pub async fn collect_matching_rows(
     state: &dyn Session,
     filters: &[Expr],
 ) -> DataFusionResult<Vec<Row>> {
-    // Pass filters to scan() which:
-    // 1. Uses PK fast-path if filter is a PK equality
-    // 2. Falls back to full scan with Inexact pushdown
-    // DataFusion adds a FilterExec on top (since pushdown is Inexact),
-    // so the collected results are already fully filtered — no need to
-    // re-apply row_matches_filters.
+    // Pass filters to scan() which may apply partial or full filtering.
+    // However, when called directly (not through the SQL planner), DataFusion does NOT
+    // automatically add a FilterExec for Inexact pushdown — the planner does that.
+    // We explicitly wrap with FilterExec to guarantee correct row-level filtering
+    // regardless of whether the underlying scan implementation applied the filter.
     let scan_plan = provider.scan(state, None, filters, None).await?;
+
+    let plan: Arc<dyn ExecutionPlan> = if !filters.is_empty() {
+        let schema = scan_plan.schema();
+        let df_schema = DFSchema::try_from(Arc::clone(&schema))?;
+        let predicate = filters[1..]
+            .iter()
+            .cloned()
+            .fold(filters[0].clone(), |acc, f| acc.and(f));
+        let physical_expr = state.create_physical_expr(predicate, &df_schema)?;
+        Arc::new(FilterExec::try_new(physical_expr, scan_plan)?)
+    } else {
+        scan_plan
+    };
+
     let task_ctx = state.task_ctx();
-    let batches = collect(scan_plan, task_ctx).await?;
+    let batches = collect(plan, task_ctx).await?;
     record_batches_to_rows(&batches)
 }
 
