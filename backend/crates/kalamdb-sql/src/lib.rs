@@ -61,8 +61,10 @@ pub use ddl::{
     SubscribeStatement, SubscriptionOptions,
 };
 pub use ddl_parent::DdlAst;
-pub use parser::{extract_dml_table_id, extract_dml_table_id_from_statement, parse_single_statement};
 pub use parser::SqlParser;
+pub use parser::{
+    extract_dml_table_id, extract_dml_table_id_from_statement, parse_single_statement,
+};
 pub use query_cache::{QueryCache, QueryCacheKey, QueryCacheTtlConfig};
 pub use validation::{
     validate_column_name, validate_namespace_name, validate_table_name, ValidationError,

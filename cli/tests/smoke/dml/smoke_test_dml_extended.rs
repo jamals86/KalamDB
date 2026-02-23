@@ -86,7 +86,8 @@ fn smoke_test_multi_row_insert() {
     println!("✅ Verified all 4 rows inserted correctly");
 
     // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 }
 
 /// Test soft DELETE for USER tables
@@ -192,7 +193,8 @@ fn smoke_test_soft_delete_user_table() {
     );
 
     // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 }
 
 /// Test soft DELETE for SHARED tables
@@ -253,7 +255,8 @@ fn smoke_test_soft_delete_shared_table() {
     println!("✅ Verified SHARED table uses soft delete");
 
     // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 }
 
 /// Test hard DELETE for STREAM tables
@@ -347,7 +350,8 @@ fn smoke_test_hard_delete_stream_table() {
     }
 
     // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 }
 
 /// Test aggregation queries (COUNT, SUM, GROUP BY)
@@ -474,7 +478,8 @@ fn smoke_test_aggregation_queries() {
     println!("✅ All aggregation queries successful");
 
     // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 }
 
 /// Test multi-row UPDATE
@@ -562,5 +567,6 @@ fn smoke_test_multi_row_update() {
     println!("✅ Verified multi-row UPDATE affected all matching rows");
 
     // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 }

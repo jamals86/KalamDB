@@ -17,7 +17,7 @@ use kalamdb_commons::datatypes::KalamDataType;
 use kalamdb_commons::models::schemas::TableDefinition;
 use kalamdb_commons::models::{StorageId, TableId, TableVersionId};
 use kalamdb_commons::schemas::{ColumnDefault, ColumnDefinition, TableType};
-use kalamdb_commons::{SystemTable};
+use kalamdb_commons::SystemTable;
 use kalamdb_system::{NotificationService, SchemaRegistry as SchemaRegistryTrait};
 // use kalamdb_system::NotificationService as NotificationServiceTrait;
 use std::collections::{HashMap, HashSet};
@@ -445,9 +445,12 @@ impl SchemaRegistry {
         match table_def.table_type {
             TableType::System => {
                 if table_def.namespace_id.is_system_namespace() {
-                    if let Ok(system_table) = SystemTable::from_name(table_def.table_name.as_str()) {
-                        if let Some(provider) =
-                            self.app_context().system_tables().persisted_table_provider(system_table)
+                    if let Ok(system_table) = SystemTable::from_name(table_def.table_name.as_str())
+                    {
+                        if let Some(provider) = self
+                            .app_context()
+                            .system_tables()
+                            .persisted_table_provider(system_table)
                         {
                             cached_data.set_system_provider(provider);
                         }
@@ -660,7 +663,8 @@ impl SchemaRegistry {
                     column_defaults,
                 ));
 
-                let provider = Arc::new(StreamTableProvider::new(core, stream_store, Some(ttl_seconds)));
+                let provider =
+                    Arc::new(StreamTableProvider::new(core, stream_store, Some(ttl_seconds)));
                 Ok(provider as Arc<dyn kalamdb_tables::KalamTableProvider>)
             },
             TableType::System => Err(KalamDbError::InvalidOperation(format!(

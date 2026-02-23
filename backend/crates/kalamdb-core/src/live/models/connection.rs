@@ -9,16 +9,24 @@ use kalamdb_commons::models::{ConnectionId, ConnectionInfo, LiveQueryId, TableId
 use kalamdb_commons::Notification;
 use kalamdb_commons::Role;
 use parking_lot::{Mutex, RwLock};
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
+
+/// Get current epoch time in milliseconds (for lock-free heartbeat tracking)
+#[inline]
+fn epoch_millis() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64
+}
 
 /// Maximum pending notifications per connection before dropping new ones
 pub const NOTIFICATION_CHANNEL_CAPACITY: usize = 1000;
 
-/// Maximum pending control events per connection
-pub const EVENT_CHANNEL_CAPACITY: usize = 16;
+/// Maximum pending control events per connection.
+/// At high connection counts, the heartbeat checker may queue multiple events
+/// (ping, timeout, shutdown) before the handler processes them.
+pub const EVENT_CHANNEL_CAPACITY: usize = 64;
 
 /// Type alias for sending notifications to WebSocket or consumer clients
 pub type NotificationSender = mpsc::Sender<Arc<Notification>>;
@@ -38,8 +46,6 @@ pub type SharedConnectionState = Arc<RwLock<ConnectionState>>;
 /// Events sent to connection tasks from the heartbeat checker
 #[derive(Debug, Clone)]
 pub enum ConnectionEvent {
-    /// Send a ping to the client
-    SendPing,
     /// Authentication timeout - close connection
     AuthTimeout,
     /// Heartbeat timeout - close connection
@@ -198,8 +204,9 @@ pub struct ConnectionState {
     // === Heartbeat/Timing ===
     /// When connection was established
     pub connected_at: Instant,
-    /// Last heartbeat (ping/pong/message activity)
-    pub last_heartbeat: Instant,
+    /// Last heartbeat timestamp in epoch millis (atomic for lock-free updates)
+    /// Use `update_heartbeat()` and `millis_since_heartbeat()` to access.
+    pub last_heartbeat_ms: AtomicU64,
 
     // === Subscriptions ===
     /// Active subscriptions for this connection (subscription_id -> state)
@@ -215,10 +222,16 @@ pub struct ConnectionState {
 }
 
 impl ConnectionState {
-    /// Update heartbeat timestamp - call on any client activity
+    /// Update heartbeat timestamp — lock-free, callable with `&self` (no write lock needed)
     #[inline]
-    pub fn update_heartbeat(&mut self) {
-        self.last_heartbeat = Instant::now();
+    pub fn update_heartbeat(&self) {
+        self.last_heartbeat_ms.store(epoch_millis(), Ordering::Release);
+    }
+
+    /// Milliseconds elapsed since last heartbeat activity
+    #[inline]
+    pub fn millis_since_heartbeat(&self) -> u64 {
+        epoch_millis().saturating_sub(self.last_heartbeat_ms.load(Ordering::Acquire))
     }
 
     /// Mark that authentication has started (for timeout logic)

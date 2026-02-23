@@ -8,7 +8,7 @@
 
 [server]
 # Server bind address (default: 127.0.0.1)
-host = "127.0.0.1"
+host = "0.0.0.0"
 
 # Server port (default: 8080)
 port = 8080
@@ -17,7 +17,7 @@ port = 8080
 # INCREASED FOR TEST LOAD: More workers handle concurrent test connections
 # macOS has limited ephemeral ports (~16K), so more workers help process
 # connections faster, reducing TIME_WAIT port exhaustion
-workers = 8
+workers = 24
 
 # Enable HTTP/2 protocol support (default: true)
 # When true, server uses automatic HTTP/1.1 and HTTP/2 cleartext (h2c) negotiation
@@ -59,7 +59,7 @@ write_buffer_size = 2097152
 
 # Maximum number of write buffers (default: 2)
 # Allows writes to continue while buffers are being flushed
-max_write_buffers = 2
+max_write_buffers = 6
 
 # Block cache size for reads in bytes (default: 4MB)
 # Shared LRU cache across all column families
@@ -194,7 +194,7 @@ keepalive_timeout = 75
 # Maximum concurrent connections per worker (default: 25000)
 # Includes both REST API and WebSocket connections
 # INCREASED FOR TEST LOAD: Handles burst connections from concurrent tests
-max_connections = 50000
+max_connections = 20000000
 
 # TCP listen backlog - pending connections queue size (default: 2048)
 # Controls how many connections can wait in the kernel queue before being accepted
@@ -209,7 +209,7 @@ backlog = 4096
 # Max blocking threads per worker for CPU-intensive operations (default: 512)
 # Used for RocksDB I/O and synchronous operations
 # INCREASED FOR TEST LOAD: More threads handle concurrent blocking operations
-worker_max_blocking_threads = 1024
+worker_max_blocking_threads = 4000
 
 # Client request timeout in seconds (default: 5)
 # Time allowed for client to send complete request headers
@@ -235,7 +235,7 @@ max_messages_per_sec = 10000
 
 # Maximum concurrent live query subscriptions per user (default: 10)
 # Limits total active subscriptions to prevent resource exhaustion
-max_subscriptions_per_user = 100
+max_subscriptions_per_user = 200000
 
 # Maximum authentication requests per IP per second (default: 20)
 # Prevents brute force attacks and login flooding
@@ -244,7 +244,7 @@ max_auth_requests_per_ip_per_sec = 200000
 
 # Maximum concurrent connections per IP address (default: 100)
 # Prevents a single IP from exhausting all server connections
-max_connections_per_ip = 10000
+max_connections_per_ip = 200000
 
 # ⚠️ CRITICAL: Maximum requests per second per IP BEFORE authentication (default: 200)
 # This is the main rate limit that triggers IP BANS
@@ -323,11 +323,29 @@ max_age = 3600
 # Enables Access-Control-Request-Private-Network header support
 allow_private_network = false
 
+[websocket]
+# Client heartbeat timeout in seconds (default: 10)
+# How long to wait for client pong/activity before disconnecting.
+# At high connection counts (>10K), increase to avoid false heartbeat timeouts
+# caused by scheduling contention and TCP buffer pressure.
+client_timeout_secs = 60
+
+# Authentication timeout in seconds (default: 3)
+# How long to wait for auth message after WebSocket connect
+auth_timeout_secs = 10
+
+# Heartbeat check interval in seconds (default: 5)
+# How often the background heartbeat task iterates all connections.
+# At high connection counts (>10K), increase to reduce CPU load and
+# avoid thundering-herd ping storms.
+heartbeat_interval_secs = 15
+
 [authentication]
-# Bcrypt cost factor for password hashing (default: 12, range: 10-14)
+# Bcrypt cost factor for password hashing (default: 12, range: 4-31)
 # Higher values = more secure but slower
 # Changing this only affects NEW passwords
-bcrypt_cost = 12
+# Use 4 for development/benchmarking; 12+ for production
+bcrypt_cost = 4
 
 # Minimum password length (default: 8)
 min_password_length = 8
@@ -344,7 +362,7 @@ disable_common_password_check = false
 # JWT configuration (for JWT Bearer token authentication)
 # Secret key for JWT signature validation (minimum 32 characters recommended)
 # IMPORTANT: Change this in production! Use a strong, random secret.
-jwt_secret = "your-secret-key-at-least-32-chars-change-me-in-production"
+jwt_secret = "kalamdb-local-dev-2026-02-23-strong-jwt-secret-32plus"
 
 # List of trusted JWT issuers (leave empty to accept any issuer)
 # Add your OAuth provider domains here (e.g., "https://accounts.google.com", "https://github.com")

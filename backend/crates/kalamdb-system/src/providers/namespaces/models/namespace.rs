@@ -37,7 +37,7 @@ use serde::{Deserialize, Serialize};
 /// Namespace struct with fields ordered for optimal memory alignment.
 /// 8-byte aligned fields first (i64, String types), then smaller types.
 #[table(name = "namespaces", comment = "Database namespaces for multi-tenancy")]
-#[derive(Serialize, Deserialize,  Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Namespace {
     #[column(
         id = 3,
@@ -155,5 +155,4 @@ mod tests {
         let deserialized: Namespace = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(namespace, deserialized);
     }
-
 }

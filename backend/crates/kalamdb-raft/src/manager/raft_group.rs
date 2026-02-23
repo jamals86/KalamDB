@@ -127,8 +127,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
             .set_reconnect_interval(Duration::from_millis(config.reconnect_interval_ms));
         self.network_factory
             .configure_rpc_auth_identity(node_id, config.cluster_id.clone());
-        self.network_factory
-            .configure_rpc_tls(&config.rpc_tls, &config.peers)?;
+        self.network_factory.configure_rpc_tls(&config.rpc_tls, &config.peers)?;
 
         // Parse snapshot policy from configuration
         let snapshot_policy =
@@ -194,10 +193,15 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
             Adaptor::new(self.storage.clone());
 
         // Create the Raft instance
-        let raft =
-            Raft::new(node_id.as_u64(), config, self.network_factory.clone(), log_store, state_machine)
-                .await
-                .map_err(|e| RaftError::Internal(format!("Failed to create Raft: {:?}", e)))?;
+        let raft = Raft::new(
+            node_id.as_u64(),
+            config,
+            self.network_factory.clone(),
+            log_store,
+            state_machine,
+        )
+        .await
+        .map_err(|e| RaftError::Internal(format!("Failed to create Raft: {:?}", e)))?;
 
         // Store the instance
         {
@@ -317,7 +321,8 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
             guard.clone().ok_or_else(|| RaftError::NotStarted(self.group_id.to_string()))?
         };
 
-        let member_set: std::collections::BTreeSet<u64> = members.into_iter().map(|id| id.as_u64()).collect();
+        let member_set: std::collections::BTreeSet<u64> =
+            members.into_iter().map(|id| id.as_u64()).collect();
         raft.change_membership(member_set, false)
             .await
             .map_err(|e| RaftError::Internal(format!("Failed to change membership: {:?}", e)))?;
@@ -381,7 +386,8 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
     /// Get the current leader node ID, if known
     pub fn current_leader(&self) -> Option<NodeId> {
         let raft = self.raft.read();
-        raft.as_ref().and_then(|r| r.metrics().borrow().current_leader.map(NodeId::from))
+        raft.as_ref()
+            .and_then(|r| r.metrics().borrow().current_leader.map(NodeId::from))
     }
 
     /// Get the latest OpenRaft metrics for this group, if started
@@ -616,11 +622,12 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
         command: Vec<u8>,
     ) -> Result<(Vec<u8>, u64), RaftError> {
         use crate::network::{ClientProposalRequest, RaftClient};
-        let channel = self
-            .network_factory
-            .get_or_create_channel(leader_node_id)
-            .ok_or_else(|| {
-                RaftError::Network(format!("No channel available for leader node {}", leader_node_id))
+        let channel =
+            self.network_factory.get_or_create_channel(leader_node_id).ok_or_else(|| {
+                RaftError::Network(format!(
+                    "No channel available for leader node {}",
+                    leader_node_id
+                ))
             })?;
 
         let mut client = RaftClient::new(channel);

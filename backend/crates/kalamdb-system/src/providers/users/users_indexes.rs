@@ -3,10 +3,10 @@
 //! This module defines secondary indexes for the system.users table.
 
 use crate::providers::users::models::User;
-use crate::StoragePartition;
 use crate::system_row_mapper::system_row_to_model;
-use kalamdb_commons::storage::Partition;
+use crate::StoragePartition;
 use kalamdb_commons::models::rows::SystemTableRow;
+use kalamdb_commons::storage::Partition;
 use kalamdb_commons::UserId;
 use kalamdb_store::IndexDefinition;
 use std::sync::Arc;

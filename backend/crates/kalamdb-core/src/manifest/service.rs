@@ -190,7 +190,8 @@ impl ManifestService {
         if let Some(old_entry) = self.provider.get_cache_entry(&rocksdb_key)? {
             let mut new_entry = old_entry.clone();
             new_entry.mark_stale();
-            self.provider.update_cache_entry_with_old(&rocksdb_key, &old_entry, &new_entry)?;
+            self.provider
+                .update_cache_entry_with_old(&rocksdb_key, &old_entry, &new_entry)?;
         }
 
         Ok(())
@@ -208,7 +209,8 @@ impl ManifestService {
             Ok(Some(old_entry)) => {
                 let mut new_entry = old_entry.clone();
                 new_entry.mark_error();
-                self.provider.update_cache_entry_with_old(&rocksdb_key, &old_entry, &new_entry)?;
+                self.provider
+                    .update_cache_entry_with_old(&rocksdb_key, &old_entry, &new_entry)?;
             },
             Ok(None) => {},
             Err(StorageError::SerializationError(err)) => {
@@ -237,7 +239,8 @@ impl ManifestService {
             Ok(Some(old_entry)) => {
                 let mut new_entry = old_entry.clone();
                 new_entry.mark_syncing();
-                self.provider.update_cache_entry_with_old(&rocksdb_key, &old_entry, &new_entry)?;
+                self.provider
+                    .update_cache_entry_with_old(&rocksdb_key, &old_entry, &new_entry)?;
             },
             Ok(None) => {},
             Err(StorageError::SerializationError(err)) => {
@@ -272,7 +275,8 @@ impl ManifestService {
             Ok(Some(old_entry)) => {
                 let mut new_entry = old_entry.clone();
                 new_entry.mark_pending_write();
-                self.provider.update_cache_entry_with_old(&rocksdb_key, &old_entry, &new_entry)?;
+                self.provider
+                    .update_cache_entry_with_old(&rocksdb_key, &old_entry, &new_entry)?;
 
                 // Index automatically updated by IndexedEntityStore
 
@@ -335,9 +339,11 @@ impl ManifestService {
     pub fn invalidate_table(&self, table_id: &TableId) -> Result<usize, StorageError> {
         // Use table prefix to include ALL scopes (shared + all users)
         let prefix = ManifestId::table_prefix(table_id);
-        let keys = self
-            .provider
-            .scan_manifest_ids_with_raw_prefix(&prefix, None, MAX_MANIFEST_SCAN_LIMIT)?;
+        let keys = self.provider.scan_manifest_ids_with_raw_prefix(
+            &prefix,
+            None,
+            MAX_MANIFEST_SCAN_LIMIT,
+        )?;
         let invalidated = keys.len();
 
         if !keys.is_empty() {
@@ -675,9 +681,11 @@ impl ManifestService {
         );
 
         // Use scan_keys_with_raw_prefix to only fetch keys (no value deserialization)
-        let keys: Vec<ManifestId> = self
-            .provider
-            .scan_manifest_ids_with_raw_prefix(&prefix, None, MAX_MANIFEST_SCAN_LIMIT)?;
+        let keys: Vec<ManifestId> = self.provider.scan_manifest_ids_with_raw_prefix(
+            &prefix,
+            None,
+            MAX_MANIFEST_SCAN_LIMIT,
+        )?;
 
         let mut user_ids = HashSet::new();
 
@@ -723,8 +731,7 @@ impl ManifestService {
         let existing = self.provider.get_cache_entry(&rocksdb_key)?;
         match existing {
             Some(old_entry) => {
-                self.provider
-                    .update_cache_entry_with_old(&rocksdb_key, &old_entry, &entry)?;
+                self.provider.update_cache_entry_with_old(&rocksdb_key, &old_entry, &entry)?;
             },
             None => {
                 self.provider.put_cache_entry(&rocksdb_key, &entry)?;

@@ -22,7 +22,7 @@ const EXECUTE_AS_PREFIX_LEN: usize = EXECUTE_AS_PREFIX.len(); // 15
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExecuteAsEnvelope {
     /// The username that follows `EXECUTE AS USER`.
-    pub username: String, //TODO: Use UserName type 
+    pub username: String, //TODO: Use UserName type
     /// The inner SQL statement (parentheses stripped).
     pub inner_sql: String,
 }
@@ -222,11 +222,10 @@ mod tests {
 
     #[test]
     fn parse_quoted_username() {
-        let result = parse_execute_as(
-            "EXECUTE AS USER 'alice' (SELECT * FROM default.todos WHERE id = 1);",
-        )
-        .expect("should parse")
-        .expect("should be an envelope");
+        let result =
+            parse_execute_as("EXECUTE AS USER 'alice' (SELECT * FROM default.todos WHERE id = 1);")
+                .expect("should parse")
+                .expect("should be an envelope");
 
         assert_eq!(result.username, "alice");
         assert_eq!(result.inner_sql, "SELECT * FROM default.todos WHERE id = 1");
@@ -245,11 +244,10 @@ mod tests {
 
     #[test]
     fn parse_bare_username() {
-        let result = parse_execute_as(
-            "EXECUTE AS USER alice (SELECT * FROM default.todos WHERE id = 1);",
-        )
-        .expect("should parse")
-        .expect("should be an envelope");
+        let result =
+            parse_execute_as("EXECUTE AS USER alice (SELECT * FROM default.todos WHERE id = 1);")
+                .expect("should parse")
+                .expect("should be an envelope");
 
         assert_eq!(result.username, "alice");
         assert_eq!(result.inner_sql, "SELECT * FROM default.todos WHERE id = 1");
@@ -281,8 +279,8 @@ mod tests {
 
     #[test]
     fn passthrough_normal_sql() {
-        let result = parse_execute_as("SELECT * FROM default.todos WHERE id = 10")
-            .expect("should parse");
+        let result =
+            parse_execute_as("SELECT * FROM default.todos WHERE id = 10").expect("should parse");
         assert!(result.is_none());
     }
 }

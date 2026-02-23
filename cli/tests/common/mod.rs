@@ -3583,10 +3583,8 @@ pub fn verify_job_completed(
         }
 
         // Query system.jobs for this specific job
-        let query = format!(
-            "SELECT job_id, status, message FROM system.jobs WHERE job_id = '{}'",
-            job_id
-        );
+        let query =
+            format!("SELECT job_id, status, message FROM system.jobs WHERE job_id = '{}'", job_id);
 
         match execute_sql_as_root_via_client_json(&query) {
             Ok(output) => {
@@ -3676,10 +3674,8 @@ pub fn wait_for_job_finished(
             .into());
         }
 
-        let query = format!(
-            "SELECT job_id, status, message FROM system.jobs WHERE job_id = '{}'",
-            job_id
-        );
+        let query =
+            format!("SELECT job_id, status, message FROM system.jobs WHERE job_id = '{}'", job_id);
 
         match execute_sql_as_root_via_client_json(&query) {
             Ok(output) => {

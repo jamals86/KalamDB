@@ -40,7 +40,7 @@ pub const VERSION_KIND_VERSIONED: u8 = 1;
 /// ```
 ///
 /// Storekey preserves lexicographic ordering for efficient range scans.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, )]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct TableVersionId {
     /// The base table identifier
     table_id: TableId,
@@ -129,10 +129,7 @@ impl TableVersionId {
     /// Used by `delete_all_versions` and `list_versions` to find all storage
     /// entries for a single table without scanning the entire column family.
     pub fn table_scan_prefix(table_id: &TableId) -> Vec<u8> {
-        encode_prefix(&(
-            table_id.namespace_id().as_str(),
-            table_id.table_name().as_str(),
-        ))
+        encode_prefix(&(table_id.namespace_id().as_str(), table_id.table_name().as_str()))
     }
 
     /// Create prefix for scanning all tables in a namespace.

@@ -115,7 +115,7 @@ impl KalamLinkTimeouts {
             auth_timeout: Duration::from_secs(15),
             initial_data_timeout: Duration::from_secs(120),
             idle_timeout: Duration::ZERO,
-            keepalive_interval: Duration::from_secs(60),
+            keepalive_interval: Duration::from_secs(30),
         }
     }
 
@@ -132,7 +132,7 @@ impl KalamLinkTimeouts {
             auth_timeout: Duration::from_secs(3),
             initial_data_timeout: Duration::from_secs(subscription_timeout_secs),
             idle_timeout: Duration::from_secs(subscription_timeout_secs),
-            keepalive_interval: Duration::from_secs(10),
+            keepalive_interval: Duration::from_secs(5),
         }
     }
 

@@ -59,6 +59,17 @@ pub struct ConnectionOptions {
     /// This allows clients to control how timestamps are displayed
     #[serde(default)]
     pub timestamp_format: TimestampFormat,
+
+    /// Optional local source IP addresses for outbound WebSocket connections.
+    ///
+    /// When non-empty, each subscription connection binds to one of these
+    /// addresses before dialing the server. This enables source-IP sharding
+    /// (for example `127.0.0.1,127.0.0.2,...`) to increase per-host
+    /// concurrency under local ephemeral-port limits.
+    ///
+    /// Values must be IP literals (IPv4 or IPv6), not hostnames.
+    #[serde(default)]
+    pub ws_local_bind_addresses: Vec<String>,
 }
 
 fn default_auto_reconnect() -> bool {
@@ -82,6 +93,7 @@ impl Default for ConnectionOptions {
             max_reconnect_delay_ms: 30000,
             max_reconnect_attempts: None,
             timestamp_format: TimestampFormat::Iso8601,
+            ws_local_bind_addresses: Vec::new(),
         }
     }
 }
@@ -148,5 +160,14 @@ impl ConnectionOptions {
     /// Create a timestamp formatter from this configuration
     pub fn create_formatter(&self) -> TimestampFormatter {
         TimestampFormatter::new(self.timestamp_format)
+    }
+
+    /// Set local source IP addresses for outbound WebSocket connections.
+    ///
+    /// Each subscription connection will pick one address from this pool and
+    /// bind to `<ip>:0` prior to connect.
+    pub fn with_ws_local_bind_addresses(mut self, addresses: Vec<String>) -> Self {
+        self.ws_local_bind_addresses = addresses;
+        self
     }
 }

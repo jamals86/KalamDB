@@ -30,15 +30,11 @@ impl From<jsonwebtoken::errors::Error> for OidcError {
     fn from(e: jsonwebtoken::errors::Error) -> Self {
         use jsonwebtoken::errors::ErrorKind;
         match e.kind() {
-            ErrorKind::ExpiredSignature => {
-                OidcError::JwtValidationFailed("Token expired".into())
-            }
+            ErrorKind::ExpiredSignature => OidcError::JwtValidationFailed("Token expired".into()),
             ErrorKind::InvalidSignature => {
                 OidcError::JwtValidationFailed("Invalid signature".into())
-            }
-            ErrorKind::InvalidToken => {
-                OidcError::JwtValidationFailed("Invalid token".into())
-            }
+            },
+            ErrorKind::InvalidToken => OidcError::JwtValidationFailed("Invalid token".into()),
             _ => OidcError::JwtValidationFailed(e.to_string()),
         }
     }

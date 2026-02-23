@@ -20,6 +20,10 @@ fn test_connection_options_default() {
         opts.max_reconnect_attempts.is_none(),
         "max_reconnect_attempts should default to None (infinite)"
     );
+    assert!(
+        opts.ws_local_bind_addresses.is_empty(),
+        "ws_local_bind_addresses should default to empty"
+    );
 }
 
 #[test]
@@ -31,6 +35,7 @@ fn test_connection_options_new() {
     assert_eq!(opts.reconnect_delay_ms, 1000);
     assert_eq!(opts.max_reconnect_delay_ms, 30000);
     assert!(opts.max_reconnect_attempts.is_none());
+    assert!(opts.ws_local_bind_addresses.is_empty());
 }
 
 #[test]
@@ -39,12 +44,17 @@ fn test_connection_options_builder_pattern() {
         .with_auto_reconnect(false)
         .with_reconnect_delay_ms(2000)
         .with_max_reconnect_delay_ms(60000)
-        .with_max_reconnect_attempts(Some(5));
+        .with_max_reconnect_attempts(Some(5))
+        .with_ws_local_bind_addresses(vec!["127.0.0.1".to_string(), "127.0.0.2".to_string()]);
 
     assert!(!opts.auto_reconnect);
     assert_eq!(opts.reconnect_delay_ms, 2000);
     assert_eq!(opts.max_reconnect_delay_ms, 60000);
     assert_eq!(opts.max_reconnect_attempts, Some(5));
+    assert_eq!(
+        opts.ws_local_bind_addresses,
+        vec!["127.0.0.1".to_string(), "127.0.0.2".to_string()]
+    );
 }
 
 #[test]
@@ -78,6 +88,7 @@ fn test_connection_options_serialization() {
     assert_eq!(parsed.reconnect_delay_ms, opts.reconnect_delay_ms);
     assert_eq!(parsed.max_reconnect_delay_ms, opts.max_reconnect_delay_ms);
     assert_eq!(parsed.max_reconnect_attempts, opts.max_reconnect_attempts);
+    assert_eq!(parsed.ws_local_bind_addresses, opts.ws_local_bind_addresses);
 }
 
 #[test]
@@ -90,6 +101,7 @@ fn test_connection_options_deserialization_with_defaults() {
     assert_eq!(opts.reconnect_delay_ms, 1000); // default
     assert_eq!(opts.max_reconnect_delay_ms, 30000); // default
     assert!(opts.max_reconnect_attempts.is_none()); // default
+    assert!(opts.ws_local_bind_addresses.is_empty()); // default
 }
 
 // ==================== SubscriptionOptions Tests ====================
@@ -525,11 +537,7 @@ fn test_schema_field_flags_deserializes_array() {
     let json = r#"{"name":"id","data_type":"BigInt","index":0,"flags":["pk","nn","uq"]}"#;
     let field: SchemaField = serde_json::from_str(json).unwrap();
 
-    let expected = BTreeSet::from([
-        FieldFlag::PrimaryKey,
-        FieldFlag::NonNull,
-        FieldFlag::Unique,
-    ]);
+    let expected = BTreeSet::from([FieldFlag::PrimaryKey, FieldFlag::NonNull, FieldFlag::Unique]);
 
     assert_eq!(field.flags, Some(expected));
 }
@@ -540,11 +548,7 @@ fn test_schema_field_flags_serializes_as_array() {
         name: "id".to_string(),
         data_type: KalamDataType::BigInt,
         index: 0,
-        flags: Some(BTreeSet::from([
-            FieldFlag::PrimaryKey,
-            FieldFlag::NonNull,
-            FieldFlag::Unique,
-        ])),
+        flags: Some(BTreeSet::from([FieldFlag::PrimaryKey, FieldFlag::NonNull, FieldFlag::Unique])),
     };
 
     let json = serde_json::to_string(&field).unwrap();

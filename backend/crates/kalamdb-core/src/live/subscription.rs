@@ -212,20 +212,31 @@ impl SubscriptionService {
         subscription_id: &str,
         live_id: &LiveQueryId,
     ) -> Result<(), KalamDbError> {
-        // Get user_id and subscription details, then remove from connection state
+        // Get user_id and subscription details, then remove from connection state.
+        // Try the raw subscription_id first; if it looks like a full LiveQueryId
+        // ("user-conn-sub"), also try extracting just the trailing subscription part.
+        // This handles the case where notifications were previously sending the full
+        // LiveQueryId as the subscription_id and the client echoes it back.
         let (connection_id, user_id, table_id) = {
             let state = connection_state.read();
             let user_id = state.user_id.clone().ok_or_else(|| {
                 KalamDbError::InvalidOperation("Connection not authenticated".to_string())
             })?;
-            let subscription = state.subscriptions.remove(subscription_id);
+            let subscription = state.subscriptions.remove(subscription_id).or_else(|| {
+                // Fallback: the client may have sent the full LiveQueryId as
+                // subscription_id (e.g. "u_abc-connid-latency_1").  Try parsing
+                // it and using just the subscription_id suffix.
+                LiveQueryId::from_string(subscription_id)
+                    .ok()
+                    .and_then(|parsed| state.subscriptions.remove(parsed.subscription_id()))
+            });
             match subscription {
                 Some((_, sub)) => (state.connection_id.clone(), user_id, sub.table_id),
                 None => {
-                    return Err(KalamDbError::NotFound(format!(
-                        "Subscription not found: {}",
-                        subscription_id
-                    )));
+                    // This is benign — the subscription may already have been
+                    // removed by cleanup_connection (WS close race).
+                    debug!("Subscription already removed (benign): {}", subscription_id);
+                    return Ok(());
                 },
             }
         };

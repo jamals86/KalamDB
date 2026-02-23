@@ -205,14 +205,15 @@ impl RaftNetwork {
         &self,
         request: &mut tonic::Request<T>,
     ) -> Result<(), ConnectionError> {
-        let cluster_id = tonic::metadata::MetadataValue::try_from(self.auth_identity.cluster_id.as_str())
-            .map_err(|e| ConnectionError(format!("Invalid cluster_id metadata: {}", e)))?;
-        let node_id = tonic::metadata::MetadataValue::try_from(self.auth_identity.node_id.as_u64().to_string())
-            .map_err(|e| ConnectionError(format!("Invalid node_id metadata: {}", e)))?;
+        let cluster_id =
+            tonic::metadata::MetadataValue::try_from(self.auth_identity.cluster_id.as_str())
+                .map_err(|e| ConnectionError(format!("Invalid cluster_id metadata: {}", e)))?;
+        let node_id = tonic::metadata::MetadataValue::try_from(
+            self.auth_identity.node_id.as_u64().to_string(),
+        )
+        .map_err(|e| ConnectionError(format!("Invalid node_id metadata: {}", e)))?;
 
-        request
-            .metadata_mut()
-            .insert("x-kalamdb-cluster-id", cluster_id);
+        request.metadata_mut().insert("x-kalamdb-cluster-id", cluster_id);
         request.metadata_mut().insert("x-kalamdb-node-id", node_id);
         Ok(())
     }
@@ -459,14 +460,17 @@ impl RaftNetworkFactory {
             crate::RaftError::Config("RPC auth identity is not configured".to_string())
         })?;
 
-        let cluster_id = tonic::metadata::MetadataValue::try_from(auth_identity.cluster_id.as_str())
-            .map_err(|e| crate::RaftError::Internal(format!("Invalid cluster_id metadata: {}", e)))?;
-        let node_id = tonic::metadata::MetadataValue::try_from(auth_identity.node_id.as_u64().to_string())
-            .map_err(|e| crate::RaftError::Internal(format!("Invalid node_id metadata: {}", e)))?;
+        let cluster_id = tonic::metadata::MetadataValue::try_from(
+            auth_identity.cluster_id.as_str(),
+        )
+        .map_err(|e| crate::RaftError::Internal(format!("Invalid cluster_id metadata: {}", e)))?;
+        let node_id =
+            tonic::metadata::MetadataValue::try_from(auth_identity.node_id.as_u64().to_string())
+                .map_err(|e| {
+                    crate::RaftError::Internal(format!("Invalid node_id metadata: {}", e))
+                })?;
 
-        request
-            .metadata_mut()
-            .insert("x-kalamdb-cluster-id", cluster_id);
+        request.metadata_mut().insert("x-kalamdb-cluster-id", cluster_id);
         request.metadata_mut().insert("x-kalamdb-node-id", node_id);
         Ok(())
     }
@@ -488,10 +492,14 @@ impl RaftNetworkFactory {
             crate::RaftError::Config("rpc_tls.enabled=true but ca_cert_path is missing".to_string())
         })?;
         let node_cert_path = tls.node_cert_path.as_deref().ok_or_else(|| {
-            crate::RaftError::Config("rpc_tls.enabled=true but node_cert_path is missing".to_string())
+            crate::RaftError::Config(
+                "rpc_tls.enabled=true but node_cert_path is missing".to_string(),
+            )
         })?;
         let node_key_path = tls.node_key_path.as_deref().ok_or_else(|| {
-            crate::RaftError::Config("rpc_tls.enabled=true but node_key_path is missing".to_string())
+            crate::RaftError::Config(
+                "rpc_tls.enabled=true but node_key_path is missing".to_string(),
+            )
         })?;
 
         let ca_pem = std::fs::read(ca_cert_path).map_err(|e| {
@@ -507,10 +515,7 @@ impl RaftNetworkFactory {
             ))
         })?;
         let key_pem = std::fs::read(node_key_path).map_err(|e| {
-            crate::RaftError::Config(format!(
-                "Failed reading node key '{}': {}",
-                node_key_path, e
-            ))
+            crate::RaftError::Config(format!("Failed reading node key '{}': {}", node_key_path, e))
         })?;
 
         let mut peer_server_names = HashMap::new();
@@ -536,10 +541,7 @@ impl RaftNetworkFactory {
 
     fn rpc_host_from_addr(rpc_addr: &str) -> Result<String, crate::RaftError> {
         let (host, _port) = rpc_addr.rsplit_once(':').ok_or_else(|| {
-            crate::RaftError::Config(format!(
-                "Invalid rpc_addr '{}': expected host:port",
-                rpc_addr
-            ))
+            crate::RaftError::Config(format!("Invalid rpc_addr '{}': expected host:port", rpc_addr))
         })?;
         if host.is_empty() {
             return Err(crate::RaftError::Config(format!(
@@ -564,11 +566,8 @@ impl RaftNetworkFactory {
             .timeout(Duration::from_secs(30));
 
         if let Some(material) = tls_material {
-            let server_name = material
-                .peer_server_names
-                .get(&node_id)
-                .cloned()
-                .unwrap_or_else(|| {
+            let server_name =
+                material.peer_server_names.get(&node_id).cloned().unwrap_or_else(|| {
                     Self::rpc_host_from_addr(&node.rpc_addr)
                         .unwrap_or_else(|_| "localhost".to_string())
                 });
@@ -658,15 +657,29 @@ impl OpenRaftNetworkFactory<KalamTypeConfig> for RaftNetworkFactory {
         let channel = if let Some(ch) = self.channels.get(&target_node_id) {
             ch.clone()
         } else {
-            let ch = self
-                .build_channel(target_node_id, node)
-                .unwrap_or_else(|e| panic!("Failed to build channel for node {}: {}", target_node_id, e));
+            let ch = self.build_channel(target_node_id, node).unwrap_or_else(|e| {
+                log::error!(
+                    "[group {}] Cannot build gRPC channel to node {}: {}. \
+                        Check network configuration and peer addresses.",
+                    self.group_id,
+                    target_node_id,
+                    e
+                );
+                // Channel creation is a fatal configuration error; the Raft node
+                // cannot communicate with its peers without a valid channel.
+                panic!("Failed to build channel for node {}: {}", target_node_id, e)
+            });
 
             self.channels.insert(target_node_id, ch.clone());
             ch
         };
 
         let auth_identity = self.auth_identity.read().clone().unwrap_or_else(|| {
+            log::error!(
+                "[group {}] RPC auth identity is not configured. \
+                Ensure configure_rpc_auth_identity() is called before the Raft node starts.",
+                self.group_id
+            );
             panic!("RPC auth identity is not configured for group {}", self.group_id)
         });
 

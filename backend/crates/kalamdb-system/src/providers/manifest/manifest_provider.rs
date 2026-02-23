@@ -127,7 +127,10 @@ impl ManifestTableProvider {
         self.store.delete(manifest_id)
     }
 
-    pub async fn delete_cache_entry_async(&self, manifest_id: &ManifestId) -> Result<(), StorageError> {
+    pub async fn delete_cache_entry_async(
+        &self,
+        manifest_id: &ManifestId,
+    ) -> Result<(), StorageError> {
         self.store.delete_async(manifest_id.clone()).await
     }
 
@@ -340,7 +343,8 @@ impl ManifestTableProvider {
     }
 
     fn encode_manifest_row(entry: &ManifestCacheEntry) -> Result<SystemTableRow, SystemError> {
-        let manifest_id = ManifestId::new(entry.manifest.table_id.clone(), entry.manifest.user_id.clone());
+        let manifest_id =
+            ManifestId::new(entry.manifest.table_id.clone(), entry.manifest.user_id.clone());
         let last_refreshed = entry.last_refreshed_millis();
         let storage_row = ManifestStorageRow {
             cache_key: manifest_id.as_str().to_string(),
@@ -361,7 +365,8 @@ impl ManifestTableProvider {
     }
 
     fn decode_manifest_row(row: &SystemTableRow) -> Result<ManifestCacheEntry, SystemError> {
-        let storage_row: ManifestStorageRow = system_row_to_model(row, &manifest_table_definition())?;
+        let storage_row: ManifestStorageRow =
+            system_row_to_model(row, &manifest_table_definition())?;
 
         let manifest: Manifest = match storage_row.manifest_json {
             Value::String(json_text) => serde_json::from_str(&json_text).map_err(|error| {
@@ -382,7 +387,7 @@ impl ManifestTableProvider {
                 return Err(SystemError::SerializationError(format!(
                     "invalid sync_state value: {value}"
                 )));
-            }
+            },
         };
 
         Ok(ManifestCacheEntry::new(

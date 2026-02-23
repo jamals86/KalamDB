@@ -74,7 +74,7 @@ pub const DEFAULT_LOCKOUT_DURATION_MINUTES: i64 = 15;
     name = "users",
     comment = "System users for authentication and authorization"
 )]
-#[derive(Serialize, Deserialize,  Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct User {
     // 8-byte aligned fields first (i64, Option<i64>, String/pointer types)
     #[column(
@@ -382,5 +382,4 @@ mod tests {
         assert_eq!(user.failed_login_attempts, 0);
         assert!(user.locked_until.is_none());
     }
-
 }

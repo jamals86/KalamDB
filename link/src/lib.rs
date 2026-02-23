@@ -146,9 +146,8 @@ pub use models::{
     parse_i64, AckResponse, ChangeEvent, ConnectionOptions, ConsumeMessage, ConsumeRequest,
     ConsumeResponse, ErrorDetail, FieldFlag, FieldFlags, HealthCheckResponse, HttpVersion,
     KalamDataType, LoginRequest, LoginResponse, LoginUserInfo, QueryRequest, QueryResponse,
-    QueryResult, SchemaField,
-    ServerSetupRequest, ServerSetupResponse, SetupStatusResponse, SetupUserInfo,
-    SubscriptionConfig, SubscriptionOptions, UploadProgress,
+    QueryResult, SchemaField, ServerSetupRequest, ServerSetupResponse, SetupStatusResponse,
+    SetupUserInfo, SubscriptionConfig, SubscriptionOptions, UploadProgress,
 };
 pub use seq_id::SeqId;
 pub use timeouts::{KalamLinkTimeouts, KalamLinkTimeoutsBuilder};

@@ -277,8 +277,7 @@ impl SqlStatement {
             | SqlStatementKind::ClusterTriggerElection
             | SqlStatementKind::ClusterTransferLeader(_)
             | SqlStatementKind::ClusterStepdown
-            | SqlStatementKind::ClusterClear
-            => true,
+            | SqlStatementKind::ClusterClear => true,
 
             // Read-only cluster inspection can run on any node
             SqlStatementKind::ClusterList => false,

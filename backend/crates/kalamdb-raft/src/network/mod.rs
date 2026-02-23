@@ -40,5 +40,6 @@ pub use cluster_client::ClusterClient;
 pub use cluster_handler::{ClusterMessageHandler, ClusterServiceImpl, NoOpClusterHandler};
 pub use models::{
     ForwardSqlRequest, ForwardSqlResponse, ForwardSqlResponsePayload, GetNodeInfoRequest,
-    GetNodeInfoResponse, NotifyFollowersRequest, NotifyFollowersResponse, PingRequest, PingResponse,
+    GetNodeInfoResponse, NotifyFollowersRequest, NotifyFollowersResponse, PingRequest,
+    PingResponse,
 };

@@ -39,6 +39,9 @@ impl ServerConfig {
     /// - KALAMDB_ALLOW_REMOTE_SETUP: Override auth.allow_remote_setup
     /// - KALAMDB_AUTH_AUTO_CREATE_USERS_FROM_PROVIDER: Override auth.auto_create_users_from_provider
     /// - KALAMDB_RATE_LIMIT_AUTH_REQUESTS_PER_IP_PER_SEC: Override rate_limit.max_auth_requests_per_ip_per_sec
+    /// - KALAMDB_WEBSOCKET_CLIENT_TIMEOUT_SECS: Override websocket.client_timeout_secs
+    /// - KALAMDB_WEBSOCKET_AUTH_TIMEOUT_SECS: Override websocket.auth_timeout_secs
+    /// - KALAMDB_WEBSOCKET_HEARTBEAT_INTERVAL_SECS: Override websocket.heartbeat_interval_secs
     ///
     /// Environment variables take precedence over server.toml values (T031)
     pub fn apply_env_overrides(&mut self) -> anyhow::Result<()> {
@@ -153,6 +156,23 @@ impl ServerConfig {
             })?;
         }
 
+        // WebSocket settings
+        if let Ok(val) = env::var("KALAMDB_WEBSOCKET_CLIENT_TIMEOUT_SECS") {
+            self.websocket.client_timeout_secs = Some(val.parse().map_err(|_| {
+                anyhow::anyhow!("Invalid KALAMDB_WEBSOCKET_CLIENT_TIMEOUT_SECS value: {}", val)
+            })?);
+        }
+        if let Ok(val) = env::var("KALAMDB_WEBSOCKET_AUTH_TIMEOUT_SECS") {
+            self.websocket.auth_timeout_secs = Some(val.parse().map_err(|_| {
+                anyhow::anyhow!("Invalid KALAMDB_WEBSOCKET_AUTH_TIMEOUT_SECS value: {}", val)
+            })?);
+        }
+        if let Ok(val) = env::var("KALAMDB_WEBSOCKET_HEARTBEAT_INTERVAL_SECS") {
+            self.websocket.heartbeat_interval_secs = Some(val.parse().map_err(|_| {
+                anyhow::anyhow!("Invalid KALAMDB_WEBSOCKET_HEARTBEAT_INTERVAL_SECS value: {}", val)
+            })?);
+        }
+
         // Data directory (new naming convention)
         if let Ok(path) = env::var("KALAMDB_DATA_DIR") {
             self.storage.data_path = path;
@@ -235,8 +255,9 @@ impl ServerConfig {
             }
 
             if let Some(val) = rpc_tls_enabled {
-                cluster.rpc_tls.enabled =
-                    val.eq_ignore_ascii_case("true") || val == "1" || val.eq_ignore_ascii_case("yes");
+                cluster.rpc_tls.enabled = val.eq_ignore_ascii_case("true")
+                    || val == "1"
+                    || val.eq_ignore_ascii_case("yes");
             }
             if let Some(val) = rpc_tls_ca_cert_path {
                 cluster.rpc_tls.ca_cert_path = Some(val);

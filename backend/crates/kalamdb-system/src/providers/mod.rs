@@ -28,8 +28,8 @@ pub use base::{
 };
 
 // Re-export all providers
-pub use audit_logs::AuditLogsTableProvider;
 pub use audit_logs::AuditLogEntry;
+pub use audit_logs::AuditLogsTableProvider;
 pub use job_nodes::JobNodesTableProvider;
 pub use jobs::JobsTableProvider;
 pub use live_queries::LiveQueriesTableProvider;

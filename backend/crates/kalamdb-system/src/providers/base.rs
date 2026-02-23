@@ -515,13 +515,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
 
-    #[derive(
-        Debug,
-        Clone,
-        PartialEq,
-        serde::Serialize,
-        serde::Deserialize,
-    )]
+    #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
     struct DummyValue {
         value: String,
     }

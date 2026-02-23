@@ -33,7 +33,6 @@ pub enum ApplierError {
     /// Authorization failed
     #[error("Unauthorized: {0}")]
     Unauthorized(String),
-
 }
 
 impl ApplierError {

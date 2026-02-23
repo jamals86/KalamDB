@@ -4,7 +4,7 @@
 
 use kalamdb_commons::models::LiveQueryId;
 use kalamdb_core::live::{LiveQueryManager, SharedConnectionState};
-use log::{error, info, debug};
+use log::debug;
 use std::sync::Arc;
 
 use crate::limiter::RateLimiter;
@@ -34,7 +34,9 @@ pub async fn handle_unsubscribe(
         .unregister_subscription(connection_state, subscription_id, &live_id)
         .await
     {
-        error!("Failed to unsubscribe {}: {}", subscription_id, e);
+        // Downgrade to debug — cleanup_connection may have already removed the
+        // subscription when the WS close frame and Unsubscribe message race.
+        debug!("Unsubscribe already handled for {}: {}", subscription_id, e);
     }
 
     // Update rate limiter

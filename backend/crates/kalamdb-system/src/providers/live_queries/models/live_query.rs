@@ -69,7 +69,7 @@ use serde::{Deserialize, Serialize};
     name = "live_queries",
     comment = "Active WebSocket live query subscriptions"
 )]
-#[derive(Serialize, Deserialize,  Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct LiveQuery {
     // 8-byte aligned fields first (i64, String/pointer types)
     #[column(
@@ -244,5 +244,4 @@ mod tests {
         let deserialized: LiveQuery = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(live_query, deserialized);
     }
-
 }

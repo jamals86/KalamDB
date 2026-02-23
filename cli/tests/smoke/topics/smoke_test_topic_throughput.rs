@@ -98,9 +98,7 @@ async fn bench_single_pub_single_consumer() -> (usize, f64, f64) {
     execute_sql(&format!("CREATE TABLE {} (id INT PRIMARY KEY, value TEXT)", table))
         .await
         .expect("create table");
-    execute_sql(&format!("CREATE TOPIC {}", topic))
-        .await
-        .expect("create topic");
+    execute_sql(&format!("CREATE TOPIC {}", topic)).await.expect("create topic");
     execute_sql(&format!("ALTER TOPIC {} ADD SOURCE {} ON INSERT", topic, table))
         .await
         .expect("add source");
@@ -156,20 +154,18 @@ async fn bench_single_pub_single_consumer() -> (usize, f64, f64) {
     // Single publisher
     tokio::time::sleep(Duration::from_millis(100)).await;
     let publish_start = Instant::now();
-    
+
     for i in 0..message_count {
         execute_sql(&format!("INSERT INTO {} (id, value) VALUES ({}, 'msg_{}')", table, i, i))
             .await
             .ok();
     }
-    
+
     let publish_elapsed = publish_start.elapsed();
     publishers_done.store(true, Ordering::Relaxed);
 
     // Wait for consumer
-    tokio::time::timeout(Duration::from_secs(30), consumer_handle)
-        .await
-        .ok();
+    tokio::time::timeout(Duration::from_secs(30), consumer_handle).await.ok();
 
     let total_received = received.load(Ordering::SeqCst);
     let total_elapsed = publish_start.elapsed();
@@ -195,9 +191,7 @@ async fn bench_multi_pub_single_consumer() -> (usize, f64, f64) {
     execute_sql(&format!("CREATE TABLE {} (id INT PRIMARY KEY, value TEXT)", table))
         .await
         .expect("create table");
-    execute_sql(&format!("CREATE TOPIC {}", topic))
-        .await
-        .expect("create topic");
+    execute_sql(&format!("CREATE TOPIC {}", topic)).await.expect("create topic");
     execute_sql(&format!("ALTER TOPIC {} ADD SOURCE {} ON INSERT", topic, table))
         .await
         .expect("add source");
@@ -255,16 +249,19 @@ async fn bench_multi_pub_single_consumer() -> (usize, f64, f64) {
     // Multiple publishers
     tokio::time::sleep(Duration::from_millis(100)).await;
     let publish_start = Instant::now();
-    
+
     let mut pub_handles = Vec::new();
     for p in 0..num_publishers {
         let table = table.clone();
         pub_handles.push(tokio::spawn(async move {
             for i in 0..msgs_per_publisher {
                 let id = p * msgs_per_publisher + i;
-                execute_sql(&format!("INSERT INTO {} (id, value) VALUES ({}, 'p{}_m{}')", table, id, p, i))
-                    .await
-                    .ok();
+                execute_sql(&format!(
+                    "INSERT INTO {} (id, value) VALUES ({}, 'p{}_m{}')",
+                    table, id, p, i
+                ))
+                .await
+                .ok();
             }
         }));
     }
@@ -272,14 +269,12 @@ async fn bench_multi_pub_single_consumer() -> (usize, f64, f64) {
     for h in pub_handles {
         h.await.ok();
     }
-    
+
     let publish_elapsed = publish_start.elapsed();
     publishers_done.store(true, Ordering::Relaxed);
 
     // Wait for consumer
-    tokio::time::timeout(Duration::from_secs(30), consumer_handle)
-        .await
-        .ok();
+    tokio::time::timeout(Duration::from_secs(30), consumer_handle).await.ok();
 
     let total_received = received.load(Ordering::SeqCst);
     let total_elapsed = publish_start.elapsed();
@@ -305,9 +300,7 @@ async fn bench_multi_pub_multi_consumer() -> (usize, f64, f64) {
     execute_sql(&format!("CREATE TABLE {} (id INT PRIMARY KEY, value TEXT)", table))
         .await
         .expect("create table");
-    execute_sql(&format!("CREATE TOPIC {}", topic))
-        .await
-        .expect("create topic");
+    execute_sql(&format!("CREATE TOPIC {}", topic)).await.expect("create topic");
     execute_sql(&format!("ALTER TOPIC {} ADD SOURCE {} ON INSERT", topic, table))
         .await
         .expect("add source");
@@ -376,16 +369,19 @@ async fn bench_multi_pub_multi_consumer() -> (usize, f64, f64) {
     // Multiple publishers
     tokio::time::sleep(Duration::from_millis(200)).await;
     let publish_start = Instant::now();
-    
+
     let mut pub_handles = Vec::new();
     for p in 0..num_publishers {
         let table = table.clone();
         pub_handles.push(tokio::spawn(async move {
             for i in 0..msgs_per_publisher {
                 let id = p * msgs_per_publisher + i;
-                execute_sql(&format!("INSERT INTO {} (id, value) VALUES ({}, 'p{}_m{}')", table, id, p, i))
-                    .await
-                    .ok();
+                execute_sql(&format!(
+                    "INSERT INTO {} (id, value) VALUES ({}, 'p{}_m{}')",
+                    table, id, p, i
+                ))
+                .await
+                .ok();
             }
         }));
     }
@@ -393,7 +389,7 @@ async fn bench_multi_pub_multi_consumer() -> (usize, f64, f64) {
     for h in pub_handles {
         h.await.ok();
     }
-    
+
     let publish_elapsed = publish_start.elapsed();
     publishers_done.store(true, Ordering::Relaxed);
 
@@ -428,10 +424,10 @@ async fn smoke_test_topic_throughput_benchmark() {
     // Run all benchmark scenarios
     println!("Running benchmark: Single Publisher → Single Consumer...");
     let (recv1, rate1, pub_rate1) = bench_single_pub_single_consumer().await;
-    
+
     println!("Running benchmark: Multi Publisher → Single Consumer...");
     let (recv2, rate2, pub_rate2) = bench_multi_pub_single_consumer().await;
-    
+
     println!("Running benchmark: Multi Publisher → Multi Consumer...");
     let (recv3, rate3, pub_rate3) = bench_multi_pub_multi_consumer().await;
 
@@ -460,46 +456,49 @@ async fn smoke_test_topic_throughput_benchmark() {
     println!("┌────────────────────────────────────────────────────────────────────────┐");
     println!("│                      THRESHOLD VALIDATION                              │");
     println!("├────────────────────────────────────────────────────────────────────────┤");
-    
+
     let threshold1 = THRESHOLD_SINGLE_PUB_SINGLE_CONSUMER;
     let threshold2 = THRESHOLD_MULTI_PUB_SINGLE_CONSUMER;
     let threshold3 = THRESHOLD_MULTI_PUB_MULTI_CONSUMER;
-    
+
     let pass1 = rate1 >= threshold1;
     let pass2 = rate2 >= threshold2;
     let pass3 = rate3 >= threshold3;
-    
+
     let status1 = if pass1 { "✅ PASS" } else { "❌ FAIL" };
     let status2 = if pass2 { "✅ PASS" } else { "❌ FAIL" };
     let status3 = if pass3 { "✅ PASS" } else { "❌ FAIL" };
-    
+
     println!(
         "│  1P→1C:  {:.1}/s >= {:.1}/s  ({:.0}%)  {}              │",
-        rate1, threshold1, (rate1 / threshold1 * 100.0), status1
+        rate1,
+        threshold1,
+        (rate1 / threshold1 * 100.0),
+        status1
     );
     println!(
         "│  24P→1C: {:.1}/s >= {:.1}/s  ({:.0}%)  {}              │",
-        rate2, threshold2, (rate2 / threshold2 * 100.0), status2
+        rate2,
+        threshold2,
+        (rate2 / threshold2 * 100.0),
+        status2
     );
     println!(
         "│  40P→4C: {:.1}/s >= {:.1}/s  ({:.0}%)  {}              │",
-        rate3, threshold3, (rate3 / threshold3 * 100.0), status3
+        rate3,
+        threshold3,
+        (rate3 / threshold3 * 100.0),
+        status3
     );
     println!("└────────────────────────────────────────────────────────────────────────┘");
     println!();
 
     // Performance insights
     if recv1 > 0 && recv2 > 0 {
-        println!(
-            "📊 Multi-publisher throughput is {:.1}x of single-publisher",
-            rate2 / rate1
-        );
+        println!("📊 Multi-publisher throughput is {:.1}x of single-publisher", rate2 / rate1);
     }
     if recv2 > 0 && recv3 > 0 {
-        println!(
-            "📊 Multi-consumer (4) throughput is {:.1}x of single-consumer",
-            rate3 / rate2
-        );
+        println!("📊 Multi-consumer (4) throughput is {:.1}x of single-consumer", rate3 / rate2);
     }
     println!();
 

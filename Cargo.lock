@@ -3490,22 +3490,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "kalamdb-benchmark"
-version = "0.2.0"
-dependencies = [
- "actix-files",
- "actix-web",
- "anyhow",
- "assert_cmd",
- "chrono",
- "kalam-cli",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
-]
-
-[[package]]
 name = "kalamdb-commons"
 version = "0.3.0-alpha2"
 dependencies = [
@@ -3553,14 +3537,11 @@ dependencies = [
  "anyhow",
  "arrow",
  "async-trait",
- "base64",
  "bcrypt",
- "bytes",
  "chrono",
  "dashmap",
  "datafusion",
  "datafusion-common",
- "hex",
  "hostname",
  "kalamdb-auth",
  "kalamdb-commons",
@@ -3575,6 +3556,7 @@ dependencies = [
  "kalamdb-store",
  "kalamdb-system",
  "kalamdb-tables",
+ "kalamdb-views",
  "log",
  "moka",
  "ntest",
@@ -3921,6 +3903,24 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "kalamdb-views"
+version = "0.3.0-alpha2"
+dependencies = [
+ "arrow",
+ "async-trait",
+ "datafusion",
+ "kalamdb-commons",
+ "kalamdb-configs",
+ "kalamdb-raft",
+ "kalamdb-system",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]

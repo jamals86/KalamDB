@@ -114,6 +114,11 @@ impl TopicConsumer {
         Ok(())
     }
 
+    /// Returns `true` if `close()` has been called or `Drop` has run.
+    pub fn is_closed(&self) -> bool {
+        self.closed
+    }
+
     fn build_consume_request(&self, timeout_override: Option<Duration>) -> ConsumeRequest {
         let start = match self.offsets.position() {
             Some(position) => AutoOffsetReset::Offset(position),
@@ -162,6 +167,34 @@ impl TopicConsumer {
             return Err(KalamLinkError::Cancelled);
         }
         Ok(())
+    }
+}
+
+impl Drop for TopicConsumer {
+    fn drop(&mut self) {
+        if self.closed || !self.config.enable_auto_commit {
+            return;
+        }
+        // Best-effort async commit of any unacknowledged offsets
+        if let Some(offset) = self.offsets.commit_offset() {
+            let poller = self.poller.clone();
+            let topic_id = self.config.topic.clone();
+            let group_id = self.config.group_id.clone();
+            let partition_id = self.config.partition_id;
+
+            if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                handle.spawn(async move {
+                    let _ = poller
+                        .ack(AckRequest {
+                            topic_id,
+                            group_id,
+                            partition_id,
+                            upto_offset: offset,
+                        })
+                        .await;
+                });
+            }
+        }
     }
 }
 
@@ -383,5 +416,92 @@ impl ConsumerBuilder {
             last_auto_commit: Instant::now(),
             closed: false,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::consumer::core::poller::ConsumerPoller;
+    use crate::consumer::models::ConsumerConfig;
+
+    /// Build a minimal `TopicConsumer` without a real server so we can test
+    /// state-flag behaviour purely in-memory.
+    fn make_test_consumer(enable_auto_commit: bool) -> TopicConsumer {
+        let mut config = ConsumerConfig::new("test-group", "test.topic");
+        config.enable_auto_commit = enable_auto_commit;
+
+        let poller = ConsumerPoller::new(
+            "http://127.0.0.1:1", // unreachable — calls must not be made in these tests
+            reqwest::Client::new(),
+            AuthProvider::None,
+            Duration::from_millis(100),
+            Duration::from_millis(50),
+        );
+
+        TopicConsumer {
+            config,
+            poller,
+            offsets: OffsetManager::new(),
+            last_auto_commit: Instant::now(),
+            closed: false,
+        }
+    }
+
+    // ── is_closed state ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_is_not_closed_initially() {
+        let consumer = make_test_consumer(false);
+        assert!(!consumer.is_closed(), "consumer should start open");
+    }
+
+    #[tokio::test]
+    async fn test_close_marks_as_closed() {
+        let mut consumer = make_test_consumer(false);
+        consumer.close().await.expect("close should succeed");
+        assert!(consumer.is_closed(), "consumer should be closed after close()");
+    }
+
+    #[tokio::test]
+    async fn test_close_is_idempotent() {
+        let mut consumer = make_test_consumer(false);
+        consumer.close().await.expect("first close should succeed");
+        consumer.close().await.expect("second close should be a no-op");
+        assert!(consumer.is_closed());
+    }
+
+    #[tokio::test]
+    async fn test_poll_fails_after_close() {
+        let mut consumer = make_test_consumer(false);
+        consumer.close().await.unwrap();
+        let result = consumer.poll().await;
+        assert!(result.is_err(), "poll() after close should return an error");
+    }
+
+    /// Drop without runtime present must not panic.
+    #[test]
+    fn test_drop_without_runtime_does_not_panic() {
+        let consumer = make_test_consumer(false);
+        drop(consumer);
+    }
+
+    /// Drop with a tokio runtime and auto_commit disabled must not panic or
+    /// attempt any network I/O.
+    #[tokio::test]
+    async fn test_drop_no_commit_when_auto_commit_disabled() {
+        let consumer = make_test_consumer(false);
+        drop(consumer); // should silently no-op
+        tokio::task::yield_now().await;
+    }
+
+    /// Drop with auto_commit enabled but no processed offsets should be a
+    /// silent no-op (nothing to commit).
+    #[tokio::test]
+    async fn test_drop_no_commit_when_no_processed_offsets() {
+        let consumer = make_test_consumer(true);
+        // No records processed, so commit_offset() returns None → Drop is a no-op.
+        drop(consumer);
+        tokio::task::yield_now().await;
     }
 }

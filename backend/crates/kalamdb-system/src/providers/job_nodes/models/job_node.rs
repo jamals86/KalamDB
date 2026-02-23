@@ -7,7 +7,7 @@ use kalamdb_macros::table;
 use serde::{Deserialize, Serialize};
 
 #[table(name = "job_nodes", comment = "Per-node job execution state")]
-#[derive(Serialize, Deserialize,  Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct JobNode {
     #[column(
         id = 5,
@@ -115,13 +115,10 @@ mod tests {
             error_message: None,
         };
 
-        let row = model_to_system_row(&job_node, &JobNode::definition()).expect("encode model to row");
+        let row =
+            model_to_system_row(&job_node, &JobNode::definition()).expect("encode model to row");
 
-        let node_id_scalar = row
-            .fields
-            .values
-            .get("node_id")
-            .expect("node_id scalar must exist");
+        let node_id_scalar = row.fields.values.get("node_id").expect("node_id scalar must exist");
         assert!(matches!(node_id_scalar, datafusion::scalar::ScalarValue::Int64(Some(1))));
 
         let decoded: JobNode =

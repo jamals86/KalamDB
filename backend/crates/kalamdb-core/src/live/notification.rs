@@ -163,10 +163,11 @@ impl NotificationService {
                     }
                 }
 
-                // Step 1: Route to live query subscriptions (only if user_id is provided)
+                // Step 1: Route to live query subscriptions
                 // Topic publishing is now handled synchronously in table providers,
                 // so the notification worker only handles live query fan-out.
                 if let Some(ref user_id) = task.user_id {
+                    // User/stream table: specific user lookup
                     let handles = notify_service
                         .registry
                         .get_subscriptions_for_table(user_id, &task.table_id);
@@ -232,14 +233,11 @@ impl NotificationService {
             user_id,
             table_id
         );
-        if let Err(e) =
-            self.notify_table_change_with_handles(&user_id, &table_id, notification, handles).await
+        if let Err(e) = self
+            .notify_table_change_with_handles(&user_id, &table_id, notification, handles)
+            .await
         {
-            log::warn!(
-                "Failed to dispatch forwarded notification for table {}: {}",
-                table_id,
-                e
-            );
+            log::warn!("Failed to dispatch forwarded notification for table {}: {}", table_id, e);
         }
     }
 
@@ -429,21 +427,20 @@ impl NotificationService {
                 None
             };
 
-            // Build the notification with JSON data
-            // Compute live_id string once to avoid 4 allocations per notification
-            let live_id_str = live_id.to_string();
+            // Build the notification with JSON data.
+            // Use the original subscription_id (client-assigned name, e.g. "latency_1")
+            // NOT the full LiveQueryId ("user-conn-sub").  This keeps the
+            // subscription_id consistent between Ack and change events so the
+            // client can send the correct ID back in Unsubscribe messages.
+            let sub_id = live_id.subscription_id().to_string();
             let notification = match change_notification.change_type {
-                ChangeType::Insert => {
-                    kalamdb_commons::Notification::insert(live_id_str, vec![row_json])
-                },
+                ChangeType::Insert => kalamdb_commons::Notification::insert(sub_id, vec![row_json]),
                 ChangeType::Update => kalamdb_commons::Notification::update(
-                    live_id_str,
+                    sub_id,
                     vec![row_json],
                     vec![old_json.unwrap_or_else(std::collections::HashMap::new)],
                 ),
-                ChangeType::Delete => {
-                    kalamdb_commons::Notification::delete(live_id_str, vec![row_json])
-                },
+                ChangeType::Delete => kalamdb_commons::Notification::delete(sub_id, vec![row_json]),
             };
 
             // Send notification through channel (non-blocking, bounded)

@@ -8,8 +8,9 @@ use kalamdb_commons::websocket::BatchControl;
 use kalamdb_commons::WebSocketMessage;
 use kalamdb_core::live::{LiveQueryManager, SharedConnectionState};
 use kalamdb_core::providers::arrow_json_conversion::row_to_json_map;
-use log::{error, info};
+use log::error;
 use std::sync::Arc;
+use tracing::debug;
 
 use crate::handlers::ws::models::WsErrorCode;
 
@@ -33,7 +34,7 @@ pub async fn handle_next_batch(
         state.increment_batch_num(subscription_id).unwrap_or(0)
     };
 
-    info!(
+    debug!(
         "Processing NextBatch request: subscription_id={}, batch_num={}, last_seq_id={:?}",
         subscription_id, batch_num, last_seq_id
     );
@@ -51,7 +52,7 @@ pub async fn handle_next_batch(
                 result.snapshot_end_seq,
             );
 
-            info!(
+            debug!(
                 "Sending batch {}: {} rows, has_more={}",
                 batch_num,
                 result.rows.len(),
@@ -87,7 +88,7 @@ pub async fn handle_next_batch(
             if !result.has_more {
                 let flushed = connection_state.read().complete_initial_load(subscription_id);
                 if flushed > 0 {
-                    info!(
+                    debug!(
                         "Flushed {} buffered notifications after initial load for {}",
                         flushed, subscription_id
                     );

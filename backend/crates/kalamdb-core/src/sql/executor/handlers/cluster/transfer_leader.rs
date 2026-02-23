@@ -52,9 +52,10 @@ impl StatementHandler for ClusterTransferLeaderHandler {
         };
 
         let manager = raft_executor.manager();
-        let results = manager.transfer_leadership_all(NodeId::from(*node_id)).await.map_err(|e| {
-            KalamDbError::InvalidOperation(format!("Failed to transfer leadership: {}", e))
-        })?;
+        let results =
+            manager.transfer_leadership_all(NodeId::from(*node_id)).await.map_err(|e| {
+                KalamDbError::InvalidOperation(format!("Failed to transfer leadership: {}", e))
+            })?;
 
         let success_count = results.iter().filter(|r| r.success).count();
         let total_count = results.len();

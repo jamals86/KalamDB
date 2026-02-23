@@ -23,7 +23,6 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::catalog::Session;
 use datafusion::datasource::TableProvider;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
-use kalamdb_commons::NotLeaderError;
 use datafusion::logical_expr::dml::InsertOp;
 use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
 use datafusion::physical_plan::{ExecutionPlan, Statistics};
@@ -32,6 +31,7 @@ use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::conversions::arrow_json_conversion::coerce_rows;
 use kalamdb_commons::ids::{SeqId, UserTableRowId};
 use kalamdb_commons::models::UserId;
+use kalamdb_commons::NotLeaderError;
 use kalamdb_commons::StorageKey;
 use kalamdb_session::{can_read_all_users, check_user_table_access, check_user_table_write_access};
 use kalamdb_store::EntityStore;
@@ -173,6 +173,29 @@ impl UserTableProvider {
         } else {
             Ok(None)
         }
+    }
+
+    /// Returns true if the latest hot-storage version of this PK is a tombstone
+    /// (`_deleted = true`).  Returns false if the PK is absent from hot storage
+    /// or if the latest version is active.
+    ///
+    /// Used in the PK fast-path of `scan_rows` to prevent cold storage (Parquet)
+    /// from surfacing a row that has already been deleted in hot storage.
+    fn pk_tombstoned_in_hot(
+        &self,
+        user_id: &UserId,
+        pk_value: &ScalarValue,
+    ) -> Result<bool, KalamDbError> {
+        let prefix = self.pk_index.build_prefix_for_pk(user_id, pk_value);
+        let index_results = self
+            .store
+            .scan_by_index(0, Some(&prefix), None)
+            .into_kalamdb_error("PK index scan failed")?;
+        Ok(index_results
+            .into_iter()
+            .max_by_key(|(row_id, _)| row_id.seq)
+            .map(|(_, row)| row._deleted)
+            .unwrap_or(false))
     }
 
     /// Scan Parquet files from cold storage for a specific user (async version).
@@ -591,14 +614,12 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
 
         {
             let _write_span = tracing::info_span!("insert_batch.store_write", row_count).entered();
-            self.store
-                .insert_batch_preencoded(&entries, encoded_values)
-                .map_err(|e| {
-                    KalamDbError::InvalidOperation(format!(
-                        "Failed to batch insert user table rows: {}",
-                        e
-                    ))
-                })?;
+            self.store.insert_batch_preencoded(&entries, encoded_values).map_err(|e| {
+                KalamDbError::InvalidOperation(format!(
+                    "Failed to batch insert user table rows: {}",
+                    e
+                ))
+            })?;
         }
 
         // Mark manifest as having pending writes (hot data needs to be flushed)
@@ -633,7 +654,10 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         let has_live_subs = notification_service.has_subscribers(Some(&user_id), &table_id);
         if has_topics || has_live_subs {
             // Build notification rows
-            let rows: Vec<_> = entries.iter().map(|(_row_key, entity)| Self::build_notification_row(entity)).collect();
+            let rows: Vec<_> = entries
+                .iter()
+                .map(|(_row_key, entity)| Self::build_notification_row(entity))
+                .collect();
 
             // Batch publish to topics (single RocksDB WriteBatch + single lock per partition)
             if has_topics {
@@ -975,9 +999,94 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         let (user_id, role) = extract_user_context(state)?;
         let allow_all_users = can_read_all_users(role);
 
-        // log::info!("🔍 [AS_USER_DEBUG] scan_rows: user_id='{}' role={:?} allow_all={}",
-        //            user_id.as_str(), role, allow_all_users);
+        let schema = self.schema_ref();
+        let pk_name = self.primary_key_field_name();
 
+        // ── PK equality fast-path ────────────────────────────────────────────
+        // If the filter is `pk_col = <literal>`, use the PK index for O(1)
+        // lookup instead of full table scan + MVCC resolution.
+        // Only for single-user scope (not admin cross-user queries).
+        if !allow_all_users {
+            if let Some(expr) = filter {
+                if let Some(pk_literal) = base::extract_pk_equality_literal(expr, pk_name) {
+                    let pk_field = schema.field_with_name(pk_name).ok();
+                    let pk_scalar = if let Some(field) = pk_field {
+                        kalamdb_commons::conversions::parse_string_as_scalar(
+                            &pk_literal.to_string(),
+                            field.data_type(),
+                        )
+                        .ok()
+                        .unwrap_or(pk_literal)
+                    } else {
+                        pk_literal
+                    };
+
+                    // Hot storage PK index (O(1))
+                    let found = self.find_by_pk(user_id, &pk_scalar)?;
+                    if let Some((row_id, row)) = found {
+                        log::debug!(
+                            "[UserProvider] PK fast-path hit for {}={}, user={}",
+                            pk_name,
+                            pk_scalar,
+                            user_id.as_str()
+                        );
+                        return crate::utils::base::rows_to_arrow_batch(
+                            &schema,
+                            vec![(row_id, row)],
+                            projection,
+                            |_, _| {},
+                        );
+                    }
+
+                    // Check if PK is tombstoned (deleted) in hot storage.
+                    // If so, the row has been deleted — do NOT fall back to cold storage.
+                    // Returning the Parquet version would surface a row whose latest
+                    // version is a tombstone, violating MVCC visibility rules.
+                    if self.pk_tombstoned_in_hot(user_id, &pk_scalar)? {
+                        log::debug!(
+                            "[UserProvider] PK fast-path tombstone for {}={}, user={}",
+                            pk_name,
+                            pk_scalar,
+                            user_id.as_str()
+                        );
+                        return crate::utils::base::rows_to_arrow_batch(
+                            &schema,
+                            Vec::<(UserTableRowId, UserTableRow)>::new(),
+                            projection,
+                            |_, _| {},
+                        );
+                    }
+
+                    // Cold storage fallback (PK absent from hot storage entirely)
+                    let cold_found =
+                        base::find_row_by_pk(self, Some(user_id), &pk_scalar.to_string()).await?;
+                    if let Some((row_id, row)) = cold_found {
+                        log::debug!(
+                            "[UserProvider] PK fast-path cold hit for {}={}, user={}",
+                            pk_name,
+                            pk_scalar,
+                            user_id.as_str()
+                        );
+                        return crate::utils::base::rows_to_arrow_batch(
+                            &schema,
+                            vec![(row_id, row)],
+                            projection,
+                            |_, _| {},
+                        );
+                    }
+
+                    // PK not found — return empty batch
+                    return crate::utils::base::rows_to_arrow_batch(
+                        &schema,
+                        Vec::<(UserTableRowId, UserTableRow)>::new(),
+                        projection,
+                        |_, _| {},
+                    );
+                }
+            }
+        }
+
+        // ── Full scan path (no PK equality filter or admin cross-user) ──────
         // Extract sequence bounds from filter to optimize RocksDB scan
         let (since_seq, _until_seq) = if let Some(expr) = filter {
             base::extract_seq_bounds_from_filter(expr)
@@ -1018,7 +1127,6 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         );
 
         // Convert rows to JSON values aligned with schema
-        let schema = self.schema_ref();
         crate::utils::base::rows_to_arrow_batch(&schema, kvs, projection, |_, _| {})
     }
 
@@ -1187,15 +1295,11 @@ impl TableProvider for UserTableProvider {
         if read_context.requires_leader()
             && self.core.services.cluster_coordinator.is_cluster_mode().await
         {
-            let is_leader =
-                self.core.services.cluster_coordinator.is_meta_leader().await;
+            let is_leader = self.core.services.cluster_coordinator.is_meta_leader().await;
             if !is_leader {
                 // Get Meta leader address for client redirection
-                let leader_addr =
-                    self.core.services.cluster_coordinator.meta_leader_addr().await;
-                return Err(DataFusionError::External(
-                    Box::new(NotLeaderError::new(leader_addr)),
-                ));
+                let leader_addr = self.core.services.cluster_coordinator.meta_leader_addr().await;
+                return Err(DataFusionError::External(Box::new(NotLeaderError::new(leader_addr))));
             }
         }
 

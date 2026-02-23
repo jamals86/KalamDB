@@ -81,7 +81,7 @@ use super::{JobStatus, JobType};
     name = "jobs",
     comment = "Background jobs for maintenance and data management"
 )]
-#[derive(Serialize, Deserialize,  Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Job {
     // 8-byte aligned fields first (i64, Option<i64>, String/pointer types)
     #[column(
@@ -539,6 +539,4 @@ mod tests {
         assert_eq!(cancelled.status, JobStatus::Cancelled);
         assert!(cancelled.finished_at.is_some());
     }
-
-
 }

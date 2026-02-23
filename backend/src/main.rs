@@ -31,7 +31,11 @@ fn resolve_bind_addrs(addr: &str, label: &str) -> Result<HashSet<SocketAddr>> {
     Ok(addrs.into_iter().collect())
 }
 
-fn ensure_any_addr_bindable(addrs: &HashSet<SocketAddr>, label: &str, original_addr: &str) -> Result<()> {
+fn ensure_any_addr_bindable(
+    addrs: &HashSet<SocketAddr>,
+    label: &str,
+    original_addr: &str,
+) -> Result<()> {
     let mut last_error: Option<(SocketAddr, std::io::Error)> = None;
 
     for addr in addrs {
@@ -63,11 +67,7 @@ fn ensure_any_addr_bindable(addrs: &HashSet<SocketAddr>, label: &str, original_a
         ));
     }
 
-    Err(anyhow!(
-        "{} port check failed: unable to bind '{}'",
-        label,
-        original_addr
-    ))
+    Err(anyhow!("{} port check failed: unable to bind '{}'", label, original_addr))
 }
 
 fn validate_startup_ports(config: &ServerConfig) -> Result<()> {
@@ -97,9 +97,43 @@ fn validate_startup_ports(config: &ServerConfig) -> Result<()> {
 #[global_allocator]
 static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
+/// Raise the process file-descriptor limit to the OS hard maximum.
+/// This is critical for benchmarks and production workloads that open many
+/// RocksDB files, Parquet segments, and WebSocket connections simultaneously.
+#[cfg(unix)]
+fn raise_fd_limit() {
+    use std::mem::MaybeUninit;
+
+    unsafe {
+        let mut rlim = MaybeUninit::<libc::rlimit>::zeroed().assume_init();
+        if libc::getrlimit(libc::RLIMIT_NOFILE, &mut rlim) == 0 {
+            let old_soft = rlim.rlim_cur;
+            // On macOS kern.maxfilesperproc is typically 10240-24576;
+            // request the hard limit (or a sane floor of 65536).
+            let target = rlim.rlim_max.max(65_536);
+            rlim.rlim_cur = target;
+            if libc::setrlimit(libc::RLIMIT_NOFILE, &rlim) != 0 {
+                // macOS may reject values above kern.maxfilesperproc;
+                // fall back to hard limit as-is.
+                rlim.rlim_cur = rlim.rlim_max;
+                let _ = libc::setrlimit(libc::RLIMIT_NOFILE, &rlim);
+            }
+            // Re-read to report actual value
+            libc::getrlimit(libc::RLIMIT_NOFILE, &mut rlim);
+            if rlim.rlim_cur != old_soft {
+                eprintln!("📂 Raised open-file limit: {} → {}", old_soft, rlim.rlim_cur);
+            }
+        }
+    }
+}
+
 // Use tokio::main instead of actix_web::main to avoid early tracing initialization
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Raise file-descriptor limit BEFORE any I/O (RocksDB, Parquet, sockets).
+    #[cfg(unix)]
+    raise_fd_limit();
+
     let main_start = std::time::Instant::now();
 
     // Normal server startup
@@ -166,7 +200,7 @@ async fn main() -> Result<()> {
     // JWT CONFIG INITIALIZATION
     // ========================================================================
     // Initialize auth JWT config from server.toml (after env overrides are applied).
-    kalamdb_auth::services::unified::init_auth_config(&config.auth);
+    kalamdb_auth::services::unified::init_auth_config(&config.auth, &config.oauth);
 
     // ========================================================================
     // Security: Validate critical configuration at startup

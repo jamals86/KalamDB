@@ -339,9 +339,8 @@ mod tests {
             app_ctx.clone(),
             Some(app_ctx.topic_publisher() as Arc<dyn kalamdb_system::TopicPublisher>),
         ));
-        let arrow_schema = tables_schema_registry
-            .get_arrow_schema(&table_id)
-            .expect("get arrow schema");
+        let arrow_schema =
+            tables_schema_registry.get_arrow_schema(&table_id).expect("get arrow schema");
         let cached_data = app_ctx.schema_registry().get(&table_id).expect("table def");
         let core = Arc::new(TableProviderCore::new(
             Arc::clone(&cached_data.table),
@@ -350,8 +349,7 @@ mod tests {
             arrow_schema,
             HashMap::new(),
         ));
-        let provider =
-            Arc::new(StreamTableProvider::new(core, stream_store, Some(1)));
+        let provider = Arc::new(StreamTableProvider::new(core, stream_store, Some(1)));
         let provider_trait: Arc<dyn TableProvider> = provider.clone();
         app_ctx
             .schema_registry()

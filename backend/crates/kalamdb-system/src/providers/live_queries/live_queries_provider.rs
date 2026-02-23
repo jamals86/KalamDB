@@ -11,8 +11,8 @@ use datafusion::arrow::array::RecordBatch;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
-use kalamdb_commons::models::ConnectionId;
 use kalamdb_commons::models::rows::SystemTableRow;
+use kalamdb_commons::models::ConnectionId;
 use kalamdb_commons::{LiveQueryId, NodeId, SystemTable, TableId, UserId};
 use kalamdb_store::entity_store::{EntityStore, EntityStoreAsync};
 use kalamdb_store::{IndexedEntityStore, StorageBackend};
@@ -45,9 +45,7 @@ impl LiveQueriesTableProvider {
                 .expect("LiveQueries is a table"),
             super::create_live_queries_indexes(),
         );
-        Self {
-            store,
-        }
+        Self { store }
     }
 
     /// Create a new live query entry
@@ -106,8 +104,7 @@ impl LiveQueriesTableProvider {
     ) -> Result<Option<LiveQuery>, SystemError> {
         let live_query_id = LiveQueryId::from_string(live_id)
             .map_err(|e| SystemError::InvalidOperation(format!("Invalid LiveQueryId: {}", e)))?;
-        let row =
-            self.store.get_async(live_query_id).await.into_system_error("get_async error")?;
+        let row = self.store.get_async(live_query_id).await.into_system_error("get_async error")?;
         row.map(|value| Self::decode_live_query_row(&value)).transpose()
     }
 
@@ -173,9 +170,7 @@ impl LiveQueriesTableProvider {
     /// List all live queries
     pub fn list_live_queries(&self) -> Result<Vec<LiveQuery>, SystemError> {
         let rows = self.store.scan_all_typed(None, None, None)?;
-        rows.into_iter()
-            .map(|(_, row)| Self::decode_live_query_row(&row))
-            .collect()
+        rows.into_iter().map(|(_, row)| Self::decode_live_query_row(&row)).collect()
     }
 
     /// Async version of `list_live_queries()` - offloads to blocking thread pool.
@@ -187,10 +182,7 @@ impl LiveQueriesTableProvider {
             .scan_all_async(None, None, None)
             .await
             .into_system_error("scan_all_async error")?;
-        results
-            .into_iter()
-            .map(|(_, row)| Self::decode_live_query_row(&row))
-            .collect()
+        results.into_iter().map(|(_, row)| Self::decode_live_query_row(&row)).collect()
     }
 
     /// Get live queries by user ID.
@@ -203,10 +195,7 @@ impl LiveQueriesTableProvider {
             .store
             .scan_with_raw_prefix(&prefix_bytes, None, 100)
             .into_system_error("prefix scan live queries by user")?;
-        results
-            .into_iter()
-            .map(|(_, row)| Self::decode_live_query_row(&row))
-            .collect()
+        results.into_iter().map(|(_, row)| Self::decode_live_query_row(&row)).collect()
     }
 
     /// Async version of `get_by_user_id()` - offloads to blocking thread pool.
@@ -222,10 +211,7 @@ impl LiveQueriesTableProvider {
             .scan_with_raw_prefix_async(&prefix_bytes, None, 100)
             .await
             .into_system_error("prefix scan live queries by user async")?;
-        results
-            .into_iter()
-            .map(|(_, row)| Self::decode_live_query_row(&row))
-            .collect()
+        results.into_iter().map(|(_, row)| Self::decode_live_query_row(&row)).collect()
     }
 
     /// Get live queries by table ID
@@ -297,27 +283,65 @@ impl LiveQueriesTableProvider {
     /// Live queries don't persist across server restarts since WebSocket connections
     /// are lost on restart.
     pub fn clear_all(&self) -> Result<usize, SystemError> {
-        let all = self.store.scan_all_typed(None, None, None)?;
-        let count = all.len();
-        for (key, _) in all {
-            self.store.delete(&key)?;
+        const BATCH_SIZE: usize = 5000;
+
+        let mut total_deleted = 0usize;
+        let mut start_key: Option<LiveQueryId> = None;
+
+        loop {
+            let batch = self.store.scan_all_typed(Some(BATCH_SIZE), None, start_key.as_ref())?;
+
+            if batch.is_empty() {
+                break;
+            }
+
+            for (key, _) in &batch {
+                self.store.delete(key)?;
+            }
+            total_deleted += batch.len();
+
+            if batch.len() < BATCH_SIZE {
+                break;
+            }
+
+            start_key = batch.last().map(|(key, _)| key.clone());
         }
-        Ok(count)
+
+        Ok(total_deleted)
     }
 
     /// Async version of `clear_all()`.
     pub async fn clear_all_async(&self) -> Result<usize, SystemError> {
+        const BATCH_SIZE: usize = 5000;
         let store = self.store.clone();
-        let all: Vec<(LiveQueryId, SystemTableRow)> =
-            tokio::task::spawn_blocking(move || store.scan_all_typed(None, None, None))
-                .await
-                .into_system_error("Join error")??;
 
-        let count = all.len();
-        for (key, _) in all {
-            self.delete_live_query_async(&key).await?;
-        }
-        Ok(count)
+        tokio::task::spawn_blocking(move || -> Result<usize, SystemError> {
+            let mut total_deleted = 0usize;
+            let mut start_key: Option<LiveQueryId> = None;
+
+            loop {
+                let batch = store.scan_all_typed(Some(BATCH_SIZE), None, start_key.as_ref())?;
+
+                if batch.is_empty() {
+                    break;
+                }
+
+                for (key, _) in &batch {
+                    store.delete(key)?;
+                }
+                total_deleted += batch.len();
+
+                if batch.len() < BATCH_SIZE {
+                    break;
+                }
+
+                start_key = batch.last().map(|(key, _)| key.clone());
+            }
+
+            Ok(total_deleted)
+        })
+        .await
+        .into_system_error("Join error")?
     }
 
     /// Scan all live queries and return as RecordBatch

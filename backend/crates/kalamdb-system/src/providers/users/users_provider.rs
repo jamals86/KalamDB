@@ -228,7 +228,10 @@ impl UsersTableProvider {
     }
 
     /// Helper to create RecordBatch from users
-    fn create_batch(&self, users: Vec<(UserId, SystemTableRow)>) -> Result<RecordBatch, SystemError> {
+    fn create_batch(
+        &self,
+        users: Vec<(UserId, SystemTableRow)>,
+    ) -> Result<RecordBatch, SystemError> {
         let rows = users.into_iter().map(|(_, row)| row).collect();
         system_rows_to_batch(&Self::schema(), rows)
     }
@@ -259,9 +262,7 @@ impl UsersTableProvider {
         static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
         SCHEMA
             .get_or_init(|| {
-                User::definition()
-                    .to_arrow_schema()
-                    .expect("failed to build users schema")
+                User::definition().to_arrow_schema().expect("failed to build users schema")
             })
             .clone()
     }

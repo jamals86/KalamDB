@@ -14,8 +14,8 @@ use kalamdb_commons::models::{NodeId, UserId};
 use kalamdb_sharding::ShardRouter;
 
 use crate::cluster_types::NodeStatus;
-use crate::network::cluster_handler::ClusterMessageHandler;
 use crate::network::cluster_client::ClusterClient;
+use crate::network::cluster_handler::ClusterMessageHandler;
 use crate::network::models::GetNodeInfoResponse;
 use crate::{
     manager::RaftManager, ClusterInfo, ClusterNodeInfo, CommandExecutor, DataResponse, GroupId,
@@ -389,10 +389,7 @@ impl CommandExecutor for RaftExecutor {
                     .as_ref()
                     .and_then(|p| p.version.clone())
                     .or_else(|| node.version.clone()),
-                memory_mb: peer_cache_entry
-                    .as_ref()
-                    .and_then(|p| p.memory_mb)
-                    .or(node.memory_mb),
+                memory_mb: peer_cache_entry.as_ref().and_then(|p| p.memory_mb).or(node.memory_mb),
                 os: peer_cache_entry
                     .as_ref()
                     .and_then(|p| p.os.clone())

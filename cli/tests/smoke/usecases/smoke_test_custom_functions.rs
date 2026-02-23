@@ -326,7 +326,8 @@ fn smoke_test_current_user_default() {
     // For localhost tests, this should be "root" or the system user
 
     // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 }
 
 /// Test all custom functions together in one table
@@ -399,5 +400,6 @@ fn smoke_test_all_custom_functions_combined() {
     println!("✅ Verified all custom function defaults work together");
 
     // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 }

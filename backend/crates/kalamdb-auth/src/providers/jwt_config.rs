@@ -16,6 +16,7 @@ pub struct JwtConfig {
     pub secret: String,
     pub trusted_issuers: Vec<String>,
     pub auto_create_users_from_provider: bool,
+    pub issuer_audiences: HashMap<String, String>,
 
     /// Per-issuer OIDC validators (lazily populated on first request).
     /// Key = issuer URL, Value = OidcValidator (owns its own JWKS cache).
@@ -32,11 +33,13 @@ pub fn init_jwt_config(
     secret: &str,
     trusted_issuers: &str,
     auto_create_users_from_provider: bool,
+    issuer_audiences: HashMap<String, String>,
 ) {
     let config = JwtConfig {
         secret: secret.to_string(),
         trusted_issuers: parse_trusted_issuers(trusted_issuers),
         auto_create_users_from_provider,
+        issuer_audiences,
         oidc_validators: RwLock::new(HashMap::new()),
     };
     let _ = JWT_CONFIG.set(config);
@@ -50,6 +53,7 @@ pub fn get_jwt_config() -> &'static JwtConfig {
         ),
         auto_create_users_from_provider:
             kalamdb_configs::defaults::default_auth_auto_create_users_from_provider(),
+        issuer_audiences: HashMap::new(),
         oidc_validators: RwLock::new(HashMap::new()),
     })
 }
@@ -70,12 +74,13 @@ impl JwtConfig {
         }
 
         // Slow path: OIDC discovery + write lock
-        let config = OidcConfig::discover(issuer.to_string(), None)
-            .await
-            .map_err(|e| AuthError::MalformedAuthorization(format!(
+        let client_id = self.issuer_audiences.get(issuer).cloned();
+        let config = OidcConfig::discover(issuer.to_string(), client_id).await.map_err(|e| {
+            AuthError::MalformedAuthorization(format!(
                 "OIDC discovery failed for issuer '{}': {}",
                 issuer, e
-            )))?;
+            ))
+        })?;
 
         let validator = OidcValidator::new(config);
 

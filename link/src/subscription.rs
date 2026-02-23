@@ -7,27 +7,35 @@ use crate::{
     auth::AuthProvider,
     error::{KalamLinkError, Result},
     models::{
-        BatchStatus, ChangeEvent, ClientMessage, ServerMessage, SubscriptionConfig,
-        SubscriptionOptions, WsAuthCredentials,
+        BatchStatus, ChangeEvent, ClientMessage, ConnectionOptions, ServerMessage,
+        SubscriptionConfig, SubscriptionOptions, SubscriptionRequest, WsAuthCredentials,
     },
     timeouts::KalamLinkTimeouts,
 };
+use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
+use std::collections::hash_map::DefaultHasher;
 use std::collections::VecDeque;
+use std::hash::{Hash, Hasher};
+use std::io::{Error as IoError, ErrorKind};
+use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
+use tokio::net::{lookup_host, TcpSocket, TcpStream};
 use tokio_tungstenite::{
-    connect_async,
+    client_async_tls_with_config, connect_async,
     tungstenite::{
         client::IntoClientRequest,
         error::Error as WsError,
+        error::UrlError,
+        handshake::client::Response as WsResponse,
         http::header::{HeaderValue, AUTHORIZATION},
         protocol::Message,
     },
 };
 
 type WebSocketStream =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<TcpStream>>;
 
 /// Manages WebSocket subscriptions for real-time change notifications.
 ///
@@ -70,6 +78,128 @@ fn resolve_ws_url(base_url: &str, override_url: Option<&str>) -> String {
 /// access logs, proxy caches and browser history.
 fn build_request_url(ws_url: &str) -> String {
     ws_url.to_string()
+}
+
+fn hash_start_index(key: &str, len: usize) -> usize {
+    if len == 0 {
+        return 0;
+    }
+    let mut hasher = DefaultHasher::new();
+    key.hash(&mut hasher);
+    (hasher.finish() as usize) % len
+}
+
+fn parse_local_bind_addresses(addresses: &[String]) -> std::result::Result<Vec<IpAddr>, WsError> {
+    let mut parsed = Vec::with_capacity(addresses.len());
+    for raw in addresses {
+        let candidate = raw.trim();
+        if candidate.is_empty() {
+            continue;
+        }
+        let ip: IpAddr = candidate.parse().map_err(|e| {
+            WsError::Io(IoError::new(
+                ErrorKind::InvalidInput,
+                format!("Invalid ws_local_bind_addresses entry '{}': {}", candidate, e),
+            ))
+        })?;
+        if !parsed.contains(&ip) {
+            parsed.push(ip);
+        }
+    }
+    Ok(parsed)
+}
+
+async fn connect_with_optional_local_bind(
+    request: tokio_tungstenite::tungstenite::http::Request<()>,
+    local_bind_addresses: &[String],
+    subscription_id: &str,
+) -> std::result::Result<(WebSocketStream, WsResponse), WsError> {
+    if local_bind_addresses.is_empty() {
+        return connect_async(request).await;
+    }
+
+    let host = request.uri().host().ok_or(WsError::Url(UrlError::NoHostName))?;
+    let port = request
+        .uri()
+        .port_u16()
+        .or_else(|| match request.uri().scheme_str() {
+            Some("wss") => Some(443),
+            Some("ws") => Some(80),
+            _ => None,
+        })
+        .ok_or(WsError::Url(UrlError::UnsupportedUrlScheme))?;
+
+    let remote_addrs: Vec<SocketAddr> =
+        lookup_host((host, port)).await.map_err(WsError::Io)?.collect();
+    if remote_addrs.is_empty() {
+        return Err(WsError::Io(IoError::new(
+            ErrorKind::AddrNotAvailable,
+            format!("No resolved addresses for {}:{}", host, port),
+        )));
+    }
+
+    let bind_ips = parse_local_bind_addresses(local_bind_addresses)?;
+    if bind_ips.is_empty() {
+        return Err(WsError::Io(IoError::new(
+            ErrorKind::InvalidInput,
+            "ws_local_bind_addresses is configured but empty after parsing",
+        )));
+    }
+
+    let mut last_error: Option<IoError> = None;
+    let mut attempted_connections = 0usize;
+    let start = hash_start_index(subscription_id, bind_ips.len());
+
+    for local_offset in 0..bind_ips.len() {
+        let local_ip = bind_ips[(start + local_offset) % bind_ips.len()];
+        let bind_addr = SocketAddr::new(local_ip, 0);
+
+        for remote_addr in remote_addrs.iter().copied() {
+            if remote_addr.is_ipv4() != local_ip.is_ipv4() {
+                continue;
+            }
+
+            attempted_connections += 1;
+
+            let socket = if remote_addr.is_ipv4() {
+                TcpSocket::new_v4()
+            } else {
+                TcpSocket::new_v6()
+            }
+            .map_err(WsError::Io)?;
+
+            if let Err(bind_err) = socket.bind(bind_addr) {
+                last_error = Some(bind_err);
+                continue;
+            }
+
+            match socket.connect(remote_addr).await {
+                Ok(stream) => {
+                    return client_async_tls_with_config(request, stream, None, None).await;
+                },
+                Err(connect_err) => {
+                    last_error = Some(connect_err);
+                },
+            }
+        }
+    }
+
+    if attempted_connections == 0 {
+        return Err(WsError::Io(IoError::new(
+            ErrorKind::InvalidInput,
+            "No compatible ws_local_bind_addresses for resolved target address family",
+        )));
+    }
+
+    Err(WsError::Io(last_error.unwrap_or_else(|| {
+        IoError::new(
+            ErrorKind::AddrNotAvailable,
+            format!(
+                "Failed to connect using configured ws_local_bind_addresses ({})",
+                local_bind_addresses.join(", ")
+            ),
+        )
+    })))
 }
 
 fn apply_ws_auth_headers(
@@ -193,8 +323,6 @@ async fn send_subscription_request(
     sql: &str,
     options: Option<SubscriptionOptions>,
 ) -> Result<()> {
-    use crate::models::{ClientMessage, SubscriptionRequest};
-
     let subscription_req = SubscriptionRequest {
         id: subscription_id.to_string(),
         sql: sql.to_string(),
@@ -312,13 +440,46 @@ fn parse_message(text: &str) -> Result<Option<ChangeEvent>> {
     }
 }
 
+/// Spread keepalive pings across connections to avoid synchronized bursts.
+///
+/// Uses deterministic jitter derived from subscription_id so reconnecting a
+/// subscription preserves its phase and avoids thundering-herd effects.
+fn jitter_keepalive_interval(base: Duration, subscription_id: &str) -> Duration {
+    if base.is_zero() {
+        return base;
+    }
+
+    let base_ms = base.as_millis() as u64;
+    if base_ms <= 1 {
+        return base;
+    }
+
+    // +/-20% jitter window.
+    let jitter_span = (base_ms / 5).max(1);
+    let mut hasher = DefaultHasher::new();
+    subscription_id.hash(&mut hasher);
+    let hashed = hasher.finish();
+
+    let offset = (hashed % (2 * jitter_span + 1)) as i64 - jitter_span as i64;
+    let jittered_ms = if offset >= 0 {
+        base_ms.saturating_add(offset as u64)
+    } else {
+        base_ms.saturating_sub((-offset) as u64).max(1)
+    };
+
+    Duration::from_millis(jittered_ms)
+}
+
 pub struct SubscriptionManager {
-    ws_stream: WebSocketStream,
+    ws_stream: Option<WebSocketStream>,
     subscription_id: String,
     event_queue: VecDeque<ChangeEvent>,
     buffered_changes: Vec<ChangeEvent>,
     is_loading: bool,
     timeouts: KalamLinkTimeouts,
+    closed: bool,
+    /// Keepalive interval — `None` means keepalive pings are disabled.
+    keepalive_interval: Option<Duration>,
 }
 
 impl SubscriptionManager {
@@ -330,6 +491,7 @@ impl SubscriptionManager {
         config: SubscriptionConfig,
         auth: &AuthProvider,
         timeouts: &KalamLinkTimeouts,
+        connection_options: &ConnectionOptions,
     ) -> Result<Self> {
         let SubscriptionConfig {
             id,
@@ -350,9 +512,22 @@ impl SubscriptionManager {
 
         // Apply connection timeout
         let connect_result = if !KalamLinkTimeouts::is_no_timeout(timeouts.connection_timeout) {
-            tokio::time::timeout(timeouts.connection_timeout, connect_async(request)).await
+            tokio::time::timeout(
+                timeouts.connection_timeout,
+                connect_with_optional_local_bind(
+                    request,
+                    &connection_options.ws_local_bind_addresses,
+                    &id,
+                ),
+            )
+            .await
         } else {
-            Ok(connect_async(request).await)
+            Ok(connect_with_optional_local_bind(
+                request,
+                &connection_options.ws_local_bind_addresses,
+                &id,
+            )
+            .await)
         };
 
         let ws_stream = match connect_result {
@@ -403,17 +578,24 @@ impl SubscriptionManager {
 
         // Use the provided subscription ID (now required)
         let subscription_id = id;
+        let keepalive_interval = if timeouts.keepalive_interval.is_zero() {
+            None
+        } else {
+            Some(jitter_keepalive_interval(timeouts.keepalive_interval, &subscription_id))
+        };
 
         // Send subscription request
         send_subscription_request(&mut ws_stream, &subscription_id, &sql, options).await?;
 
         Ok(Self {
-            ws_stream,
+            ws_stream: Some(ws_stream),
             subscription_id,
             event_queue: VecDeque::new(),
             buffered_changes: Vec::new(),
             is_loading: true,
             timeouts: timeouts.clone(),
+            closed: false,
+            keepalive_interval,
         })
     }
 
@@ -423,16 +605,14 @@ impl SubscriptionManager {
         }
     }
 
-    /// Process a parsed change event: update subscription ID, request next batch
-    /// if needed, and apply buffering logic. Returns `Some` if the caller should
-    /// yield early (error while requesting next batch).
+    /// Process a parsed change event: request next batch if needed and apply
+    /// buffering logic. Returns `Some` if the caller should yield early (error
+    /// while requesting next batch).
+    ///
+    /// NOTE: We intentionally do NOT overwrite `self.subscription_id` from
+    /// server-sent events. The client keeps the original ID it passed during
+    /// subscribe so that Unsubscribe sends the correct key.
     async fn process_event(&mut self, event: ChangeEvent) -> Option<Result<ChangeEvent>> {
-        if let Some(id) = event.subscription_id() {
-            if id != self.subscription_id {
-                self.subscription_id = id.to_string();
-            }
-        }
-
         // Request next batch when initial data has more pages
         if let ChangeEvent::InitialDataBatch {
             ref batch_control, ..
@@ -500,6 +680,8 @@ impl SubscriptionManager {
     ///
     /// Returns `None` when the connection is closed.
     /// Automatically requests next batches when initial data has more batches available.
+    /// Sends periodic keepalive pings when `keepalive_interval` is configured so the
+    /// server-side heartbeat timeout never fires for healthy idle connections.
     pub async fn next(&mut self) -> Option<Result<ChangeEvent>> {
         loop {
             // 1. Drain event queue first
@@ -507,7 +689,31 @@ impl SubscriptionManager {
                 return Some(Ok(event));
             }
 
-            match self.ws_stream.next().await {
+            // 2. If closed or stream taken, signal end-of-stream
+            let ws_stream = match self.ws_stream.as_mut() {
+                Some(s) => s,
+                None => return None,
+            };
+
+            // 3. Await next WS frame, with an optional keepalive timeout.
+            //    If the timeout fires before any frame arrives we send a Ping
+            //    and loop — the server will see the Ping as heartbeat activity.
+            let msg_result = if let Some(interval) = self.keepalive_interval {
+                match tokio::time::timeout(interval, ws_stream.next()).await {
+                    Ok(msg) => msg,
+                    Err(_) => {
+                        // Keepalive timeout: send a Ping to refresh the server heartbeat.
+                        if let Err(e) = ws_stream.send(Message::Ping(Bytes::new())).await {
+                            return Some(Err(KalamLinkError::WebSocketError(e.to_string())));
+                        }
+                        continue;
+                    },
+                }
+            } else {
+                ws_stream.next().await
+            };
+
+            match msg_result {
                 Some(Ok(msg @ (Message::Text(_) | Message::Binary(_)))) => {
                     let (data, is_binary) = match msg {
                         Message::Text(t) => (t.as_bytes().to_vec(), false),
@@ -536,8 +742,10 @@ impl SubscriptionManager {
                 },
                 Some(Ok(Message::Ping(payload))) => {
                     // Reply to ping to keep connection alive
-                    if let Err(e) = self.ws_stream.send(Message::Pong(payload)).await {
-                        return Some(Err(KalamLinkError::WebSocketError(e.to_string())));
+                    if let Some(ref mut ws) = self.ws_stream {
+                        if let Err(e) = ws.send(Message::Pong(payload)).await {
+                            return Some(Err(KalamLinkError::WebSocketError(e.to_string())));
+                        }
                     }
                     continue;
                 },
@@ -576,7 +784,11 @@ impl SubscriptionManager {
             KalamLinkError::WebSocketError(format!("Failed to serialize NextBatch: {}", e))
         })?;
 
-        self.ws_stream
+        let ws_stream = self.ws_stream.as_mut().ok_or_else(|| {
+            KalamLinkError::WebSocketError("Subscription already closed".to_string())
+        })?;
+
+        ws_stream
             .send(Message::Text(payload.into()))
             .await
             .map_err(|e| KalamLinkError::WebSocketError(format!("Failed to send NextBatch: {}", e)))
@@ -592,31 +804,92 @@ impl SubscriptionManager {
         &self.timeouts
     }
 
-    /// Close the subscription gracefully
-    pub async fn close(mut self) -> Result<()> {
-        use crate::models::ClientMessage;
+    /// Close the subscription gracefully.
+    ///
+    /// Sends an Unsubscribe message and closes the WebSocket connection.
+    /// Safe to call multiple times — subsequent calls are no-ops.
+    /// If not called explicitly, the `Drop` impl will spawn a best-effort
+    /// background cleanup task.
+    pub async fn close(&mut self) -> Result<()> {
+        if self.closed {
+            return Ok(());
+        }
+        self.closed = true;
 
-        // Attempt best-effort unsubscribe before closing
-        let message = ClientMessage::Unsubscribe {
-            subscription_id: self.subscription_id.clone(),
-        };
+        if let Some(mut ws_stream) = self.ws_stream.take() {
+            use crate::models::ClientMessage;
 
-        let payload = serde_json::to_string(&message).unwrap_or_default();
+            // Attempt best-effort unsubscribe before closing
+            let message = ClientMessage::Unsubscribe {
+                subscription_id: self.subscription_id.clone(),
+            };
 
-        if !payload.is_empty() {
-            let _ = self.ws_stream.send(Message::Text(payload.into())).await;
+            if let Ok(payload) = serde_json::to_string(&message) {
+                let _ = ws_stream.send(Message::Text(payload.into())).await;
+            }
+
+            // Close WebSocket connection (best-effort)
+            let _ = ws_stream.close(None).await;
         }
 
-        // Close WebSocket connection (best-effort)
-        let _ = self.ws_stream.close(None).await;
-
         Ok(())
+    }
+
+    /// Returns `true` if `close()` has been called or `Drop` has run.
+    pub fn is_closed(&self) -> bool {
+        self.closed
+    }
+}
+
+impl Drop for SubscriptionManager {
+    fn drop(&mut self) {
+        if self.closed {
+            return;
+        }
+        // Take ownership of the stream so the background task is 'static
+        if let Some(mut ws_stream) = self.ws_stream.take() {
+            let subscription_id = self.subscription_id.clone();
+
+            // Best-effort: only spawn if we're inside a tokio runtime.
+            // If no runtime is available the TCP stream will simply be dropped,
+            // which sends a TCP RST — acceptable as a last resort.
+            if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                handle.spawn(async move {
+                    use crate::models::ClientMessage;
+
+                    let message = ClientMessage::Unsubscribe { subscription_id };
+                    if let Ok(payload) = serde_json::to_string(&message) {
+                        let _ = ws_stream.send(Message::Text(payload.into())).await;
+                    }
+                    let _ = ws_stream.close(None).await;
+                });
+            }
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── helpers ───────────────────────────────────────────────────────────────
+
+    /// Create a minimal `SubscriptionManager` with no real WebSocket for
+    /// testing state-flag logic without a network connection.
+    fn make_closed_sub() -> SubscriptionManager {
+        SubscriptionManager {
+            ws_stream: None,
+            subscription_id: "unit-test-id".to_string(),
+            event_queue: VecDeque::new(),
+            buffered_changes: Vec::new(),
+            is_loading: false,
+            timeouts: KalamLinkTimeouts::default(),
+            closed: false,
+            keepalive_interval: None,
+        }
+    }
+
+    // ── url resolution tests ───────────────────────────────────────────────
 
     #[test]
     fn test_ws_url_conversion() {
@@ -626,5 +899,95 @@ mod tests {
             resolve_ws_url("http://localhost:3000", Some("ws://override/ws")),
             "ws://override/ws"
         );
+    }
+
+    #[test]
+    fn test_ws_url_trailing_slash_stripped() {
+        assert_eq!(resolve_ws_url("http://localhost:3000/", None), "ws://localhost:3000/v1/ws");
+    }
+
+    #[test]
+    fn test_keepalive_jitter_is_deterministic() {
+        let base = Duration::from_secs(20);
+        let a = jitter_keepalive_interval(base, "sub-a");
+        let b = jitter_keepalive_interval(base, "sub-a");
+        assert_eq!(a, b, "jitter must be stable for the same subscription");
+    }
+
+    #[test]
+    fn test_keepalive_jitter_stays_within_bounds() {
+        let base = Duration::from_secs(20);
+        let jittered = jitter_keepalive_interval(base, "sub-b");
+        let min = Duration::from_secs(16); // -20%
+        let max = Duration::from_secs(24); // +20%
+        assert!(
+            jittered >= min && jittered <= max,
+            "jittered interval {:?} must be within [{:?}, {:?}]",
+            jittered,
+            min,
+            max
+        );
+    }
+
+    // ── state-flag unit tests (no network) ────────────────────────────────
+
+    #[test]
+    fn test_is_not_closed_initially() {
+        let sub = make_closed_sub();
+        assert!(!sub.is_closed(), "subscription should start as open");
+    }
+
+    #[tokio::test]
+    async fn test_close_marks_subscription_as_closed() {
+        let mut sub = make_closed_sub();
+        assert!(!sub.is_closed());
+        sub.close().await.expect("close should succeed on a stream-less sub");
+        assert!(sub.is_closed(), "subscription should be closed after close()");
+    }
+
+    #[tokio::test]
+    async fn test_close_is_idempotent() {
+        let mut sub = make_closed_sub();
+        sub.close().await.expect("first close should succeed");
+        sub.close().await.expect("second close should also succeed (no-op)");
+        assert!(sub.is_closed());
+    }
+
+    #[tokio::test]
+    async fn test_next_returns_none_when_stream_is_none() {
+        let mut sub = make_closed_sub();
+        // ws_stream is None, so next() must immediately return None
+        let result = tokio::time::timeout(std::time::Duration::from_millis(100), sub.next())
+            .await
+            .expect("next() should complete quickly when stream is None");
+        assert!(result.is_none(), "next() should return None when stream is None");
+    }
+
+    #[tokio::test]
+    async fn test_next_returns_none_after_close() {
+        let mut sub = make_closed_sub();
+        sub.close().await.unwrap();
+        let result = tokio::time::timeout(std::time::Duration::from_millis(100), sub.next())
+            .await
+            .expect("next() should complete quickly after close");
+        assert!(result.is_none());
+    }
+
+    /// Verify Drop does not panic even outside a tokio runtime.
+    #[test]
+    fn test_drop_without_runtime_does_not_panic() {
+        let sub = make_closed_sub();
+        drop(sub); // no tokio runtime in scope — should be a silent no-op
+    }
+
+    /// Verify Drop inside a tokio runtime spawns a cleanup task without
+    /// panicking. We cannot easily observe the network side here, but we
+    /// verify the Drop code path at least runs without error.
+    #[tokio::test]
+    async fn test_drop_inside_runtime_does_not_panic() {
+        let sub = make_closed_sub();
+        drop(sub);
+        // Yield to let any spawned cleanup tasks run
+        tokio::task::yield_now().await;
     }
 }

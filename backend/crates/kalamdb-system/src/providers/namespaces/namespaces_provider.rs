@@ -4,7 +4,9 @@
 //! Uses the new EntityStore architecture with NamespaceId keys.
 
 use crate::error::{SystemError, SystemResultExt};
-use crate::providers::base::{extract_filter_value, system_rows_to_batch, SimpleProviderDefinition};
+use crate::providers::base::{
+    extract_filter_value, system_rows_to_batch, SimpleProviderDefinition,
+};
 use crate::providers::namespaces::models::Namespace;
 use crate::system_row_mapper::{model_to_system_row, system_row_to_model};
 use datafusion::arrow::array::RecordBatch;
@@ -44,9 +46,7 @@ impl NamespacesTableProvider {
                 .expect("Namespaces is a table"),
             Vec::new(),
         );
-        Self {
-            store,
-        }
+        Self { store }
     }
 
     /// Create a new namespace entry
@@ -125,12 +125,7 @@ impl NamespacesTableProvider {
     /// Use this in async contexts to avoid blocking the Tokio runtime.
     pub async fn update_namespace_async(&self, namespace: Namespace) -> Result<(), SystemError> {
         // Check if namespace exists
-        if self
-            .store
-            .get_async(namespace.namespace_id.clone())
-            .await?
-            .is_none()
-        {
+        if self.store.get_async(namespace.namespace_id.clone()).await?.is_none() {
             return Err(SystemError::NotFound(format!(
                 "Namespace not found: {}",
                 namespace.namespace_id
@@ -185,10 +180,7 @@ impl NamespacesTableProvider {
             .scan_all_async(None, None, None)
             .await
             .into_system_error("scan_all_async error")?;
-        results
-            .into_iter()
-            .map(|(_, row)| Self::decode_namespace_row(&row))
-            .collect()
+        results.into_iter().map(|(_, row)| Self::decode_namespace_row(&row)).collect()
     }
 
     /// Alias for list_namespaces (backward compatibility)
@@ -205,10 +197,7 @@ impl NamespacesTableProvider {
             .scan_all_async(None, None, None)
             .await
             .into_system_error("scan_all_async error")?;
-        results
-            .into_iter()
-            .map(|(_, row)| Self::decode_namespace_row(&row))
-            .collect()
+        results.into_iter().map(|(_, row)| Self::decode_namespace_row(&row)).collect()
     }
 
     /// Scan all namespaces and return as RecordBatch

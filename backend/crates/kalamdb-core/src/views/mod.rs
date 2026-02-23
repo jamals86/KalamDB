@@ -1,23 +1,28 @@
-pub mod cluster;
-pub mod cluster_groups;
-pub mod columns_view;
-pub mod datatypes;
-pub mod describe;
-pub mod server_logs;
-pub mod settings;
-pub mod stats;
+// System schema provider wiring stays in core (depends on SchemaRegistry)
 pub mod system_schema_provider;
-pub mod tables_view;
-pub mod view_base;
-
-pub use cluster::*;
-pub use cluster_groups::*;
-pub use columns_view::*;
-pub use datatypes::*;
-pub use describe::*;
-pub use server_logs::*;
-pub use settings::*;
-pub use stats::*;
 pub use system_schema_provider::*;
-pub use tables_view::*;
-pub use view_base::*;
+
+// All view implementations are in the kalamdb-views crate
+pub use kalamdb_views::cluster;
+pub use kalamdb_views::cluster_groups;
+pub use kalamdb_views::columns_view;
+pub use kalamdb_views::datatypes;
+pub use kalamdb_views::describe;
+pub use kalamdb_views::error;
+pub use kalamdb_views::server_logs;
+pub use kalamdb_views::settings;
+pub use kalamdb_views::stats;
+pub use kalamdb_views::tables_view;
+pub use kalamdb_views::view_base;
+
+// Re-export all public items for backward compatibility
+pub use kalamdb_views::cluster::*;
+pub use kalamdb_views::cluster_groups::*;
+pub use kalamdb_views::columns_view::*;
+pub use kalamdb_views::datatypes::*;
+pub use kalamdb_views::describe::*;
+pub use kalamdb_views::server_logs::*;
+pub use kalamdb_views::settings::*;
+pub use kalamdb_views::stats::*;
+pub use kalamdb_views::tables_view::*;
+pub use kalamdb_views::view_base::*;

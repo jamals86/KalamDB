@@ -78,7 +78,10 @@ pub struct CoreClusterHandler {
 }
 
 impl CoreClusterHandler {
-    pub fn new(app_context: Arc<AppContext>, notification_service: Arc<NotificationService>) -> Self {
+    pub fn new(
+        app_context: Arc<AppContext>,
+        notification_service: Arc<NotificationService>,
+    ) -> Self {
         Self {
             app_context,
             notification_service,
@@ -195,24 +198,26 @@ impl ClusterMessageHandler for CoreClusterHandler {
             ));
         }
 
-        let user_repo: Arc<dyn UserRepository> = Arc::new(CoreUsersRepo::new(
-            self.app_context.system_tables().users(),
-        ));
+        let user_repo: Arc<dyn UserRepository> =
+            Arc::new(CoreUsersRepo::new(self.app_context.system_tables().users()));
         let connection_info = ConnectionInfo::new(Some("127.0.0.1".to_string()));
-        let auth_result =
-            match authenticate(AuthRequest::Header(auth_header.to_string()), &connection_info, &user_repo)
-                .await
-            {
-                Ok(result) => result,
-                Err(e) => {
-                    return Ok(Self::error_payload(
-                        401,
-                        "PERMISSION_DENIED",
-                        &format!("Authentication failed: {}", e),
-                        started_at,
-                    ));
-                },
-            };
+        let auth_result = match authenticate(
+            AuthRequest::Header(auth_header.to_string()),
+            &connection_info,
+            &user_repo,
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(e) => {
+                return Ok(Self::error_payload(
+                    401,
+                    "PERMISSION_DENIED",
+                    &format!("Authentication failed: {}", e),
+                    started_at,
+                ));
+            },
+        };
 
         if !matches!(auth_result.method, AuthMethod::Bearer) {
             return Ok(Self::error_payload(
@@ -378,15 +383,14 @@ impl ClusterMessageHandler for CoreClusterHandler {
             .ok_or_else(|| "Self node not found in cluster_info".to_string())?;
 
         // Also fetch live groups_leading count from RaftExecutor directly
-        let groups_leading = if let Some(raft_executor) =
-            executor.as_any().downcast_ref::<RaftExecutor>()
-        {
-            let manager = raft_executor.manager();
-            let all_groups = manager.all_group_ids();
-            all_groups.iter().filter(|&&g| manager.is_leader(g)).count() as u32
-        } else {
-            self_node.groups_leading
-        };
+        let groups_leading =
+            if let Some(raft_executor) = executor.as_any().downcast_ref::<RaftExecutor>() {
+                let manager = raft_executor.manager();
+                let all_groups = manager.all_group_ids();
+                all_groups.iter().filter(|&&g| manager.is_leader(g)).count() as u32
+            } else {
+                self_node.groups_leading
+            };
 
         Ok(GetNodeInfoResponse {
             success: true,
@@ -403,4 +407,5 @@ impl ClusterMessageHandler for CoreClusterHandler {
             os: self_node.os.clone(),
             arch: self_node.arch.clone(),
         })
-    }}
+    }
+}

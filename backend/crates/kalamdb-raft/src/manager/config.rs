@@ -121,7 +121,7 @@ impl RaftManagerConfig {
             node_id: NodeId::new(1),
             rpc_addr: "127.0.0.1:0".to_string(), // Port 0 = OS assigns random available port
             api_addr,
-            peers: vec![],    // No peers - single node cluster
+            peers: vec![], // No peers - single node cluster
             rpc_tls: RpcTlsConfig::default(),
             user_shards: 1,   // Single shard - no distribution needed
             shared_shards: 1, // Single shard - no distribution needed

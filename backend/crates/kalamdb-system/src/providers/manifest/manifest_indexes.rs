@@ -68,10 +68,7 @@ mod tests {
 
     fn create_test_row(sync_state: &str) -> SystemTableRow {
         let mut fields = BTreeMap::new();
-        fields.insert(
-            "sync_state".to_string(),
-            ScalarValue::Utf8(Some(sync_state.to_string())),
-        );
+        fields.insert("sync_state".to_string(), ScalarValue::Utf8(Some(sync_state.to_string())));
         SystemTableRow {
             fields: Row::new(fields),
         }

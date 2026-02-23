@@ -4,13 +4,15 @@
 //! Uses `IndexedEntityStore` with composite primary key (topic_id, group_id, partition_id).
 
 use crate::error::{SystemError, SystemResultExt};
-use crate::providers::base::{extract_filter_value, system_rows_to_batch, SimpleProviderDefinition};
+use crate::providers::base::{
+    extract_filter_value, system_rows_to_batch, SimpleProviderDefinition,
+};
 use crate::system_row_mapper::{model_to_system_row, system_row_to_model};
 use datafusion::arrow::array::RecordBatch;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::logical_expr::Expr;
-use kalamdb_commons::models::{ConsumerGroupId, TopicId};
 use kalamdb_commons::models::rows::SystemTableRow;
+use kalamdb_commons::models::{ConsumerGroupId, TopicId};
 use kalamdb_commons::SystemTable;
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_store::{IndexedEntityStore, StorageBackend};
@@ -124,10 +126,7 @@ impl TopicOffsetsTableProvider {
             .store
             .scan_with_raw_prefix(prefix.as_bytes(), None, 10_000)
             .into_system_error("prefix scan topic offsets")?;
-        entries
-            .into_iter()
-            .map(|(_, row)| Self::decode_offset_row(&row))
-            .collect()
+        entries.into_iter().map(|(_, row)| Self::decode_offset_row(&row)).collect()
     }
 
     /// Get all offsets for a topic across all consumer groups.
@@ -140,10 +139,7 @@ impl TopicOffsetsTableProvider {
             .store
             .scan_with_raw_prefix(prefix.as_bytes(), None, 10_000)
             .into_system_error("prefix scan topic offsets")?;
-        entries
-            .into_iter()
-            .map(|(_, row)| Self::decode_offset_row(&row))
-            .collect()
+        entries.into_iter().map(|(_, row)| Self::decode_offset_row(&row)).collect()
     }
 
     /// Acknowledge consumption through a specific offset
@@ -254,9 +250,7 @@ impl TopicOffsetsTableProvider {
     /// List all topic offsets
     pub fn list_offsets(&self) -> Result<Vec<TopicOffset>, SystemError> {
         let rows = self.store.scan_all_typed(None, None, None)?;
-        rows.into_iter()
-            .map(|(_, row)| Self::decode_offset_row(&row))
-            .collect()
+        rows.into_iter().map(|(_, row)| Self::decode_offset_row(&row)).collect()
     }
 
     /// Get reference to the underlying store for advanced operations

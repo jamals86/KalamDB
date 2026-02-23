@@ -54,7 +54,7 @@ use super::TopicRoute;
 /// };
 /// ```
 #[table(name = "topics", comment = "Durable topics for pub/sub messaging")]
-#[derive(Serialize, Deserialize,  Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Topic {
     // Primary key field first
     #[column(

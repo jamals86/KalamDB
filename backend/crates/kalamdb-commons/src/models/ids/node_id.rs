@@ -39,10 +39,9 @@ impl<'de> Deserialize<'de> for NodeId {
 
         match NodeIdRepr::deserialize(deserializer)? {
             NodeIdRepr::Number(value) => Ok(NodeId::new(value)),
-            NodeIdRepr::String(value) => value
-                .parse::<u64>()
-                .map(NodeId::new)
-                .map_err(serde::de::Error::custom),
+            NodeIdRepr::String(value) => {
+                value.parse::<u64>().map(NodeId::new).map_err(serde::de::Error::custom)
+            },
         }
     }
 }

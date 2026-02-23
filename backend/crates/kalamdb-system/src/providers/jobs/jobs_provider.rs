@@ -27,8 +27,8 @@ use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::Expr;
 use datafusion::logical_expr::TableProviderFilterPushDown;
-use kalamdb_commons::JobId;
 use kalamdb_commons::models::rows::SystemTableRow;
+use kalamdb_commons::JobId;
 use kalamdb_commons::SystemTable;
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_store::{IndexedEntityStore, StorageBackend};
@@ -110,7 +110,11 @@ impl JobsTableProvider {
 
     /// Async version of `get_job()`.
     pub async fn get_job_async(&self, job_id: &JobId) -> Result<Option<Job>, SystemError> {
-        let row = self.store.get_async(job_id.clone()).await.into_system_error("get_async error")?;
+        let row = self
+            .store
+            .get_async(job_id.clone())
+            .await
+            .into_system_error("get_async error")?;
         row.map(|value| Self::decode_job_row(&value)).transpose()
     }
 
@@ -641,9 +645,7 @@ impl JobsTableProvider {
         static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
         SCHEMA
             .get_or_init(|| {
-                Job::definition()
-                    .to_arrow_schema()
-                    .expect("failed to build jobs schema")
+                Job::definition().to_arrow_schema().expect("failed to build jobs schema")
             })
             .clone()
     }

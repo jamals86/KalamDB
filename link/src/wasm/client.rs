@@ -429,7 +429,10 @@ impl KalamClient {
             // SECURITY: Do not log full message content — it may contain
             // sensitive row data.  Log only the message type for debugging.
             if message.len() > 200 {
-                console_log(&format!("KalamClient: Received WebSocket message ({} bytes)", message.len()));
+                console_log(&format!(
+                    "KalamClient: Received WebSocket message ({} bytes)",
+                    message.len()
+                ));
             }
 
             // Parse message using ServerMessage enum

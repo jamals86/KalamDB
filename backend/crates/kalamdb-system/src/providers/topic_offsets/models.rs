@@ -166,10 +166,7 @@ mod tests {
             offset.last_acked_offset, 399,
             "ack with lower offset must not regress committed position"
         );
-        assert_eq!(
-            offset.updated_at, 2000,
-            "timestamp should not change on no-op ack"
-        );
+        assert_eq!(offset.updated_at, 2000, "timestamp should not change on no-op ack");
 
         // Equal offset is also a no-op
         offset.ack(399, 4000);

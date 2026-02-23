@@ -127,7 +127,10 @@ pub async fn download_file(
                 .collect();
             HttpResponse::Ok()
                 .content_type(content_type)
-                .append_header(("Content-Disposition", format!("inline; filename=\"{}\"", safe_file_id)))
+                .append_header((
+                    "Content-Disposition",
+                    format!("inline; filename=\"{}\"", safe_file_id),
+                ))
                 .body(data)
         },
         Err(e) => {

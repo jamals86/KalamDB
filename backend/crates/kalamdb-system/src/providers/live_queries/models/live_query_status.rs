@@ -6,7 +6,7 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 
 /// Status of a live query subscription
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash,  Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum LiveQueryStatus {
     /// Active and receiving updates
     Active,

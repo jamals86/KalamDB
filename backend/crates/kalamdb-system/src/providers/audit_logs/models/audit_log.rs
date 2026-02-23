@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
     name = "audit_log",
     comment = "System audit log for security and compliance tracking"
 )]
-#[derive(Serialize, Deserialize,  Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct AuditLogEntry {
     #[column(
         id = 1,

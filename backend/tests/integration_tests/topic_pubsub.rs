@@ -15,6 +15,120 @@
 
 use crate::test_support::*;
 use kalam_link::models::ResponseStatus;
+use kalamdb_commons::{Role, UserName};
+use reqwest::StatusCode;
+use serde::Deserialize;
+use serde_json::{json, Value};
+
+#[derive(Debug, Deserialize)]
+struct HttpConsumeMessage {
+    offset: u64,
+    partition_id: u32,
+}
+
+#[derive(Debug, Deserialize)]
+struct HttpConsumeResponse {
+    messages: Vec<HttpConsumeMessage>,
+    next_offset: u64,
+    has_more: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct HttpAckResponse {
+    success: bool,
+    acknowledged_offset: u64,
+}
+
+async fn post_topics_consume(
+    server: &http_server::HttpTestServer,
+    auth_header: &str,
+    body: Value,
+) -> (StatusCode, Value) {
+    let client = reqwest::Client::new();
+    let response = client
+        .post(format!("{}/v1/api/topics/consume", server.base_url()))
+        .header("Authorization", auth_header)
+        .json(&body)
+        .send()
+        .await
+        .expect("Failed to call /v1/api/topics/consume");
+
+    let status = response.status();
+    let payload = response
+        .json::<Value>()
+        .await
+        .expect("Failed to decode consume response JSON");
+    (status, payload)
+}
+
+async fn post_topics_ack(
+    server: &http_server::HttpTestServer,
+    auth_header: &str,
+    body: Value,
+) -> (StatusCode, Value) {
+    let client = reqwest::Client::new();
+    let response = client
+        .post(format!("{}/v1/api/topics/ack", server.base_url()))
+        .header("Authorization", auth_header)
+        .json(&body)
+        .send()
+        .await
+        .expect("Failed to call /v1/api/topics/ack");
+
+    let status = response.status();
+    let payload = response
+        .json::<Value>()
+        .await
+        .expect("Failed to decode ack response JSON");
+    (status, payload)
+}
+
+async fn wait_until_group_reads_at_least(
+    server: &http_server::HttpTestServer,
+    auth_header: &str,
+    topic_id: &str,
+    group_id: &str,
+    start: &str,
+    limit: u64,
+    min_messages: usize,
+) -> HttpConsumeResponse {
+    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(8);
+
+    loop {
+        let request_body = json!({
+            "topic_id": topic_id,
+            "group_id": group_id,
+            "start": start,
+            "limit": limit,
+            "partition_id": 0,
+            "timeout_seconds": 1
+        });
+
+        let (status, payload) = post_topics_consume(server, auth_header, request_body).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "Consume endpoint should return HTTP 200, payload={:?}",
+            payload
+        );
+
+        let response: HttpConsumeResponse = serde_json::from_value(payload)
+            .expect("Consume payload should match HttpConsumeResponse");
+        if response.messages.len() >= min_messages {
+            return response;
+        }
+
+        if tokio::time::Instant::now() >= deadline {
+            panic!(
+                "Timed out waiting for at least {} messages (got {})",
+                min_messages,
+                response.messages.len()
+            );
+        }
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(120)).await;
+    }
+}
 
 /// Test basic topic creation via SQL
 #[tokio::test]
@@ -385,6 +499,311 @@ async fn test_consume_schema_structure() {
             );
         }
     }
+}
+
+/// HTTP API integration: consume/ack option combinations and offset progression.
+///
+/// Covers the consumer options from SDK usage:
+/// - `topic` / `group_id` mapping to `topic_id` / `group_id`
+/// - `start` (`earliest` and `latest`)
+/// - `batch_size` mapping to `limit`
+/// - explicit `ack` progression for same-group consumers
+#[tokio::test]
+#[ntest::timeout(90000)]
+async fn test_http_api_consume_ack_option_combinations() {
+    let server = http_server::get_global_server().await;
+    let namespace = consolidated_helpers::unique_namespace("tp_http_opts");
+    let table = consolidated_helpers::unique_table("events");
+    let topic_table = consolidated_helpers::unique_table("topic");
+    let topic = format!("{}.{}", namespace, topic_table);
+    let source_table = format!("{}.{}", namespace, table);
+
+    let service_user = consolidated_helpers::unique_table("svc_tp_opts");
+    let auth_header = auth_helper::create_user_auth_header(
+        server,
+        &service_user,
+        "TopicPass123!",
+        &Role::Service,
+    )
+    .await
+    .expect("Failed to create service auth header");
+
+    let create_namespace = server.execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
+    assert_eq!(
+        create_namespace.status,
+        ResponseStatus::Success,
+        "CREATE NAMESPACE failed: {:?}",
+        create_namespace.error
+    );
+
+    let create_table = server
+        .execute_sql(&format!(
+            "CREATE TABLE {} (id INT PRIMARY KEY, payload TEXT)",
+            source_table
+        ))
+        .await;
+    assert_eq!(
+        create_table.status,
+        ResponseStatus::Success,
+        "CREATE TABLE failed: {:?}",
+        create_table.error
+    );
+
+    let create_topic = server
+        .execute_sql(&format!("CREATE TOPIC {} PARTITIONS 1", topic))
+        .await;
+    assert_eq!(
+        create_topic.status,
+        ResponseStatus::Success,
+        "CREATE TOPIC failed: {:?}",
+        create_topic.error
+    );
+
+    let add_source = server
+        .execute_sql(&format!("ALTER TOPIC {} ADD SOURCE {} ON INSERT", topic, source_table))
+        .await;
+    assert_eq!(
+        add_source.status,
+        ResponseStatus::Success,
+        "ALTER TOPIC ADD SOURCE failed: {:?}",
+        add_source.error
+    );
+
+    for id in 1..=6 {
+        let insert = server
+            .execute_sql(&format!(
+                "INSERT INTO {} (id, payload) VALUES ({}, 'payload_{}')",
+                source_table, id, id
+            ))
+            .await;
+        assert_eq!(
+            insert.status,
+            ResponseStatus::Success,
+            "INSERT {} failed: {:?}",
+            id,
+            insert.error
+        );
+    }
+
+    let group = format!("group-{}", consolidated_helpers::unique_table("earliest"));
+    let first_batch = wait_until_group_reads_at_least(
+        server,
+        &auth_header,
+        &topic,
+        &group,
+        "earliest",
+        2,
+        2,
+    )
+    .await;
+    assert_eq!(
+        first_batch.messages.len(),
+        2,
+        "batch_size/limit should cap first consume response"
+    );
+    assert!(first_batch.has_more, "Expected more data after first limited batch");
+    assert_eq!(
+        first_batch.next_offset,
+        first_batch.messages.last().expect("message exists").offset + 1
+    );
+
+    let ack_offset = first_batch.messages.last().expect("message exists").offset;
+    let (ack_status, ack_payload) = post_topics_ack(
+        server,
+        &auth_header,
+        json!({
+            "topic_id": topic,
+            "group_id": group,
+            "partition_id": 0,
+            "upto_offset": ack_offset
+        }),
+    )
+    .await;
+    assert_eq!(
+        ack_status,
+        StatusCode::OK,
+        "Ack endpoint should return HTTP 200, payload={:?}",
+        ack_payload
+    );
+
+    let ack_response: HttpAckResponse =
+        serde_json::from_value(ack_payload).expect("Ack payload should deserialize");
+    assert!(ack_response.success, "Ack response should be successful");
+    assert_eq!(
+        ack_response.acknowledged_offset, ack_offset,
+        "Ack response should echo acknowledged offset"
+    );
+
+    let resumed = wait_until_group_reads_at_least(
+        server,
+        &auth_header,
+        &topic,
+        &group,
+        "earliest",
+        10,
+        4,
+    )
+    .await;
+    assert!(
+        resumed.messages.iter().all(|m| m.offset > ack_offset),
+        "Messages should resume strictly after acked offset"
+    );
+
+    let latest_group = format!("group-{}", consolidated_helpers::unique_table("latest"));
+    let (latest_status, latest_payload) = post_topics_consume(
+        server,
+        &auth_header,
+        json!({
+            "topic_id": topic,
+            "group_id": latest_group,
+            "start": "latest",
+            "limit": 10,
+            "partition_id": 0,
+            "timeout_seconds": 1
+        }),
+    )
+    .await;
+    assert_eq!(
+        latest_status,
+        StatusCode::OK,
+        "Latest consume should return HTTP 200, payload={:?}",
+        latest_payload
+    );
+    let latest_initial: HttpConsumeResponse =
+        serde_json::from_value(latest_payload).expect("Latest payload should deserialize");
+    assert_eq!(
+        latest_initial.messages.len(),
+        0,
+        "start=latest should not replay old backlog for new group"
+    );
+
+    for id in 100..=101 {
+        let insert = server
+            .execute_sql(&format!(
+                "INSERT INTO {} (id, payload) VALUES ({}, 'live_{}')",
+                source_table, id, id
+            ))
+            .await;
+        assert_eq!(
+            insert.status,
+            ResponseStatus::Success,
+            "INSERT live {} failed: {:?}",
+            id,
+            insert.error
+        );
+    }
+
+    let latest_after_new = wait_until_group_reads_at_least(
+        server,
+        &auth_header,
+        &topic,
+        &latest_group,
+        "latest",
+        10,
+        2,
+    )
+    .await;
+    assert!(
+        latest_after_new.messages.len() >= 2,
+        "Latest consumer should observe newly inserted rows"
+    );
+}
+
+/// HTTP API integration: two consumers in the same group should not receive
+/// overlapping offsets when polling concurrently in batches.
+#[tokio::test]
+#[ntest::timeout(90000)]
+async fn test_http_api_same_group_consumers_no_overlap() {
+    let server = http_server::get_global_server().await;
+    let namespace = consolidated_helpers::unique_namespace("tp_http_group");
+    let table = consolidated_helpers::unique_table("events");
+    let topic_table = consolidated_helpers::unique_table("topic");
+    let topic = format!("{}.{}", namespace, topic_table);
+    let source_table = format!("{}.{}", namespace, table);
+
+    let service_user = consolidated_helpers::unique_table("svc_tp_group");
+    let auth_header = auth_helper::create_user_auth_header(
+        server,
+        &service_user,
+        "TopicPass123!",
+        &Role::Service,
+    )
+    .await
+    .expect("Failed to create service auth header");
+
+    let create_namespace = server.execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
+    assert_eq!(create_namespace.status, ResponseStatus::Success);
+
+    let create_table = server
+        .execute_sql(&format!(
+            "CREATE TABLE {} (id INT PRIMARY KEY, payload TEXT)",
+            source_table
+        ))
+        .await;
+    assert_eq!(create_table.status, ResponseStatus::Success);
+
+    let create_topic = server
+        .execute_sql(&format!("CREATE TOPIC {} PARTITIONS 1", topic))
+        .await;
+    assert_eq!(create_topic.status, ResponseStatus::Success);
+
+    let add_source = server
+        .execute_sql(&format!("ALTER TOPIC {} ADD SOURCE {} ON INSERT", topic, source_table))
+        .await;
+    assert_eq!(add_source.status, ResponseStatus::Success);
+
+    let expected_messages = 80usize;
+    for id in 0..expected_messages {
+        let insert = server
+            .execute_sql(&format!(
+                "INSERT INTO {} (id, payload) VALUES ({}, 'event_{}')",
+                source_table, id, id
+            ))
+            .await;
+        assert_eq!(insert.status, ResponseStatus::Success, "INSERT {} failed", id);
+    }
+
+    // Warm-up with an independent group to ensure all messages are queryable.
+    let ready_group = format!("ready-{}", consolidated_helpers::unique_table("group"));
+    let ready = wait_until_group_reads_at_least(
+        server,
+        &auth_header,
+        &topic,
+        &ready_group,
+        "earliest",
+        expected_messages as u64,
+        expected_messages,
+    )
+    .await;
+    assert_eq!(ready.messages.len(), expected_messages);
+
+    let group = format!("group-{}", consolidated_helpers::unique_table("shared"));
+
+    let first = wait_until_group_reads_at_least(
+        server, &auth_header, &topic, &group, "earliest", 40, 40,
+    )
+    .await;
+    let second = wait_until_group_reads_at_least(
+        server, &auth_header, &topic, &group, "earliest", 40, 40,
+    )
+    .await;
+
+    let first_offsets: std::collections::HashSet<(u32, u64)> =
+        first.messages.iter().map(|m| (m.partition_id, m.offset)).collect();
+    let second_offsets: std::collections::HashSet<(u32, u64)> =
+        second.messages.iter().map(|m| (m.partition_id, m.offset)).collect();
+
+    let overlap_count = first_offsets.intersection(&second_offsets).count();
+    assert_eq!(
+        overlap_count, 0,
+        "Same-group consumers must not receive overlapping offsets"
+    );
+
+    let union_count = first_offsets.union(&second_offsets).count();
+    assert_eq!(
+        union_count, 80,
+        "Two sequential same-group polls should cover the first 80 offsets without duplicates"
+    );
 }
 
 // ============================================================================

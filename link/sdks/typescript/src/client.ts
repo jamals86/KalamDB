@@ -36,6 +36,16 @@ import type {
 
 import { parseRows } from './helpers/query_helpers.js';
 
+type NodeWindowShim = {
+  location?: {
+    protocol: string;
+    hostname: string;
+    port: string;
+    href: string;
+  };
+  fetch?: typeof fetch;
+};
+
 /* ================================================================== */
 /*  KalamDBClient                                                     */
 /* ================================================================== */
@@ -76,9 +86,11 @@ import { parseRows } from './helpers/query_helpers.js';
 export class KalamDBClient {
   private wasmClient: WasmClient | null = null;
   private initialized = false;
+  private connecting: Promise<void> | null = null;
   private url: string;
   private auth: AuthCredentials;
   private wasmUrl?: string | BufferSource;
+  private autoConnect: boolean;
 
   /** Track active subscriptions for management */
   private subscriptions: Map<string, SubscriptionInfo> = new Map();
@@ -106,6 +118,7 @@ export class KalamDBClient {
     this.url = options.url;
     this.auth = options.auth;
     this.wasmUrl = options.wasmUrl;
+    this.autoConnect = options.autoConnect ?? true;
   }
 
   /* ---------------------------------------------------------------- */
@@ -129,6 +142,7 @@ export class KalamDBClient {
     if (this.initialized) return;
 
     try {
+      await this.ensureNodeRuntimeCompat();
       console.log('[kalam-link] Starting WASM initialization...');
 
       if (this.wasmUrl) {
@@ -163,11 +177,34 @@ export class KalamDBClient {
   /**
    * Connect to KalamDB server via WebSocket.
    * Also initialises WASM if not already done.
+   *
+   * When using Basic auth, `login()` is called automatically to exchange
+   * credentials for a JWT before opening the WebSocket.
+   *
+   * This is called lazily by `subscribe()` / `subscribeWithSql()` unless
+   * `autoConnect` was set to `false`.
    */
   async connect(): Promise<void> {
-    await this.initialize();
-    if (!this.wasmClient) throw new Error('WASM client not initialized');
-    await this.wasmClient.connect();
+    // Deduplicate concurrent connect() calls — only one handshake at a time.
+    if (this.connecting) return this.connecting;
+
+    this.connecting = (async () => {
+      try {
+        await this.initialize();
+        if (!this.wasmClient) throw new Error('WASM client not initialized');
+
+        // Auto-login: exchange Basic credentials for JWT before WebSocket connect
+        if (this.auth.type === 'basic') {
+          await this.login();
+        }
+
+        await this.wasmClient.connect();
+      } finally {
+        this.connecting = null;
+      }
+    })();
+
+    return this.connecting;
   }
 
   /** Disconnect and clean up all subscriptions */
@@ -176,6 +213,36 @@ export class KalamDBClient {
       await this.wasmClient.disconnect();
     }
     this.subscriptions.clear();
+  }
+
+  /**
+   * Async dispose — enables `await using client = createClient(...)`.
+   *
+   * Automatically disconnects and cleans up all subscriptions when the
+   * variable goes out of scope. Requires Node 20+ or a modern browser
+   * with Explicit Resource Management support.
+   *
+   * @example
+   * ```typescript
+   * async function demo() {
+   *   await using client = createClient({ url, auth });
+   *   await client.connect();
+   *   // ... use client ...
+   * } // client.disconnect() called automatically here
+   * ```
+   */
+  async [Symbol.asyncDispose](): Promise<void> {
+    await this.disconnect();
+  }
+
+  /**
+   * Sync dispose — enables `using client = createClient(...)`.
+   *
+   * Fires disconnect as fire-and-forget (best-effort) since `using`
+   * does not await. Prefer `await using` for reliable cleanup.
+   */
+  [Symbol.dispose](): void {
+    void this.disconnect();
   }
 
   /** Whether the WebSocket connection is active */
@@ -237,6 +304,7 @@ export class KalamDBClient {
    */
   async query(sql: string, params?: unknown[]): Promise<QueryResponse> {
     await this.initialize();
+    await this.ensureJwtForBasicAuth();
     if (!this.wasmClient) throw new Error('WASM client not initialized');
 
     const resultStr = params?.length
@@ -299,6 +367,7 @@ export class KalamDBClient {
     onProgress?: (progress: UploadProgress) => void,
   ): Promise<QueryResponse> {
     await this.initialize();
+    await this.ensureJwtForBasicAuth();
 
     const formData = new FormData();
     formData.append('sql', sql);
@@ -394,6 +463,8 @@ export class KalamDBClient {
    * ```
    */
   async insert(tableName: string, data: Record<string, unknown>): Promise<QueryResponse> {
+    await this.initialize();
+    await this.ensureJwtForBasicAuth();
     this.requireInit();
     const resultStr = await this.wasmClient!.insert(tableName, JSON.stringify(data));
     return JSON.parse(resultStr) as QueryResponse;
@@ -408,6 +479,8 @@ export class KalamDBClient {
    * ```
    */
   async delete(tableName: string, rowId: string | number): Promise<void> {
+    await this.initialize();
+    await this.ensureJwtForBasicAuth();
     this.requireInit();
     await this.wasmClient!.delete(tableName, String(rowId));
   }
@@ -563,7 +636,11 @@ export class KalamDBClient {
     callback: SubscriptionCallback,
     options?: SubscriptionOptions,
   ): Promise<Unsubscribe> {
-    await this.initialize();
+    if (this.autoConnect && !this.isConnected()) {
+      await this.connect();
+    } else {
+      await this.initialize();
+    }
     if (!this.wasmClient) throw new Error('WASM client not initialized');
 
     const wrappedCallback = (eventJson: string) => {
@@ -669,6 +746,7 @@ export class KalamDBClient {
     const handle: ConsumerHandle = {
       run: async (handler: ConsumerHandler): Promise<void> => {
         await this.initialize();
+        await this.ensureJwtForBasicAuth();
         if (!this.wasmClient) throw new Error('WASM client not initialized');
 
         running = true;
@@ -747,6 +825,7 @@ export class KalamDBClient {
    */
   async consumeBatch(options: ConsumeRequest): Promise<ConsumeResponse> {
     await this.initialize();
+    await this.ensureJwtForBasicAuth();
     if (!this.wasmClient) throw new Error('WASM client not initialized');
 
     return (await this.wasmClient.consume(options)) as ConsumeResponse;
@@ -776,6 +855,7 @@ export class KalamDBClient {
     uptoOffset: number,
   ): Promise<AckResponse> {
     await this.initialize();
+    await this.ensureJwtForBasicAuth();
     if (!this.wasmClient) throw new Error('WASM client not initialized');
 
     return (await this.wasmClient.ack(
@@ -793,6 +873,80 @@ export class KalamDBClient {
   private requireInit(): void {
     if (!this.wasmClient) {
       throw new Error('WASM client not initialized. Call connect() first.');
+    }
+  }
+
+  private async ensureJwtForBasicAuth(): Promise<void> {
+    if (this.auth.type === 'basic') {
+      await this.login();
+    }
+  }
+
+  private async ensureNodeRuntimeCompat(): Promise<void> {
+    const isNodeRuntime = typeof process !== 'undefined' && Boolean(process.versions?.node);
+    if (!isNodeRuntime) {
+      return;
+    }
+
+    const runtime = globalThis as unknown as {
+      WebSocket?: typeof WebSocket;
+      window?: NodeWindowShim;
+    };
+
+    if (typeof runtime.WebSocket === 'undefined') {
+      try {
+        const wsModuleName = 'ws';
+        const wsModule = (await import(wsModuleName)) as {
+          WebSocket?: typeof WebSocket;
+          default?: typeof WebSocket;
+        };
+        const wsCtor = wsModule.WebSocket ?? wsModule.default;
+        if (!wsCtor || typeof wsCtor !== 'function') {
+          throw new Error('ws module did not export a WebSocket constructor');
+        }
+        runtime.WebSocket = wsCtor;
+      } catch (error) {
+        throw new Error(
+          `Node.js runtime is missing WebSocket support. Install "ws" or assign globalThis.WebSocket before creating the client. Cause: ${error}`,
+        );
+      }
+    }
+
+    if (typeof globalThis.fetch !== 'function') {
+      throw new Error('Node.js runtime is missing fetch() support. Node.js 18+ is required.');
+    }
+
+    if (!this.wasmUrl) {
+      try {
+        const [{ readFile }, { fileURLToPath }] = await Promise.all([
+          import('node:fs/promises'),
+          import('node:url'),
+        ]);
+        const wasmFileUrl = new URL('../.wasm-out/kalam_link_bg.wasm', import.meta.url);
+        this.wasmUrl = await readFile(fileURLToPath(wasmFileUrl));
+      } catch (error) {
+        throw new Error(
+          `Node.js runtime could not load bundled WASM file. Build the SDK and ensure dist/.wasm-out/kalam_link_bg.wasm exists. Cause: ${error}`,
+        );
+      }
+    }
+
+    const parsedUrl = new URL(this.url);
+    const location = {
+      protocol: parsedUrl.protocol,
+      hostname: parsedUrl.hostname,
+      port: parsedUrl.port,
+      href: parsedUrl.href,
+    };
+
+    if (!runtime.window) {
+      runtime.window = { location, fetch: globalThis.fetch.bind(globalThis) };
+      return;
+    }
+
+    runtime.window.location = location;
+    if (!runtime.window.fetch) {
+      runtime.window.fetch = globalThis.fetch.bind(globalThis);
     }
   }
 }

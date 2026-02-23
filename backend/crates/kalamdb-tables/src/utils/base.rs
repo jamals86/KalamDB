@@ -550,6 +550,41 @@ pub fn filter_uses_deleted_column(filter: &Expr) -> bool {
     }
 }
 
+/// Extract a PK equality literal from a simple `pk_col = literal` filter.
+///
+/// Supports both `col = literal` and `literal = col` forms, including
+/// AND-conjunctions where the PK equality is one term.
+/// Returns `Some(ScalarValue)` if a PK equality is found, `None` otherwise.
+pub fn extract_pk_equality_literal(filter: &Expr, pk_name: &str) -> Option<ScalarValue> {
+    match filter {
+        Expr::BinaryExpr(binary) if binary.op == datafusion::logical_expr::Operator::Eq => {
+            // col = literal
+            if let (Expr::Column(col), Expr::Literal(val, _)) =
+                (binary.left.as_ref(), binary.right.as_ref())
+            {
+                if col.name.eq_ignore_ascii_case(pk_name) {
+                    return Some(val.clone());
+                }
+            }
+            // literal = col
+            if let (Expr::Literal(val, _), Expr::Column(col)) =
+                (binary.left.as_ref(), binary.right.as_ref())
+            {
+                if col.name.eq_ignore_ascii_case(pk_name) {
+                    return Some(val.clone());
+                }
+            }
+            None
+        },
+        Expr::BinaryExpr(binary) if binary.op == datafusion::logical_expr::Operator::And => {
+            // Recursively check AND branches
+            extract_pk_equality_literal(&binary.left, pk_name)
+                .or_else(|| extract_pk_equality_literal(&binary.right, pk_name))
+        },
+        _ => None,
+    }
+}
+
 /// Locate the latest non-deleted row matching the provided primary-key value (async).
 ///
 /// This function scans cold storage (Parquet files) to find a row by its primary key.

@@ -18,8 +18,8 @@
 //! - No extra write overhead from maintaining a secondary index
 
 use crate::providers::live_queries::models::LiveQuery;
-use crate::StoragePartition;
 use crate::system_row_mapper::system_row_to_model;
+use crate::StoragePartition;
 use kalamdb_commons::models::rows::SystemTableRow;
 use kalamdb_commons::storage::Partition;
 use kalamdb_commons::{LiveQueryId, TableId};
@@ -81,8 +81,8 @@ pub fn table_id_index_prefix(table_id: &TableId) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use crate::LiveQueryStatus;
     use crate::system_row_mapper::model_to_system_row;
+    use crate::LiveQueryStatus;
 
     use super::*;
     use kalamdb_commons::models::ConnectionId;

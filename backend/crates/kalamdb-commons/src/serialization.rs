@@ -97,8 +97,8 @@ mod tests {
 
     #[test]
     fn envelope_roundtrip() {
-        let bytes = encode_enveloped(CodecKind::FlatBuffers, 1, vec![1, 2, 3])
-            .expect("encode envelope");
+        let bytes =
+            encode_enveloped(CodecKind::FlatBuffers, 1, vec![1, 2, 3]).expect("encode envelope");
 
         let decoded = decode_enveloped(&bytes, 1).expect("decode envelope");
         assert_eq!(decoded.codec_kind, CodecKind::FlatBuffers);

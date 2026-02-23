@@ -397,9 +397,7 @@ mod tests {
         let sql = "CLUSTER JOIN 10.0.0.2:9100";
         let result = ExtensionStatement::parse(sql);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .contains("CLUSTER JOIN/LEAVE commands were removed"));
+        assert!(result.unwrap_err().contains("CLUSTER JOIN/LEAVE commands were removed"));
     }
 
     #[test]
@@ -407,8 +405,6 @@ mod tests {
         let sql = "CLUSTER LEAVE";
         let result = ExtensionStatement::parse(sql);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .contains("CLUSTER JOIN/LEAVE commands were removed"));
+        assert!(result.unwrap_err().contains("CLUSTER JOIN/LEAVE commands were removed"));
     }
 }

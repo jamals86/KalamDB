@@ -264,10 +264,7 @@ impl AppContext {
             // Register the system schema provider with the catalog
             // Views are created on first access, not eagerly at startup
             catalog
-                .register_schema(
-                    "system",
-                    Arc::clone(&system_schema) as Arc<dyn SchemaProvider>,
-                )
+                .register_schema("system", Arc::clone(&system_schema) as Arc<dyn SchemaProvider>)
                 .expect("Failed to register system schema");
 
             // Register existing namespaces as DataFusion schemas
@@ -321,8 +318,14 @@ impl AppContext {
                 Duration::from_secs(config.websocket.auth_timeout_secs.unwrap_or(10));
             let heartbeat_interval =
                 Duration::from_secs(config.websocket.heartbeat_interval_secs.unwrap_or(5));
-            let connection_registry =
-                ConnectionsManager::new(*node_id, client_timeout, auth_timeout, heartbeat_interval);
+            let ws_max_connections = config.performance.max_connections;
+            let connection_registry = ConnectionsManager::with_max_connections(
+                *node_id,
+                client_timeout,
+                auth_timeout,
+                heartbeat_interval,
+                ws_max_connections,
+            );
 
             // Create slow query logger (Phase 11)
             let slow_log_path = format!("{}/slow.log", config.logging.logs_path);
@@ -1071,7 +1074,10 @@ impl AppContext {
     ///
     /// Convenience wrapper for system_tables().jobs().list_jobs()
     pub fn scan_all_jobs(&self) -> Result<Vec<Job>, crate::error::KalamDbError> {
-        self.system_tables().jobs().list_jobs().into_kalamdb_error("Failed to scan jobs")
+        self.system_tables()
+            .jobs()
+            .list_jobs()
+            .into_kalamdb_error("Failed to scan jobs")
     }
 
     /// Get server uptime in seconds

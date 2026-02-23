@@ -463,7 +463,29 @@ export function useMessages(conversationId: string | null) {
     }
   }, [client, conversationId]);
 
-  return { messages, loading, error, sending, uploadProgress, waitingForAI, sendMessage, refetch };
+  const deleteMessage = useCallback(async (messageId: string) => {
+    if (!client) return false;
+    try {
+      await client.query(`DELETE FROM chat.messages WHERE id = '${messageId}'`);
+      setMessages(prev => prev.filter(m => m.id !== messageId));
+      return true;
+    } catch (err) {
+      console.error('[useMessages] Failed to delete message:', err);
+      return false;
+    }
+  }, [client]);
+
+  const stopResponse = useCallback(() => {
+    if (waitingForAI) {
+      setWaitingForAI(false);
+      if (waitingTimeoutRef.current) {
+        clearTimeout(waitingTimeoutRef.current);
+        waitingTimeoutRef.current = null;
+      }
+    }
+  }, [waitingForAI]);
+
+  return { messages, loading, error, sending, uploadProgress, waitingForAI, sendMessage, refetch, deleteMessage, stopResponse };
 }
 
 // ============================================================================

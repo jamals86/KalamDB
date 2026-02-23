@@ -5,18 +5,7 @@
 **ALWAYS follow these essential guidelines:**
 
 1. **Model Separation**: Each model MUST be in its own separate file
-   ```rust
-   // ✅ CORRECT: Separate files
-   models/user.rs        // User model only
-   models/job.rs         // Job model only
-   models/namespace.rs   // Namespace model only
-   
-   // ❌ WRONG: Multiple models in one file
-   models/all.rs         // Contains User, Job, Namespace together
-   ```
-
 2. **AppContext-First Pattern**: Use `Arc<AppContext>` parameter instead of individual fields
-
 3. **Performance & Memory Optimization**: Focus on lightweight memory usage and high concurrency
    - Use `Arc<T>` for zero-copy sharing (no cloning data)
    - DashMap for lock-free concurrent access

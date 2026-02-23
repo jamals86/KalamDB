@@ -167,7 +167,7 @@ async fn try_fast_insert_from_insert(
     // 9. Call insert_rows directly via KalamTableProvider, bypassing DataFusion
     let user_id = exec_ctx.user_id();
     let row_count = rows.len();
-    tracing::info!(table_id = %table_id, row_count = row_count, "sql.fast_insert");
+    tracing::debug!(table_id = %table_id, row_count = row_count, "sql.fast_insert");
     let rows_affected = kalam_provider.insert_rows(user_id, rows).await?;
 
     Ok(Some(ExecutionResult::Inserted { rows_affected }))

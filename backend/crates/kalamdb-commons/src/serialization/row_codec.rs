@@ -42,11 +42,7 @@ pub fn encode_row(row: &Row) -> Result<Vec<u8>> {
 
     fb_row::finish_row_payload_buffer(&mut builder, row_payload);
     // Zero-copy: pass builder's finished slice directly — no intermediate Vec<u8>
-    encode_envelope_inline(
-        CodecKind::FlatBuffers,
-        ROW_SCHEMA_VERSION,
-        builder.finished_data(),
-    )
+    encode_envelope_inline(CodecKind::FlatBuffers, ROW_SCHEMA_VERSION, builder.finished_data())
 }
 
 pub fn decode_row(bytes: &[u8]) -> Result<Row> {
@@ -81,11 +77,7 @@ pub fn encode_user_table_row(row: &UserTableRow) -> Result<Vec<u8>> {
     );
     builder.finish(payload, None);
     // Zero-copy: pass builder's finished slice directly — no intermediate Vec<u8>
-    encode_envelope_inline(
-        CodecKind::FlatBuffers,
-        ROW_SCHEMA_VERSION,
-        builder.finished_data(),
-    )
+    encode_envelope_inline(CodecKind::FlatBuffers, ROW_SCHEMA_VERSION, builder.finished_data())
 }
 
 pub fn decode_user_table_row(bytes: &[u8]) -> Result<UserTableRow> {
@@ -126,11 +118,7 @@ pub fn encode_shared_table_row(seq: SeqId, deleted: bool, fields: &Row) -> Resul
     );
     builder.finish(payload, None);
     // Zero-copy: pass builder's finished slice directly — no intermediate Vec<u8>
-    encode_envelope_inline(
-        CodecKind::FlatBuffers,
-        ROW_SCHEMA_VERSION,
-        builder.finished_data(),
-    )
+    encode_envelope_inline(CodecKind::FlatBuffers, ROW_SCHEMA_VERSION, builder.finished_data())
 }
 
 pub fn decode_shared_table_row(bytes: &[u8]) -> Result<(SeqId, bool, Row)> {
@@ -159,11 +147,7 @@ pub fn encode_system_table_row(row: &Row) -> Result<Vec<u8>> {
         },
     );
     builder.finish(payload, None);
-    encode_envelope_inline(
-        CodecKind::FlatBuffers,
-        ROW_SCHEMA_VERSION,
-        builder.finished_data(),
-    )
+    encode_envelope_inline(CodecKind::FlatBuffers, ROW_SCHEMA_VERSION, builder.finished_data())
 }
 
 pub fn decode_system_table_row(bytes: &[u8]) -> Result<Row> {
@@ -661,9 +645,7 @@ pub fn batch_encode_user_table_rows(rows: &[UserTableRow]) -> Result<Vec<Vec<u8>
 }
 
 /// Batch-encode multiple shared table rows, reusing internal FlatBufferBuilders.
-pub fn batch_encode_shared_table_rows(
-    rows: &[(SeqId, bool, &Row)],
-) -> Result<Vec<Vec<u8>>> {
+pub fn batch_encode_shared_table_rows(rows: &[(SeqId, bool, &Row)]) -> Result<Vec<Vec<u8>>> {
     let _span = tracing::info_span!("batch_encode_shared_table_rows", count = rows.len()).entered();
     let mut results = Vec::with_capacity(rows.len());
     let mut inner_builder = flatbuffers::FlatBufferBuilder::with_capacity(512);
@@ -766,7 +748,10 @@ mod tests {
         let mut values = BTreeMap::new();
         values.insert("user_id".to_string(), ScalarValue::Utf8(Some("admin".to_string())));
         values.insert("role".to_string(), ScalarValue::Utf8(Some("dba".to_string())));
-        values.insert("created_at".to_string(), ScalarValue::TimestampMillisecond(Some(1000000), None));
+        values.insert(
+            "created_at".to_string(),
+            ScalarValue::TimestampMillisecond(Some(1000000), None),
+        );
         let row = Row { values };
 
         let encoded = encode_system_table_row(&row).expect("encode system row");

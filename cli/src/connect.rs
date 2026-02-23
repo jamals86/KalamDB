@@ -292,19 +292,42 @@ pub async fn create_session(
         instance: &str,
         credential_store: &mut FileCredentialStore,
     ) -> Result<(AuthProvider, Option<String>, bool)> {
-        // Before prompting for credentials, check if the server needs initial setup.
-        // This avoids showing "Username:" when the server has never been configured.
-        if let Ok(temp_client) = KalamLinkClient::builder()
+        // Before prompting for credentials, probe the server to detect whether it needs
+        // initial setup. We use two methods:
+        //
+        // 1. check_setup_status() — works for localhost connections (server may block remote).
+        // 2. A probe login as "root" with empty password — the server returns HTTP 428
+        //    (SetupRequired) when root has no password, regardless of origin IP.
+        //
+        // Either detection redirects straight to the setup wizard without showing a username
+        // prompt.
+        let needs_setup = if let Ok(temp_client) = KalamLinkClient::builder()
             .base_url(server_url)
             .timeout(Duration::from_secs(10))
             .build()
         {
-            if let Ok(status) = temp_client.check_setup_status().await {
-                if status.needs_setup {
-                    return setup_and_login(server_url, verbose, instance, credential_store, true)
-                        .await;
-                }
+            // Try the status endpoint first (fast, no login attempt).
+            let from_status = if let Ok(status) = temp_client.check_setup_status().await {
+                status.needs_setup
+            } else {
+                false
+            };
+
+            // Fall back to the probe login if status endpoint didn't confirm.
+            if from_status {
+                true
+            } else {
+                matches!(
+                    try_login(server_url, "root", "", verbose).await,
+                    LoginResult::SetupRequired
+                )
             }
+        } else {
+            false
+        };
+
+        if needs_setup {
+            return setup_and_login(server_url, verbose, instance, credential_store, true).await;
         }
 
         println!();

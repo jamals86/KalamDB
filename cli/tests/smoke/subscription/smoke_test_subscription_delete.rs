@@ -74,10 +74,7 @@ fn smoke_subscription_receives_delete_event() {
             Err(_) => continue,
         }
     }
-    assert!(
-        insert_received,
-        "expected INSERT change event for 'live_insert' within 5s"
-    );
+    assert!(insert_received, "expected INSERT change event for 'live_insert' within 5s");
 
     // 5) DELETE the first row and verify DELETE notification arrives
     let del = format!("DELETE FROM {} WHERE content = 'to_be_deleted'", full);

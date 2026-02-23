@@ -1297,9 +1297,9 @@ async fn authenticate_credentials(
 191) /// TODO: This will hurt the sharding distribution of provider users, i prefer adding the provider code as a prefix to the username instead of suffixing it, but we can revisit this if it becomes an issue.
 pub(crate) fn compose_provider_username(issuer: &str, subject: &str) -> UserName
 
+192) make AuthErrorResponse typesafe error code
 
-
-
+193) force pre-checks before benchmark runs like open files/empty database/permissions and other things to make sure the benchmark runs smoothly without any issues
 
 
 
