@@ -87,6 +87,55 @@ await unsubscribe();
 await client.disconnect();
 ```
 
+## AI Agent Example (Topic Subscription)
+
+Subscribe an AI agent to a KalamDB topic and process each row with an LLM — fully managed retries, backpressure, and at-least-once delivery via `runAgent`.
+
+```ts
+import { createClient, Auth, runAgent } from 'kalam-link';
+
+const client = createClient({
+  url: 'http://localhost:8080',
+  auth: Auth.basic('root', 'kalamdb123'),
+});
+
+const abort = new AbortController();
+process.on('SIGINT', () => abort.abort());
+
+await runAgent<{ title: string; body: string }>({
+  client,
+  name: 'summarizer-agent',
+  topic: 'blog.posts',       // KalamDB topic to consume
+  groupId: 'summarizer-v1',  // consumer group — tracks per-agent offset
+  start: 'earliest',
+  batchSize: 20,
+  timeoutSeconds: 30,
+  stopSignal: abort.signal,
+
+  // Called for every row; return value is written back as metadata
+  onRow: async ({ row }) => {
+    const summary = await myLlm.summarize(row.body);
+    console.log(`[${row.title}] →`, summary);
+  },
+
+  onFailed: async ({ row, error }) => {
+    console.error('failed row', row, error);
+  },
+
+  retry: {
+    maxAttempts: 3,
+    initialBackoffMs: 250,
+    maxBackoffMs: 1500,
+    multiplier: 2,
+  },
+  ackOnFailed: true,    // commit offset even on permanent failure
+});
+
+await client.disconnect();
+```
+
+See [`examples/summarizer-agent/`](examples/summarizer-agent/) for a full working example with Gemini integration.
+
 ## SQL Example
 
 ```sql
