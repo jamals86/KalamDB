@@ -47,9 +47,7 @@ use super::file_utils::{
     extract_file_placeholders, parse_sql_payload, stage_and_finalize_files,
     substitute_file_placeholders,
 };
-use super::forward::{
-    forward_sql_if_follower, handle_not_leader_error,
-};
+use super::forward::{forward_sql_if_follower, handle_not_leader_error};
 use super::helpers::{cleanup_files, execute_single_statement, parse_scalar_params};
 use super::models::{ErrorCode, QueryRequest, QueryResult, SqlResponse};
 use crate::limiter::RateLimiter;
@@ -178,22 +176,31 @@ async fn parse_incoming_payload(
         parse_sql_payload(Either::Right(multipart), &app_context.config().files)
             .await
             .map_err(|e| {
-                HttpResponse::BadRequest().json(SqlResponse::error(e.code, &e.message, took_ms(start_time)))
-            })
-    } else {
-        let json = web::Json::<QueryRequest>::from_request(http_req, &mut payload)
-            .await
-            .map_err(|e| {
                 HttpResponse::BadRequest().json(SqlResponse::error(
-                    ErrorCode::InvalidInput,
-                    &format!("Invalid JSON payload: {}", e),
+                    e.code,
+                    &e.message,
                     took_ms(start_time),
                 ))
-            })?;
+            })
+    } else {
+        let json =
+            web::Json::<QueryRequest>::from_request(http_req, &mut payload)
+                .await
+                .map_err(|e| {
+                    HttpResponse::BadRequest().json(SqlResponse::error(
+                        ErrorCode::InvalidInput,
+                        &format!("Invalid JSON payload: {}", e),
+                        took_ms(start_time),
+                    ))
+                })?;
         parse_sql_payload(Either::Left(json), &app_context.config().files)
             .await
             .map_err(|e| {
-                HttpResponse::BadRequest().json(SqlResponse::error(e.code, &e.message, took_ms(start_time)))
+                HttpResponse::BadRequest().json(SqlResponse::error(
+                    e.code,
+                    &e.message,
+                    took_ms(start_time),
+                ))
             })
     }
 }
@@ -207,11 +214,7 @@ async fn parse_incoming_payload(
 fn validate_sql_length(sql: &str, start_time: Instant) -> Result<(), HttpResponse> {
     let max = kalamdb_commons::constants::MAX_SQL_QUERY_LENGTH;
     if sql.len() > max {
-        log::warn!(
-            "SQL query rejected: length {} bytes exceeds maximum {} bytes",
-            sql.len(),
-            max,
-        );
+        log::warn!("SQL query rejected: length {} bytes exceeds maximum {} bytes", sql.len(), max,);
         return Err(HttpResponse::BadRequest().json(SqlResponse::error(
             ErrorCode::InvalidSql,
             &format!("SQL query too long: {} bytes (maximum {} bytes)", sql.len(), max),
@@ -307,28 +310,22 @@ fn split_and_prepare_statements(
         // custom DDL (CREATE NAMESPACE, SHOW TABLES, etc.).  When it fails we
         // fall through with None — the classifier and executor handle these
         // statements via their own tokeniser.
-        let parsed_sql_statement =
-            kalamdb_sql::parse_single_statement(&parsed.sql).ok().flatten();
+        let parsed_sql_statement = kalamdb_sql::parse_single_statement(&parsed.sql).ok().flatten();
 
         let table_id = parsed_sql_statement.as_ref().and_then(|stmt| {
-            kalamdb_sql::extract_dml_table_id_from_statement(
-                stmt,
-                default_namespace.as_str(),
-            )
+            kalamdb_sql::extract_dml_table_id_from_statement(stmt, default_namespace.as_str())
         });
 
         let table_type = table_id.as_ref().and_then(|tid| {
             if let Some(cached) = table_type_cache.get(tid) {
                 return *cached;
             }
-            let resolved =
-                schema_registry.get(tid).map(|c| c.table_entry().table_type);
+            let resolved = schema_registry.get(tid).map(|c| c.table_entry().table_type);
             table_type_cache.insert(tid.clone(), resolved);
             resolved
         });
 
-        let classified =
-            classify_sql(&parsed.sql, default_namespace, exec_ctx, start_time)?;
+        let classified = classify_sql(&parsed.sql, default_namespace, exec_ctx, start_time)?;
 
         let prepared_statement = PreparedExecutionStatement::new(
             parsed.sql, // move, not clone
@@ -371,7 +368,6 @@ async fn execute_file_upload_path(
     schema_registry: &SchemaRegistry,
     start_time: Instant,
 ) -> HttpResponse {
-
     if !is_multipart {
         return HttpResponse::BadRequest().json(SqlResponse::error(
             ErrorCode::InvalidInput,
@@ -402,8 +398,7 @@ async fn execute_file_upload_path(
 
     let mut files_map = files.take().unwrap_or_default();
     if !required_files.is_empty() {
-        files_map =
-            files_map.into_iter().filter(|(key, _)| required_files.contains(key)).collect();
+        files_map = files_map.into_iter().filter(|(key, _)| required_files.contains(key)).collect();
     }
 
     let table_id = match stmt.prepared_statement.table_id.clone() {
@@ -483,14 +478,16 @@ async fn execute_file_upload_path(
         {
             Ok(refs) => refs,
             Err(e) => {
-                return HttpResponse::InternalServerError()
-                    .json(SqlResponse::error(e.code, &e.message, took_ms(start_time)));
+                return HttpResponse::InternalServerError().json(SqlResponse::error(
+                    e.code,
+                    &e.message,
+                    took_ms(start_time),
+                ));
             },
         }
     };
 
-    let modified_sql =
-        substitute_file_placeholders(&stmt.prepared_statement.sql, &file_refs);
+    let modified_sql = substitute_file_placeholders(&stmt.prepared_statement.sql, &file_refs);
 
     let modified_parsed = match kalamdb_sql::parse_single_statement(&modified_sql) {
         Ok(Some(s)) => Some(s),
@@ -510,15 +507,11 @@ async fn execute_file_upload_path(
         },
     };
 
-    let modified_classified = match classify_sql(
-        &modified_sql,
-        default_namespace,
-        exec_ctx,
-        start_time,
-    ) {
-        Ok(c) => c,
-        Err(resp) => return resp,
-    };
+    let modified_classified =
+        match classify_sql(&modified_sql, default_namespace, exec_ctx, start_time) {
+            Ok(c) => c,
+            Err(resp) => return resp,
+        };
 
     let modified_metadata = PreparedExecutionStatement::new(
         modified_sql.clone(),
@@ -543,8 +536,7 @@ async fn execute_file_upload_path(
     {
         Ok(result) => {
             let result = result.with_as_user(effective_username);
-            if let Err(e) =
-                manifest_service.update_file_subfolder_state(&table_id, subfolder_state)
+            if let Err(e) = manifest_service.update_file_subfolder_state(&table_id, subfolder_state)
             {
                 log::warn!("Failed to update subfolder state for {}: {}", table_id, e);
             }
@@ -994,10 +986,9 @@ mod tests {
 
     #[test]
     fn parse_execute_as_user_bare_case_insensitive() {
-        let parsed = parse_execute_statement(
-            "execute as user bob (INSERT INTO default.t VALUES (1))",
-        )
-        .expect("case-insensitive bare username should parse");
+        let parsed =
+            parse_execute_statement("execute as user bob (INSERT INTO default.t VALUES (1))")
+                .expect("case-insensitive bare username should parse");
 
         assert_eq!(parsed.execute_as_username, Some(Username::from("bob")));
         assert_eq!(parsed.sql, "INSERT INTO default.t VALUES (1)");
@@ -1006,10 +997,8 @@ mod tests {
     #[test]
     fn parse_execute_as_user_bare_no_space_before_paren() {
         // `alice(SELECT ...)` — the username is `alice`, paren starts body.
-        let parsed = parse_execute_statement(
-            "EXECUTE AS USER alice(SELECT 1)",
-        )
-        .expect("bare username immediately followed by '(' should parse");
+        let parsed = parse_execute_statement("EXECUTE AS USER alice(SELECT 1)")
+            .expect("bare username immediately followed by '(' should parse");
 
         assert_eq!(parsed.execute_as_username, Some(Username::from("alice")));
         assert_eq!(parsed.sql, "SELECT 1");

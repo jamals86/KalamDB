@@ -17,10 +17,7 @@ use tokio::sync::mpsc;
 /// Get current epoch time in milliseconds (for lock-free heartbeat tracking)
 #[inline]
 fn epoch_millis() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
+    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64
 }
 
 /// Maximum pending notifications per connection before dropping new ones

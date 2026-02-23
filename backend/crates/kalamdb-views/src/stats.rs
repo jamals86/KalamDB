@@ -179,10 +179,7 @@ impl VirtualView for StatsView {
             ],
         )
         .map_err(|e| {
-            crate::error::RegistryError::Other(format!(
-                "Failed to build stats batch: {}",
-                e
-            ))
+            crate::error::RegistryError::Other(format!("Failed to build stats batch: {}", e))
         })
     }
 }

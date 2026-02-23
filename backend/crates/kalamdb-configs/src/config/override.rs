@@ -169,10 +169,7 @@ impl ServerConfig {
         }
         if let Ok(val) = env::var("KALAMDB_WEBSOCKET_HEARTBEAT_INTERVAL_SECS") {
             self.websocket.heartbeat_interval_secs = Some(val.parse().map_err(|_| {
-                anyhow::anyhow!(
-                    "Invalid KALAMDB_WEBSOCKET_HEARTBEAT_INTERVAL_SECS value: {}",
-                    val
-                )
+                anyhow::anyhow!("Invalid KALAMDB_WEBSOCKET_HEARTBEAT_INTERVAL_SECS value: {}", val)
             })?);
         }
 
@@ -258,8 +255,9 @@ impl ServerConfig {
             }
 
             if let Some(val) = rpc_tls_enabled {
-                cluster.rpc_tls.enabled =
-                    val.eq_ignore_ascii_case("true") || val == "1" || val.eq_ignore_ascii_case("yes");
+                cluster.rpc_tls.enabled = val.eq_ignore_ascii_case("true")
+                    || val == "1"
+                    || val.eq_ignore_ascii_case("yes");
             }
             if let Some(val) = rpc_tls_ca_cert_path {
                 cluster.rpc_tls.ca_cert_path = Some(val);

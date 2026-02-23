@@ -31,16 +31,10 @@ impl Benchmark for ConcurrentSubscriberBench {
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
             client
-                .sql_ok(&format!(
-                    "CREATE NAMESPACE IF NOT EXISTS {}",
-                    config.namespace
-                ))
+                .sql_ok(&format!("CREATE NAMESPACE IF NOT EXISTS {}", config.namespace))
                 .await?;
             let _ = client
-                .sql(&format!(
-                    "DROP USER TABLE IF EXISTS {}.sub_bench",
-                    config.namespace
-                ))
+                .sql(&format!("DROP USER TABLE IF EXISTS {}.sub_bench", config.namespace))
                 .await;
             client
                 .sql_ok(&format!(
@@ -80,8 +74,8 @@ impl Benchmark for ConcurrentSubscriberBench {
                         .map_err(|e| format!("Subscribe #{} failed: {}", sub_id, e))?;
 
                     // Read messages for a short window (initial data + changes)
-                    let deadline = tokio::time::Instant::now()
-                        + std::time::Duration::from_millis(1500);
+                    let deadline =
+                        tokio::time::Instant::now() + std::time::Duration::from_millis(1500);
                     loop {
                         let remaining =
                             deadline.saturating_duration_since(tokio::time::Instant::now());
@@ -93,8 +87,8 @@ impl Benchmark for ConcurrentSubscriberBench {
                                 ChangeEvent::Insert { .. }
                                 | ChangeEvent::InitialDataBatch { .. } => {
                                     counter.fetch_add(1, Ordering::Relaxed);
-                                }
-                                _ => {}
+                                },
+                                _ => {},
                             },
                             _ => break,
                         }
@@ -142,10 +136,7 @@ impl Benchmark for ConcurrentSubscriberBench {
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
             let _ = client
-                .sql(&format!(
-                    "DROP USER TABLE IF EXISTS {}.sub_bench",
-                    config.namespace
-                ))
+                .sql(&format!("DROP USER TABLE IF EXISTS {}.sub_bench", config.namespace))
                 .await;
             Ok(())
         })

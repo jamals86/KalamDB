@@ -61,8 +61,8 @@ impl TypedStatementHandler<CreateUserStatement> for CreateUserHandler {
                         .map_err(|e| KalamDbError::InvalidOperation(e.to_string()))?;
                 }
                 let bcrypt_cost = self.app_context.config().auth.bcrypt_cost;
-                let hash = bcrypt::hash(raw, bcrypt_cost)
-                    .into_kalamdb_error("Password hash error")?;
+                let hash =
+                    bcrypt::hash(raw, bcrypt_cost).into_kalamdb_error("Password hash error")?;
                 (hash, None)
             },
             AuthType::OAuth => {
@@ -73,8 +73,8 @@ impl TypedStatementHandler<CreateUserStatement> for CreateUserHandler {
                     )
                 })?;
 
-                let json: serde_json::Value = serde_json::from_str(&payload)
-                    .into_invalid_operation("Invalid OAuth JSON")?;
+                let json: serde_json::Value =
+                    serde_json::from_str(&payload).into_invalid_operation("Invalid OAuth JSON")?;
 
                 let provider = json
                     .get("provider")

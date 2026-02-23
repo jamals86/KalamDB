@@ -188,13 +188,13 @@ pub async fn handle_subscribe(
                         "Failed to register subscription {}: {} (sql: '{}')",
                         subscription_id, e, subscription.sql
                     );
-                }
+                },
                 _ => {
                     error!(
                         "Failed to register subscription {}: {} (sql: '{}')",
                         subscription_id, e, subscription.sql
                     );
-                }
+                },
             }
             let _ = send_error(session, &subscription_id, code, &message).await;
             Ok(())

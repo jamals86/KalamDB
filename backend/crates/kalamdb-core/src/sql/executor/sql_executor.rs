@@ -146,9 +146,7 @@ impl SqlExecutor {
         // custom DDL (CREATE NAMESPACE, CREATE USER, SHOW TABLES, etc.).
         // When it fails we fall through with None — the classifier and
         // executor handle these statements via their own tokeniser.
-        let parsed_statement = kalamdb_sql::parse_single_statement(sql)
-            .ok()
-            .flatten();
+        let parsed_statement = kalamdb_sql::parse_single_statement(sql).ok().flatten();
         let table_id = parsed_statement.as_ref().and_then(|stmt| {
             kalamdb_sql::extract_dml_table_id_from_statement(
                 stmt,
@@ -414,9 +412,10 @@ impl SqlExecutor {
                                         .insert(cache_key.clone(), template_plan.clone());
                                     let rebound_plan =
                                         replace_placeholders_in_plan(template_plan, &params)?;
-                                    retry_session.execute_logical_plan(rebound_plan).await.map_err(
-                                        |e3| Self::datafusion_to_execution_error(e3),
-                                    )?
+                                    retry_session
+                                        .execute_logical_plan(rebound_plan)
+                                        .await
+                                        .map_err(|e3| Self::datafusion_to_execution_error(e3))?
                                 } else {
                                     return Err(self.log_sql_error(sql, exec_ctx, e));
                                 }

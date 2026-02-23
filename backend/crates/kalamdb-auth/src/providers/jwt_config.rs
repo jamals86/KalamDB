@@ -75,12 +75,12 @@ impl JwtConfig {
 
         // Slow path: OIDC discovery + write lock
         let client_id = self.issuer_audiences.get(issuer).cloned();
-        let config = OidcConfig::discover(issuer.to_string(), client_id)
-            .await
-            .map_err(|e| AuthError::MalformedAuthorization(format!(
+        let config = OidcConfig::discover(issuer.to_string(), client_id).await.map_err(|e| {
+            AuthError::MalformedAuthorization(format!(
                 "OIDC discovery failed for issuer '{}': {}",
                 issuer, e
-            )))?;
+            ))
+        })?;
 
         let validator = OidcValidator::new(config);
 

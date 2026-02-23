@@ -139,7 +139,7 @@ mod smoke_test_system_and_users;
 mod smoke_test_system_tables_extended;
 
 // Security tests
-#[path = "smoke/security/smoke_test_security_access.rs"]
-mod smoke_test_security_access;
 #[path = "smoke/security/smoke_test_rpc_auth.rs"]
 mod smoke_test_rpc_auth;
+#[path = "smoke/security/smoke_test_security_access.rs"]
+mod smoke_test_security_access;

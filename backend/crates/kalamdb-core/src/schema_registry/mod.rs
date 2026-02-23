@@ -14,8 +14,8 @@ pub use kalamdb_commons::helpers::string_interner::SystemColumns;
 
 pub use kalamdb_system::SystemColumnsService;
 pub use projection::{project_batch, schemas_compatible};
-pub use registry::TablesSchemaRegistryAdapter;
 pub use registry::SchemaRegistry;
+pub use registry::TablesSchemaRegistryAdapter;
 
 // Re-export common types from kalamdb_commons for convenience
 pub use kalamdb_commons::models::{NamespaceId, TableName, UserId};

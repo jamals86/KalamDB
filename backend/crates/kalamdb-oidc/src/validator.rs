@@ -96,8 +96,8 @@ impl OidcValidator {
         let jwk = self.get_jwk(&kid).await?;
         log::debug!("Found matching key with kid: {}", kid);
 
-        let decoding_key = DecodingKey::from_jwk(&jwk)
-            .map_err(|e| OidcError::InvalidKeyFormat(e.to_string()))?;
+        let decoding_key =
+            DecodingKey::from_jwk(&jwk).map_err(|e| OidcError::InvalidKeyFormat(e.to_string()))?;
 
         // Pin validation to the exact algorithm in the token header.
         // This is required for jsonwebtoken 10.x (especially with aws_lc_rs)
@@ -123,7 +123,9 @@ impl OidcValidator {
         let parts: Vec<&str> = token.splitn(3, '.').collect();
         if parts.len() >= 2 {
             use base64::Engine as _;
-            if let Ok(payload_bytes) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(parts[1]) {
+            if let Ok(payload_bytes) =
+                base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(parts[1])
+            {
                 if let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&payload_bytes) {
                     if let Some(iat) = payload.get("iat").and_then(|v| v.as_u64()) {
                         let now = chrono::Utc::now().timestamp() as u64;
@@ -156,10 +158,7 @@ impl OidcValidator {
         self.refresh_jwks_cache().await?;
 
         let cache = self.jwks_cache.read().await;
-        cache
-            .get(kid)
-            .cloned()
-            .ok_or_else(|| OidcError::KeyNotFound(kid.to_string()))
+        cache.get(kid).cloned().ok_or_else(|| OidcError::KeyNotFound(kid.to_string()))
     }
 
     /// Fetch the JWKS from the issuer and replace the cache if keys changed.
@@ -174,10 +173,7 @@ impl OidcValidator {
                 true
             } else {
                 new_jwks.keys.iter().any(|jwk| {
-                    jwk.common
-                        .key_id
-                        .as_ref()
-                        .map_or(false, |kid| !cache.contains_key(kid))
+                    jwk.common.key_id.as_ref().map_or(false, |kid| !cache.contains_key(kid))
                 })
             }
         };

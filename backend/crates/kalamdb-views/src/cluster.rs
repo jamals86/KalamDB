@@ -21,8 +21,8 @@
 //!
 //! **Schema**: TableDefinition provides consistent metadata for views
 
-use crate::view_base::VirtualView;
 use crate::error::RegistryError;
+use crate::view_base::VirtualView;
 use datafusion::arrow::array::{
     ArrayRef, BooleanArray, Int16Array, Int32Array, Int64Array, StringArray,
 };
@@ -501,10 +501,7 @@ impl datafusion::datasource::TableProvider for ClusterTableProvider {
 
         let schema = self.view.schema();
         let batch = self.view.compute_batch().map_err(|e| {
-            DataFusionError::Execution(format!(
-                "Failed to compute cluster batch: {}",
-                e
-            ))
+            DataFusionError::Execution(format!("Failed to compute cluster batch: {}", e))
         })?;
 
         let partitions = vec![vec![batch]];

@@ -5,13 +5,15 @@
 
 use crate::error::{SystemError, SystemResultExt};
 use crate::providers::audit_logs::models::AuditLogEntry;
-use crate::providers::base::{extract_filter_value, system_rows_to_batch, SimpleProviderDefinition};
+use crate::providers::base::{
+    extract_filter_value, system_rows_to_batch, SimpleProviderDefinition,
+};
 use crate::system_row_mapper::{model_to_system_row, system_row_to_model};
 use datafusion::arrow::array::RecordBatch;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::logical_expr::Expr;
-use kalamdb_commons::models::AuditLogId;
 use kalamdb_commons::models::rows::SystemTableRow;
+use kalamdb_commons::models::AuditLogId;
 use kalamdb_commons::schemas::TableDefinition;
 use kalamdb_commons::SystemTable;
 use kalamdb_store::entity_store::{EntityStore, EntityStoreAsync};
@@ -40,14 +42,10 @@ impl AuditLogsTableProvider {
     pub fn new(backend: Arc<dyn StorageBackend>) -> Self {
         let store = IndexedEntityStore::new(
             backend,
-            crate::SystemTable::AuditLog
-                .column_family_name()
-                .expect("AuditLog is a table"),
+            crate::SystemTable::AuditLog.column_family_name().expect("AuditLog is a table"),
             Vec::new(),
         );
-        Self {
-            store,
-        }
+        Self { store }
     }
 
     /// Append a new audit log entry
@@ -144,10 +142,7 @@ impl AuditLogsTableProvider {
             .scan_all_async(None, None, None)
             .await
             .into_system_error("scan_all_async error")?;
-        results
-            .into_iter()
-            .map(|(_, row)| Self::decode_audit_row(&row))
-            .collect()
+        results.into_iter().map(|(_, row)| Self::decode_audit_row(&row)).collect()
     }
     fn scan_to_batch_filtered(
         &self,

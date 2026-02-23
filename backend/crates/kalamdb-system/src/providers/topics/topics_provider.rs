@@ -167,9 +167,7 @@ impl TopicsTableProvider {
     /// List all topics
     pub fn list_topics(&self) -> Result<Vec<Topic>, SystemError> {
         let rows = self.store.scan_all_typed(None, None, None)?;
-        rows.into_iter()
-            .map(|(_, row)| Self::decode_topic_row(&row))
-            .collect()
+        rows.into_iter().map(|(_, row)| Self::decode_topic_row(&row)).collect()
     }
 
     /// Get reference to the underlying store for advanced operations
@@ -217,9 +215,7 @@ impl TopicsTableProvider {
         static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
         SCHEMA
             .get_or_init(|| {
-                Topic::definition()
-                    .to_arrow_schema()
-                    .expect("failed to build topics schema")
+                Topic::definition().to_arrow_schema().expect("failed to build topics schema")
             })
             .clone()
     }

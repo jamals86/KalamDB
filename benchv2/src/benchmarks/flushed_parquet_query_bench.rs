@@ -37,16 +37,10 @@ impl Benchmark for FlushedParquetQueryBench {
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
             client
-                .sql_ok(&format!(
-                    "CREATE NAMESPACE IF NOT EXISTS {}",
-                    config.namespace
-                ))
+                .sql_ok(&format!("CREATE NAMESPACE IF NOT EXISTS {}", config.namespace))
                 .await?;
             let _ = client
-                .sql(&format!(
-                    "DROP TABLE IF EXISTS {}.parquet_bench",
-                    config.namespace
-                ))
+                .sql(&format!("DROP TABLE IF EXISTS {}.parquet_bench", config.namespace))
                 .await;
             client
                 .sql_ok(&format!(
@@ -58,11 +52,7 @@ impl Benchmark for FlushedParquetQueryBench {
             // Insert 10K rows then flush — 20 times to create 20 Parquet files
             let mut global_id = 0u32;
             for file_num in 0..PARQUET_FILES {
-                print!(
-                    "\r    Loading Parquet file {}/{}...",
-                    file_num + 1,
-                    PARQUET_FILES
-                );
+                print!("\r    Loading Parquet file {}/{}...", file_num + 1, PARQUET_FILES);
 
                 // Insert ROWS_PER_FLUSH in batches
                 for _ in 0..(ROWS_PER_FLUSH / BATCH_SIZE) {
@@ -88,10 +78,7 @@ impl Benchmark for FlushedParquetQueryBench {
 
                 // Flush to create a Parquet file
                 client
-                    .sql_ok(&format!(
-                        "STORAGE FLUSH TABLE {}.parquet_bench",
-                        config.namespace
-                    ))
+                    .sql_ok(&format!("STORAGE FLUSH TABLE {}.parquet_bench", config.namespace))
                     .await?;
 
                 // Wait for flush job to complete
@@ -136,7 +123,7 @@ impl Benchmark for FlushedParquetQueryBench {
                             }
                         }
                     }
-                }
+                },
                 1 => {
                     // Filter scan across all files
                     client
@@ -145,7 +132,7 @@ impl Benchmark for FlushedParquetQueryBench {
                             config.namespace
                         ))
                         .await?;
-                }
+                },
                 2 => {
                     // Aggregation with GROUP BY
                     client
@@ -154,7 +141,7 @@ impl Benchmark for FlushedParquetQueryBench {
                             config.namespace
                         ))
                         .await?;
-                }
+                },
                 3 => {
                     // Point lookup (should hit specific parquet file)
                     client
@@ -163,7 +150,7 @@ impl Benchmark for FlushedParquetQueryBench {
                             config.namespace
                         ))
                         .await?;
-                }
+                },
                 _ => {
                     // Range scan with ORDER BY + LIMIT
                     client
@@ -172,7 +159,7 @@ impl Benchmark for FlushedParquetQueryBench {
                             config.namespace
                         ))
                         .await?;
-                }
+                },
             }
             Ok(())
         })
@@ -185,10 +172,7 @@ impl Benchmark for FlushedParquetQueryBench {
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
             let _ = client
-                .sql(&format!(
-                    "DROP TABLE IF EXISTS {}.parquet_bench",
-                    config.namespace
-                ))
+                .sql(&format!("DROP TABLE IF EXISTS {}.parquet_bench", config.namespace))
                 .await;
             Ok(())
         })

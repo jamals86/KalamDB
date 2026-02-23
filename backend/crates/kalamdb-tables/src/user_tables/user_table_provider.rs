@@ -23,7 +23,6 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::catalog::Session;
 use datafusion::datasource::TableProvider;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
-use kalamdb_commons::NotLeaderError;
 use datafusion::logical_expr::dml::InsertOp;
 use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
 use datafusion::physical_plan::{ExecutionPlan, Statistics};
@@ -32,6 +31,7 @@ use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::conversions::arrow_json_conversion::coerce_rows;
 use kalamdb_commons::ids::{SeqId, UserTableRowId};
 use kalamdb_commons::models::UserId;
+use kalamdb_commons::NotLeaderError;
 use kalamdb_commons::StorageKey;
 use kalamdb_session::{can_read_all_users, check_user_table_access, check_user_table_write_access};
 use kalamdb_store::EntityStore;
@@ -614,14 +614,12 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
 
         {
             let _write_span = tracing::info_span!("insert_batch.store_write", row_count).entered();
-            self.store
-                .insert_batch_preencoded(&entries, encoded_values)
-                .map_err(|e| {
-                    KalamDbError::InvalidOperation(format!(
-                        "Failed to batch insert user table rows: {}",
-                        e
-                    ))
-                })?;
+            self.store.insert_batch_preencoded(&entries, encoded_values).map_err(|e| {
+                KalamDbError::InvalidOperation(format!(
+                    "Failed to batch insert user table rows: {}",
+                    e
+                ))
+            })?;
         }
 
         // Mark manifest as having pending writes (hot data needs to be flushed)
@@ -656,7 +654,10 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         let has_live_subs = notification_service.has_subscribers(Some(&user_id), &table_id);
         if has_topics || has_live_subs {
             // Build notification rows
-            let rows: Vec<_> = entries.iter().map(|(_row_key, entity)| Self::build_notification_row(entity)).collect();
+            let rows: Vec<_> = entries
+                .iter()
+                .map(|(_row_key, entity)| Self::build_notification_row(entity))
+                .collect();
 
             // Batch publish to topics (single RocksDB WriteBatch + single lock per partition)
             if has_topics {
@@ -1294,15 +1295,11 @@ impl TableProvider for UserTableProvider {
         if read_context.requires_leader()
             && self.core.services.cluster_coordinator.is_cluster_mode().await
         {
-            let is_leader =
-                self.core.services.cluster_coordinator.is_meta_leader().await;
+            let is_leader = self.core.services.cluster_coordinator.is_meta_leader().await;
             if !is_leader {
                 // Get Meta leader address for client redirection
-                let leader_addr =
-                    self.core.services.cluster_coordinator.meta_leader_addr().await;
-                return Err(DataFusionError::External(
-                    Box::new(NotLeaderError::new(leader_addr)),
-                ));
+                let leader_addr = self.core.services.cluster_coordinator.meta_leader_addr().await;
+                return Err(DataFusionError::External(Box::new(NotLeaderError::new(leader_addr))));
             }
         }
 

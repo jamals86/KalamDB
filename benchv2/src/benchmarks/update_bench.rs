@@ -29,10 +29,7 @@ impl Benchmark for SingleUpdateBench {
                 .sql_ok(&format!("CREATE NAMESPACE IF NOT EXISTS {}", config.namespace))
                 .await?;
             let _ = client
-                .sql(&format!(
-                    "DROP TABLE IF EXISTS {}.update_bench",
-                    config.namespace
-                ))
+                .sql(&format!("DROP TABLE IF EXISTS {}.update_bench", config.namespace))
                 .await;
             client
                 .sql_ok(&format!(
@@ -86,10 +83,7 @@ impl Benchmark for SingleUpdateBench {
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
             let _ = client
-                .sql(&format!(
-                    "DROP TABLE IF EXISTS {}.update_bench",
-                    config.namespace
-                ))
+                .sql(&format!("DROP TABLE IF EXISTS {}.update_bench", config.namespace))
                 .await;
             Ok(())
         })

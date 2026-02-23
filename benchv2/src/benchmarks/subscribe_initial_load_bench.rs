@@ -31,16 +31,10 @@ impl Benchmark for SubscribeInitialLoadBench {
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
             client
-                .sql_ok(&format!(
-                    "CREATE NAMESPACE IF NOT EXISTS {}",
-                    config.namespace
-                ))
+                .sql_ok(&format!("CREATE NAMESPACE IF NOT EXISTS {}", config.namespace))
                 .await?;
             let _ = client
-                .sql(&format!(
-                    "DROP USER TABLE IF EXISTS {}.sub_init_load",
-                    config.namespace
-                ))
+                .sql(&format!("DROP USER TABLE IF EXISTS {}.sub_init_load", config.namespace))
                 .await;
             client
                 .sql_ok(&format!(
@@ -95,7 +89,7 @@ impl Benchmark for SubscribeInitialLoadBench {
                             got_ready = true;
                             break;
                         }
-                    }
+                    },
                     Ok(ChangeEvent::InitialDataBatch { batch_control, .. }) => {
                         batches += 1;
                         if batch_control.status == kalam_link::models::BatchStatus::Ready
@@ -104,12 +98,12 @@ impl Benchmark for SubscribeInitialLoadBench {
                             got_ready = true;
                             break;
                         }
-                    }
+                    },
                     Ok(ChangeEvent::Error { message, .. }) => {
                         return Err(format!("Server error: {}", message));
-                    }
+                    },
                     Err(e) => return Err(format!("Subscription error: {}", e)),
-                    _ => {}
+                    _ => {},
                 }
             }
 
@@ -119,10 +113,7 @@ impl Benchmark for SubscribeInitialLoadBench {
                 return Err("No initial data batches received within timeout".to_string());
             }
             if !got_ready {
-                return Err(format!(
-                    "Received {} batches but never got Ready status",
-                    batches
-                ));
+                return Err(format!("Received {} batches but never got Ready status", batches));
             }
 
             Ok(())
@@ -136,10 +127,7 @@ impl Benchmark for SubscribeInitialLoadBench {
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
             let _ = client
-                .sql(&format!(
-                    "DROP USER TABLE IF EXISTS {}.sub_init_load",
-                    config.namespace
-                ))
+                .sql(&format!("DROP USER TABLE IF EXISTS {}.sub_init_load", config.namespace))
                 .await;
             Ok(())
         })

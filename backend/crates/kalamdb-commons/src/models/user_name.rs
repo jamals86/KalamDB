@@ -12,7 +12,7 @@ use crate::StorageKey;
 /// This newtype ensures usernames cannot be confused with user IDs
 /// or other string identifiers, providing compile-time safety for
 /// username-to-UserId lookups in the secondary index.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, )]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct UserName(String);
 
 /// Error type for UserName validation failures

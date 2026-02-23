@@ -5,8 +5,8 @@
 //! Provides per-Raft-group OpenRaft metrics directly from RaftMetrics.
 //! Each row represents one Raft group's current state on this node.
 
-use crate::view_base::{ViewTableProvider, VirtualView};
 use crate::error::RegistryError;
+use crate::view_base::{ViewTableProvider, VirtualView};
 use datafusion::arrow::array::{ArrayRef, Int64Array, StringArray};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;

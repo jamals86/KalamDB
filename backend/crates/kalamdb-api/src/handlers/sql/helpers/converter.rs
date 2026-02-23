@@ -1,9 +1,7 @@
 //! Arrow to JSON conversion helpers
 
 use arrow::record_batch::RecordBatch;
-use kalamdb_commons::conversions::{
-    read_kalam_data_type_metadata, KALAM_DATA_TYPE_METADATA_KEY,
-};
+use kalamdb_commons::conversions::{read_kalam_data_type_metadata, KALAM_DATA_TYPE_METADATA_KEY};
 use kalamdb_commons::models::datatypes::{FromArrowType, KalamDataType};
 use kalamdb_commons::models::Role;
 use kalamdb_commons::schemas::SchemaField;
@@ -129,11 +127,7 @@ mod tests {
                 Field::new("id", DataType::FixedSizeBinary(16), false),
                 &KalamDataType::Uuid,
             ),
-            &FieldFlags::from([
-                FieldFlag::PrimaryKey,
-                FieldFlag::NonNull,
-                FieldFlag::Unique,
-            ]),
+            &FieldFlags::from([FieldFlag::PrimaryKey, FieldFlag::NonNull, FieldFlag::Unique]),
         );
         let tenant_field = with_kalam_column_flags_metadata(
             with_kalam_data_type_metadata(

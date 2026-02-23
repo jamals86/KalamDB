@@ -27,16 +27,10 @@ impl Benchmark for ConcurrentPublisherBench {
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
             client
-                .sql_ok(&format!(
-                    "CREATE NAMESPACE IF NOT EXISTS {}",
-                    config.namespace
-                ))
+                .sql_ok(&format!("CREATE NAMESPACE IF NOT EXISTS {}", config.namespace))
                 .await?;
             let _ = client
-                .sql(&format!(
-                    "DROP TABLE IF EXISTS {}.pub_bench",
-                    config.namespace
-                ))
+                .sql(&format!("DROP TABLE IF EXISTS {}.pub_bench", config.namespace))
                 .await;
             client
                 .sql_ok(&format!(
@@ -47,12 +41,8 @@ impl Benchmark for ConcurrentPublisherBench {
 
             // Create topic + wire it to the table (namespace-qualified)
             let topic_name = format!("{}.pub_topic", config.namespace);
-            let _ = client
-                .sql(&format!("DROP TOPIC IF EXISTS {}", topic_name))
-                .await;
-            let _ = client
-                .sql(&format!("CREATE TOPIC {}", topic_name))
-                .await;
+            let _ = client.sql(&format!("DROP TOPIC IF EXISTS {}", topic_name)).await;
+            let _ = client.sql(&format!("CREATE TOPIC {}", topic_name)).await;
             let _ = client
                 .sql(&format!(
                     "ALTER TOPIC {} ADD SOURCE {}.pub_bench ON INSERT",
@@ -100,10 +90,7 @@ impl Benchmark for ConcurrentPublisherBench {
             let topic_name = format!("{}.pub_topic", config.namespace);
             let _ = client.sql(&format!("DROP TOPIC IF EXISTS {}", topic_name)).await;
             let _ = client
-                .sql(&format!(
-                    "DROP TABLE IF EXISTS {}.pub_bench",
-                    config.namespace
-                ))
+                .sql(&format!("DROP TABLE IF EXISTS {}.pub_bench", config.namespace))
                 .await;
             Ok(())
         })

@@ -484,7 +484,8 @@ where
         entries: &[(K, V)],
         encoded_values: Vec<Vec<u8>>,
     ) -> Result<()> {
-        let _span = tracing::info_span!("store.insert_batch_preencoded", count = entries.len()).entered();
+        let _span =
+            tracing::info_span!("store.insert_batch_preencoded", count = entries.len()).entered();
         if entries.is_empty() {
             return Ok(());
         }

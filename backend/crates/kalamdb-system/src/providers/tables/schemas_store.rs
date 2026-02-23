@@ -176,9 +176,7 @@ impl SchemasStore {
 
         let mut versions: Vec<(u32, TableDefinition)> = entries
             .into_iter()
-            .filter_map(|(version_key, table_def)| {
-                version_key.version().map(|v| (v, table_def))
-            })
+            .filter_map(|(version_key, table_def)| version_key.version().map(|v| (v, table_def)))
             .collect();
 
         // Sort by version ascending

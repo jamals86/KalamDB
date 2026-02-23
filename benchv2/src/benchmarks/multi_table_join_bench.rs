@@ -27,18 +27,12 @@ impl Benchmark for MultiTableJoinBench {
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
             client
-                .sql_ok(&format!(
-                    "CREATE NAMESPACE IF NOT EXISTS {}",
-                    config.namespace
-                ))
+                .sql_ok(&format!("CREATE NAMESPACE IF NOT EXISTS {}", config.namespace))
                 .await?;
 
             // Customers table
             let _ = client
-                .sql(&format!(
-                    "DROP TABLE IF EXISTS {}.join_customers",
-                    config.namespace
-                ))
+                .sql(&format!("DROP TABLE IF EXISTS {}.join_customers", config.namespace))
                 .await;
             client
                 .sql_ok(&format!(
@@ -49,10 +43,7 @@ impl Benchmark for MultiTableJoinBench {
 
             // Orders table
             let _ = client
-                .sql(&format!(
-                    "DROP TABLE IF EXISTS {}.join_orders",
-                    config.namespace
-                ))
+                .sql(&format!("DROP TABLE IF EXISTS {}.join_orders", config.namespace))
                 .await;
             client
                 .sql_ok(&format!(
@@ -133,7 +124,7 @@ impl Benchmark for MultiTableJoinBench {
                             ns = config.namespace
                         ))
                         .await?;
-                }
+                },
                 1 => {
                     // Aggregation across join: total spent per tier
                     client
@@ -145,7 +136,7 @@ impl Benchmark for MultiTableJoinBench {
                             ns = config.namespace
                         ))
                         .await?;
-                }
+                },
                 _ => {
                     // Filtered join with LIMIT
                     client
@@ -158,7 +149,7 @@ impl Benchmark for MultiTableJoinBench {
                             ns = config.namespace
                         ))
                         .await?;
-                }
+                },
             }
             Ok(())
         })
@@ -171,16 +162,10 @@ impl Benchmark for MultiTableJoinBench {
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
             let _ = client
-                .sql(&format!(
-                    "DROP TABLE IF EXISTS {}.join_orders",
-                    config.namespace
-                ))
+                .sql(&format!("DROP TABLE IF EXISTS {}.join_orders", config.namespace))
                 .await;
             let _ = client
-                .sql(&format!(
-                    "DROP TABLE IF EXISTS {}.join_customers",
-                    config.namespace
-                ))
+                .sql(&format!("DROP TABLE IF EXISTS {}.join_customers", config.namespace))
                 .await;
             Ok(())
         })

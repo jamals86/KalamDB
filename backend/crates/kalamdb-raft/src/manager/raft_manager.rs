@@ -132,7 +132,10 @@ async fn add_learner_and_wait<SM: KalamStateMachine + Send + Sync + 'static>(
     timeout: Duration,
 ) -> Result<(), RaftError> {
     if !group.is_leader() {
-        return Err(RaftError::not_leader(group.group_id().to_string(), group.current_leader().map(|id| id.as_u64())));
+        return Err(RaftError::not_leader(
+            group.group_id().to_string(),
+            group.current_leader().map(|id| id.as_u64()),
+        ));
     }
     group.add_learner(node_id, node.clone()).await?;
     group.wait_for_learner_catchup(node_id, timeout).await?;
@@ -617,7 +620,9 @@ impl RaftManager {
             let scheme = if rpc_tls.enabled { "https" } else { "http" };
             let uri = format!("{}://{}", scheme, peer.rpc_addr);
             let mut endpoint = tonic::transport::Endpoint::from_shared(uri.clone())
-                .map_err(|e| RaftError::Internal(format!("Invalid RPC address {}: {}", peer.rpc_addr, e)))?
+                .map_err(|e| {
+                    RaftError::Internal(format!("Invalid RPC address {}: {}", peer.rpc_addr, e))
+                })?
                 .connect_timeout(Duration::from_secs(5))
                 .timeout(Duration::from_secs(10));
 
@@ -651,38 +656,33 @@ impl RaftManager {
                     ))
                 })?;
                 let key_pem = std::fs::read(node_key_path).map_err(|e| {
-                    RaftError::Config(format!(
-                        "Failed reading node key '{}': {}",
-                        node_key_path, e
-                    ))
+                    RaftError::Config(format!("Failed reading node key '{}': {}", node_key_path, e))
                 })?;
 
                 let server_name = if let Some(name) = peer.rpc_server_name.as_ref() {
                     name.clone()
                 } else {
-                    peer.rpc_addr
-                        .rsplit_once(':')
-                        .map(|(host, _)| host.to_string())
-                        .ok_or_else(|| {
+                    peer.rpc_addr.rsplit_once(':').map(|(host, _)| host.to_string()).ok_or_else(
+                        || {
                             RaftError::Config(format!(
                                 "Invalid peer rpc_addr '{}': expected host:port",
                                 peer.rpc_addr
                             ))
-                        })?
+                        },
+                    )?
                 };
                 let tls_config = ClientTlsConfig::new()
                     .ca_certificate(Certificate::from_pem(ca_pem))
                     .identity(Identity::from_pem(cert_pem, key_pem))
                     .domain_name(server_name);
-                endpoint = endpoint
-                    .tls_config(tls_config)
-                    .map_err(|e| RaftError::Network(format!("Failed to configure RPC TLS: {}", e)))?;
+                endpoint = endpoint.tls_config(tls_config).map_err(|e| {
+                    RaftError::Network(format!("Failed to configure RPC TLS: {}", e))
+                })?;
             }
 
-            let channel = endpoint
-                .connect()
-                .await
-                .map_err(|e| RaftError::Network(format!("Failed to connect to peer {}: {}", peer.node_id, e)));
+            let channel = endpoint.connect().await.map_err(|e| {
+                RaftError::Network(format!("Failed to connect to peer {}: {}", peer.node_id, e))
+            });
 
             match channel {
                 Ok(channel) => {
@@ -690,17 +690,15 @@ impl RaftManager {
                     let mut request = tonic::Request::new(PingRequest {
                         from_node_id: source_node_id.as_u64(),
                     });
-                    let cluster_id_header =
-                        tonic::metadata::MetadataValue::try_from(cluster_id).map_err(|e| {
+                    let cluster_id_header = tonic::metadata::MetadataValue::try_from(cluster_id)
+                        .map_err(|e| {
                             RaftError::Internal(format!("Invalid cluster_id metadata: {}", e))
                         })?;
                     let node_id_header = tonic::metadata::MetadataValue::try_from(
                         source_node_id.as_u64().to_string(),
                     )
                     .map_err(|e| RaftError::Internal(format!("Invalid node_id metadata: {}", e)))?;
-                    request
-                        .metadata_mut()
-                        .insert(RPC_CLUSTER_ID_HEADER, cluster_id_header);
+                    request.metadata_mut().insert(RPC_CLUSTER_ID_HEADER, cluster_id_header);
                     request.metadata_mut().insert(RPC_NODE_ID_HEADER, node_id_header);
 
                     match client.ping(request).await {
@@ -735,7 +733,7 @@ impl RaftManager {
                             peer.rpc_addr, max_retries
                         )));
                     }
-                }
+                },
             }
 
             if attempt == 1 || attempt % 10 == 0 {
@@ -850,17 +848,14 @@ impl RaftManager {
         );
 
         // Add to unified meta group
-        add_learner_and_wait(&self.meta, node_id, &node, self.config.replication_timeout)
-            .await?;
+        add_learner_and_wait(&self.meta, node_id, &node, self.config.replication_timeout).await?;
 
         for shard in &self.user_data_shards {
-            add_learner_and_wait(shard, node_id, &node, self.config.replication_timeout)
-                .await?;
+            add_learner_and_wait(shard, node_id, &node, self.config.replication_timeout).await?;
         }
 
         for shard in &self.shared_data_shards {
-            add_learner_and_wait(shard, node_id, &node, self.config.replication_timeout)
-                .await?;
+            add_learner_and_wait(shard, node_id, &node, self.config.replication_timeout).await?;
         }
 
         log::info!("[CLUSTER] Promoting node {} to voter on all groups...", node_id);
@@ -953,12 +948,11 @@ impl RaftManager {
     ) -> Result<(), RaftError> {
         let cluster_id = tonic::metadata::MetadataValue::try_from(self.config.cluster_id.as_str())
             .map_err(|e| RaftError::Internal(format!("Invalid cluster_id metadata: {}", e)))?;
-        let node_id = tonic::metadata::MetadataValue::try_from(self.node_id.as_u64().to_string())
-            .map_err(|e| RaftError::Internal(format!("Invalid node_id metadata: {}", e)))?;
+        let node_id =
+            tonic::metadata::MetadataValue::try_from(self.node_id.as_u64().to_string())
+                .map_err(|e| RaftError::Internal(format!("Invalid node_id metadata: {}", e)))?;
 
-        request
-            .metadata_mut()
-            .insert(RPC_CLUSTER_ID_HEADER, cluster_id);
+        request.metadata_mut().insert(RPC_CLUSTER_ID_HEADER, cluster_id);
         request.metadata_mut().insert(RPC_NODE_ID_HEADER, node_id);
         Ok(())
     }
@@ -975,9 +969,7 @@ impl RaftManager {
                 .peer_certs()
                 .ok_or_else(|| tonic::Status::unauthenticated("Missing peer TLS certificate"))?;
             if peer_certs.is_empty() {
-                return Err(tonic::Status::unauthenticated(
-                    "Missing peer TLS certificate",
-                ));
+                return Err(tonic::Status::unauthenticated("Missing peer TLS certificate"));
             }
         }
 
@@ -1218,10 +1210,7 @@ impl RaftManager {
     /// the same `rpc_addr` per node, so one channel per node is sufficient).
     ///
     /// Returns `None` if the node is not registered.
-    pub fn get_peer_channel(
-        &self,
-        node_id: NodeId,
-    ) -> Option<tonic::transport::Channel> {
+    pub fn get_peer_channel(&self, node_id: NodeId) -> Option<tonic::transport::Channel> {
         self.meta.network_factory().get_or_create_channel(node_id)
     }
 
@@ -1629,16 +1618,12 @@ impl RaftManager {
 
     /// Trigger elections for all Raft groups
     pub async fn trigger_all_elections(&self) -> Result<Vec<ClusterActionResult>, RaftError> {
-        Ok(self
-            .run_action_for_all_groups(ClusterAction::TriggerElection)
-            .await)
+        Ok(self.run_action_for_all_groups(ClusterAction::TriggerElection).await)
     }
 
     /// Purge logs up to the given index for all Raft groups
     pub async fn purge_all_logs(&self, upto: u64) -> Result<Vec<ClusterActionResult>, RaftError> {
-        Ok(self
-            .run_action_for_all_groups(ClusterAction::PurgeLogs { upto })
-            .await)
+        Ok(self.run_action_for_all_groups(ClusterAction::PurgeLogs { upto }).await)
     }
 
     /// Attempt to transfer leadership for all Raft groups

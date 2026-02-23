@@ -86,16 +86,12 @@ pub type AuthResult<T> = Result<T, AuthError>;
 impl From<kalamdb_oidc::OidcError> for AuthError {
     fn from(e: kalamdb_oidc::OidcError) -> Self {
         match e {
-            kalamdb_oidc::OidcError::JwtValidationFailed(ref msg)
-                if msg.contains("expired") =>
-            {
+            kalamdb_oidc::OidcError::JwtValidationFailed(ref msg) if msg.contains("expired") => {
                 AuthError::TokenExpired
-            }
-            kalamdb_oidc::OidcError::JwtValidationFailed(ref msg)
-                if msg.contains("signature") =>
-            {
+            },
+            kalamdb_oidc::OidcError::JwtValidationFailed(ref msg) if msg.contains("signature") => {
                 AuthError::InvalidSignature
-            }
+            },
             _ => AuthError::MalformedAuthorization(e.to_string()),
         }
     }

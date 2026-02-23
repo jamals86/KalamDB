@@ -9,8 +9,8 @@
 //!
 //! **DataFusion Pattern**: Implements VirtualView trait for consistent view behavior
 
-use crate::view_base::VirtualView;
 use crate::error::RegistryError;
+use crate::view_base::VirtualView;
 use datafusion::arrow::array::{
     ArrayRef, Int64Builder, StringBuilder, TimestampMicrosecondBuilder,
 };

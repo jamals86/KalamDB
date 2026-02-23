@@ -50,7 +50,7 @@ impl Verdict {
             Verdict::Excellent => "<span class=\"verdict verdict-excellent\">🟢 Excellent</span>",
             Verdict::Acceptable => {
                 "<span class=\"verdict verdict-acceptable\">🟡 Acceptable</span>"
-            }
+            },
             Verdict::Slow => "<span class=\"verdict verdict-slow\">🔴 Slow</span>",
             Verdict::Failed => "<span class=\"verdict verdict-failed\">⛔ Failed</span>",
         }

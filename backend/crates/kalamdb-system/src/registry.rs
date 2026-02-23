@@ -6,22 +6,21 @@
 //! **Phase 5 Completion**: Consolidates all 10 system table providers into
 //! a single struct for cleaner AppContext API.
 
-use super::providers::{
-    AuditLogEntry, AuditLogsTableProvider, JobNodesTableProvider, JobsTableProvider,
-    LiveQueriesTableProvider, ManifestTableProvider, NamespacesTableProvider, SchemasTableProvider,
-    StoragesTableProvider, TopicOffsetsTableProvider,
-    TopicsTableProvider, UsersTableProvider,
-};
-use super::providers::manifest::manifest_table_definition;
 use super::providers::job_nodes::models::JobNode;
 use super::providers::jobs::models::Job;
 use super::providers::live_queries::models::LiveQuery;
+use super::providers::manifest::manifest_table_definition;
 use super::providers::namespaces::models::Namespace;
 use super::providers::storages::models::Storage;
 use super::providers::tables::schemas_table_definition;
 use super::providers::topic_offsets::models::TopicOffset;
 use super::providers::topics::models::Topic;
 use super::providers::users::models::User;
+use super::providers::{
+    AuditLogEntry, AuditLogsTableProvider, JobNodesTableProvider, JobsTableProvider,
+    LiveQueriesTableProvider, ManifestTableProvider, NamespacesTableProvider, SchemasTableProvider,
+    StoragesTableProvider, TopicOffsetsTableProvider, TopicsTableProvider, UsersTableProvider,
+};
 // SchemaRegistry will be passed as Arc parameter from kalamdb-core
 use datafusion::datasource::TableProvider;
 use kalamdb_commons::schemas::{TableDefinition, TableType};

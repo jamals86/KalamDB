@@ -31,7 +31,11 @@ fn resolve_bind_addrs(addr: &str, label: &str) -> Result<HashSet<SocketAddr>> {
     Ok(addrs.into_iter().collect())
 }
 
-fn ensure_any_addr_bindable(addrs: &HashSet<SocketAddr>, label: &str, original_addr: &str) -> Result<()> {
+fn ensure_any_addr_bindable(
+    addrs: &HashSet<SocketAddr>,
+    label: &str,
+    original_addr: &str,
+) -> Result<()> {
     let mut last_error: Option<(SocketAddr, std::io::Error)> = None;
 
     for addr in addrs {
@@ -63,11 +67,7 @@ fn ensure_any_addr_bindable(addrs: &HashSet<SocketAddr>, label: &str, original_a
         ));
     }
 
-    Err(anyhow!(
-        "{} port check failed: unable to bind '{}'",
-        label,
-        original_addr
-    ))
+    Err(anyhow!("{} port check failed: unable to bind '{}'", label, original_addr))
 }
 
 fn validate_startup_ports(config: &ServerConfig) -> Result<()> {
@@ -121,10 +121,7 @@ fn raise_fd_limit() {
             // Re-read to report actual value
             libc::getrlimit(libc::RLIMIT_NOFILE, &mut rlim);
             if rlim.rlim_cur != old_soft {
-                eprintln!(
-                    "📂 Raised open-file limit: {} → {}",
-                    old_soft, rlim.rlim_cur
-                );
+                eprintln!("📂 Raised open-file limit: {} → {}", old_soft, rlim.rlim_cur);
             }
         }
     }

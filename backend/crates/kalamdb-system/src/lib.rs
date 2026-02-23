@@ -84,8 +84,7 @@ pub use providers::manifest::models::{
 pub use providers::namespaces::models::Namespace;
 pub use providers::storages::models::{Storage, StorageType};
 pub use providers::users::models::{
-    AuthData, User, DEFAULT_LOCKOUT_DURATION_MINUTES,
-    DEFAULT_MAX_FAILED_ATTEMPTS,
+    AuthData, User, DEFAULT_LOCKOUT_DURATION_MINUTES, DEFAULT_MAX_FAILED_ATTEMPTS,
 };
 
 // Re-export from kalamdb-commons for convenience

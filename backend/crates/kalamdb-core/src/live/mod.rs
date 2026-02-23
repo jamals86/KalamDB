@@ -10,12 +10,12 @@
 //! When data is applied on any node (leader or follower), the provider's insert/update/delete
 //! methods fire local notifications to connected clients.
 
+pub mod cluster_handler;
 pub mod helpers;
 pub mod manager;
 pub mod models; // Consolidated model definitions
 pub mod notification;
 pub mod subscription;
-pub mod cluster_handler;
 
 // Re-export types from kalamdb-commons (canonical source)
 pub use kalamdb_commons::models::{ConnectionId, LiveQueryId, TableId, UserId};

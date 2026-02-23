@@ -29,12 +29,8 @@ impl Benchmark for NamespaceIsolationBench {
             // Create 5 namespaces, each with the same table and data
             for i in 0..5 {
                 let ns = format!("{}_iso_{}", config.namespace, i);
-                client
-                    .sql_ok(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns))
-                    .await?;
-                let _ = client
-                    .sql(&format!("DROP TABLE IF EXISTS {}.iso_data", ns))
-                    .await;
+                client.sql_ok(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns)).await?;
+                let _ = client.sql(&format!("DROP TABLE IF EXISTS {}.iso_data", ns)).await;
                 client
                     .sql_ok(&format!(
                         "CREATE TABLE {}.iso_data (id INT PRIMARY KEY, ns_id INT, payload TEXT)",
@@ -87,12 +83,9 @@ impl Benchmark for NamespaceIsolationBench {
                 }));
 
                 handles.push(tokio::spawn(async move {
-                    c2.sql_ok(&format!(
-                        "SELECT COUNT(*) FROM {}.iso_data",
-                        ns2
-                    ))
-                    .await
-                    .map_err(|e| format!("NS {} count failed: {}", i, e))
+                    c2.sql_ok(&format!("SELECT COUNT(*) FROM {}.iso_data", ns2))
+                        .await
+                        .map_err(|e| format!("NS {} count failed: {}", i, e))
                 }));
             }
 
@@ -111,12 +104,8 @@ impl Benchmark for NamespaceIsolationBench {
         Box::pin(async move {
             for i in 0..5 {
                 let ns = format!("{}_iso_{}", config.namespace, i);
-                let _ = client
-                    .sql(&format!("DROP TABLE IF EXISTS {}.iso_data", ns))
-                    .await;
-                let _ = client
-                    .sql(&format!("DROP NAMESPACE IF EXISTS {}", ns))
-                    .await;
+                let _ = client.sql(&format!("DROP TABLE IF EXISTS {}.iso_data", ns)).await;
+                let _ = client.sql(&format!("DROP NAMESPACE IF EXISTS {}", ns)).await;
             }
             Ok(())
         })

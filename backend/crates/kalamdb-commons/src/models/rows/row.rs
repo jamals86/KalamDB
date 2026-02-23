@@ -130,9 +130,7 @@ where
     let maybe_value = Option::<Decimal128Value>::deserialize(deserializer)?;
     match maybe_value {
         None => Ok(None),
-        Some(Decimal128Value::String(v)) => {
-            v.parse::<i128>().map(Some).map_err(de::Error::custom)
-        },
+        Some(Decimal128Value::String(v)) => v.parse::<i128>().map(Some).map_err(de::Error::custom),
         Some(Decimal128Value::I64(v)) => Ok(Some(v as i128)),
         Some(Decimal128Value::U64(v)) => Ok(Some(v as i128)),
         Some(Decimal128Value::I128(v)) => Ok(Some(v)),

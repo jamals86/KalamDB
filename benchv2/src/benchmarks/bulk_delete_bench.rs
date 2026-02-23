@@ -29,17 +29,10 @@ impl Benchmark for BulkDeleteBench {
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
             client
-                .sql_ok(&format!(
-                    "CREATE NAMESPACE IF NOT EXISTS {}",
-                    config.namespace
-                ))
+                .sql_ok(&format!("CREATE NAMESPACE IF NOT EXISTS {}", config.namespace))
                 .await?;
-            let _ = client
-                .sql(&format!(
-                    "DROP TABLE IF EXISTS {}.bulk_del",
-                    config.namespace
-                ))
-                .await;
+            let _ =
+                client.sql(&format!("DROP TABLE IF EXISTS {}.bulk_del", config.namespace)).await;
             client
                 .sql_ok(&format!(
                     "CREATE TABLE {}.bulk_del (id INT PRIMARY KEY, bucket INT, payload TEXT)",
@@ -95,12 +88,8 @@ impl Benchmark for BulkDeleteBench {
         config: &'a Config,
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
-            let _ = client
-                .sql(&format!(
-                    "DROP TABLE IF EXISTS {}.bulk_del",
-                    config.namespace
-                ))
-                .await;
+            let _ =
+                client.sql(&format!("DROP TABLE IF EXISTS {}.bulk_del", config.namespace)).await;
             Ok(())
         })
     }

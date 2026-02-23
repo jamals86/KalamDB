@@ -13,8 +13,8 @@
 //! **Schema Caching**: Memoized via `OnceLock`
 //! **Schema**: TableDefinition provides consistent metadata for views
 
-use crate::view_base::{ViewTableProvider, VirtualView};
 use crate::error::RegistryError;
+use crate::view_base::{ViewTableProvider, VirtualView};
 use datafusion::arrow::array::{ArrayRef, Int64Builder, StringBuilder};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;

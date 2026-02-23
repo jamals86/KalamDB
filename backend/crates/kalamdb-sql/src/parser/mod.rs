@@ -26,4 +26,6 @@ pub mod utils;
 pub use extensions::*;
 pub use query_parser::*;
 pub use system::*;
-pub use utils::{extract_dml_table_id, extract_dml_table_id_from_statement, parse_single_statement};
+pub use utils::{
+    extract_dml_table_id, extract_dml_table_id_from_statement, parse_single_statement,
+};

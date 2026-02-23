@@ -25,7 +25,8 @@ use tonic_prost::ProstCodec;
 
 pub use super::models::{
     ForwardSqlRequest, ForwardSqlResponse, ForwardSqlResponsePayload, GetNodeInfoRequest,
-    GetNodeInfoResponse, NotifyFollowersRequest, NotifyFollowersResponse, PingRequest, PingResponse,
+    GetNodeInfoResponse, NotifyFollowersRequest, NotifyFollowersResponse, PingRequest,
+    PingResponse,
 };
 
 // ─── gRPC Client ────────────────────────────────────────────────────────────
@@ -69,10 +70,8 @@ pub mod cluster_client {
                 "/kalamdb.cluster.ClusterService/NotifyFollowers",
             );
             let mut req = request.into_request();
-            req.extensions_mut().insert(GrpcMethod::new(
-                "kalamdb.cluster.ClusterService",
-                "NotifyFollowers",
-            ));
+            req.extensions_mut()
+                .insert(GrpcMethod::new("kalamdb.cluster.ClusterService", "NotifyFollowers"));
             self.inner.unary(req, path, codec).await
         }
 
@@ -89,10 +88,8 @@ pub mod cluster_client {
             let path =
                 http::uri::PathAndQuery::from_static("/kalamdb.cluster.ClusterService/ForwardSql");
             let mut req = request.into_request();
-            req.extensions_mut().insert(GrpcMethod::new(
-                "kalamdb.cluster.ClusterService",
-                "ForwardSql",
-            ));
+            req.extensions_mut()
+                .insert(GrpcMethod::new("kalamdb.cluster.ClusterService", "ForwardSql"));
             self.inner.unary(req, path, codec).await
         }
 
@@ -123,14 +120,11 @@ pub mod cluster_client {
             })?;
 
             let codec = ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/kalamdb.cluster.ClusterService/GetNodeInfo",
-            );
+            let path =
+                http::uri::PathAndQuery::from_static("/kalamdb.cluster.ClusterService/GetNodeInfo");
             let mut req = request.into_request();
-            req.extensions_mut().insert(GrpcMethod::new(
-                "kalamdb.cluster.ClusterService",
-                "GetNodeInfo",
-            ));
+            req.extensions_mut()
+                .insert(GrpcMethod::new("kalamdb.cluster.ClusterService", "GetNodeInfo"));
             self.inner.unary(req, path, codec).await
         }
     }

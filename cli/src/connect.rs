@@ -317,7 +317,10 @@ pub async fn create_session(
             if from_status {
                 true
             } else {
-                matches!(try_login(server_url, "root", "", verbose).await, LoginResult::SetupRequired)
+                matches!(
+                    try_login(server_url, "root", "", verbose).await,
+                    LoginResult::SetupRequired
+                )
             }
         } else {
             false

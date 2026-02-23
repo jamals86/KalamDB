@@ -40,7 +40,7 @@ async fn main() {
     println!("║       KalamDB Benchmark Suite v0.1.0          ║");
     println!("╚════════════════════════════════════════════════╝");
     println!();
-    println!("  Server:      {}", config.url);
+    println!("  Servers:     {}", config.urls.join(", "));
     println!("  Namespace:   {}", config.namespace);
     println!("  Iterations:  {}", config.iterations);
     println!("  Warmup:      {}", config.warmup);
@@ -56,17 +56,20 @@ async fn main() {
 
     // Build client (login to get Bearer token)
     print!("Authenticating... ");
-    let client = match KalamClient::login(&config.url, &config.user, &config.password).await {
+    let client = match KalamClient::login(&config.urls, &config.user, &config.password).await {
         Ok(c) => {
             println!("OK");
             c
-        }
+        },
         Err(e) => {
             eprintln!("FAILED");
             eprintln!("  {}", e);
-            eprintln!("Make sure the server is running at {} and credentials are correct.", config.url);
+            eprintln!(
+                "Make sure all servers are running at [{}] and credentials are correct.",
+                config.urls.join(", ")
+            );
             std::process::exit(1);
-        }
+        },
     };
 
     println!();
@@ -79,10 +82,7 @@ async fn main() {
     // ── Load previous run for comparison ───────────────────────────
     let previous = comparison::load_previous_run(&config.output_dir);
     if let Some(ref prev) = previous {
-        println!(
-            "  📊 Comparing against previous run: {}\n",
-            prev.timestamp
-        );
+        println!("  📊 Comparing against previous run: {}\n", prev.timestamp);
     } else {
         println!("  📊 No previous run found — skipping comparison\n");
     }
@@ -137,15 +137,19 @@ async fn main() {
         Err(e) => eprintln!("  Failed to write JSON report: {}", e),
     }
 
-    match html_reporter::write_html_report(&results, &config, &config.output_dir, KALAMDB_VERSION, previous.as_ref()) {
+    match html_reporter::write_html_report(
+        &results,
+        &config,
+        &config.output_dir,
+        KALAMDB_VERSION,
+        previous.as_ref(),
+    ) {
         Ok(path) => println!("  HTML report: {}", path),
         Err(e) => eprintln!("  Failed to write HTML report: {}", e),
     }
 
     // Clean up the benchmark namespace
-    let _ = client
-        .sql(&format!("DROP NAMESPACE IF EXISTS {}", config.namespace))
-        .await;
+    let _ = client.sql(&format!("DROP NAMESPACE IF EXISTS {}", config.namespace)).await;
 
     println!();
     if failed > 0 {

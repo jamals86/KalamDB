@@ -3,12 +3,12 @@
 //! This module defines the `SchemaField` struct used in REST API responses
 //! to provide type-safe schema information to clients.
 
-use crate::schemas::ColumnDefinition;
 use crate::conversions::read_kalam_column_flags_metadata;
 use crate::models::datatypes::KalamDataType;
+use crate::schemas::ColumnDefinition;
 use crate::schemas::{FieldFlag, FieldFlags};
-use serde::{Deserialize, Serialize};
 use arrow_schema::Field;
+use serde::{Deserialize, Serialize};
 
 /// A field in the result schema returned by SQL queries
 ///

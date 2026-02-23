@@ -27,16 +27,10 @@ impl Benchmark for MixedReadWriteBench {
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
             client
-                .sql_ok(&format!(
-                    "CREATE NAMESPACE IF NOT EXISTS {}",
-                    config.namespace
-                ))
+                .sql_ok(&format!("CREATE NAMESPACE IF NOT EXISTS {}", config.namespace))
                 .await?;
             let _ = client
-                .sql(&format!(
-                    "DROP TABLE IF EXISTS {}.mixed_bench",
-                    config.namespace
-                ))
+                .sql(&format!("DROP TABLE IF EXISTS {}.mixed_bench", config.namespace))
                 .await;
             client
                 .sql_ok(&format!(
@@ -95,14 +89,9 @@ impl Benchmark for MixedReadWriteBench {
                 let query = match i % 3 {
                     0 => format!("SELECT * FROM {}.mixed_bench WHERE id < 50", ns),
                     1 => format!("SELECT COUNT(*) FROM {}.mixed_bench", ns),
-                    _ => format!(
-                        "SELECT * FROM {}.mixed_bench ORDER BY id DESC LIMIT 20",
-                        ns
-                    ),
+                    _ => format!("SELECT * FROM {}.mixed_bench ORDER BY id DESC LIMIT 20", ns),
                 };
-                handles.push(tokio::spawn(
-                    async move { c.sql_ok(&query).await },
-                ));
+                handles.push(tokio::spawn(async move { c.sql_ok(&query).await }));
             }
 
             for h in handles {
@@ -119,10 +108,7 @@ impl Benchmark for MixedReadWriteBench {
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
             let _ = client
-                .sql(&format!(
-                    "DROP TABLE IF EXISTS {}.mixed_bench",
-                    config.namespace
-                ))
+                .sql(&format!("DROP TABLE IF EXISTS {}.mixed_bench", config.namespace))
                 .await;
             Ok(())
         })

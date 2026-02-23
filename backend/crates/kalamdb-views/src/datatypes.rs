@@ -242,10 +242,7 @@ impl VirtualView for DatatypesView {
             ],
         )
         .map_err(|e| {
-            crate::error::RegistryError::Other(format!(
-                "Failed to build datatypes batch: {}",
-                e
-            ))
+            crate::error::RegistryError::Other(format!("Failed to build datatypes batch: {}", e))
         })
     }
 }

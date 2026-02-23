@@ -7,7 +7,7 @@ use std::fmt;
 use crate::StorageKey;
 
 /// Type-safe wrapper for audit log identifiers stored in system.audit_log.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, )]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AuditLogId(String);
 
 impl AuditLogId {

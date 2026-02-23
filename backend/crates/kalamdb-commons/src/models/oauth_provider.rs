@@ -159,7 +159,7 @@ impl OAuthProvider {
                 use sha2::Digest;
                 let hash = hex::encode(sha2::Sha256::digest(s.as_bytes()));
                 return hash[..3].to_string();
-            }
+            },
         };
         static_prefix.to_string()
     }
@@ -415,36 +415,23 @@ mod tests {
 
     #[test]
     fn test_oauth_provider_detect_azure() {
-        let p = OAuthProvider::detect_from_issuer(
-            "https://login.microsoftonline.com/tenant-id/v2.0",
-        );
+        let p =
+            OAuthProvider::detect_from_issuer("https://login.microsoftonline.com/tenant-id/v2.0");
         assert_eq!(p, OAuthProvider::AzureAd);
     }
 
     #[test]
     fn test_oauth_provider_detect_custom() {
         let p = OAuthProvider::detect_from_issuer("https://my-idp.internal.corp");
-        assert_eq!(
-            p,
-            OAuthProvider::Custom("https://my-idp.internal.corp".to_string())
-        );
+        assert_eq!(p, OAuthProvider::Custom("https://my-idp.internal.corp".to_string()));
     }
 
     #[test]
     fn test_oauth_provider_aliases() {
         assert_eq!(OAuthProvider::from_str_lossy("twitter"), OAuthProvider::X);
-        assert_eq!(
-            OAuthProvider::from_str_lossy("meta"),
-            OAuthProvider::Facebook
-        );
-        assert_eq!(
-            OAuthProvider::from_str_lossy("microsoft"),
-            OAuthProvider::AzureAd
-        );
-        assert_eq!(
-            OAuthProvider::from_str_lossy("aws_cognito"),
-            OAuthProvider::Cognito
-        );
+        assert_eq!(OAuthProvider::from_str_lossy("meta"), OAuthProvider::Facebook);
+        assert_eq!(OAuthProvider::from_str_lossy("microsoft"), OAuthProvider::AzureAd);
+        assert_eq!(OAuthProvider::from_str_lossy("aws_cognito"), OAuthProvider::Cognito);
     }
 
     #[test]

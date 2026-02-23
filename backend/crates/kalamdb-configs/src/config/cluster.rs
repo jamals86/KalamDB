@@ -268,51 +268,21 @@ impl ClusterConfig {
         }
 
         if self.rpc_tls.enabled {
-            if self
-                .rpc_tls
-                .ca_cert_path
-                .as_deref()
-                .unwrap_or("")
-                .trim()
-                .is_empty()
-            {
-                return Err(
-                    "cluster.rpc_tls.ca_cert_path is required when rpc_tls.enabled=true".to_string()
-                );
+            if self.rpc_tls.ca_cert_path.as_deref().unwrap_or("").trim().is_empty() {
+                return Err("cluster.rpc_tls.ca_cert_path is required when rpc_tls.enabled=true"
+                    .to_string());
             }
-            if self
-                .rpc_tls
-                .node_cert_path
-                .as_deref()
-                .unwrap_or("")
-                .trim()
-                .is_empty()
-            {
-                return Err(
-                    "cluster.rpc_tls.node_cert_path is required when rpc_tls.enabled=true".to_string()
-                );
+            if self.rpc_tls.node_cert_path.as_deref().unwrap_or("").trim().is_empty() {
+                return Err("cluster.rpc_tls.node_cert_path is required when rpc_tls.enabled=true"
+                    .to_string());
             }
-            if self
-                .rpc_tls
-                .node_key_path
-                .as_deref()
-                .unwrap_or("")
-                .trim()
-                .is_empty()
-            {
-                return Err(
-                    "cluster.rpc_tls.node_key_path is required when rpc_tls.enabled=true".to_string()
-                );
+            if self.rpc_tls.node_key_path.as_deref().unwrap_or("").trim().is_empty() {
+                return Err("cluster.rpc_tls.node_key_path is required when rpc_tls.enabled=true"
+                    .to_string());
             }
 
             for peer in &self.peers {
-                if peer
-                    .rpc_server_name
-                    .as_deref()
-                    .unwrap_or("")
-                    .trim()
-                    .is_empty()
-                {
+                if peer.rpc_server_name.as_deref().unwrap_or("").trim().is_empty() {
                     return Err(format!(
                         "cluster.peers(node_id={}) requires rpc_server_name when rpc_tls.enabled=true",
                         peer.node_id

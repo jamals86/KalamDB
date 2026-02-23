@@ -74,10 +74,14 @@ pub async fn refresh_handler(
         if *claimed_role != user.role {
             log::warn!(
                 "Refresh token role mismatch: claimed={:?}, actual={:?} for user={}",
-                claimed_role, user.role, user.username
+                claimed_role,
+                user.role,
+                user.username
             );
-            return HttpResponse::Unauthorized()
-                .json(AuthErrorResponse::new("unauthorized", "Token role does not match user role"));
+            return HttpResponse::Unauthorized().json(AuthErrorResponse::new(
+                "unauthorized",
+                "Token role does not match user role",
+            ));
         }
     }
 

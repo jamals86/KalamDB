@@ -98,10 +98,7 @@ fn smoke_subscription_explicit_close_removes_live_query() {
             };
 
             let query_sql = format!("SELECT * FROM {} -- {}", full_clone, marker_clone);
-            let cfg = SubscriptionConfig::new(
-                format!("sub_{}", marker_clone),
-                query_sql,
-            );
+            let cfg = SubscriptionConfig::new(format!("sub_{}", marker_clone), query_sql);
 
             let mut sub = match client.subscribe_with_config(cfg).await {
                 Ok(s) => s,
@@ -144,10 +141,7 @@ fn smoke_subscription_explicit_close_removes_live_query() {
 
     if !closed {
         eprintln!("WARN: subscription setup/close failed; skipping live_query check");
-        let _ = execute_sql_as_root_via_client(&format!(
-            "DROP NAMESPACE IF EXISTS {} CASCADE",
-            ns
-        ));
+        let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", ns));
         return;
     }
 
@@ -212,10 +206,7 @@ fn smoke_subscription_drop_removes_live_query() {
             };
 
             let query_sql = format!("SELECT * FROM {} -- {}", full_clone, marker_clone);
-            let cfg = SubscriptionConfig::new(
-                format!("sub_{}", marker_clone),
-                query_sql,
-            );
+            let cfg = SubscriptionConfig::new(format!("sub_{}", marker_clone), query_sql);
 
             let mut sub = match client.subscribe_with_config(cfg).await {
                 Ok(s) => s,
@@ -256,10 +247,7 @@ fn smoke_subscription_drop_removes_live_query() {
 
     if !dropped {
         eprintln!("WARN: subscription setup failed; skipping live_query check");
-        let _ = execute_sql_as_root_via_client(&format!(
-            "DROP NAMESPACE IF EXISTS {} CASCADE",
-            ns
-        ));
+        let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", ns));
         return;
     }
 

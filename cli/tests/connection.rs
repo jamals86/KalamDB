@@ -14,6 +14,8 @@
 //
 // Unit tests (no server required):
 mod common;
+#[path = "connection/concurrent_ws_tests.rs"]
+mod concurrent_ws_tests;
 #[path = "connection/connection_options_tests.rs"]
 mod connection_options_tests;
 #[path = "connection/reconnection_tests.rs"]
@@ -22,5 +24,3 @@ mod reconnection_tests;
 mod resume_seqid_tests;
 #[path = "connection/timeout_tests.rs"]
 mod timeout_tests;
-#[path = "connection/concurrent_ws_tests.rs"]
-mod concurrent_ws_tests;

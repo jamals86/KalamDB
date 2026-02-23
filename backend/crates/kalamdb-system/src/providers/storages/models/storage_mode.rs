@@ -3,7 +3,7 @@ use std::fmt;
 use std::str::FromStr;
 
 /// Enum representing storage mode preferences for users.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, )]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum StorageMode {
     Table,
     Region,

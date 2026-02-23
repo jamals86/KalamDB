@@ -33,190 +33,187 @@ fn test_concurrent_websocket_subscriptions() {
         .expect("Failed to create tokio runtime");
 
     rt.block_on(async {
+        let num_connections: usize = 100; // Moderate load — enough to expose contention issues
+        let namespace = generate_unique_namespace("conc_ws");
+        let table = generate_unique_table("scale");
+        let full = format!("{}.{}", namespace, table);
 
-    let num_connections: usize = 100; // Moderate load — enough to expose contention issues
-    let namespace = generate_unique_namespace("conc_ws");
-    let table = generate_unique_table("scale");
-    let full = format!("{}.{}", namespace, table);
-
-    // Setup: create namespace and table
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
-        .expect("create namespace");
-    let create_sql = format!(
-        r#"CREATE TABLE {} (
+        // Setup: create namespace and table
+        execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+            .expect("create namespace");
+        let create_sql = format!(
+            r#"CREATE TABLE {} (
             id BIGINT AUTO_INCREMENT PRIMARY KEY,
             data TEXT NOT NULL,
             ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         ) WITH (TYPE='USER')"#,
-        full
-    );
-    execute_sql_as_root_via_client(&create_sql).expect("create table");
+            full
+        );
+        execute_sql_as_root_via_client(&create_sql).expect("create table");
 
-    // Insert a row so subscriptions have initial data
-    execute_sql_as_root_via_client(&format!(
-        "INSERT INTO {} (data) VALUES ('seed_row')",
-        full
-    ))
-    .expect("seed insert");
+        // Insert a row so subscriptions have initial data
+        execute_sql_as_root_via_client(&format!("INSERT INTO {} (data) VALUES ('seed_row')", full))
+            .expect("seed insert");
 
-    let base_url = leader_or_server_url();
-    let subscribed = Arc::new(AtomicUsize::new(0));
-    let notified = Arc::new(AtomicUsize::new(0));
-    let errors = Arc::new(AtomicUsize::new(0));
-    let timeouts = Arc::new(AtomicUsize::new(0));
+        let base_url = leader_or_server_url();
+        let subscribed = Arc::new(AtomicUsize::new(0));
+        let notified = Arc::new(AtomicUsize::new(0));
+        let errors = Arc::new(AtomicUsize::new(0));
+        let timeouts = Arc::new(AtomicUsize::new(0));
 
-    let query = format!("SELECT * FROM {}", full);
+        let query = format!("SELECT * FROM {}", full);
 
-    // Launch concurrent subscriptions
-    let mut handles = Vec::with_capacity(num_connections);
-    for i in 0..num_connections {
-        let base_url = base_url.clone();
-        let query = query.clone();
-        let subscribed = Arc::clone(&subscribed);
-        let notified = Arc::clone(&notified);
-        let errors = Arc::clone(&errors);
-        let timeouts = Arc::clone(&timeouts);
+        // Launch concurrent subscriptions
+        let mut handles = Vec::with_capacity(num_connections);
+        for i in 0..num_connections {
+            let base_url = base_url.clone();
+            let query = query.clone();
+            let subscribed = Arc::clone(&subscribed);
+            let notified = Arc::clone(&notified);
+            let errors = Arc::clone(&errors);
+            let timeouts = Arc::clone(&timeouts);
 
-        let handle = tokio::spawn(async move {
-            let client = match client_for_user_on_url_with_timeouts(
-                &base_url,
-                default_username(),
-                default_password(),
-                KalamLinkTimeouts::builder()
-                    .connection_timeout_secs(10)
-                    .receive_timeout_secs(60)
-                    .send_timeout_secs(10)
-                    .subscribe_timeout_secs(15)
-                    .auth_timeout_secs(10)
-                    .initial_data_timeout(Duration::from_secs(30))
-                    .build(),
-            ) {
-                Ok(c) => c,
-                Err(e) => {
-                    eprintln!("[conn {}] client build error: {}", i, e);
-                    errors.fetch_add(1, Ordering::Relaxed);
-                    return;
-                },
-            };
-
-            let mut sub = match client
-                .subscribe_with_config(
-                    SubscriptionConfig::new(format!("conc_sub_{}", i), &query),
-                )
-                .await
-            {
-                Ok(s) => {
-                    subscribed.fetch_add(1, Ordering::Relaxed);
-                    s
-                },
-                Err(e) => {
-                    let msg = e.to_string();
-                    if msg.contains("timeout") || msg.contains("Timeout") {
-                        eprintln!("[conn {}] subscribe timeout: {}", i, e);
-                        timeouts.fetch_add(1, Ordering::Relaxed);
-                    } else {
-                        eprintln!("[conn {}] subscribe error: {}", i, e);
+            let handle = tokio::spawn(async move {
+                let client = match client_for_user_on_url_with_timeouts(
+                    &base_url,
+                    default_username(),
+                    default_password(),
+                    KalamLinkTimeouts::builder()
+                        .connection_timeout_secs(10)
+                        .receive_timeout_secs(60)
+                        .send_timeout_secs(10)
+                        .subscribe_timeout_secs(15)
+                        .auth_timeout_secs(10)
+                        .initial_data_timeout(Duration::from_secs(30))
+                        .build(),
+                ) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        eprintln!("[conn {}] client build error: {}", i, e);
                         errors.fetch_add(1, Ordering::Relaxed);
-                    }
-                    return;
-                },
-            };
+                        return;
+                    },
+                };
 
-            // Wait for at least one notification (from the INSERT we'll do below)
-            let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
-            loop {
-                tokio::select! {
-                    _ = tokio::time::sleep_until(deadline) => {
-                        // Timed out waiting for notification — this is OK for this test,
-                        // the main thing is we stayed connected without heartbeat timeout
-                        break;
-                    }
-                    event = sub.next() => {
-                        match event {
-                            Some(Ok(_change)) => {
-                                notified.fetch_add(1, Ordering::Relaxed);
-                                break;
-                            }
-                            Some(Err(e)) => {
-                                let msg = e.to_string();
-                                if msg.contains("heartbeat") || msg.contains("Heartbeat") {
-                                    eprintln!("[conn {}] heartbeat timeout: {}", i, e);
-                                    timeouts.fetch_add(1, Ordering::Relaxed);
-                                } else {
-                                    eprintln!("[conn {}] notification error: {}", i, e);
-                                    errors.fetch_add(1, Ordering::Relaxed);
+                let mut sub = match client
+                    .subscribe_with_config(SubscriptionConfig::new(
+                        format!("conc_sub_{}", i),
+                        &query,
+                    ))
+                    .await
+                {
+                    Ok(s) => {
+                        subscribed.fetch_add(1, Ordering::Relaxed);
+                        s
+                    },
+                    Err(e) => {
+                        let msg = e.to_string();
+                        if msg.contains("timeout") || msg.contains("Timeout") {
+                            eprintln!("[conn {}] subscribe timeout: {}", i, e);
+                            timeouts.fetch_add(1, Ordering::Relaxed);
+                        } else {
+                            eprintln!("[conn {}] subscribe error: {}", i, e);
+                            errors.fetch_add(1, Ordering::Relaxed);
+                        }
+                        return;
+                    },
+                };
+
+                // Wait for at least one notification (from the INSERT we'll do below)
+                let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+                loop {
+                    tokio::select! {
+                        _ = tokio::time::sleep_until(deadline) => {
+                            // Timed out waiting for notification — this is OK for this test,
+                            // the main thing is we stayed connected without heartbeat timeout
+                            break;
+                        }
+                        event = sub.next() => {
+                            match event {
+                                Some(Ok(_change)) => {
+                                    notified.fetch_add(1, Ordering::Relaxed);
+                                    break;
                                 }
-                                break;
-                            }
-                            None => {
-                                // Stream ended unexpectedly
-                                eprintln!("[conn {}] stream ended", i);
-                                errors.fetch_add(1, Ordering::Relaxed);
-                                break;
+                                Some(Err(e)) => {
+                                    let msg = e.to_string();
+                                    if msg.contains("heartbeat") || msg.contains("Heartbeat") {
+                                        eprintln!("[conn {}] heartbeat timeout: {}", i, e);
+                                        timeouts.fetch_add(1, Ordering::Relaxed);
+                                    } else {
+                                        eprintln!("[conn {}] notification error: {}", i, e);
+                                        errors.fetch_add(1, Ordering::Relaxed);
+                                    }
+                                    break;
+                                }
+                                None => {
+                                    // Stream ended unexpectedly
+                                    eprintln!("[conn {}] stream ended", i);
+                                    errors.fetch_add(1, Ordering::Relaxed);
+                                    break;
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            // Explicitly close subscription
-            let _ = sub.close().await;
-        });
-        handles.push(handle);
-    }
+                // Explicitly close subscription
+                let _ = sub.close().await;
+            });
+            handles.push(handle);
+        }
 
-    // Give subscriptions time to connect
-    tokio::time::sleep(Duration::from_secs(3)).await;
+        // Give subscriptions time to connect
+        tokio::time::sleep(Duration::from_secs(3)).await;
 
-    // Insert a row to trigger notifications for all subscribers
-    execute_sql_as_root_via_client(&format!(
-        "INSERT INTO {} (data) VALUES ('trigger_notification')",
-        full
-    ))
-    .expect("trigger insert");
+        // Insert a row to trigger notifications for all subscribers
+        execute_sql_as_root_via_client(&format!(
+            "INSERT INTO {} (data) VALUES ('trigger_notification')",
+            full
+        ))
+        .expect("trigger insert");
 
-    // Wait for all tasks to complete
-    for handle in handles {
-        let _ = handle.await;
-    }
+        // Wait for all tasks to complete
+        for handle in handles {
+            let _ = handle.await;
+        }
 
-    let total_subscribed = subscribed.load(Ordering::Relaxed);
-    let total_notified = notified.load(Ordering::Relaxed);
-    let total_errors = errors.load(Ordering::Relaxed);
-    let total_timeouts = timeouts.load(Ordering::Relaxed);
+        let total_subscribed = subscribed.load(Ordering::Relaxed);
+        let total_notified = notified.load(Ordering::Relaxed);
+        let total_errors = errors.load(Ordering::Relaxed);
+        let total_timeouts = timeouts.load(Ordering::Relaxed);
 
-    eprintln!(
-        "\n=== Concurrent WS Test Results ===\n\
+        eprintln!(
+            "\n=== Concurrent WS Test Results ===\n\
          Connections attempted: {}\n\
          Successfully subscribed: {}\n\
          Received notification: {}\n\
          Errors: {}\n\
          Heartbeat timeouts: {}\n",
-        num_connections, total_subscribed, total_notified, total_errors, total_timeouts
-    );
+            num_connections, total_subscribed, total_notified, total_errors, total_timeouts
+        );
 
-    // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+        // Cleanup
+        let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full));
+        let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
 
-    // Assertions: at least 90% should succeed (some may fail due to connection limits)
-    let min_success = num_connections * 9 / 10;
-    assert!(
-        total_subscribed >= min_success,
-        "Expected at least {} subscriptions to succeed, got {} (errors={}, timeouts={})",
-        min_success,
-        total_subscribed,
-        total_errors,
-        total_timeouts
-    );
+        // Assertions: at least 90% should succeed (some may fail due to connection limits)
+        let min_success = num_connections * 9 / 10;
+        assert!(
+            total_subscribed >= min_success,
+            "Expected at least {} subscriptions to succeed, got {} (errors={}, timeouts={})",
+            min_success,
+            total_subscribed,
+            total_errors,
+            total_timeouts
+        );
 
-    // No heartbeat timeouts allowed — this is the key signal our improvements work
-    assert_eq!(
-        total_timeouts, 0,
-        "Expected zero heartbeat timeouts, got {} (this indicates the server heartbeat \
+        // No heartbeat timeouts allowed — this is the key signal our improvements work
+        assert_eq!(
+            total_timeouts, 0,
+            "Expected zero heartbeat timeouts, got {} (this indicates the server heartbeat \
          checker is too aggressive or connection handling is too slow)",
-        total_timeouts
-    );
+            total_timeouts
+        );
     }); // rt.block_on
 }
 
@@ -234,92 +231,89 @@ fn test_rapid_connect_disconnect() {
         .expect("Failed to create tokio runtime");
 
     rt.block_on(async {
+        let namespace = generate_unique_namespace("rapid_ws");
+        let table = generate_unique_table("churn");
+        let full = format!("{}.{}", namespace, table);
 
-    let namespace = generate_unique_namespace("rapid_ws");
-    let table = generate_unique_table("churn");
-    let full = format!("{}.{}", namespace, table);
-
-    // Setup
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
-        .expect("create namespace");
-    let create_sql = format!(
-        r#"CREATE TABLE {} (
+        // Setup
+        execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+            .expect("create namespace");
+        let create_sql = format!(
+            r#"CREATE TABLE {} (
             id BIGINT AUTO_INCREMENT PRIMARY KEY,
             msg TEXT NOT NULL
         ) WITH (TYPE='USER')"#,
-        full
-    );
-    execute_sql_as_root_via_client(&create_sql).expect("create table");
+            full
+        );
+        execute_sql_as_root_via_client(&create_sql).expect("create table");
 
-    let base_url = leader_or_server_url();
-    let query = format!("SELECT * FROM {}", full);
-    let cycles = 50;
-    let mut success_count = 0;
+        let base_url = leader_or_server_url();
+        let query = format!("SELECT * FROM {}", full);
+        let cycles = 50;
+        let mut success_count = 0;
 
-    let start = Instant::now();
+        let start = Instant::now();
 
-    for i in 0..cycles {
-        let client = match client_for_user_on_url_with_timeouts(
-            &base_url,
-            default_username(),
-            default_password(),
-            KalamLinkTimeouts::builder()
-                .connection_timeout_secs(5)
-                .receive_timeout_secs(10)
-                .send_timeout_secs(5)
-                .subscribe_timeout_secs(5)
-                .auth_timeout_secs(5)
-                .initial_data_timeout(Duration::from_secs(10))
-                .build(),
-        ) {
-            Ok(c) => c,
-            Err(e) => {
-                eprintln!("[cycle {}] client error: {}", i, e);
-                continue;
-            },
-        };
+        for i in 0..cycles {
+            let client = match client_for_user_on_url_with_timeouts(
+                &base_url,
+                default_username(),
+                default_password(),
+                KalamLinkTimeouts::builder()
+                    .connection_timeout_secs(5)
+                    .receive_timeout_secs(10)
+                    .send_timeout_secs(5)
+                    .subscribe_timeout_secs(5)
+                    .auth_timeout_secs(5)
+                    .initial_data_timeout(Duration::from_secs(10))
+                    .build(),
+            ) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("[cycle {}] client error: {}", i, e);
+                    continue;
+                },
+            };
 
-        match client
-            .subscribe_with_config(
-                SubscriptionConfig::new(format!("rapid_{}", i), &query),
-            )
-            .await
-        {
-            Ok(mut sub) => {
-                // Immediately close — tests cleanup path
-                let _ = sub.close().await;
-                success_count += 1;
-            },
-            Err(e) => {
-                eprintln!("[cycle {}] subscribe error: {}", i, e);
-            },
+            match client
+                .subscribe_with_config(SubscriptionConfig::new(format!("rapid_{}", i), &query))
+                .await
+            {
+                Ok(mut sub) => {
+                    // Immediately close — tests cleanup path
+                    let _ = sub.close().await;
+                    success_count += 1;
+                },
+                Err(e) => {
+                    eprintln!("[cycle {}] subscribe error: {}", i, e);
+                },
+            }
         }
-    }
 
-    let elapsed = start.elapsed();
+        let elapsed = start.elapsed();
 
-    eprintln!(
-        "\n=== Rapid Connect/Disconnect Results ===\n\
+        eprintln!(
+            "\n=== Rapid Connect/Disconnect Results ===\n\
          Cycles: {}\n\
          Successful: {}\n\
          Elapsed: {:.2}s\n\
          Avg per cycle: {:.1}ms\n",
-        cycles,
-        success_count,
-        elapsed.as_secs_f64(),
-        elapsed.as_millis() as f64 / cycles as f64,
-    );
+            cycles,
+            success_count,
+            elapsed.as_secs_f64(),
+            elapsed.as_millis() as f64 / cycles as f64,
+        );
 
-    // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+        // Cleanup
+        let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full));
+        let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
 
-    // At least 90% should succeed
-    assert!(
-        success_count >= cycles * 9 / 10,
-        "Expected at least {} cycles to succeed, got {}",
-        cycles * 9 / 10,
-        success_count
-    );
+        // At least 90% should succeed
+        assert!(
+            success_count >= cycles * 9 / 10,
+            "Expected at least {} cycles to succeed, got {}",
+            cycles * 9 / 10,
+            success_count
+        );
     }); // rt.block_on
 }

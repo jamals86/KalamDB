@@ -27,16 +27,10 @@ impl Benchmark for ConcurrentMixedDmlBench {
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
             client
-                .sql_ok(&format!(
-                    "CREATE NAMESPACE IF NOT EXISTS {}",
-                    config.namespace
-                ))
+                .sql_ok(&format!("CREATE NAMESPACE IF NOT EXISTS {}", config.namespace))
                 .await?;
             let _ = client
-                .sql(&format!(
-                    "DROP TABLE IF EXISTS {}.mixed_dml",
-                    config.namespace
-                ))
+                .sql(&format!("DROP TABLE IF EXISTS {}.mixed_dml", config.namespace))
                 .await;
             client
                 .sql_ok(&format!(
@@ -131,10 +125,7 @@ impl Benchmark for ConcurrentMixedDmlBench {
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
             let _ = client
-                .sql(&format!(
-                    "DROP TABLE IF EXISTS {}.mixed_dml",
-                    config.namespace
-                ))
+                .sql(&format!("DROP TABLE IF EXISTS {}.mixed_dml", config.namespace))
                 .await;
             Ok(())
         })

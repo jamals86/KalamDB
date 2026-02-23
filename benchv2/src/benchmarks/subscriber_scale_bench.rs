@@ -2,11 +2,11 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use kalam_link::{ChangeEvent, SubscriptionConfig};
 use serde_json::Value;
-use tokio::sync::{Mutex, Semaphore, watch};
+use tokio::sync::{watch, Mutex, Semaphore};
 
 use crate::benchmarks::Benchmark;
 use crate::client::KalamClient;
@@ -21,7 +21,9 @@ use crate::config::Config;
 pub struct SubscriberScaleBench;
 
 /// Tiers to test (cumulative subscriber counts).
-const TIERS: &[u32] = &[10, 100, 500, 1_000, 2_000, 5_000, 10_000, 25_000, 50_000, 100_000];
+const TIERS: &[u32] = &[
+    10, 100, 500, 1_000, 2_000, 5_000, 10_000, 25_000, 50_000, 100_000,
+];
 
 /// Max concurrent connection attempts at once (to avoid fd exhaustion bursts).
 const CONNECT_BATCH: usize = 1_000;
@@ -43,6 +45,9 @@ const FAILURE_THRESHOLD: f64 = 0.20;
 
 /// How long to wait for graceful task shutdown after signalling stop.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(45);
+
+/// How long to wait when validating each configured WebSocket target.
+const TARGET_VALIDATE_TIMEOUT: Duration = Duration::from_secs(5);
 
 impl Benchmark for SubscriberScaleBench {
     fn name(&self) -> &str {
@@ -66,16 +71,10 @@ impl Benchmark for SubscriberScaleBench {
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
             client
-                .sql_ok(&format!(
-                    "CREATE NAMESPACE IF NOT EXISTS {}",
-                    config.namespace
-                ))
+                .sql_ok(&format!("CREATE NAMESPACE IF NOT EXISTS {}", config.namespace))
                 .await?;
             let _ = client
-                .sql(&format!(
-                    "DROP USER TABLE IF EXISTS {}.scale_sub",
-                    config.namespace
-                ))
+                .sql(&format!("DROP USER TABLE IF EXISTS {}.scale_sub", config.namespace))
                 .await;
             client
                 .sql_ok(&format!(
@@ -96,20 +95,30 @@ impl Benchmark for SubscriberScaleBench {
         Box::pin(async move {
             // Clean up probe rows from any previous iteration to avoid PK collisions
             let _ = client
-                .sql(&format!(
-                    "DELETE FROM {}.scale_sub WHERE id >= 1000000",
-                    config.namespace
-                ))
+                .sql(&format!("DELETE FROM {}.scale_sub WHERE id >= 1000000", config.namespace))
                 .await;
 
             let max_subs = config.max_subscribers;
+            let ws_targets = validate_ws_targets(
+                client,
+                &config.namespace,
+                resolve_subscriber_ws_targets(config),
+            )
+            .await?;
+            let ws_targets = Arc::new(ws_targets);
+
+            if ws_targets.len() == 1
+                && max_subs > 32_000
+                && std::env::var("KALAMDB_ALLOW_SINGLE_WS_TARGET").ok().as_deref() != Some("1")
+            {
+                return Err(format!(
+                    "Single WS target ({}) is likely capped by local ephemeral ports near ~32K. Use --urls with multiple endpoints (example: --urls http://127.0.0.1:8080,http://127.0.0.2:8080,http://127.0.0.3:8080,http://127.0.0.4:8080), or set KALAMDB_ALLOW_SINGLE_WS_TARGET=1 to force this run.",
+                    ws_targets[0]
+                ));
+            }
 
             // Build the list of tiers up to max_subscribers
-            let tiers: Vec<u32> = TIERS
-                .iter()
-                .copied()
-                .filter(|&t| t <= max_subs)
-                .collect();
+            let tiers: Vec<u32> = TIERS.iter().copied().filter(|&t| t <= max_subs).collect();
             let tiers = if tiers.last().copied() != Some(max_subs) {
                 let mut t = tiers;
                 t.push(max_subs);
@@ -143,13 +152,28 @@ impl Benchmark for SubscriberScaleBench {
             let semaphore = Arc::new(Semaphore::new(CONNECT_BATCH));
 
             println!(
-                "  Settings: connect_batch={}, wave_size={}, wave_pause={}ms, connect_timeout={}, base_delivery_window={}s",
+                "  Settings: connect_batch={}, wave_size={}, wave_pause={}ms, connect_timeout={}, base_delivery_window={}s, ws_targets={}",
                 CONNECT_BATCH,
                 CONNECT_WAVE_SIZE,
                 CONNECT_WAVE_PAUSE.as_millis(),
                 format_duration(CONNECT_TIMEOUT),
                 DELIVERY_WINDOW.as_secs(),
+                ws_targets.len(),
             );
+            println!("  WebSocket target validation: {} endpoint(s) reachable", ws_targets.len());
+            if ws_targets.len() == 1 && max_subs > 32_000 {
+                println!(
+                    "  │ {:^91} │",
+                    format!(
+                        "⚠ Single WS target likely capped by local ephemeral ports near ~32K (target: {})",
+                        ws_targets[0]
+                    )
+                );
+                println!(
+                    "  │ {:^91} │",
+                    "  Use --urls with multiple endpoints to scale higher from one load host"
+                );
+            }
 
             for &tier_target in &tiers {
                 let need = tier_target.saturating_sub(current_connected);
@@ -184,6 +208,7 @@ impl Benchmark for SubscriberScaleBench {
                     let other_samples = other_failure_samples.clone();
                     let sem = semaphore.clone();
                     let mut stop_rx = stop_tx.subscribe();
+                    let ws_targets = ws_targets.clone();
 
                     // Each subscriber: acquire semaphore → subscribe → release → listen until stop
                     let handle = tokio::spawn(async move {
@@ -202,7 +227,11 @@ impl Benchmark for SubscriberScaleBench {
                             result = tokio::time::timeout(CONNECT_TIMEOUT, async {
                                 let sub_name = format!("scale_{}_{}", iteration, sub_id);
                                 let sql = format!("SELECT * FROM {}.scale_sub", ns);
-                                let sub_config = SubscriptionConfig::new(sub_name, sql);
+                                let mut sub_config = SubscriptionConfig::new(sub_name, sql);
+                                if !ws_targets.is_empty() {
+                                    let idx = (sub_id as usize) % ws_targets.len();
+                                    sub_config.ws_url = Some(ws_targets[idx].clone());
+                                }
                                 link.subscribe_with_config(sub_config).await
                             }) => {
                                 match result {
@@ -220,16 +249,18 @@ impl Benchmark for SubscriberScaleBench {
                             Ok(sub) => {
                                 conn_counter.fetch_add(1, Ordering::Relaxed);
                                 sub
-                            }
+                            },
                             Err(e) if e == "cancelled" => {
                                 return;
-                            }
+                            },
                             Err(e) => {
                                 fail_counter.fetch_add(1, Ordering::Relaxed);
                                 let e_lower = e.to_lowercase();
                                 if e_lower.contains("timeout") {
                                     timeout_counter.fetch_add(1, Ordering::Relaxed);
-                                } else if e_lower.contains("auth") || e_lower.contains("unauthorized") {
+                                } else if e_lower.contains("auth")
+                                    || e_lower.contains("unauthorized")
+                                {
                                     auth_counter.fetch_add(1, Ordering::Relaxed);
                                 } else {
                                     other_counter.fetch_add(1, Ordering::Relaxed);
@@ -239,7 +270,7 @@ impl Benchmark for SubscriberScaleBench {
                                     }
                                 }
                                 return;
-                            }
+                            },
                         };
 
                         // Listen for messages until we receive the stop signal
@@ -324,7 +355,10 @@ impl Benchmark for SubscriberScaleBench {
                     if let Err(e) = write_result {
                         println!(
                             "  │ {:^91} │",
-                            format!("⚠ Delivery probe skipped at tier {} due to write error: {}", tier_target, e)
+                            format!(
+                                "⚠ Delivery probe skipped at tier {} due to write error: {}",
+                                tier_target, e
+                            )
                         );
                         ("write_err".to_string(), "n/a".to_string())
                     } else {
@@ -334,7 +368,11 @@ impl Benchmark for SubscriberScaleBench {
                         let tier_changes = changes.saturating_sub(change_start);
 
                         (
-                            format!("{}/{}", format_num(tier_changes), format_num(current_connected)),
+                            format!(
+                                "{}/{}",
+                                format_num(tier_changes),
+                                format_num(current_connected)
+                            ),
                             format_duration(delivery_time),
                         )
                     }
@@ -365,10 +403,7 @@ impl Benchmark for SubscriberScaleBench {
                 if failure_rate > FAILURE_THRESHOLD && tier_target > 100 {
                     let samples = other_failure_samples.lock().await;
                     if !samples.is_empty() {
-                        println!(
-                            "  │ {:^91} │",
-                            format!("Other failure sample: {}", samples[0])
-                        );
+                        println!("  │ {:^91} │", format!("Other failure sample: {}", samples[0]));
                     }
                     println!(
                         "  │ {:^91} │",
@@ -395,30 +430,34 @@ impl Benchmark for SubscriberScaleBench {
             println!(
                 "  └─────────────┴───────────┴──────────┴──────────────┴──────────────┴───────────────┴──────────────┘"
             );
-            println!(
-                "  Max sustained subscribers: {}",
-                format_num(max_achieved)
-            );
+            println!("  Max sustained subscribers: {}", format_num(max_achieved));
             println!();
 
             // Signal all subscriber tasks to stop gracefully
             let _ = stop_tx.send(true);
             tokio::time::sleep(Duration::from_millis(200)).await;
 
-            // Wait for tasks to close their WebSocket connections cleanly (with timeout)
-            let shutdown_start = Instant::now();
-            for mut handle in all_handles {
-                let remaining = SHUTDOWN_GRACE.saturating_sub(shutdown_start.elapsed());
-                if remaining.is_zero() {
-                    handle.abort();
-                } else {
-                    match tokio::time::timeout(remaining, &mut handle).await {
-                        Ok(_) => {} // Task finished cleanly
-                        Err(_) => {
-                            handle.abort();
-                        } // Timed out — abort explicitly
-                    }
+            // Wait up to SHUTDOWN_GRACE for tasks to finish, then abort any stragglers.
+            // This avoids O(N) sequential timeout behavior at high subscriber counts.
+            let shutdown_deadline = tokio::time::Instant::now() + SHUTDOWN_GRACE;
+            loop {
+                if all_handles.iter().all(tokio::task::JoinHandle::is_finished) {
+                    break;
                 }
+                if tokio::time::Instant::now() >= shutdown_deadline {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+
+            for handle in &all_handles {
+                if !handle.is_finished() {
+                    handle.abort();
+                }
+            }
+
+            for handle in all_handles {
+                let _ = handle.await;
             }
 
             Ok(())
@@ -461,10 +500,7 @@ impl Benchmark for SubscriberScaleBench {
             }
 
             let _ = client
-                .sql(&format!(
-                    "DROP USER TABLE IF EXISTS {}.scale_sub",
-                    config.namespace
-                ))
+                .sql(&format!("DROP USER TABLE IF EXISTS {}.scale_sub", config.namespace))
                 .await;
             Ok(())
         })
@@ -523,4 +559,95 @@ fn should_verify_delivery(tier_target: u32, _max_subs: u32) -> bool {
     }
 
     tier_target == 25_000 || tier_target == 50_000
+}
+
+fn resolve_subscriber_ws_targets(config: &Config) -> Vec<String> {
+    let mut targets = Vec::new();
+
+    for raw in &config.urls {
+        if let Some(target) = normalize_ws_endpoint(raw) {
+            if !targets.contains(&target) {
+                targets.push(target);
+            }
+        }
+    }
+
+    targets
+}
+
+fn normalize_ws_endpoint(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let normalized = trimmed.trim_end_matches('/');
+    let mut url = if normalized.starts_with("ws://") || normalized.starts_with("wss://") {
+        normalized.to_string()
+    } else if normalized.starts_with("http://") || normalized.starts_with("https://") {
+        normalized.replace("http://", "ws://").replace("https://", "wss://")
+    } else {
+        format!("ws://{}", normalized)
+    };
+
+    let authority_start = url.find("://").map(|idx| idx + 3).unwrap_or(0);
+    let has_path = url[authority_start..].contains('/');
+    if !has_path {
+        url.push_str("/v1/ws");
+    }
+
+    Some(url)
+}
+
+async fn validate_ws_targets(
+    client: &KalamClient,
+    namespace: &str,
+    targets: Vec<String>,
+) -> Result<Vec<String>, String> {
+    if targets.is_empty() {
+        return Err("No valid WebSocket targets were resolved.".to_string());
+    }
+
+    let mut failures = Vec::new();
+    let probe_sql = format!("SELECT * FROM {}.scale_sub", namespace);
+    let probe_seed = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
+
+    for (idx, target) in targets.iter().enumerate() {
+        let mut cfg = SubscriptionConfig::without_initial_data(
+            format!("scale_probe_{}_{}", probe_seed, idx),
+            probe_sql.clone(),
+        );
+        cfg.ws_url = Some(target.clone());
+
+        match tokio::time::timeout(TARGET_VALIDATE_TIMEOUT, client.subscribe_with_config(cfg)).await
+        {
+            Ok(Ok(mut sub)) => {
+                let _ = sub.close().await;
+            },
+            Ok(Err(e)) => failures.push(format!("{} -> {}", target, e)),
+            Err(_) => failures.push(format!(
+                "{} -> timeout after {}",
+                target,
+                format_duration(TARGET_VALIDATE_TIMEOUT)
+            )),
+        }
+    }
+
+    if failures.is_empty() {
+        Ok(targets)
+    } else {
+        let mut message = format!(
+            "WebSocket target validation failed for {}/{} endpoint(s).",
+            failures.len(),
+            targets.len()
+        );
+        for failure in failures {
+            message.push_str("\n  - ");
+            message.push_str(&failure);
+        }
+        message.push_str(
+            "\nHint: bind server to 0.0.0.0 (or all listed target IPs) and verify each URL can authenticate and run SELECT 1.",
+        );
+        Err(message)
+    }
 }

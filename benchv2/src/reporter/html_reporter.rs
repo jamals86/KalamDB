@@ -63,7 +63,13 @@ fn format_total(us: u64) -> String {
     }
 }
 
-fn build_html(results: &[BenchmarkResult], config: &Config, timestamp: &str, version: &str, previous: Option<&PreviousRun>) -> String {
+fn build_html(
+    results: &[BenchmarkResult],
+    config: &Config,
+    timestamp: &str,
+    version: &str,
+    previous: Option<&PreviousRun>,
+) -> String {
     let passed = results.iter().filter(|r| r.success).count();
     let failed = results.iter().filter(|r| !r.success).count();
 
@@ -135,10 +141,7 @@ fn build_html(results: &[BenchmarkResult], config: &Config, timestamp: &str, ver
     let chart_mean: Vec<String> = results.iter().map(|r| format!("{:.1}", r.mean_us)).collect();
     let chart_p95: Vec<String> = results.iter().map(|r| format!("{:.1}", r.p95_us)).collect();
     let chart_p99: Vec<String> = results.iter().map(|r| format!("{:.1}", r.p99_us)).collect();
-    let chart_ops: Vec<String> = results
-        .iter()
-        .map(|r| format!("{:.1}", r.ops_per_sec))
-        .collect();
+    let chart_ops: Vec<String> = results.iter().map(|r| format!("{:.1}", r.ops_per_sec)).collect();
 
     // Category breakdown for pie chart
     let mut cat_ops: Vec<(String, f64)> = Vec::new();
@@ -148,11 +151,7 @@ fn build_html(results: &[BenchmarkResult], config: &Config, timestamp: &str, ver
             .filter(|r| &r.category == cat && r.success)
             .map(|r| r.mean_us)
             .sum::<f64>()
-            / results
-                .iter()
-                .filter(|r| &r.category == cat && r.success)
-                .count()
-                .max(1) as f64;
+            / results.iter().filter(|r| &r.category == cat && r.success).count().max(1) as f64;
         cat_ops.push((cat.clone(), avg));
     }
     let pie_labels: Vec<String> = cat_ops.iter().map(|(c, _)| format!("\"{}\"", c)).collect();
@@ -559,7 +558,7 @@ new Chart(document.getElementById('categoryChart'), {{
 </body>
 </html>
 "##,
-        server_url = html_escape(&config.url),
+        server_url = html_escape(&config.urls.join(", ")),
         date = timestamp,
         iterations = config.iterations,
         warmup = config.warmup,

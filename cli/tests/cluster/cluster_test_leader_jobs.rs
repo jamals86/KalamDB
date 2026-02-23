@@ -165,10 +165,7 @@ fn cluster_test_jobs_table_consistency() {
                 min, max, last_counts
             );
         } else {
-            panic!(
-                "system.jobs counts mismatch beyond tolerance: {:?}",
-                last_counts
-            );
+            panic!("system.jobs counts mismatch beyond tolerance: {:?}", last_counts);
         }
     }
 

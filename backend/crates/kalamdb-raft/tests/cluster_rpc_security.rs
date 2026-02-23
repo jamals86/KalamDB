@@ -37,7 +37,9 @@ use kalamdb_commons::models::NodeId;
 use kalamdb_raft::{
     manager::{RaftManager, RaftManagerConfig},
     network::cluster_service::cluster_client::ClusterServiceClient,
-    network::cluster_service::{ForwardSqlRequest, GetNodeInfoRequest, NotifyFollowersRequest, PingRequest},
+    network::cluster_service::{
+        ForwardSqlRequest, GetNodeInfoRequest, NotifyFollowersRequest, PingRequest,
+    },
     ClusterMessageHandler, ForwardSqlResponsePayload, GetNodeInfoResponse, NoOpClusterHandler,
 };
 use tokio::time::sleep;
@@ -78,12 +80,7 @@ struct SecurityStubHandler {
 }
 
 impl SecurityStubHandler {
-    fn new() -> (
-        Arc<Self>,
-        Arc<AtomicUsize>,
-        Arc<AtomicUsize>,
-        Arc<AtomicUsize>,
-    ) {
+    fn new() -> (Arc<Self>, Arc<AtomicUsize>, Arc<AtomicUsize>, Arc<AtomicUsize>) {
         let allowed = Arc::new(AtomicUsize::new(0));
         let rejected = Arc::new(AtomicUsize::new(0));
         let unauthenticated = Arc::new(AtomicUsize::new(0));
@@ -125,7 +122,10 @@ impl ClusterMessageHandler for SecurityStubHandler {
                 "results": [],
             }))
             .unwrap();
-            return Ok(ForwardSqlResponsePayload { status_code: 401, body });
+            return Ok(ForwardSqlResponsePayload {
+                status_code: 401,
+                body,
+            });
         }
 
         // Only Bearer tokens are accepted.
@@ -140,7 +140,10 @@ impl ClusterMessageHandler for SecurityStubHandler {
                 "results": [],
             }))
             .unwrap();
-            return Ok(ForwardSqlResponsePayload { status_code: 401, body });
+            return Ok(ForwardSqlResponsePayload {
+                status_code: 401,
+                body,
+            });
         }
 
         // Validate token (stub: accept only the sentinel "valid-test-token",
@@ -154,7 +157,10 @@ impl ClusterMessageHandler for SecurityStubHandler {
                 "results": [],
             }))
             .unwrap();
-            return Ok(ForwardSqlResponsePayload { status_code: 401, body });
+            return Ok(ForwardSqlResponsePayload {
+                status_code: 401,
+                body,
+            });
         }
 
         // If we reach here the caller is authenticated.
@@ -164,7 +170,10 @@ impl ClusterMessageHandler for SecurityStubHandler {
             "results": [{"row_count": 0, "message": "ok"}],
         }))
         .unwrap();
-        Ok(ForwardSqlResponsePayload { status_code: 200, body })
+        Ok(ForwardSqlResponsePayload {
+            status_code: 200,
+            body,
+        })
     }
 
     async fn handle_ping(&self, req: kalamdb_raft::PingRequest) -> Result<(), String> {
@@ -276,8 +285,7 @@ async fn test_forward_sql_no_auth_header_returns_401() {
 async fn test_forward_sql_empty_auth_header_returns_401() {
     let (handler, allowed, rejected, _) = SecurityStubHandler::new();
     let handler: Arc<dyn ClusterMessageHandler> = handler;
-    let mut client =
-        start_grpc_server_with_handler(handler, PORT_FORWARD_SQL_EMPTY_CREDS).await;
+    let mut client = start_grpc_server_with_handler(handler, PORT_FORWARD_SQL_EMPTY_CREDS).await;
 
     let request = ForwardSqlRequest {
         sql: "SELECT * FROM system.users".to_string(),
@@ -287,10 +295,7 @@ async fn test_forward_sql_empty_auth_header_returns_401() {
         request_id: None,
     };
 
-    let response = client
-        .forward_sql(tonic::Request::new(request))
-        .await
-        .unwrap();
+    let response = client.forward_sql(tonic::Request::new(request)).await.unwrap();
 
     let resp = response.into_inner();
     assert_eq!(resp.status_code, 401);
@@ -307,8 +312,7 @@ async fn test_forward_sql_empty_auth_header_returns_401() {
 async fn test_forward_sql_basic_auth_is_rejected() {
     let (handler, allowed, rejected, _) = SecurityStubHandler::new();
     let handler: Arc<dyn ClusterMessageHandler> = handler;
-    let mut client =
-        start_grpc_server_with_handler(handler, PORT_FORWARD_SQL_BASIC_AUTH).await;
+    let mut client = start_grpc_server_with_handler(handler, PORT_FORWARD_SQL_BASIC_AUTH).await;
 
     // base64("admin:kalamdb123") = "YWRtaW46a2FsYW1kYjEyMw=="
     let basic = "Basic YWRtaW46a2FsYW1kYjEyMw==";
@@ -321,10 +325,7 @@ async fn test_forward_sql_basic_auth_is_rejected() {
         request_id: None,
     };
 
-    let response = client
-        .forward_sql(tonic::Request::new(request))
-        .await
-        .unwrap();
+    let response = client.forward_sql(tonic::Request::new(request)).await.unwrap();
 
     let resp = response.into_inner();
     assert_eq!(
@@ -344,8 +345,7 @@ async fn test_forward_sql_basic_auth_is_rejected() {
 async fn test_forward_sql_forged_bearer_token_is_rejected() {
     let (handler, allowed, rejected, _) = SecurityStubHandler::new();
     let handler: Arc<dyn ClusterMessageHandler> = handler;
-    let mut client =
-        start_grpc_server_with_handler(handler, PORT_FORWARD_SQL_FORGED_TOKEN).await;
+    let mut client = start_grpc_server_with_handler(handler, PORT_FORWARD_SQL_FORGED_TOKEN).await;
 
     // A real-looking but forged JWT (header.payload.sig, all base64url)
     let forged_jwt = "Bearer eyJhbGciOiJIUzI1NiJ9.\
@@ -360,17 +360,10 @@ async fn test_forward_sql_forged_bearer_token_is_rejected() {
         request_id: None,
     };
 
-    let response = client
-        .forward_sql(tonic::Request::new(request))
-        .await
-        .unwrap();
+    let response = client.forward_sql(tonic::Request::new(request)).await.unwrap();
 
     let resp = response.into_inner();
-    assert_eq!(
-        resp.status_code, 401,
-        "Forged token must be rejected, got {}",
-        resp.status_code
-    );
+    assert_eq!(resp.status_code, 401, "Forged token must be rejected, got {}", resp.status_code);
     let body: serde_json::Value = serde_json::from_slice(&resp.body).unwrap();
     assert_eq!(body["error"]["code"], "PERMISSION_DENIED");
     assert_eq!(allowed.load(Ordering::SeqCst), 0);
@@ -385,23 +378,22 @@ async fn test_forward_sql_rejects_all_malformed_auth_variants() {
     // Re-use a single server for all sub-cases.
     let (handler, allowed, rejected, _) = SecurityStubHandler::new();
     let handler: Arc<dyn ClusterMessageHandler> = handler;
-    let mut client =
-        start_grpc_server_with_handler(handler, PORT_FORWARD_SQL_MALFORMED).await;
+    let mut client = start_grpc_server_with_handler(handler, PORT_FORWARD_SQL_MALFORMED).await;
 
     let attack_vectors: &[(&str, &str)] = &[
         // (description, auth_header)
         ("null byte injection", "Bearer \0\0\0"),
         ("unicode overflow", "Bearer \u{FFFF}\u{FFFE}payload"),
-        ("jwt tampering – alg:none", "Bearer eyJhbGciOiJub25lIn0.eyJ1c2VyX2lkIjoiYWRtaW4ifQ."),
+        (
+            "jwt tampering – alg:none",
+            "Bearer eyJhbGciOiJub25lIn0.eyJ1c2VyX2lkIjoiYWRtaW4ifQ.",
+        ),
         ("Bearer keyword only", "Bearer"),
         ("Bearer with only spaces", "Bearer     "),
         ("wrong scheme: Token", "Token some-random-value"),
         ("wrong scheme: ApiKey", "ApiKey supersecret"),
         ("repeated Bearer prefix", "Bearer Bearer valid-test-token"),
-        (
-            "SQL injection inside token",
-            "Bearer '; DROP TABLE users; --",
-        ),
+        ("SQL injection inside token", "Bearer '; DROP TABLE users; --"),
         ("very long garbage token", &format!("Bearer {}", "A".repeat(8192))),
     ];
 
@@ -435,11 +427,7 @@ async fn test_forward_sql_rejects_all_malformed_auth_variants() {
             body["error"]["code"], "PERMISSION_DENIED",
             "Attack vector '{desc}' must return PERMISSION_DENIED",
         );
-        assert_eq!(
-            allowed.load(Ordering::SeqCst),
-            0,
-            "Attack '{desc}' must not execute any SQL"
-        );
+        assert_eq!(allowed.load(Ordering::SeqCst), 0, "Attack '{desc}' must not execute any SQL");
         assert_eq!(
             rejected.load(Ordering::SeqCst),
             expected_rejected,
@@ -458,8 +446,7 @@ async fn test_forward_sql_rejects_all_malformed_auth_variants() {
 async fn test_forward_sql_valid_token_empty_sql_is_not_executed() {
     let (handler, allowed, rejected, _) = SecurityStubHandler::new();
     let handler: Arc<dyn ClusterMessageHandler> = handler;
-    let mut client =
-        start_grpc_server_with_handler(handler.clone(), PORT_FORWARD_SQL_SQLI).await;
+    let mut client = start_grpc_server_with_handler(handler.clone(), PORT_FORWARD_SQL_SQLI).await;
 
     // First: no auth → 401
     let req_no_auth = ForwardSqlRequest {
@@ -469,11 +456,7 @@ async fn test_forward_sql_valid_token_empty_sql_is_not_executed() {
         authorization_header: None,
         request_id: None,
     };
-    let resp = client
-        .forward_sql(tonic::Request::new(req_no_auth))
-        .await
-        .unwrap()
-        .into_inner();
+    let resp = client.forward_sql(tonic::Request::new(req_no_auth)).await.unwrap().into_inner();
     assert_eq!(resp.status_code, 401);
     assert_eq!(allowed.load(Ordering::SeqCst), 0);
     assert_eq!(rejected.load(Ordering::SeqCst), 1);
@@ -508,8 +491,7 @@ async fn test_forward_sql_valid_token_empty_sql_is_not_executed() {
 async fn test_forward_sql_oversized_payload_rejected_before_parsing() {
     let (handler, allowed, rejected, _) = SecurityStubHandler::new();
     let handler: Arc<dyn ClusterMessageHandler> = handler;
-    let mut client =
-        start_grpc_server_with_handler(handler, PORT_FORWARD_SQL_OVERSIZED).await;
+    let mut client = start_grpc_server_with_handler(handler, PORT_FORWARD_SQL_OVERSIZED).await;
 
     let oversized_params = vec![0xFF_u8; 8 * 1024 * 1024]; // 8 MiB
 
@@ -538,7 +520,7 @@ async fn test_forward_sql_oversized_payload_rejected_before_parsing() {
             );
             assert_eq!(allowed.load(Ordering::SeqCst), 0);
             assert_eq!(rejected.load(Ordering::SeqCst), 1);
-        }
+        },
         Err(status) => {
             // Transport-level rejection is also an acceptable security outcome.
             assert!(
@@ -550,7 +532,7 @@ async fn test_forward_sql_oversized_payload_rejected_before_parsing() {
             );
             // The handler never ran, so allowed/rejected counters stay at 0.
             assert_eq!(allowed.load(Ordering::SeqCst), 0);
-        }
+        },
     }
 }
 
@@ -563,8 +545,7 @@ async fn test_forward_sql_oversized_payload_rejected_before_parsing() {
 async fn test_forward_sql_token_replay_is_rejected() {
     let (handler, allowed, rejected, _) = SecurityStubHandler::new();
     let handler: Arc<dyn ClusterMessageHandler> = handler;
-    let mut client =
-        start_grpc_server_with_handler(handler, PORT_FORWARD_SQL_REPLAY).await;
+    let mut client = start_grpc_server_with_handler(handler, PORT_FORWARD_SQL_REPLAY).await;
 
     let stolen_token = "Bearer stolen-from-wireshark-this-is-invalid";
 
@@ -577,17 +558,9 @@ async fn test_forward_sql_token_replay_is_rejected() {
             request_id: Some(format!("replay-attempt-{}", attempt)),
         };
 
-        let resp = client
-            .forward_sql(tonic::Request::new(req))
-            .await
-            .unwrap()
-            .into_inner();
+        let resp = client.forward_sql(tonic::Request::new(req)).await.unwrap().into_inner();
 
-        assert_eq!(
-            resp.status_code, 401,
-            "Replay attempt {} must be rejected",
-            attempt
-        );
+        assert_eq!(resp.status_code, 401, "Replay attempt {} must be rejected", attempt);
         assert_eq!(allowed.load(Ordering::SeqCst), 0);
         assert_eq!(rejected.load(Ordering::SeqCst), attempt);
     }
@@ -605,8 +578,7 @@ async fn test_forward_sql_token_replay_is_rejected() {
 /// indicates liveness only and carries no credential-bearing state.
 #[tokio::test]
 async fn test_ping_reachable_without_user_token() {
-    let handler: Arc<dyn ClusterMessageHandler> =
-        Arc::new(NoOpClusterHandler);
+    let handler: Arc<dyn ClusterMessageHandler> = Arc::new(NoOpClusterHandler);
     let port = PORT_UNAUTHENTICATED_PING;
     let mut client = start_grpc_server_with_handler(handler, port).await;
 
@@ -616,10 +588,7 @@ async fn test_ping_reachable_without_user_token() {
         .expect("Ping must succeed at transport level");
 
     let inner = resp.into_inner();
-    assert!(
-        inner.success,
-        "No-auth ping should report success (it is read-only)"
-    );
+    assert!(inner.success, "No-auth ping should report success (it is read-only)");
     // The response carries no sensitive authentication state.
     assert!(inner.error.is_empty(), "No error expected for ping");
 }
@@ -684,10 +653,7 @@ async fn test_get_node_info_does_not_expose_sensitive_fields() {
         !info.hostname.as_deref().unwrap_or("").contains("password"),
         "hostname must not contain the word 'password'"
     );
-    assert!(
-        !info.status.contains("Bearer"),
-        "status must not contain a Bearer token"
-    );
+    assert!(!info.status.contains("Bearer"), "status must not contain a Bearer token");
     assert!(
         !info.version.as_deref().unwrap_or("").contains("secret"),
         "version must not contain secrets"
@@ -861,9 +827,7 @@ async fn test_noop_handler_forward_sql_returns_error() {
 #[tokio::test]
 async fn test_noop_handler_ping_is_safe() {
     let handler = NoOpClusterHandler;
-    let result = handler
-        .handle_ping(kalamdb_raft::PingRequest { from_node_id: 999 })
-        .await;
+    let result = handler.handle_ping(kalamdb_raft::PingRequest { from_node_id: 999 }).await;
     assert!(result.is_ok(), "NoOp ping must succeed");
 }
 

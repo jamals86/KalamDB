@@ -78,10 +78,7 @@ pub async fn collect_matching_rows(
     let plan: Arc<dyn ExecutionPlan> = if !filters.is_empty() {
         let schema = scan_plan.schema();
         let df_schema = DFSchema::try_from(Arc::clone(&schema))?;
-        let predicate = filters[1..]
-            .iter()
-            .cloned()
-            .fold(filters[0].clone(), |acc, f| acc.and(f));
+        let predicate = filters[1..].iter().cloned().fold(filters[0].clone(), |acc, f| acc.and(f));
         let physical_expr = state.create_physical_expr(predicate, &df_schema)?;
         Arc::new(FilterExec::try_new(physical_expr, scan_plan)?)
     } else {
@@ -170,7 +167,9 @@ pub fn evaluate_assignment_expr(
 
 fn record_batches_to_rows(batches: &[RecordBatch]) -> DataFusionResult<Vec<Row>> {
     let total_rows: usize = batches.iter().map(RecordBatch::num_rows).sum();
-    let _span = tracing::info_span!("record_batches_to_rows", total_rows, batch_count = batches.len()).entered();
+    let _span =
+        tracing::info_span!("record_batches_to_rows", total_rows, batch_count = batches.len())
+            .entered();
     let mut rows = Vec::with_capacity(total_rows);
 
     for batch in batches {

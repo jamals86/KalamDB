@@ -117,10 +117,7 @@ impl ClusterClient {
         self.manager.add_outgoing_rpc_metadata(&mut grpc_request)?;
 
         let response = client.forward_sql(grpc_request).await.map_err(|e| {
-            RaftError::Network(format!(
-                "gRPC forward_sql to node {} failed: {}",
-                target_node_id, e
-            ))
+            RaftError::Network(format!("gRPC forward_sql to node {} failed: {}", target_node_id, e))
         })?;
 
         Ok(response.into_inner())
@@ -187,8 +184,8 @@ impl ClusterClient {
         &self,
         timeout_ms: u64,
     ) -> std::collections::HashMap<NodeId, GetNodeInfoResponse> {
-        use tokio::time::timeout;
         use std::time::Duration;
+        use tokio::time::timeout;
 
         let self_id = self.manager.node_id();
         let peers = self.manager.get_all_peers();

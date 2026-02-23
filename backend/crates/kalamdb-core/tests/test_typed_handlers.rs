@@ -3,8 +3,8 @@
 //! Shows how the executor classifies SQL, parses once, and dispatches to typed handlers.
 
 use kalamdb_commons::models::UserId;
-use kalamdb_commons::Role;
 use kalamdb_commons::NodeId;
+use kalamdb_commons::Role;
 use kalamdb_configs::ServerConfig;
 use kalamdb_core::app_context::AppContext;
 use kalamdb_core::sql::context::ExecutionContext;
@@ -41,7 +41,8 @@ async fn create_test_app_context() -> (Arc<AppContext>, TempDir) {
 async fn test_typed_handler_create_namespace() {
     let (app_ctx, _temp_dir) = create_test_app_context().await;
     let executor = SqlExecutor::new(Arc::clone(&app_ctx), false);
-    let exec_ctx = ExecutionContext::new(UserId::from("admin"), Role::Dba, app_ctx.base_session_context());
+    let exec_ctx =
+        ExecutionContext::new(UserId::from("admin"), Role::Dba, app_ctx.base_session_context());
 
     // Test CREATE NAMESPACE with typed handler
     let namespace = format!("integration_test_ns_{}", std::process::id());
@@ -82,7 +83,8 @@ async fn test_classifier_prioritizes_select() {
     // without attempting DDL parsing
     let (app_ctx, _temp_dir) = create_test_app_context().await;
     let executor = SqlExecutor::new(Arc::clone(&app_ctx), false);
-    let exec_ctx = ExecutionContext::new(UserId::from("user"), Role::User, app_ctx.base_session_context());
+    let exec_ctx =
+        ExecutionContext::new(UserId::from("user"), Role::User, app_ctx.base_session_context());
 
     // SELECT should hit the DataFusion path immediately
     let sql = "SELECT 1 as test";

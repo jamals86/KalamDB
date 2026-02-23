@@ -40,7 +40,7 @@ use serde::{Deserialize, Serialize};
 ///     partition_key_expr: None,
 /// };
 /// ```
-#[derive(Serialize, Deserialize,  Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct TopicRoute {
     /// Source table to capture events from
     pub table_id: TableId,

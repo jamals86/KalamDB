@@ -31,10 +31,7 @@ impl Benchmark for ConcurrentInsertBench {
                 .sql_ok(&format!("CREATE NAMESPACE IF NOT EXISTS {}", config.namespace))
                 .await?;
             let _ = client
-                .sql(&format!(
-                    "DROP TABLE IF EXISTS {}.conc_insert_bench",
-                    config.namespace
-                ))
+                .sql(&format!("DROP TABLE IF EXISTS {}.conc_insert_bench", config.namespace))
                 .await;
             client
                 .sql_ok(&format!(
@@ -81,10 +78,7 @@ impl Benchmark for ConcurrentInsertBench {
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
             let _ = client
-                .sql(&format!(
-                    "DROP TABLE IF EXISTS {}.conc_insert_bench",
-                    config.namespace
-                ))
+                .sql(&format!("DROP TABLE IF EXISTS {}.conc_insert_bench", config.namespace))
                 .await;
             Ok(())
         })
@@ -117,10 +111,7 @@ impl Benchmark for ConcurrentSelectBench {
                 .sql_ok(&format!("CREATE NAMESPACE IF NOT EXISTS {}", config.namespace))
                 .await?;
             let _ = client
-                .sql(&format!(
-                    "DROP TABLE IF EXISTS {}.conc_select_bench",
-                    config.namespace
-                ))
+                .sql(&format!("DROP TABLE IF EXISTS {}.conc_select_bench", config.namespace))
                 .await;
             client
                 .sql_ok(&format!(
@@ -163,11 +154,8 @@ impl Benchmark for ConcurrentSelectBench {
                 let ns = config.namespace.clone();
                 handles.push(tokio::spawn(async move {
                     let id = i % 200;
-                    c.sql_ok(&format!(
-                        "SELECT * FROM {}.conc_select_bench WHERE id = {}",
-                        ns, id
-                    ))
-                    .await
+                    c.sql_ok(&format!("SELECT * FROM {}.conc_select_bench WHERE id = {}", ns, id))
+                        .await
                 }));
             }
             for h in handles {
@@ -184,10 +172,7 @@ impl Benchmark for ConcurrentSelectBench {
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
             let _ = client
-                .sql(&format!(
-                    "DROP TABLE IF EXISTS {}.conc_select_bench",
-                    config.namespace
-                ))
+                .sql(&format!("DROP TABLE IF EXISTS {}.conc_select_bench", config.namespace))
                 .await;
             Ok(())
         })

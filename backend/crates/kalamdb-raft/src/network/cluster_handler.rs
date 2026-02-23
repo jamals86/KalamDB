@@ -16,12 +16,13 @@ use std::sync::Arc;
 
 use tonic::{Request, Response, Status};
 
-use crate::manager::RaftManager;
 use super::cluster_service::cluster_server::ClusterService;
 use super::models::{
     ForwardSqlRequest, ForwardSqlResponse, ForwardSqlResponsePayload, GetNodeInfoRequest,
-    GetNodeInfoResponse, NotifyFollowersRequest, NotifyFollowersResponse, PingRequest, PingResponse,
+    GetNodeInfoResponse, NotifyFollowersRequest, NotifyFollowersResponse, PingRequest,
+    PingResponse,
 };
+use crate::manager::RaftManager;
 
 /// Trait for handling incoming cluster messages.
 ///

@@ -8,8 +8,8 @@
 //! - SchemasStore wrapper with versioning support
 //! - TableProvider for DataFusion integration
 
-pub mod schemas_provider;
 mod schemas_definition;
+pub mod schemas_provider;
 pub mod schemas_store;
 
 pub use schemas_definition::{schemas_arrow_schema, schemas_table_definition};

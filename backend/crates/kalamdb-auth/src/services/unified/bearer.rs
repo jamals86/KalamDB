@@ -79,11 +79,14 @@ pub(super) async fn authenticate_bearer(
             let header = jsonwebtoken::decode_header(token).map_err(|e| {
                 AuthError::MalformedAuthorization(format!("Invalid JWT header: {}", e))
             })?;
-            
+
             if let Some(typ) = header.typ {
                 let typ_lower = typ.to_lowercase();
                 if typ_lower.contains("refresh") {
-                    log::warn!("External refresh token used as access token for user={}", claims.sub);
+                    log::warn!(
+                        "External refresh token used as access token for user={}",
+                        claims.sub
+                    );
                     return Err(AuthError::InvalidCredentials(
                         "Refresh tokens cannot be used for API authentication".to_string(),
                     ));
@@ -96,9 +99,10 @@ pub(super) async fn authenticate_bearer(
         let user = if is_internal {
             // Internal token: `claims.username` is the actual username set
             // by `create_and_sign_token`.
-            let username = claims.username.clone().ok_or_else(|| {
-                AuthError::MissingClaim("username".to_string())
-            })?;
+            let username = claims
+                .username
+                .clone()
+                .ok_or_else(|| AuthError::MissingClaim("username".to_string()))?;
 
             repo.get_user_by_username(&username).await?
         } else {
@@ -294,20 +298,23 @@ async fn validate_bearer_token(
             // The validator owns a per-issuer JWKS cache with auto-refresh on miss.
             let validator = config.get_oidc_validator(issuer).await?;
 
-            let claims: jwt_auth::JwtClaims = validator.validate(token).await.map_err(|e| {
-                match e {
-                    kalamdb_oidc::OidcError::JwtValidationFailed(ref msg) if msg.contains("expired") => {
+            let claims: jwt_auth::JwtClaims =
+                validator.validate(token).await.map_err(|e| match e {
+                    kalamdb_oidc::OidcError::JwtValidationFailed(ref msg)
+                        if msg.contains("expired") =>
+                    {
                         AuthError::TokenExpired
                     },
-                    kalamdb_oidc::OidcError::JwtValidationFailed(ref msg) if msg.contains("signature") => {
+                    kalamdb_oidc::OidcError::JwtValidationFailed(ref msg)
+                        if msg.contains("signature") =>
+                    {
                         AuthError::InvalidSignature
                     },
                     _ => AuthError::MalformedAuthorization(format!(
                         "External token validation failed: {}",
                         e
                     )),
-                }
-            })?;
+                })?;
 
             // Post-decode issuer check: now cryptographically proven
             jwt_auth::verify_issuer(&claims.iss, &config.trusted_issuers)?;

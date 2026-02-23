@@ -142,8 +142,8 @@ pub async fn websocket_handler(
 #[allow(clippy::too_many_arguments)]
 async fn handle_websocket(
     client_ip: ConnectionInfo,
-    mut session: Session,
-    mut msg_stream: actix_ws::MessageStream,
+    session: Session,
+    msg_stream: actix_ws::MessageStream,
     registration: kalamdb_core::live::ConnectionRegistration,
     registry: Arc<ConnectionsManager>,
     app_context: Arc<AppContext>,
@@ -157,134 +157,142 @@ async fn handle_websocket(
     let connection_state = registration.state;
     let connection_id = connection_state.read().connection_id().clone();
 
-    loop {
-        tokio::select! {
-            biased;
+    // Scope WebSocket transport so it is dropped before cleanup.
+    {
+        let mut session = session;
+        let mut msg_stream = msg_stream;
 
-            // Handle control events from registry (highest priority)
-            event = event_rx.recv() => {
-                match event {
-                    Some(ConnectionEvent::AuthTimeout) => {
-                        error!("WebSocket auth timeout: {}", connection_id);
-                        let msg = WebSocketMessage::AuthError {
-                            message: "Authentication timeout - no auth message received within 3 seconds".to_string(),
-                        };
-                        let _ = send_json(&mut session, &msg).await;
-                        let _ = session.close(Some(CloseReason {
-                            code: CloseCode::Policy,
-                            description: Some("Authentication timeout".into()),
-                        })).await;
-                        break;
-                    }
-                    Some(ConnectionEvent::HeartbeatTimeout) => {
-                        warn!("WebSocket heartbeat timeout: {}", connection_id);
-                        let _ = session.close(Some(CloseReason {
-                            code: CloseCode::Normal,
-                            description: Some("Heartbeat timeout".into()),
-                        })).await;
-                        break;
-                    }
-                    Some(ConnectionEvent::Shutdown) => {
-                        info!("WebSocket shutdown requested: {}", connection_id);
-                        let _ = session.close(Some(CloseReason {
-                            code: CloseCode::Away,
-                            description: Some("Server shutting down".into()),
-                        })).await;
-                        break;
-                    }
-                    None => {
-                        // Channel closed
-                        break;
-                    }
-                }
-            }
+        loop {
+            tokio::select! {
+                biased;
 
-            // Handle incoming WebSocket messages
-            msg = msg_stream.next() => {
-                match msg {
-                    Some(Ok(Message::Ping(bytes))) => {
-                        connection_state.read().update_heartbeat();
-                        if session.pong(&bytes).await.is_err() {
-                            break;
-                        }
-                    }
-                    Some(Ok(Message::Pong(_))) => {
-                        connection_state.read().update_heartbeat();
-                    }
-                    Some(Ok(Message::Text(text))) => {
-                        connection_state.read().update_heartbeat();
-
-                        // Security: Check message size limit
-                        if text.len() > max_message_size {
-                            warn!("Message too large from {}: {} bytes (max {})",
-                                connection_id, text.len(), max_message_size);
-                            let _ = send_error(&mut session, "protocol", WsErrorCode::MessageTooLarge,
-                                &format!("Message exceeds maximum size of {} bytes", max_message_size)).await;
-                            continue;
-                        }
-
-                        // Rate limit check
-                        if !rate_limiter.check_message_rate(&connection_id) {
-                            warn!("Message rate limit exceeded: {}", connection_id);
-                            let _ = send_error(&mut session, "rate_limit", WsErrorCode::RateLimitExceeded, "Too many messages").await;
-                            continue;
-                        }
-
-                        if let Err(e) = handle_text_message(
-                            &connection_state,
-                            &client_ip,
-                            &text,
-                            &mut session,
-                            &registry,
-                            &app_context,
-                            &rate_limiter,
-                            &live_query_manager,
-                            &user_repo,
-                        ).await {
-                            error!("Error handling message: {}", e);
+                // Handle control events from registry (highest priority)
+                event = event_rx.recv() => {
+                    match event {
+                        Some(ConnectionEvent::AuthTimeout) => {
+                            error!("WebSocket auth timeout: {}", connection_id);
+                            let msg = WebSocketMessage::AuthError {
+                                message: "Authentication timeout - no auth message received within 3 seconds".to_string(),
+                            };
+                            let _ = send_json(&mut session, &msg).await;
                             let _ = session.close(Some(CloseReason {
-                                code: CloseCode::Error,
-                                description: Some(e),
+                                code: CloseCode::Policy,
+                                description: Some("Authentication timeout".into()),
                             })).await;
                             break;
                         }
-                    }
-                    Some(Ok(Message::Binary(_))) => {
-                        warn!("Binary messages not supported: {}", connection_id);
-                        let _ = send_error(&mut session, "protocol", WsErrorCode::UnsupportedData, "Binary not supported").await;
-                    }
-                    Some(Ok(Message::Close(reason))) => {
-                        debug!("Client requested close: {:?}", reason);
-                        let _ = session.close(reason).await;
-                        break;
-                    }
-                    Some(Ok(_)) => {
-                        // Continuation, Nop - ignore
-                    }
-                    Some(Err(e)) => {
-                        error!("WebSocket error: {}", e);
-                        break;
-                    }
-                    None => {
-                        // Stream ended
-                        debug!("WebSocket stream ended: {}", connection_id);
-                        break;
-                    }
-                }
-            }
-
-            // Handle notifications from live query manager
-            notification = notification_rx.recv() => {
-                match notification {
-                    Some(notif) => {
-                        // Use send_json for automatic compression of large payloads
-                        if send_json(&mut session, notif.as_ref()).await.is_err() {
+                        Some(ConnectionEvent::HeartbeatTimeout) => {
+                            warn!("WebSocket heartbeat timeout: {}", connection_id);
+                            let _ = session
+                                .close(Some(CloseReason {
+                                    code: CloseCode::Normal,
+                                    description: Some("Heartbeat timeout".into()),
+                                }))
+                                .await;
+                            break;
+                        }
+                        Some(ConnectionEvent::Shutdown) => {
+                            info!("WebSocket shutdown requested: {}", connection_id);
+                            let _ = session.close(Some(CloseReason {
+                                code: CloseCode::Away,
+                                description: Some("Server shutting down".into()),
+                            })).await;
+                            break;
+                        }
+                        None => {
+                            // Channel closed
                             break;
                         }
                     }
-                    None => {
-                        // Channel closed
-                        break;
+                }
+
+                // Handle incoming WebSocket messages
+                msg = msg_stream.next() => {
+                    match msg {
+                        Some(Ok(Message::Ping(bytes))) => {
+                            connection_state.read().update_heartbeat();
+                            if session.pong(&bytes).await.is_err() {
+                                break;
+                            }
+                        }
+                        Some(Ok(Message::Pong(_))) => {
+                            connection_state.read().update_heartbeat();
+                        }
+                        Some(Ok(Message::Text(text))) => {
+                            connection_state.read().update_heartbeat();
+
+                            // Security: Check message size limit
+                            if text.len() > max_message_size {
+                                warn!("Message too large from {}: {} bytes (max {})",
+                                    connection_id, text.len(), max_message_size);
+                                let _ = send_error(&mut session, "protocol", WsErrorCode::MessageTooLarge,
+                                    &format!("Message exceeds maximum size of {} bytes", max_message_size)).await;
+                                continue;
+                            }
+
+                            // Rate limit check
+                            if !rate_limiter.check_message_rate(&connection_id) {
+                                warn!("Message rate limit exceeded: {}", connection_id);
+                                let _ = send_error(&mut session, "rate_limit", WsErrorCode::RateLimitExceeded, "Too many messages").await;
+                                continue;
+                            }
+
+                            if let Err(e) = handle_text_message(
+                                &connection_state,
+                                &client_ip,
+                                &text,
+                                &mut session,
+                                &registry,
+                                &app_context,
+                                &rate_limiter,
+                                &live_query_manager,
+                                &user_repo,
+                            ).await {
+                                error!("Error handling message: {}", e);
+                                let _ = session.close(Some(CloseReason {
+                                    code: CloseCode::Error,
+                                    description: Some(e),
+                                })).await;
+                                break;
+                            }
+                        }
+                        Some(Ok(Message::Binary(_))) => {
+                            warn!("Binary messages not supported: {}", connection_id);
+                            let _ = send_error(&mut session, "protocol", WsErrorCode::UnsupportedData, "Binary not supported").await;
+                        }
+                        Some(Ok(Message::Close(reason))) => {
+                            debug!("Client requested close: {:?}", reason);
+                            let _ = session.close(reason).await;
+                            break;
+                        }
+                        Some(Ok(_)) => {
+                            // Continuation, Nop - ignore
+                        }
+                        Some(Err(e)) => {
+                            error!("WebSocket error: {}", e);
+                            break;
+                        }
+                        None => {
+                            // Stream ended
+                            debug!("WebSocket stream ended: {}", connection_id);
+                            break;
+                        }
+                    }
+                }
+
+                // Handle notifications from live query manager
+                notification = notification_rx.recv() => {
+                    match notification {
+                        Some(notif) => {
+                            // Use send_json for automatic compression of large payloads
+                            if send_json(&mut session, notif.as_ref()).await.is_err() {
+                                break;
+                            }
+                        }
+                        None => {
+                            // Channel closed
+                            break;
+                        }
                     }
                 }
             }

@@ -18,7 +18,7 @@ use crate::StorageKey;
 ///
 /// Serializes as "namespace.table" string format for JSON compatibility.
 /// For example: `"flush_test_ns_mkav1q2g_3.metrics"`
-#[derive(Debug, Clone, PartialEq, Eq, Hash, )]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TableId {
     namespace_id: NamespaceId,
     table_name: TableName,

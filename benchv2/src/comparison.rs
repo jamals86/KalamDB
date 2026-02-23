@@ -61,20 +61,11 @@ impl Comparison {
         let abs_pct = self.mean_pct.abs();
 
         if abs_pct < 3.0 {
-            format!(
-                "<span class=\"delta delta-same\">~ {:.0}µs prior</span>",
-                self.prev_mean_us
-            )
+            format!("<span class=\"delta delta-same\">~ {:.0}µs prior</span>", self.prev_mean_us)
         } else if self.mean_pct < 0.0 {
-            format!(
-                "<span class=\"delta delta-faster\">↑{:.0}% faster</span>",
-                abs_pct
-            )
+            format!("<span class=\"delta delta-faster\">↑{:.0}% faster</span>", abs_pct)
         } else {
-            format!(
-                "<span class=\"delta delta-slower\">↓{:.0}% slower</span>",
-                abs_pct
-            )
+            format!("<span class=\"delta delta-slower\">↓{:.0}% slower</span>", abs_pct)
         }
     }
 }
@@ -92,9 +83,7 @@ pub fn load_previous_run(output_dir: &str) -> Option<PreviousRun> {
         .ok()?
         .filter_map(|e| e.ok())
         .filter(|e| {
-            e.path()
-                .extension()
-                .map_or(false, |ext| ext == "json")
+            e.path().extension().map_or(false, |ext| ext == "json")
                 && e.path()
                     .file_name()
                     .map_or(false, |n| n.to_string_lossy().starts_with("bench-"))

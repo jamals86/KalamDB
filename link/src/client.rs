@@ -48,6 +48,7 @@ pub struct KalamLinkClient {
     query_executor: QueryExecutor,
     health_cache: Arc<Mutex<HealthCheckCache>>,
     timeouts: KalamLinkTimeouts,
+    connection_options: ConnectionOptions,
 }
 
 impl KalamLinkClient {
@@ -196,7 +197,14 @@ impl KalamLinkClient {
         &self,
         config: SubscriptionConfig,
     ) -> Result<SubscriptionManager> {
-        SubscriptionManager::new(&self.base_url, config, &self.auth, &self.timeouts).await
+        SubscriptionManager::new(
+            &self.base_url,
+            config,
+            &self.auth,
+            &self.timeouts,
+            &self.connection_options,
+        )
+        .await
     }
 
     /// Get the configured timeouts
@@ -721,6 +729,7 @@ impl KalamLinkClientBuilder {
             query_executor,
             health_cache: Arc::new(Mutex::new(HealthCheckCache::default())),
             timeouts: self.timeouts,
+            connection_options: self.connection_options,
         })
     }
 }

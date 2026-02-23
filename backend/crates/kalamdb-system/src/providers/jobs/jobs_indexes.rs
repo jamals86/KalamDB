@@ -3,9 +3,9 @@
 //! This module defines secondary indexes for the system.jobs table.
 
 use crate::providers::jobs::models::Job;
+use crate::system_row_mapper::system_row_to_model;
 use crate::JobStatus;
 use crate::StoragePartition;
-use crate::system_row_mapper::system_row_to_model;
 use kalamdb_commons::models::rows::SystemTableRow;
 use kalamdb_commons::storage::Partition;
 use kalamdb_commons::JobId;
@@ -129,8 +129,8 @@ pub fn create_jobs_indexes() -> Vec<Arc<dyn IndexDefinition<JobId, SystemTableRo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::JobType;
     use crate::system_row_mapper::model_to_system_row;
+    use crate::JobType;
     use kalamdb_commons::NodeId;
 
     fn create_test_job(id: &str, status: JobStatus) -> Job {

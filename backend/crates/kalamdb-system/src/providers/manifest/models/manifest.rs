@@ -587,7 +587,8 @@ mod tests {
             ManifestCacheEntry::new(manifest, Some("etag123".to_string()), 1000, SyncState::InSync);
 
         let encoded = serde_json::to_vec(&entry).expect("json encode failed");
-        let decoded: ManifestCacheEntry = serde_json::from_slice(&encoded).expect("json decode failed");
+        let decoded: ManifestCacheEntry =
+            serde_json::from_slice(&encoded).expect("json decode failed");
 
         // Verify
         assert_eq!(decoded.etag, Some("etag123".to_string()));

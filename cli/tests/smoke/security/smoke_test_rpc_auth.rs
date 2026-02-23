@@ -46,9 +46,7 @@ fn login_url() -> String {
 
 /// Synchronously run a future on a fresh tokio runtime (smoke tests are sync).
 fn block<F: std::future::Future<Output = T>, T>(fut: F) -> T {
-    tokio::runtime::Runtime::new()
-        .expect("Failed to create runtime")
-        .block_on(fut)
+    tokio::runtime::Runtime::new().expect("Failed to create runtime").block_on(fut)
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
@@ -182,14 +180,8 @@ fn smoke_rpc_me_no_auth_returns_401() {
         return;
     }
 
-    let status = block(async {
-        http_client()
-            .get(me_url())
-            .send()
-            .await
-            .expect("Request failed")
-            .status()
-    });
+    let status =
+        block(async { http_client().get(me_url()).send().await.expect("Request failed").status() });
 
     assert_eq!(
         status.as_u16(),
@@ -210,19 +202,10 @@ fn smoke_rpc_health_is_public() {
     }
 
     let status = block(async {
-        http_client()
-            .get(health_url())
-            .send()
-            .await
-            .expect("Request failed")
-            .status()
+        http_client().get(health_url()).send().await.expect("Request failed").status()
     });
 
-    assert!(
-        status.is_success(),
-        "/health must be publicly accessible (2xx), got {}",
-        status
-    );
+    assert!(status.is_success(), "/health must be publicly accessible (2xx), got {}", status);
 }
 
 /// POST /v1/api/auth/login with wrong password must return 401.
@@ -326,11 +309,7 @@ fn smoke_rpc_login_nonexistent_user_matches_wrong_password_response() {
         (status, msg)
     });
 
-    assert_eq!(
-        status_real_user.as_u16(),
-        401,
-        "Wrong password for real user must return 401"
-    );
+    assert_eq!(status_real_user.as_u16(), 401, "Wrong password for real user must return 401");
     assert_eq!(
         status_fake_user.as_u16(),
         401,
@@ -358,9 +337,7 @@ fn smoke_rpc_login_nonexistent_user_matches_wrong_password_response() {
 #[test]
 fn smoke_rpc_user_role_cannot_read_system_users() {
     if !is_server_running() {
-        eprintln!(
-            "Skipping smoke_rpc_user_role_cannot_read_system_users: server not running"
-        );
+        eprintln!("Skipping smoke_rpc_user_role_cannot_read_system_users: server not running");
         return;
     }
 
@@ -376,8 +353,7 @@ fn smoke_rpc_user_role_cannot_read_system_users() {
 
     let result = execute_sql_via_client_as(&username, password, "SELECT * FROM system.users");
 
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", username));
+    let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", username));
 
     assert!(
         result.is_err(),

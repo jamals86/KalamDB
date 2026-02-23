@@ -9,8 +9,8 @@ use kalamdb_commons::WebSocketMessage;
 use kalamdb_core::live::{LiveQueryManager, SharedConnectionState};
 use kalamdb_core::providers::arrow_json_conversion::row_to_json_map;
 use log::error;
-use tracing::debug;
 use std::sync::Arc;
+use tracing::debug;
 
 use crate::handlers::ws::models::WsErrorCode;
 

@@ -10,7 +10,7 @@ use crate::StorageKey;
 ///
 /// Ensures job IDs cannot be accidentally used where other identifier types
 /// are expected.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, )]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct JobId(String);
 
 impl JobId {

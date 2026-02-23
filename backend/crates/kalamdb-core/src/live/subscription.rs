@@ -228,9 +228,7 @@ impl SubscriptionService {
                 // it and using just the subscription_id suffix.
                 LiveQueryId::from_string(subscription_id)
                     .ok()
-                    .and_then(|parsed| {
-                        state.subscriptions.remove(parsed.subscription_id())
-                    })
+                    .and_then(|parsed| state.subscriptions.remove(parsed.subscription_id()))
             });
             match subscription {
                 Some((_, sub)) => (state.connection_id.clone(), user_id, sub.table_id),

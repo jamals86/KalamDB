@@ -29,16 +29,10 @@ impl Benchmark for ConcurrentConsumerBench {
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
             client
-                .sql_ok(&format!(
-                    "CREATE NAMESPACE IF NOT EXISTS {}",
-                    config.namespace
-                ))
+                .sql_ok(&format!("CREATE NAMESPACE IF NOT EXISTS {}", config.namespace))
                 .await?;
             let _ = client
-                .sql(&format!(
-                    "DROP TABLE IF EXISTS {}.consume_bench",
-                    config.namespace
-                ))
+                .sql(&format!("DROP TABLE IF EXISTS {}.consume_bench", config.namespace))
                 .await;
             client
                 .sql_ok(&format!(
@@ -50,12 +44,8 @@ impl Benchmark for ConcurrentConsumerBench {
             // Topic names must be namespace-qualified: <namespace>.<topic>
             let topic_name = format!("{}.consume_topic", config.namespace);
             // Ensure clean topic
-            let _ = client
-                .sql(&format!("DROP TOPIC IF EXISTS {}", topic_name))
-                .await;
-            client
-                .sql_ok(&format!("CREATE TOPIC {}", topic_name))
-                .await?;
+            let _ = client.sql(&format!("DROP TOPIC IF EXISTS {}", topic_name)).await;
+            client.sql_ok(&format!("CREATE TOPIC {}", topic_name)).await?;
             client
                 .sql_ok(&format!(
                     "ALTER TOPIC {} ADD SOURCE {}.consume_bench ON INSERT",
@@ -110,10 +100,7 @@ impl Benchmark for ConcurrentConsumerBench {
                         .await
                         .map_err(|e| format!("Consumer poll: {}", e))?;
 
-                    consumer
-                        .close()
-                        .await
-                        .map_err(|e| format!("Consumer close: {}", e))?;
+                    consumer.close().await.map_err(|e| format!("Consumer close: {}", e))?;
 
                     Ok::<(), String>(())
                 }));
@@ -135,10 +122,7 @@ impl Benchmark for ConcurrentConsumerBench {
             let topic_name = format!("{}.consume_topic", config.namespace);
             let _ = client.sql(&format!("DROP TOPIC IF EXISTS {}", topic_name)).await;
             let _ = client
-                .sql(&format!(
-                    "DROP TABLE IF EXISTS {}.consume_bench",
-                    config.namespace
-                ))
+                .sql(&format!("DROP TABLE IF EXISTS {}.consume_bench", config.namespace))
                 .await;
             Ok(())
         })

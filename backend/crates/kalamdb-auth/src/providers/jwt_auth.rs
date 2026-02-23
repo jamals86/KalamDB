@@ -59,7 +59,13 @@ pub fn create_and_sign_token(
     secret: &str,
 ) -> AuthResult<(String, JwtClaims)> {
     let claims = JwtClaims::with_token_type(
-        user_id, username, role, email, expiry_hours, TokenType::Access, KALAMDB_ISSUER,
+        user_id,
+        username,
+        role,
+        email,
+        expiry_hours,
+        TokenType::Access,
+        KALAMDB_ISSUER,
     );
     let token = generate_jwt_token(&claims, secret)?;
     Ok((token, claims))
@@ -323,10 +329,9 @@ mod tests {
         let username = kalamdb_commons::UserName::new("refresh_user");
         let role = kalamdb_commons::Role::User;
 
-        let (refresh_token, _) = create_and_sign_refresh_token(
-            &user_id, &username, &role, None, None, secret,
-        )
-        .expect("Failed to create refresh token");
+        let (refresh_token, _) =
+            create_and_sign_refresh_token(&user_id, &username, &role, None, None, secret)
+                .expect("Failed to create refresh token");
 
         let claims =
             validate_jwt_token(&refresh_token, secret, &trusted).expect("Token validation failed");
@@ -349,10 +354,9 @@ mod tests {
         let username = kalamdb_commons::UserName::new("access_user");
         let role = kalamdb_commons::Role::User;
 
-        let (access_token, _) = create_and_sign_token(
-            &user_id, &username, &role, None, None, secret,
-        )
-        .expect("Failed to create access token");
+        let (access_token, _) =
+            create_and_sign_token(&user_id, &username, &role, None, None, secret)
+                .expect("Failed to create access token");
 
         let claims =
             validate_jwt_token(&access_token, secret, &trusted).expect("Token validation failed");
@@ -375,22 +379,17 @@ mod tests {
         let username = kalamdb_commons::UserName::new("distinct_user");
         let role = kalamdb_commons::Role::User;
 
-        let (access, _) = create_and_sign_token(
-            &user_id, &username, &role, None, None, secret,
-        )
-        .unwrap();
+        let (access, _) =
+            create_and_sign_token(&user_id, &username, &role, None, None, secret).unwrap();
 
-        let (refresh, _) = create_and_sign_refresh_token(
-            &user_id, &username, &role, None, None, secret,
-        )
-        .unwrap();
+        let (refresh, _) =
+            create_and_sign_refresh_token(&user_id, &username, &role, None, None, secret).unwrap();
 
         let access_claims = validate_jwt_token(&access, secret, &trusted).unwrap();
         let refresh_claims = validate_jwt_token(&refresh, secret, &trusted).unwrap();
 
         assert_ne!(
-            access_claims.token_type,
-            refresh_claims.token_type,
+            access_claims.token_type, refresh_claims.token_type,
             "Access and refresh tokens must have different token_type claims"
         );
     }
@@ -409,10 +408,7 @@ mod tests {
     fn test_validate_truncated_jwt_returns_error() {
         let trusted = vec!["kalamdb.io".to_string()];
         let result = validate_jwt_token("eyJhbGciOiJIUzI1NiJ9.e30", "any-secret", &trusted);
-        assert!(
-            result.is_err(),
-            "Truncated JWT (missing signature) must be rejected"
-        );
+        assert!(result.is_err(), "Truncated JWT (missing signature) must be rejected");
     }
 
     /// A JWT whose `sub` claim contains SQL-injection text must still be
@@ -448,10 +444,7 @@ mod tests {
 
         // The SQL injection string is preserved literally — it's the auth and SQL
         // layers' job to sanitise inputs, not the JWT validator.
-        assert_eq!(
-            parsed.sub, sqli_username,
-            "JWT validator must preserve sub claims verbatim"
-        );
+        assert_eq!(parsed.sub, sqli_username, "JWT validator must preserve sub claims verbatim");
     }
 
     /// A token signed with the cluster's secret but containing a higher role
@@ -467,8 +460,7 @@ mod tests {
         let secret = "secure-secret";
         let trusted = vec!["kalamdb-test".to_string()];
 
-        let token =
-            create_test_token_with_type(secret, 3600, Some(TokenType::Access));
+        let token = create_test_token_with_type(secret, 3600, Some(TokenType::Access));
 
         let claims = validate_jwt_token(&token, secret, &trusted).unwrap();
 

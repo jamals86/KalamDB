@@ -16,10 +16,10 @@ use jsonwebtoken::{decode_header, Algorithm};
 pub fn extract_algorithm_unverified(token: &str) -> Result<Algorithm, OidcError> {
     let header = decode_header(token)
         .map_err(|e| OidcError::JwtValidationFailed(format!("Invalid JWT header: {}", e)))?;
-        
+
     // Reject 'none' algorithm explicitly (if it exists in the enum, otherwise we just rely on the fact that it's not in the allowed list later)
     // jsonwebtoken crate doesn't have a `none` variant in `Algorithm` enum, so it will fail to decode if `alg=none`
-    
+
     Ok(header.alg)
 }
 
@@ -31,16 +31,17 @@ pub fn extract_algorithm_unverified(token: &str) -> Result<Algorithm, OidcError>
 pub fn extract_issuer_unverified(token: &str) -> Result<String, OidcError> {
     let parts: Vec<&str> = token.splitn(3, '.').collect();
     if parts.len() < 2 {
-        return Err(OidcError::JwtValidationFailed("Invalid JWT format: less than 2 segments".into()));
+        return Err(OidcError::JwtValidationFailed(
+            "Invalid JWT format: less than 2 segments".into(),
+        ));
     }
 
     let payload_bytes = URL_SAFE_NO_PAD.decode(parts[1]).map_err(|e| {
         OidcError::JwtValidationFailed(format!("Invalid JWT payload base64: {}", e))
     })?;
 
-    let payload: serde_json::Value = serde_json::from_slice(&payload_bytes).map_err(|e| {
-        OidcError::JwtValidationFailed(format!("Invalid JWT payload JSON: {}", e))
-    })?;
+    let payload: serde_json::Value = serde_json::from_slice(&payload_bytes)
+        .map_err(|e| OidcError::JwtValidationFailed(format!("Invalid JWT payload JSON: {}", e)))?;
 
     payload
         .get("iss")

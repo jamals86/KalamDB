@@ -36,6 +36,16 @@ import type {
 
 import { parseRows } from './helpers/query_helpers.js';
 
+type NodeWindowShim = {
+  location?: {
+    protocol: string;
+    hostname: string;
+    port: string;
+    href: string;
+  };
+  fetch?: typeof fetch;
+};
+
 /* ================================================================== */
 /*  KalamDBClient                                                     */
 /* ================================================================== */
@@ -132,6 +142,7 @@ export class KalamDBClient {
     if (this.initialized) return;
 
     try {
+      await this.ensureNodeRuntimeCompat();
       console.log('[kalam-link] Starting WASM initialization...');
 
       if (this.wasmUrl) {
@@ -293,6 +304,7 @@ export class KalamDBClient {
    */
   async query(sql: string, params?: unknown[]): Promise<QueryResponse> {
     await this.initialize();
+    await this.ensureJwtForBasicAuth();
     if (!this.wasmClient) throw new Error('WASM client not initialized');
 
     const resultStr = params?.length
@@ -355,6 +367,7 @@ export class KalamDBClient {
     onProgress?: (progress: UploadProgress) => void,
   ): Promise<QueryResponse> {
     await this.initialize();
+    await this.ensureJwtForBasicAuth();
 
     const formData = new FormData();
     formData.append('sql', sql);
@@ -450,6 +463,8 @@ export class KalamDBClient {
    * ```
    */
   async insert(tableName: string, data: Record<string, unknown>): Promise<QueryResponse> {
+    await this.initialize();
+    await this.ensureJwtForBasicAuth();
     this.requireInit();
     const resultStr = await this.wasmClient!.insert(tableName, JSON.stringify(data));
     return JSON.parse(resultStr) as QueryResponse;
@@ -464,6 +479,8 @@ export class KalamDBClient {
    * ```
    */
   async delete(tableName: string, rowId: string | number): Promise<void> {
+    await this.initialize();
+    await this.ensureJwtForBasicAuth();
     this.requireInit();
     await this.wasmClient!.delete(tableName, String(rowId));
   }
@@ -729,6 +746,7 @@ export class KalamDBClient {
     const handle: ConsumerHandle = {
       run: async (handler: ConsumerHandler): Promise<void> => {
         await this.initialize();
+        await this.ensureJwtForBasicAuth();
         if (!this.wasmClient) throw new Error('WASM client not initialized');
 
         running = true;
@@ -807,6 +825,7 @@ export class KalamDBClient {
    */
   async consumeBatch(options: ConsumeRequest): Promise<ConsumeResponse> {
     await this.initialize();
+    await this.ensureJwtForBasicAuth();
     if (!this.wasmClient) throw new Error('WASM client not initialized');
 
     return (await this.wasmClient.consume(options)) as ConsumeResponse;
@@ -836,6 +855,7 @@ export class KalamDBClient {
     uptoOffset: number,
   ): Promise<AckResponse> {
     await this.initialize();
+    await this.ensureJwtForBasicAuth();
     if (!this.wasmClient) throw new Error('WASM client not initialized');
 
     return (await this.wasmClient.ack(
@@ -853,6 +873,80 @@ export class KalamDBClient {
   private requireInit(): void {
     if (!this.wasmClient) {
       throw new Error('WASM client not initialized. Call connect() first.');
+    }
+  }
+
+  private async ensureJwtForBasicAuth(): Promise<void> {
+    if (this.auth.type === 'basic') {
+      await this.login();
+    }
+  }
+
+  private async ensureNodeRuntimeCompat(): Promise<void> {
+    const isNodeRuntime = typeof process !== 'undefined' && Boolean(process.versions?.node);
+    if (!isNodeRuntime) {
+      return;
+    }
+
+    const runtime = globalThis as unknown as {
+      WebSocket?: typeof WebSocket;
+      window?: NodeWindowShim;
+    };
+
+    if (typeof runtime.WebSocket === 'undefined') {
+      try {
+        const wsModuleName = 'ws';
+        const wsModule = (await import(wsModuleName)) as {
+          WebSocket?: typeof WebSocket;
+          default?: typeof WebSocket;
+        };
+        const wsCtor = wsModule.WebSocket ?? wsModule.default;
+        if (!wsCtor || typeof wsCtor !== 'function') {
+          throw new Error('ws module did not export a WebSocket constructor');
+        }
+        runtime.WebSocket = wsCtor;
+      } catch (error) {
+        throw new Error(
+          `Node.js runtime is missing WebSocket support. Install "ws" or assign globalThis.WebSocket before creating the client. Cause: ${error}`,
+        );
+      }
+    }
+
+    if (typeof globalThis.fetch !== 'function') {
+      throw new Error('Node.js runtime is missing fetch() support. Node.js 18+ is required.');
+    }
+
+    if (!this.wasmUrl) {
+      try {
+        const [{ readFile }, { fileURLToPath }] = await Promise.all([
+          import('node:fs/promises'),
+          import('node:url'),
+        ]);
+        const wasmFileUrl = new URL('../.wasm-out/kalam_link_bg.wasm', import.meta.url);
+        this.wasmUrl = await readFile(fileURLToPath(wasmFileUrl));
+      } catch (error) {
+        throw new Error(
+          `Node.js runtime could not load bundled WASM file. Build the SDK and ensure dist/.wasm-out/kalam_link_bg.wasm exists. Cause: ${error}`,
+        );
+      }
+    }
+
+    const parsedUrl = new URL(this.url);
+    const location = {
+      protocol: parsedUrl.protocol,
+      hostname: parsedUrl.hostname,
+      port: parsedUrl.port,
+      href: parsedUrl.href,
+    };
+
+    if (!runtime.window) {
+      runtime.window = { location, fetch: globalThis.fetch.bind(globalThis) };
+      return;
+    }
+
+    runtime.window.location = location;
+    if (!runtime.window.fetch) {
+      runtime.window.fetch = globalThis.fetch.bind(globalThis);
     }
   }
 }

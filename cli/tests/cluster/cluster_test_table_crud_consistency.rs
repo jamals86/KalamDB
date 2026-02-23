@@ -21,8 +21,10 @@ fn assert_rows_on_all_nodes(urls: &[String], sql: &str, expected: &[String]) {
                 Ok(rows) => {
                     if rows != expected_rows {
                         all_match = false;
-                        last_mismatch =
-                            format!("Node {} data mismatch: got {:?}, expected {:?}", idx, rows, expected_rows);
+                        last_mismatch = format!(
+                            "Node {} data mismatch: got {:?}, expected {:?}",
+                            idx, rows, expected_rows
+                        );
                     }
                 },
                 Err(e) => {
@@ -63,8 +65,10 @@ fn assert_rows_on_all_nodes_as_user(
                 Ok(rows) => {
                     if rows != expected_rows {
                         all_match = false;
-                        last_mismatch =
-                            format!("Node {} data mismatch: got {:?}, expected {:?}", idx, rows, expected_rows);
+                        last_mismatch = format!(
+                            "Node {} data mismatch: got {:?}, expected {:?}",
+                            idx, rows, expected_rows
+                        );
                     }
                 },
                 Err(e) => {

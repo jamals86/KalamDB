@@ -12,8 +12,8 @@
 //!
 //! **Schema**: TableDefinition provides consistent metadata for views
 
-use crate::view_base::VirtualView;
 use crate::error::RegistryError;
+use crate::view_base::VirtualView;
 use datafusion::arrow::array::{
     ArrayRef, BooleanArray, Int32Array, Int64Array, RecordBatch, StringBuilder,
 };

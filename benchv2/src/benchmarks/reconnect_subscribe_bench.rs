@@ -31,16 +31,10 @@ impl Benchmark for ReconnectSubscribeBench {
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
             client
-                .sql_ok(&format!(
-                    "CREATE NAMESPACE IF NOT EXISTS {}",
-                    config.namespace
-                ))
+                .sql_ok(&format!("CREATE NAMESPACE IF NOT EXISTS {}", config.namespace))
                 .await?;
             let _ = client
-                .sql(&format!(
-                    "DROP USER TABLE IF EXISTS {}.reconnect_sub",
-                    config.namespace
-                ))
+                .sql(&format!("DROP USER TABLE IF EXISTS {}.reconnect_sub", config.namespace))
                 .await;
             client
                 .sql_ok(&format!(
@@ -87,16 +81,15 @@ impl Benchmark for ReconnectSubscribeBench {
                         Ok(Some(Ok(event))) => match &event {
                             ChangeEvent::Ack { batch_control, .. }
                             | ChangeEvent::InitialDataBatch { batch_control, .. } => {
-                                if batch_control.status
-                                    == kalam_link::models::BatchStatus::Ready
+                                if batch_control.status == kalam_link::models::BatchStatus::Ready
                                     || !batch_control.has_more
                                 {
                                     break;
                                 }
-                            }
+                            },
                             ChangeEvent::Error { message, .. } => {
                                 return Err(format!("Server error: {}", message));
-                            }
+                            },
                             _ => break,
                         },
                         _ => break,
@@ -122,25 +115,23 @@ impl Benchmark for ReconnectSubscribeBench {
                         Ok(Some(Ok(event))) => match &event {
                             ChangeEvent::Ack { batch_control, .. } => {
                                 got_ack_or_data = true;
-                                if batch_control.status
-                                    == kalam_link::models::BatchStatus::Ready
+                                if batch_control.status == kalam_link::models::BatchStatus::Ready
                                     || !batch_control.has_more
                                 {
                                     break;
                                 }
-                            }
+                            },
                             ChangeEvent::InitialDataBatch { batch_control, .. } => {
                                 got_ack_or_data = true;
-                                if batch_control.status
-                                    == kalam_link::models::BatchStatus::Ready
+                                if batch_control.status == kalam_link::models::BatchStatus::Ready
                                     || !batch_control.has_more
                                 {
                                     break;
                                 }
-                            }
+                            },
                             ChangeEvent::Error { message, .. } => {
                                 return Err(format!("Server error on reconnect: {}", message));
-                            }
+                            },
                             _ => break,
                         },
                         _ => break,
@@ -165,10 +156,7 @@ impl Benchmark for ReconnectSubscribeBench {
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
             let _ = client
-                .sql(&format!(
-                    "DROP USER TABLE IF EXISTS {}.reconnect_sub",
-                    config.namespace
-                ))
+                .sql(&format!("DROP USER TABLE IF EXISTS {}.reconnect_sub", config.namespace))
                 .await;
             Ok(())
         })

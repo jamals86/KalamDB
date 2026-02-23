@@ -312,7 +312,8 @@ impl TableDefinition {
                 // Store KalamDataType in metadata for lossless round-trip conversion
                 field = with_kalam_data_type_metadata(field, &col.data_type);
 
-                if let Some(flags) = SchemaField::flags_for_column(col.is_primary_key, col.is_nullable)
+                if let Some(flags) =
+                    SchemaField::flags_for_column(col.is_primary_key, col.is_nullable)
                 {
                     field = with_kalam_column_flags_metadata(field, &flags);
                 }

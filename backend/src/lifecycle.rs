@@ -343,7 +343,8 @@ pub async fn bootstrap(
     let users_provider_for_init = app_context.system_tables().users();
 
     // T125-T127: Create default system user on first startup
-    create_default_system_user(users_provider_for_init.clone(), config.auth.root_password.clone()).await?;
+    create_default_system_user(users_provider_for_init.clone(), config.auth.root_password.clone())
+        .await?;
 
     // // Security warning: Check if remote access is enabled with empty root password
     // check_remote_access_security(config, users_provider_for_init).await?;
@@ -486,7 +487,8 @@ pub async fn bootstrap_isolated(
 
     // Create default system user
     let users_provider_for_init = app_context.system_tables().users();
-    create_default_system_user(users_provider_for_init.clone(), config.auth.root_password.clone()).await?;
+    create_default_system_user(users_provider_for_init.clone(), config.auth.root_password.clone())
+        .await?;
     // check_remote_access_security(config, users_provider_for_init).await?;
 
     let components = ApplicationComponents {
@@ -914,7 +916,8 @@ async fn create_default_system_user(
 
             // Check for root password from environment variable or config file.
             // Priority: KALAMDB_ROOT_PASSWORD env var > config auth.root_password > empty (localhost-only)
-            let root_password_from_env = std::env::var("KALAMDB_ROOT_PASSWORD").ok().filter(|p| !p.is_empty());
+            let root_password_from_env =
+                std::env::var("KALAMDB_ROOT_PASSWORD").ok().filter(|p| !p.is_empty());
             let root_password_from_config = config_root_password.clone().filter(|p| !p.is_empty());
             let root_password = root_password_from_env.or(root_password_from_config);
 

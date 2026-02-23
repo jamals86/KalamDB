@@ -131,10 +131,7 @@ async fn test_is_closed_flag_transitions() {
     let full = setup_table(&ns, &tbl).await;
 
     let client = fast_client().expect("client should build");
-    let cfg = SubscriptionConfig::new(
-        unique_ident("sub_flag"),
-        format!("SELECT * FROM {}", full),
-    );
+    let cfg = SubscriptionConfig::new(unique_ident("sub_flag"), format!("SELECT * FROM {}", full));
     let mut sub = client.subscribe_with_config(cfg).await.expect("subscribe should succeed");
 
     assert!(!sub.is_closed(), "should be open after subscribe()");
@@ -158,10 +155,7 @@ async fn test_close_is_idempotent() {
     let full = setup_table(&ns, &tbl).await;
 
     let client = fast_client().expect("client should build");
-    let cfg = SubscriptionConfig::new(
-        unique_ident("sub_idem"),
-        format!("SELECT * FROM {}", full),
-    );
+    let cfg = SubscriptionConfig::new(unique_ident("sub_idem"), format!("SELECT * FROM {}", full));
     let mut sub = client.subscribe_with_config(cfg).await.expect("subscribe should succeed");
 
     sub.close().await.expect("first close() should succeed");
@@ -184,10 +178,8 @@ async fn test_next_returns_none_after_close() {
     let full = setup_table(&ns, &tbl).await;
 
     let client = fast_client().expect("client should build");
-    let cfg = SubscriptionConfig::new(
-        unique_ident("sub_nextnone"),
-        format!("SELECT * FROM {}", full),
-    );
+    let cfg =
+        SubscriptionConfig::new(unique_ident("sub_nextnone"), format!("SELECT * FROM {}", full));
     let mut sub = client.subscribe_with_config(cfg).await.expect("subscribe should succeed");
 
     sub.close().await.unwrap();

@@ -10,8 +10,8 @@
 //!
 //! **DataFusion Pattern**: Implements VirtualView trait for consistent view behavior
 
-use crate::view_base::VirtualView;
 use crate::error::RegistryError;
+use crate::view_base::VirtualView;
 use datafusion::arrow::array::{ArrayRef, BooleanBuilder, Int64Builder, StringBuilder};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;

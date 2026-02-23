@@ -383,5 +383,6 @@ fn smoke_test_describe_table_meta_command() {
     // This requires DESCRIBE TABLE implementation or system.columns table
 
     // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 }

@@ -54,7 +54,7 @@ impl<'de> Deserialize<'de> for LiveQueryId {
         match LiveQueryIdRepr::deserialize(deserializer)? {
             LiveQueryIdRepr::String(value) => {
                 LiveQueryId::from_string(&value).map_err(serde::de::Error::custom)
-            }
+            },
             LiveQueryIdRepr::Struct {
                 user_id,
                 connection_id,

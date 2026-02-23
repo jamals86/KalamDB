@@ -26,17 +26,10 @@ impl Benchmark for ConcurrentUpdateBench {
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
             client
-                .sql_ok(&format!(
-                    "CREATE NAMESPACE IF NOT EXISTS {}",
-                    config.namespace
-                ))
+                .sql_ok(&format!("CREATE NAMESPACE IF NOT EXISTS {}", config.namespace))
                 .await?;
-            let _ = client
-                .sql(&format!(
-                    "DROP TABLE IF EXISTS {}.conc_upd",
-                    config.namespace
-                ))
-                .await;
+            let _ =
+                client.sql(&format!("DROP TABLE IF EXISTS {}.conc_upd", config.namespace)).await;
             client
                 .sql_ok(&format!(
                     "CREATE TABLE {}.conc_upd (id INT PRIMARY KEY, counter INT, label TEXT)",
@@ -75,7 +68,10 @@ impl Benchmark for ConcurrentUpdateBench {
                 handles.push(tokio::spawn(async move {
                     c.sql_ok(&format!(
                         "UPDATE {}.conc_upd SET counter = {}, label = 'iter_{}' WHERE id = {}",
-                        ns, iter * 100 + i, iter, i
+                        ns,
+                        iter * 100 + i,
+                        iter,
+                        i
                     ))
                     .await
                     .map_err(|e| format!("Concurrent update #{} failed: {}", i, e))
@@ -94,12 +90,8 @@ impl Benchmark for ConcurrentUpdateBench {
         config: &'a Config,
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
-            let _ = client
-                .sql(&format!(
-                    "DROP TABLE IF EXISTS {}.conc_upd",
-                    config.namespace
-                ))
-                .await;
+            let _ =
+                client.sql(&format!("DROP TABLE IF EXISTS {}.conc_upd", config.namespace)).await;
             Ok(())
         })
     }

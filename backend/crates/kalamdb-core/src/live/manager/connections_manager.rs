@@ -463,11 +463,12 @@ impl ConnectionsManager {
             let conn_id = entry.key().clone();
             let state = entry.value().read();
             match state.event_tx.try_send(ConnectionEvent::Shutdown) {
-                Ok(_) => {}
-                Err(mpsc::error::TrySendError::Full(_)) | Err(mpsc::error::TrySendError::Closed(_)) => {
+                Ok(_) => {},
+                Err(mpsc::error::TrySendError::Full(_))
+                | Err(mpsc::error::TrySendError::Closed(_)) => {
                     // Handler is likely stalled or gone; unregister immediately so shutdown doesn't wait forever.
                     force_unregister.push(conn_id);
-                }
+                },
             }
         }
 
@@ -559,10 +560,11 @@ impl ConnectionsManager {
             {
                 debug!("Auth timeout for connection: {}", conn_id);
                 match state.event_tx.try_send(ConnectionEvent::AuthTimeout) {
-                    Ok(_) => {}
-                    Err(mpsc::error::TrySendError::Full(_)) | Err(mpsc::error::TrySendError::Closed(_)) => {
+                    Ok(_) => {},
+                    Err(mpsc::error::TrySendError::Full(_))
+                    | Err(mpsc::error::TrySendError::Closed(_)) => {
                         force_unregister.push(conn_id.clone());
-                    }
+                    },
                 }
                 continue;
             }
@@ -573,12 +575,16 @@ impl ConnectionsManager {
             // This check is the last line of defence for crashed / misbehaving clients.
             let ms_since = state.millis_since_heartbeat();
             if ms_since > client_timeout_ms {
-                debug!("Heartbeat timeout for connection: {} ({}ms since last activity)", conn_id, ms_since);
+                debug!(
+                    "Heartbeat timeout for connection: {} ({}ms since last activity)",
+                    conn_id, ms_since
+                );
                 match state.event_tx.try_send(ConnectionEvent::HeartbeatTimeout) {
-                    Ok(_) => {}
-                    Err(mpsc::error::TrySendError::Full(_)) | Err(mpsc::error::TrySendError::Closed(_)) => {
+                    Ok(_) => {},
+                    Err(mpsc::error::TrySendError::Full(_))
+                    | Err(mpsc::error::TrySendError::Closed(_)) => {
                         force_unregister.push(conn_id.clone());
-                    }
+                    },
                 }
             }
         }
@@ -680,10 +686,7 @@ mod tests {
         {
             let mut state = reg.state.write();
             state.mark_auth_started();
-            state.mark_authenticated(
-                UserId::new("u1"),
-                kalamdb_commons::Role::User,
-            );
+            state.mark_authenticated(UserId::new("u1"), kalamdb_commons::Role::User);
         }
 
         // Wait longer than client_timeout
@@ -719,10 +722,7 @@ mod tests {
         {
             let mut state = reg.state.write();
             state.mark_auth_started();
-            state.mark_authenticated(
-                UserId::new("u2"),
-                kalamdb_commons::Role::User,
-            );
+            state.mark_authenticated(UserId::new("u2"), kalamdb_commons::Role::User);
         }
 
         // Simulate client activity before the timeout fires
@@ -747,8 +747,8 @@ mod tests {
     async fn test_auth_timeout_for_unauthenticated() {
         let registry = ConnectionsManager::new(
             NodeId::new(1),
-            Duration::from_secs(60),    // client_timeout (long)
-            Duration::from_millis(50),  // auth_timeout (short)
+            Duration::from_secs(60),   // client_timeout (long)
+            Duration::from_millis(50), // auth_timeout (short)
             Duration::from_secs(5),
         );
 
@@ -789,10 +789,7 @@ mod tests {
         {
             let mut state = reg.state.write();
             state.mark_auth_started();
-            state.mark_authenticated(
-                UserId::new("u3"),
-                kalamdb_commons::Role::User,
-            );
+            state.mark_authenticated(UserId::new("u3"), kalamdb_commons::Role::User);
         }
 
         // Fill the event channel to capacity

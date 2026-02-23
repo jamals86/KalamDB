@@ -559,24 +559,28 @@ pub fn extract_pk_equality_literal(filter: &Expr, pk_name: &str) -> Option<Scala
     match filter {
         Expr::BinaryExpr(binary) if binary.op == datafusion::logical_expr::Operator::Eq => {
             // col = literal
-            if let (Expr::Column(col), Expr::Literal(val, _)) = (binary.left.as_ref(), binary.right.as_ref()) {
+            if let (Expr::Column(col), Expr::Literal(val, _)) =
+                (binary.left.as_ref(), binary.right.as_ref())
+            {
                 if col.name.eq_ignore_ascii_case(pk_name) {
                     return Some(val.clone());
                 }
             }
             // literal = col
-            if let (Expr::Literal(val, _), Expr::Column(col)) = (binary.left.as_ref(), binary.right.as_ref()) {
+            if let (Expr::Literal(val, _), Expr::Column(col)) =
+                (binary.left.as_ref(), binary.right.as_ref())
+            {
                 if col.name.eq_ignore_ascii_case(pk_name) {
                     return Some(val.clone());
                 }
             }
             None
-        }
+        },
         Expr::BinaryExpr(binary) if binary.op == datafusion::logical_expr::Operator::And => {
             // Recursively check AND branches
             extract_pk_equality_literal(&binary.left, pk_name)
                 .or_else(|| extract_pk_equality_literal(&binary.right, pk_name))
-        }
+        },
         _ => None,
     }
 }

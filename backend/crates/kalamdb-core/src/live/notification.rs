@@ -233,14 +233,11 @@ impl NotificationService {
             user_id,
             table_id
         );
-        if let Err(e) =
-            self.notify_table_change_with_handles(&user_id, &table_id, notification, handles).await
+        if let Err(e) = self
+            .notify_table_change_with_handles(&user_id, &table_id, notification, handles)
+            .await
         {
-            log::warn!(
-                "Failed to dispatch forwarded notification for table {}: {}",
-                table_id,
-                e
-            );
+            log::warn!("Failed to dispatch forwarded notification for table {}: {}", table_id, e);
         }
     }
 
@@ -437,17 +434,13 @@ impl NotificationService {
             // client can send the correct ID back in Unsubscribe messages.
             let sub_id = live_id.subscription_id().to_string();
             let notification = match change_notification.change_type {
-                ChangeType::Insert => {
-                    kalamdb_commons::Notification::insert(sub_id, vec![row_json])
-                },
+                ChangeType::Insert => kalamdb_commons::Notification::insert(sub_id, vec![row_json]),
                 ChangeType::Update => kalamdb_commons::Notification::update(
                     sub_id,
                     vec![row_json],
                     vec![old_json.unwrap_or_else(std::collections::HashMap::new)],
                 ),
-                ChangeType::Delete => {
-                    kalamdb_commons::Notification::delete(sub_id, vec![row_json])
-                },
+                ChangeType::Delete => kalamdb_commons::Notification::delete(sub_id, vec![row_json]),
             };
 
             // Send notification through channel (non-blocking, bounded)

@@ -1,8 +1,11 @@
+use std::net::IpAddr;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use kalam_link::{
-    AuthProvider, KalamLinkClient, KalamLinkTimeouts, QueryResponse, ServerSetupRequest,
-    SubscriptionConfig, SubscriptionManager,
+    AuthProvider, ConnectionOptions, KalamLinkClient, KalamLinkTimeouts, QueryResponse,
+    ServerSetupRequest, SubscriptionConfig, SubscriptionManager,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -11,8 +14,14 @@ use serde_json::Value;
 /// for the benchmark suite while delegating all HTTP / WebSocket work to kalam-link.
 #[derive(Clone)]
 pub struct KalamClient {
-    link: KalamLinkClient,
+    endpoints: Arc<Vec<EndpointClient>>,
+    next_endpoint: Arc<AtomicUsize>,
+}
+
+#[derive(Clone)]
+struct EndpointClient {
     base_url: String,
+    link: KalamLinkClient,
 }
 
 // Keep these simple response types so existing benchmarks compile unchanged.
@@ -39,14 +48,75 @@ pub struct SqlError {
 }
 
 impl KalamClient {
-    /// Create a new client by logging in via kalam-link and obtaining a JWT.
-    /// Handles initial server setup if needed.
-    pub async fn login(base_url: &str, username: &str, password: &str) -> Result<Self, String> {
-        let base_url = base_url.trim_end_matches('/').to_string();
+    /// Create a multi-endpoint client by logging into every configured URL.
+    /// All URLs must be reachable and authenticatable, otherwise creation fails.
+    pub async fn login(urls: &[String], username: &str, password: &str) -> Result<Self, String> {
+        let urls = normalize_http_urls(urls);
+        if urls.is_empty() {
+            return Err(
+                "No valid server URLs provided. Use --urls with one or more endpoints.".to_string()
+            );
+        }
 
+        let timeouts = default_timeouts();
+        let ws_local_bind_addresses = derive_loopback_bind_addresses(&urls);
+        let mut endpoints = Vec::with_capacity(urls.len());
+        let mut failures = Vec::new();
+
+        for base_url in urls {
+            match Self::build_authenticated_endpoint(
+                &base_url,
+                username,
+                password,
+                &timeouts,
+                &ws_local_bind_addresses,
+            )
+            .await
+            {
+                Ok(endpoint) => endpoints.push(endpoint),
+                Err(e) => failures.push(format!("{} -> {}", base_url, e)),
+            }
+        }
+
+        if !failures.is_empty() {
+            let mut msg = format!(
+                "Failed to authenticate against {}/{} configured URL(s).",
+                failures.len(),
+                failures.len() + endpoints.len()
+            );
+            for failure in failures {
+                msg.push_str("\n  - ");
+                msg.push_str(&failure);
+            }
+            return Err(msg);
+        }
+
+        Ok(Self {
+            endpoints: Arc::new(endpoints),
+            next_endpoint: Arc::new(AtomicUsize::new(0)),
+        })
+    }
+
+    /// Convenience helper for a single endpoint.
+    pub async fn login_single(
+        base_url: &str,
+        username: &str,
+        password: &str,
+    ) -> Result<Self, String> {
+        let urls = vec![base_url.to_string()];
+        Self::login(&urls, username, password).await
+    }
+
+    async fn build_authenticated_endpoint(
+        base_url: &str,
+        username: &str,
+        password: &str,
+        timeouts: &KalamLinkTimeouts,
+        ws_local_bind_addresses: &[String],
+    ) -> Result<EndpointClient, String> {
         // Build an unauthenticated client first — needed for setup + login
         let unauthed = KalamLinkClient::builder()
-            .base_url(&base_url)
+            .base_url(base_url)
             .timeout(Duration::from_secs(60))
             .build()
             .map_err(|e| format!("failed to build kalam-link client: {}", e))?;
@@ -64,43 +134,35 @@ impl KalamClient {
                     .login(username, password)
                     .await
                     .map_err(|e| format!("Login failed after setup: {}", e))?
-            }
+            },
             Err(e) => return Err(format!("Login failed: {}", e)),
         };
 
-        let token = login_resp.access_token.clone();
+        let token = login_resp.access_token;
 
         // Build the authenticated client with sensible timeouts
-        let timeouts = KalamLinkTimeouts::builder()
-            .connection_timeout(Duration::from_secs(45))
-            .receive_timeout(Duration::from_secs(60))
-            .send_timeout(Duration::from_secs(30))
-            .subscribe_timeout(Duration::from_secs(45))
-            .auth_timeout(Duration::from_secs(30))
-            .initial_data_timeout(Duration::from_secs(60))
-            .keepalive_interval_secs(20)
-            .build();
-
-        let link = KalamLinkClient::builder()
-            .base_url(&base_url)
+        let mut link_builder = KalamLinkClient::builder()
+            .base_url(base_url)
             .auth(AuthProvider::jwt_token(token))
             .timeout(Duration::from_secs(60))
-            .timeouts(timeouts)
+            .timeouts(timeouts.clone());
+        if !ws_local_bind_addresses.is_empty() {
+            let connection_options = ConnectionOptions::new()
+                .with_ws_local_bind_addresses(ws_local_bind_addresses.to_vec());
+            link_builder = link_builder.connection_options(connection_options);
+        }
+        let link = link_builder
             .build()
             .map_err(|e| format!("failed to build authenticated kalam-link client: {}", e))?;
 
-        Ok(Self {
-            link,
+        Ok(EndpointClient {
             base_url: base_url.to_string(),
+            link,
         })
     }
 
     /// Complete initial server setup if the server hasn't been set up yet.
-    async fn complete_setup_if_needed(
-        client: &KalamLinkClient,
-        username: &str,
-        password: &str,
-    ) {
+    async fn complete_setup_if_needed(client: &KalamLinkClient, username: &str, password: &str) {
         let Ok(status) = client.check_setup_status().await else {
             return;
         };
@@ -117,9 +179,47 @@ impl KalamClient {
         let _ = client.server_setup(req).await;
     }
 
+    fn pick_endpoint(&self) -> EndpointClient {
+        let idx = self.next_endpoint.fetch_add(1, Ordering::Relaxed) % self.endpoints.len();
+        self.endpoints[idx].clone()
+    }
+
+    fn endpoint_for_http_url(&self, base_url: &str) -> Option<EndpointClient> {
+        let normalized = normalize_http_url(base_url)?;
+        self.endpoints.iter().find(|ep| ep.base_url == normalized).cloned()
+    }
+
+    fn endpoint_for_ws_url(&self, ws_url: &str) -> Option<EndpointClient> {
+        let ws_norm = normalize_ws_url(ws_url)?;
+        self.endpoints
+            .iter()
+            .find(|ep| {
+                normalize_ws_url(&http_to_ws_url(&ep.base_url))
+                    .as_ref()
+                    .map(|v| v == &ws_norm)
+                    .unwrap_or(false)
+            })
+            .cloned()
+    }
+
     /// Execute a SQL statement returning a `QueryResponse` from kalam-link.
     pub async fn query(&self, sql: &str) -> Result<QueryResponse, String> {
-        self.link
+        let endpoint = self.pick_endpoint();
+        endpoint
+            .link
+            .execute_query(sql, None, None, None)
+            .await
+            .map_err(|e| format!("SQL error: {}", e))
+    }
+
+    /// Execute SQL against a specific configured URL.
+    pub async fn query_on_url(&self, base_url: &str, sql: &str) -> Result<QueryResponse, String> {
+        let endpoint = self
+            .endpoint_for_http_url(base_url)
+            .ok_or_else(|| format!("URL not configured in client: {}", base_url))?;
+
+        endpoint
+            .link
             .execute_query(sql, None, None, None)
             .await
             .map_err(|e| format!("SQL error: {}", e))
@@ -127,11 +227,13 @@ impl KalamClient {
 
     /// Execute a SQL statement and return the parsed response (legacy format).
     pub async fn sql(&self, sql: &str) -> Result<SqlResponse, String> {
-        let resp = self
-            .link
-            .execute_query(sql, None, None, None)
-            .await
-            .map_err(|e| format!("SQL error: {}", e))?;
+        let resp = self.query(sql).await?;
+        Ok(query_response_to_sql_response(resp))
+    }
+
+    /// Execute SQL against a specific configured URL and return the parsed response.
+    pub async fn sql_on_url(&self, base_url: &str, sql: &str) -> Result<SqlResponse, String> {
+        let resp = self.query_on_url(base_url, sql).await?;
         Ok(query_response_to_sql_response(resp))
     }
 
@@ -139,23 +241,49 @@ impl KalamClient {
     pub async fn sql_ok(&self, sql: &str) -> Result<SqlResponse, String> {
         let resp = self.sql(sql).await?;
         if resp.status != "success" {
-            let msg = resp
-                .error
-                .map(|e| e.message)
-                .unwrap_or_else(|| "unknown error".to_string());
+            let msg = resp.error.map(|e| e.message).unwrap_or_else(|| "unknown error".to_string());
             return Err(format!("SQL error: {}", msg));
         }
         Ok(resp)
     }
 
-    /// Health check — can we reach the server?
+    /// Execute SQL expecting success on a specific URL.
+    pub async fn sql_ok_on_url(&self, base_url: &str, sql: &str) -> Result<SqlResponse, String> {
+        let resp = self.sql_on_url(base_url, sql).await?;
+        if resp.status != "success" {
+            let msg = resp.error.map(|e| e.message).unwrap_or_else(|| "unknown error".to_string());
+            return Err(format!("SQL error: {}", msg));
+        }
+        Ok(resp)
+    }
+
+    /// Validate SQL success across all configured URLs.
+    pub async fn validate_sql_on_all_urls(&self, sql: &str) -> Result<(), Vec<String>> {
+        let mut failures = Vec::new();
+        for url in self.urls() {
+            if let Err(e) = self.sql_ok_on_url(&url, sql).await {
+                failures.push(format!("{} -> {}", url, e));
+            }
+        }
+
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(failures)
+        }
+    }
+
+    /// Health check — can we reach the server on any endpoint.
     pub async fn health_check(&self) -> bool {
-        self.link.health_check().await.is_ok()
+        let endpoint = self.pick_endpoint();
+        endpoint.link.health_check().await.is_ok()
     }
 
     /// Subscribe to a live query using kalam-link's built-in subscription manager.
     pub async fn subscribe(&self, sql: &str) -> Result<SubscriptionManager, String> {
-        self.link
+        let endpoint = self.pick_endpoint();
+        endpoint
+            .link
             .subscribe(sql)
             .await
             .map_err(|e| format!("Subscribe error: {}", e))
@@ -166,21 +294,146 @@ impl KalamClient {
         &self,
         config: SubscriptionConfig,
     ) -> Result<SubscriptionManager, String> {
-        self.link
+        let endpoint = if let Some(ref ws_url) = config.ws_url {
+            self.endpoint_for_ws_url(ws_url).unwrap_or_else(|| self.pick_endpoint())
+        } else {
+            self.pick_endpoint()
+        };
+
+        endpoint
+            .link
             .subscribe_with_config(config)
             .await
             .map_err(|e| format!("Subscribe error: {}", e))
     }
 
-    /// Get a reference to the inner kalam-link client (for advanced use).
-    pub fn link(&self) -> &KalamLinkClient {
-        &self.link
+    /// Get a reference to one inner client for advanced use.
+    /// Selection is round-robin across configured URLs.
+    pub fn link(&self) -> KalamLinkClient {
+        self.pick_endpoint().link
     }
 
-    /// Returns the base URL.
-    pub fn base_url(&self) -> &str {
-        &self.base_url
+    /// Returns all configured base URLs.
+    pub fn urls(&self) -> Vec<String> {
+        self.endpoints.iter().map(|ep| ep.base_url.clone()).collect()
     }
+
+    /// Returns a representative base URL (first configured endpoint).
+    pub fn base_url(&self) -> &str {
+        &self.endpoints[0].base_url
+    }
+
+    /// Returns normalized WebSocket URLs derived from configured HTTP URLs.
+    pub fn ws_urls(&self) -> Vec<String> {
+        self.endpoints.iter().map(|ep| http_to_ws_url(&ep.base_url)).collect()
+    }
+}
+
+fn default_timeouts() -> KalamLinkTimeouts {
+    KalamLinkTimeouts::builder()
+        .connection_timeout(Duration::from_secs(45))
+        .receive_timeout(Duration::from_secs(60))
+        .send_timeout(Duration::from_secs(30))
+        .subscribe_timeout(Duration::from_secs(45))
+        .auth_timeout(Duration::from_secs(30))
+        .initial_data_timeout(Duration::from_secs(60))
+        .keepalive_interval_secs(20)
+        .build()
+}
+
+fn normalize_http_urls(urls: &[String]) -> Vec<String> {
+    let mut normalized = Vec::new();
+    for raw in urls {
+        if let Some(url) = normalize_http_url(raw) {
+            if !normalized.contains(&url) {
+                normalized.push(url);
+            }
+        }
+    }
+    normalized
+}
+
+fn derive_loopback_bind_addresses(urls: &[String]) -> Vec<String> {
+    let mut bind_addrs = Vec::new();
+    for url in urls {
+        let Some(host) = extract_url_host(url) else {
+            continue;
+        };
+        let Ok(ip) = host.parse::<IpAddr>() else {
+            continue;
+        };
+        if ip.is_loopback() {
+            let normalized = ip.to_string();
+            if !bind_addrs.contains(&normalized) {
+                bind_addrs.push(normalized);
+            }
+        }
+    }
+    bind_addrs
+}
+
+fn extract_url_host(url: &str) -> Option<String> {
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let after_scheme = trimmed.split("://").nth(1).unwrap_or(trimmed);
+    let authority = after_scheme.split('/').next().unwrap_or(after_scheme);
+    let host_port = authority.rsplit('@').next().unwrap_or(authority);
+
+    if host_port.starts_with('[') {
+        let end = host_port.find(']')?;
+        return Some(host_port[1..end].to_string());
+    }
+
+    let host = host_port.split(':').next().unwrap_or(host_port);
+    if host.is_empty() {
+        None
+    } else {
+        Some(host.to_string())
+    }
+}
+
+fn normalize_http_url(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let with_scheme = if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        trimmed.to_string()
+    } else {
+        format!("http://{}", trimmed)
+    };
+
+    Some(with_scheme.trim_end_matches('/').to_string())
+}
+
+fn normalize_ws_url(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let mut ws = if trimmed.starts_with("ws://") || trimmed.starts_with("wss://") {
+        trimmed.to_string()
+    } else if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        trimmed.replace("http://", "ws://").replace("https://", "wss://")
+    } else {
+        format!("ws://{}", trimmed)
+    };
+
+    ws = ws.trim_end_matches('/').to_string();
+    if !ws.contains("/v1/ws") {
+        ws.push_str("/v1/ws");
+    }
+
+    Some(ws)
+}
+
+fn http_to_ws_url(base_url: &str) -> String {
+    normalize_ws_url(base_url).unwrap_or_else(|| "ws://localhost:8080/v1/ws".to_string())
 }
 
 /// Convert a kalam-link `QueryResponse` into the legacy `SqlResponse` used by benchmarks.

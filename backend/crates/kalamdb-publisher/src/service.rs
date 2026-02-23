@@ -58,7 +58,10 @@ struct PendingClaim {
 
 impl ClaimState {
     fn new(cursor: u64) -> Self {
-        Self { cursor, pending: Vec::new() }
+        Self {
+            cursor,
+            pending: Vec::new(),
+        }
     }
 
     /// Expire stale pending claims and reset cursor to the earliest expired start.
@@ -262,8 +265,7 @@ impl TopicPublisherService {
             // Allocate offset and write message under a per-partition lock.
             // This ensures messages are stored in offset order even with
             // concurrent publishers, so consumers never skip gaps.
-            let partition_lock_key =
-                format!("{}:{}", entry.topic_id.as_str(), partition_id);
+            let partition_lock_key = format!("{}:{}", entry.topic_id.as_str(), partition_id);
             let lock = self
                 .partition_write_locks
                 .entry(partition_lock_key)
@@ -376,8 +378,7 @@ impl TopicPublisherService {
                 std::collections::HashMap::new();
 
             for (idx, prep) in prepared.iter().enumerate() {
-                let partition_id =
-                    (prep.hash_row() % entry.topic_partitions as u64) as u32;
+                let partition_id = (prep.hash_row() % entry.topic_partitions as u64) as u32;
                 partition_groups.entry(partition_id).or_default().push(idx);
             }
 
@@ -405,8 +406,7 @@ impl TopicPublisherService {
                 }
 
                 // Acquire partition lock only for offset allocation + RocksDB write.
-                let partition_lock_key =
-                    format!("{}:{}", topic_id_str, partition_id);
+                let partition_lock_key = format!("{}:{}", topic_id_str, partition_id);
                 let lock = self
                     .partition_write_locks
                     .entry(partition_lock_key)
@@ -415,9 +415,8 @@ impl TopicPublisherService {
                 let _guard = lock.lock().unwrap_or_else(|e| e.into_inner());
 
                 // Allocate contiguous offset range atomically.
-                let start_offset = self
-                    .offset_allocator
-                    .next_n_offsets(topic_id_str, *partition_id, count);
+                let start_offset =
+                    self.offset_allocator.next_n_offsets(topic_id_str, *partition_id, count);
 
                 // Now build messages with real offsets and serialize them.
                 let mut raw_entries = Vec::with_capacity(pre_encoded.len());
@@ -445,8 +444,8 @@ impl TopicPublisherService {
 
                     //TODO: Use the store to serialize the message directly to avoid redundant serialization in TopicMessage::new and TopicMessageStore::put. This would require refactoring TopicMessage to separate the in-memory model from the serialized form, or adding a method to get the pre-encoded bytes without going through the full struct construction.
                     let key_encoded = kalamdb_commons::StorageKey::storage_key(&msg_id);
-                    let value_encoded = kalamdb_commons::KSerializable::encode(&message)
-                        .map_err(|e| {
+                    let value_encoded =
+                        kalamdb_commons::KSerializable::encode(&message).map_err(|e| {
                             CommonError::Internal(format!(
                                 "Failed to serialize topic message: {}",
                                 e
@@ -557,8 +556,7 @@ impl TopicPublisherService {
             state.ack_up_to(offset);
         } else {
             // No claim state yet — seed one from the acked offset.
-            self.group_claim_state
-                .insert(cursor_key, ClaimState::new(offset + 1));
+            self.group_claim_state.insert(cursor_key, ClaimState::new(offset + 1));
         }
 
         Ok(())
@@ -838,12 +836,8 @@ mod tests {
             service.publish_message(&table_id, TopicOp::Insert, &row, None).unwrap();
         }
 
-        let first = service
-            .fetch_messages_for_group(&topic_id, &group_id, 0, 0, 4)
-            .unwrap();
-        let second = service
-            .fetch_messages_for_group(&topic_id, &group_id, 0, 0, 4)
-            .unwrap();
+        let first = service.fetch_messages_for_group(&topic_id, &group_id, 0, 0, 4).unwrap();
+        let second = service.fetch_messages_for_group(&topic_id, &group_id, 0, 0, 4).unwrap();
 
         assert!(!first.is_empty());
         assert!(!second.is_empty());
@@ -869,10 +863,7 @@ mod tests {
 
         let offsets = service.get_group_offsets(&topic_id, &group_id).unwrap();
         assert_eq!(offsets.len(), 1);
-        assert_eq!(
-            offsets[0].last_acked_offset, 399,
-            "Committed offset must never regress"
-        );
+        assert_eq!(offsets[0].last_acked_offset, 399, "Committed offset must never regress");
     }
 
     #[test]
@@ -897,9 +888,7 @@ mod tests {
         // Simulate two consumers fetching sequentially (serialized by lock)
         let mut all_offsets = Vec::new();
         for _ in 0..10 {
-            let batch = service
-                .fetch_messages_for_group(&topic_id, &group_id, 0, 0, 10)
-                .unwrap();
+            let batch = service.fetch_messages_for_group(&topic_id, &group_id, 0, 0, 10).unwrap();
             if batch.is_empty() {
                 break;
             }
@@ -948,9 +937,7 @@ mod tests {
         }
 
         // Fetch a batch (creates a pending claim)
-        let batch1 = service
-            .fetch_messages_for_group(&topic_id, &group_id, 0, 0, 5)
-            .unwrap();
+        let batch1 = service.fetch_messages_for_group(&topic_id, &group_id, 0, 0, 5).unwrap();
         assert!(!batch1.is_empty());
         let last_offset = batch1.last().unwrap().offset;
 
@@ -977,15 +964,11 @@ mod tests {
         let topic_id = TopicId::new("empty_topic");
         let group_id = ConsumerGroupId::new("empty_group");
 
-        let result = service
-            .fetch_messages_for_group(&topic_id, &group_id, 0, 0, 10)
-            .unwrap();
+        let result = service.fetch_messages_for_group(&topic_id, &group_id, 0, 0, 10).unwrap();
         assert!(result.is_empty(), "Empty partition should return empty vec");
 
         // Cursor should stay at 0 (not advance past non-existent messages)
-        let result2 = service
-            .fetch_messages_for_group(&topic_id, &group_id, 0, 0, 10)
-            .unwrap();
+        let result2 = service.fetch_messages_for_group(&topic_id, &group_id, 0, 0, 10).unwrap();
         assert!(result2.is_empty());
     }
 
@@ -1008,9 +991,7 @@ mod tests {
         }
 
         // Fetch first batch
-        let batch1 = service
-            .fetch_messages_for_group(&topic_id, &group_id, 0, 0, 10)
-            .unwrap();
+        let batch1 = service.fetch_messages_for_group(&topic_id, &group_id, 0, 0, 10).unwrap();
         assert!(!batch1.is_empty());
         let last1 = batch1.last().unwrap().offset;
 
@@ -1018,14 +999,9 @@ mod tests {
         service.ack_offset(&topic_id, &group_id, 0, last1).unwrap();
 
         // Fetch second batch — should continue from after first
-        let batch2 = service
-            .fetch_messages_for_group(&topic_id, &group_id, 0, 0, 10)
-            .unwrap();
+        let batch2 = service.fetch_messages_for_group(&topic_id, &group_id, 0, 0, 10).unwrap();
         if !batch2.is_empty() {
-            assert!(
-                batch2[0].offset > last1,
-                "Second batch should start after first acked offset"
-            );
+            assert!(batch2[0].offset > last1, "Second batch should start after first acked offset");
         }
     }
 }

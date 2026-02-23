@@ -8,8 +8,7 @@ use serde::{de::DeserializeOwned, Serialize};
 
 /// Encode a value to bytes using JSON.
 pub fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>, RaftError> {
-    serde_json::to_vec(value)
-        .map_err(|e| RaftError::Serialization(e.to_string()))
+    serde_json::to_vec(value).map_err(|e| RaftError::Serialization(e.to_string()))
 }
 
 /// Decode a value from bytes using JSON.

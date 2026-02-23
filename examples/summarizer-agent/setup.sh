@@ -1,0 +1,202 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+KALAMDB_URL="${KALAMDB_URL:-http://127.0.0.1:8080}"
+ROOT_PASSWORD="${KALAMDB_ROOT_PASSWORD:-kalamdb123}"
+SQL_FILE="$SCRIPT_DIR/setup.sql"
+ENV_FILE="$SCRIPT_DIR/.env.local"
+ACCESS_TOKEN=""
+SAMPLE_BLOG_ID=""
+
+log_info() {
+  echo "[setup] $*"
+}
+
+log_error() {
+  echo "[setup][error] $*" >&2
+}
+
+require_cmd() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    log_error "Missing required command: $1"
+    exit 1
+  fi
+}
+
+check_server() {
+  log_info "Checking server: $KALAMDB_URL"
+  if ! curl -fsS "$KALAMDB_URL/health" >/dev/null; then
+    log_error "KalamDB is not reachable at $KALAMDB_URL"
+    log_error "Start it first: cd backend && cargo run"
+    exit 1
+  fi
+}
+
+login_root() {
+  log_info "Logging in as root"
+  local response
+  response="$(curl -fsS -X POST "$KALAMDB_URL/v1/api/auth/login" \
+    -H "Content-Type: application/json" \
+    -d "{\"username\":\"root\",\"password\":\"$ROOT_PASSWORD\"}")"
+
+  ACCESS_TOKEN="$(echo "$response" | jq -r '.access_token // empty')"
+  if [[ -z "$ACCESS_TOKEN" ]]; then
+    log_error "Could not get access token. Check KALAMDB_ROOT_PASSWORD."
+    exit 1
+  fi
+}
+
+execute_sql_raw() {
+  local sql="$1"
+  local response
+
+  response="$(curl -sS -w "\n%{http_code}" -X POST "$KALAMDB_URL/v1/api/sql" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $ACCESS_TOKEN" \
+    -d "{\"sql\": $(jq -Rs . <<<"$sql")}")"
+
+  local http_code
+  http_code="$(echo "$response" | tail -1)"
+  local body
+  body="$(echo "$response" | sed '$d')"
+
+  if [[ "$http_code" -ge 200 && "$http_code" -lt 300 ]]; then
+    echo "$body"
+    return 0
+  fi
+
+  echo "$body"
+  return 1
+}
+
+execute_sql_allow_exists() {
+  local sql="$1"
+  local output
+  if output="$(execute_sql_raw "$sql")"; then
+    return 0
+  fi
+
+  if echo "$output" | grep -Eiq "already exists|duplicate|conflict"; then
+    log_info "Ignoring idempotent error for: $sql"
+    return 0
+  fi
+
+  log_error "SQL failed: $sql"
+  log_error "$output"
+  return 1
+}
+
+execute_sql_file() {
+  log_info "Applying schema + topic routes from $(basename "$SQL_FILE")"
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -z "$line" || "$line" =~ ^[[:space:]]*-- ]] && continue
+
+    SQL_BUFFER+="${line} "
+    if [[ "$line" =~ \;[[:space:]]*$ ]]; then
+      local stmt
+      stmt="${SQL_BUFFER%;*}"
+      stmt="$(echo "$stmt" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+      SQL_BUFFER=""
+
+      [[ -z "$stmt" ]] && continue
+      execute_sql_allow_exists "$stmt"
+    fi
+  done < "$SQL_FILE"
+}
+
+verify() {
+  log_info "Verifying sample row"
+  local result
+  result="$(execute_sql_raw "SELECT blog_id, content, summary, created, updated FROM blog.blogs ORDER BY created DESC LIMIT 1")"
+
+  local row_count
+  row_count="$(echo "$result" | jq -r '.results[0].row_count // 0')"
+  if [[ "${row_count}" -lt 1 ]]; then
+    log_error "Expected at least one blog row, but none were found."
+    exit 1
+  fi
+
+  SAMPLE_BLOG_ID="$(echo "$result" | jq -r '(try .results[0].rows[0].blog_id catch empty) // (try .results[0].rows[0][0] catch empty)')"
+  if [[ -z "$SAMPLE_BLOG_ID" || "$SAMPLE_BLOG_ID" == "null" ]]; then
+    log_error "Failed to extract sample blog_id from verification query."
+    exit 1
+  fi
+
+  log_info "Sample blog_id: $SAMPLE_BLOG_ID"
+}
+
+generate_env_file() {
+  log_info "Writing .env.local"
+  cat > "$ENV_FILE" <<EOF
+# KalamDB Connection (same style as examples/chat-with-ai)
+KALAMDB_URL=$KALAMDB_URL
+KALAMDB_USERNAME=root
+KALAMDB_PASSWORD=$ROOT_PASSWORD
+
+# Agent settings
+KALAMDB_TOPIC=blog.summarizer
+KALAMDB_GROUP=blog-summarizer-agent
+EOF
+}
+
+show_help() {
+  cat <<HELP
+Setup summarizer-agent example
+
+Usage:
+  ./setup.sh [--server URL] [--password ROOT_PASSWORD]
+
+Options:
+  --server     KalamDB server URL (default: http://127.0.0.1:8080)
+  --password   Root password (default: kalamdb123)
+HELP
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --server)
+      KALAMDB_URL="$2"
+      shift 2
+      ;;
+    --password)
+      ROOT_PASSWORD="$2"
+      shift 2
+      ;;
+    --help)
+      show_help
+      exit 0
+      ;;
+    *)
+      log_error "Unknown option: $1"
+      show_help
+      exit 1
+      ;;
+  esac
+done
+
+require_cmd curl
+require_cmd jq
+
+check_server
+login_root
+SQL_BUFFER=""
+execute_sql_file
+verify
+generate_env_file
+
+cat <<DONE
+
+Setup complete.
+
+Next:
+  1. npm install
+  2. npm run start
+  3. Update content to trigger summarization:
+     curl -sS -X POST "$KALAMDB_URL/v1/api/sql" \\
+       -H "Content-Type: application/json" \\
+       -H "Authorization: Bearer <token>" \\
+       -d '{"sql":"UPDATE blog.blogs SET content = ''KalamDB topics make event-driven agents simple'' WHERE blog_id = $SAMPLE_BLOG_ID"}'
+
+DONE

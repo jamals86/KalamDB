@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # KalamDB Benchmark Runner
-# Usage: ./run-benchmarks.sh [--url URL] [--user USER] [--password PASS] [--iterations N]
+# Usage: ./run-benchmarks.sh [--urls URLS] [--user USER] [--password PASS] [--iterations N]
 set -euo pipefail
 
 # Raise file-descriptor limit for the benchmark process (WebSocket connections, etc.)
@@ -10,7 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
 # Default values (can be overridden via args or env vars)
-URL="${KALAMDB_URL:-http://localhost:8080}"
+URLS="${KALAMDB_URLS:-${KALAMDB_URL:-http://localhost:8080}}"
 USER="${KALAMDB_USER:-admin}"
 PASSWORD="${KALAMDB_PASSWORD:-kalamdb123}"
 EXTRA_ARGS=""
@@ -18,7 +18,7 @@ EXTRA_ARGS=""
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --url) URL="$2"; shift 2;;
+        --urls) URLS="$2"; shift 2;;
         --user) USER="$2"; shift 2;;
         --password) PASSWORD="$2"; shift 2;;
         *) EXTRA_ARGS="$EXTRA_ARGS $1"; shift;;
@@ -26,12 +26,12 @@ while [[ $# -gt 0 ]]; do
 done
 
 echo "🚀 KalamDB Benchmark Suite"
-echo "   Server: $URL"
+echo "   Servers: $URLS"
 echo ""
 
 # Build and run
 cargo run --release -- \
-    --url "$URL" \
+    --urls "$URLS" \
     --user "$USER" \
     --password "$PASSWORD" \
     $EXTRA_ARGS

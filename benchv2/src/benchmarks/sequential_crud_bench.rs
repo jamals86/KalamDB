@@ -27,16 +27,10 @@ impl Benchmark for SequentialCrudBench {
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
             client
-                .sql_ok(&format!(
-                    "CREATE NAMESPACE IF NOT EXISTS {}",
-                    config.namespace
-                ))
+                .sql_ok(&format!("CREATE NAMESPACE IF NOT EXISTS {}", config.namespace))
                 .await?;
             let _ = client
-                .sql(&format!(
-                    "DROP TABLE IF EXISTS {}.crud_cycle",
-                    config.namespace
-                ))
+                .sql(&format!("DROP TABLE IF EXISTS {}.crud_cycle", config.namespace))
                 .await;
             client
                 .sql_ok(&format!(
@@ -77,10 +71,7 @@ impl Benchmark for SequentialCrudBench {
 
             // 3. SELECT (verify update)
             let resp = client
-                .sql_ok(&format!(
-                    "SELECT * FROM {}.crud_cycle WHERE id = {}",
-                    config.namespace, id
-                ))
+                .sql_ok(&format!("SELECT * FROM {}.crud_cycle WHERE id = {}", config.namespace, id))
                 .await
                 .map_err(|e| format!("SELECT failed: {}", e))?;
 
@@ -94,10 +85,7 @@ impl Benchmark for SequentialCrudBench {
 
             // 4. DELETE
             client
-                .sql_ok(&format!(
-                    "DELETE FROM {}.crud_cycle WHERE id = {}",
-                    config.namespace, id
-                ))
+                .sql_ok(&format!("DELETE FROM {}.crud_cycle WHERE id = {}", config.namespace, id))
                 .await
                 .map_err(|e| format!("DELETE failed: {}", e))?;
 
@@ -112,10 +100,7 @@ impl Benchmark for SequentialCrudBench {
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
             let _ = client
-                .sql(&format!(
-                    "DROP TABLE IF EXISTS {}.crud_cycle",
-                    config.namespace
-                ))
+                .sql(&format!("DROP TABLE IF EXISTS {}.crud_cycle", config.namespace))
                 .await;
             Ok(())
         })

@@ -96,6 +96,10 @@ await handle.run(async (ctx) => {
 handle.stop();
 ```
 
+Node.js workers do not need manual WASM/WebSocket bootstrap. `createClient(...)`
+auto-configures runtime shims and auto-loads bundled WASM bytes, so the
+consumer above is enough.
+
 ### Consume one batch + ack manually
 
 ```ts

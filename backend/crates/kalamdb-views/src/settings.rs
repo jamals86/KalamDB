@@ -632,10 +632,7 @@ impl VirtualView for SettingsView {
             ],
         )
         .map_err(|e| {
-            crate::error::RegistryError::Other(format!(
-                "Failed to build settings batch: {}",
-                e
-            ))
+            crate::error::RegistryError::Other(format!("Failed to build settings batch: {}", e))
         })
     }
 }

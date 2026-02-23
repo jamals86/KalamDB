@@ -32,16 +32,10 @@ impl Benchmark for SubscribeChangeLatencyBench {
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
             client
-                .sql_ok(&format!(
-                    "CREATE NAMESPACE IF NOT EXISTS {}",
-                    config.namespace
-                ))
+                .sql_ok(&format!("CREATE NAMESPACE IF NOT EXISTS {}", config.namespace))
                 .await?;
             let _ = client
-                .sql(&format!(
-                    "DROP USER TABLE IF EXISTS {}.change_latency",
-                    config.namespace
-                ))
+                .sql(&format!("DROP USER TABLE IF EXISTS {}.change_latency", config.namespace))
                 .await;
             client
                 .sql_ok(&format!(
@@ -77,17 +71,17 @@ impl Benchmark for SubscribeChangeLatencyBench {
                             if batch_control.status == kalam_link::models::BatchStatus::Ready {
                                 break;
                             }
-                        }
+                        },
                         ChangeEvent::InitialDataBatch { batch_control, .. } => {
                             if batch_control.status == kalam_link::models::BatchStatus::Ready
                                 || !batch_control.has_more
                             {
                                 break;
                             }
-                        }
+                        },
                         ChangeEvent::Error { message, .. } => {
                             return Err(format!("Server error: {}", message));
-                        }
+                        },
                         _ => break,
                     },
                     _ => break,
@@ -107,7 +101,7 @@ impl Benchmark for SubscribeChangeLatencyBench {
                             if matches!(event, ChangeEvent::Insert { .. }) {
                                 counter.fetch_add(1, Ordering::SeqCst);
                             }
-                        }
+                        },
                         _ => break,
                     }
                 }
@@ -159,10 +153,7 @@ impl Benchmark for SubscribeChangeLatencyBench {
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
             let _ = client
-                .sql(&format!(
-                    "DROP USER TABLE IF EXISTS {}.change_latency",
-                    config.namespace
-                ))
+                .sql(&format!("DROP USER TABLE IF EXISTS {}.change_latency", config.namespace))
                 .await;
             Ok(())
         })

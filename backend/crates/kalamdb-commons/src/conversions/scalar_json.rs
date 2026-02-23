@@ -47,10 +47,7 @@ pub fn json_value_to_scalar_for_column(
         KalamDataType::Double => ScalarValue::Float64(Some(value.as_f64().unwrap_or(0.0))),
         KalamDataType::Float => ScalarValue::Float32(Some(value.as_f64().unwrap_or(0.0) as f32)),
         KalamDataType::Text | KalamDataType::Uuid => {
-            let text = value
-                .as_str()
-                .map(str::to_string)
-                .unwrap_or_else(|| value.to_string());
+            let text = value.as_str().map(str::to_string).unwrap_or_else(|| value.to_string());
             ScalarValue::Utf8(Some(text))
         },
         KalamDataType::Json | KalamDataType::File => match value {
@@ -65,8 +62,10 @@ pub fn json_value_to_scalar_for_column(
         KalamDataType::Bytes => match value {
             Value::String(s) => ScalarValue::Binary(Some(s.as_bytes().to_vec())),
             Value::Array(arr) => {
-                let bytes: Vec<u8> =
-                    arr.iter().filter_map(|v| v.as_u64().and_then(|u| u8::try_from(u).ok())).collect();
+                let bytes: Vec<u8> = arr
+                    .iter()
+                    .filter_map(|v| v.as_u64().and_then(|u| u8::try_from(u).ok()))
+                    .collect();
                 ScalarValue::Binary(Some(bytes))
             },
             _ => ScalarValue::Binary(Some(value.to_string().into_bytes())),
@@ -107,9 +106,10 @@ pub fn scalar_to_json_for_column(
         },
         KalamDataType::Double | KalamDataType::Float => {
             let value = extract_f64(scalar).unwrap_or(0.0);
-            Value::Number(Number::from_f64(value).ok_or_else(|| {
-                "invalid floating point value".to_string()
-            })?)
+            Value::Number(
+                Number::from_f64(value)
+                    .ok_or_else(|| "invalid floating point value".to_string())?,
+            )
         },
         KalamDataType::Text | KalamDataType::Uuid => {
             Value::String(extract_string(scalar).unwrap_or_default())
@@ -119,7 +119,9 @@ pub fn scalar_to_json_for_column(
                 serde_json::from_slice(bytes)
                     .map_err(|e| format!("json field decode failed: {e}"))?
             },
-            ScalarValue::Utf8(Some(s)) | ScalarValue::LargeUtf8(Some(s)) => Value::String(s.clone()),
+            ScalarValue::Utf8(Some(s)) | ScalarValue::LargeUtf8(Some(s)) => {
+                Value::String(s.clone())
+            },
             ScalarValue::Utf8(None) | ScalarValue::LargeUtf8(None) => Value::Null,
             _ => Value::String(extract_string(scalar).unwrap_or_default()),
         },
@@ -274,8 +276,8 @@ mod tests {
             other => panic!("expected Utf8 for UUID, got {other:?}"),
         }
 
-        let json_back = scalar_to_json_for_column(&scalar, &KalamDataType::Uuid)
-            .expect("scalar to uuid json");
+        let json_back =
+            scalar_to_json_for_column(&scalar, &KalamDataType::Uuid).expect("scalar to uuid json");
         assert_eq!(json_back, value);
     }
 
@@ -295,10 +297,12 @@ mod tests {
     #[test]
     fn test_bytes_array_roundtrip() {
         let value = json!([1, 2, 255]);
-        let scalar =
-            json_value_to_scalar_for_column(&value, &KalamDataType::Bytes).expect("bytes to scalar");
+        let scalar = json_value_to_scalar_for_column(&value, &KalamDataType::Bytes)
+            .expect("bytes to scalar");
 
-        assert!(matches!(scalar, ScalarValue::Binary(Some(ref bytes)) if bytes == &vec![1, 2, 255]));
+        assert!(
+            matches!(scalar, ScalarValue::Binary(Some(ref bytes)) if bytes == &vec![1, 2, 255])
+        );
 
         let json_back =
             scalar_to_json_for_column(&scalar, &KalamDataType::Bytes).expect("scalar to bytes");

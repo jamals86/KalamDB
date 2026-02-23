@@ -20,11 +20,7 @@ pub async fn run_all(
     for bench in benchmarks {
         if !config.bench.is_empty() {
             let bench_name = bench.name();
-            if !config
-                .bench
-                .iter()
-                .any(|selected_name| selected_name == bench_name)
-            {
+            if !config.bench.iter().any(|selected_name| selected_name == bench_name) {
                 continue;
             }
         }
@@ -44,14 +40,7 @@ pub async fn run_all(
 
     let total = selected.len();
     for (idx, bench) in selected.iter().enumerate() {
-
-        println!(
-            "\n[{}/{}] {} — {}",
-            idx + 1,
-            total,
-            bench.name(),
-            bench.description()
-        );
+        println!("\n[{}/{}] {} — {}", idx + 1, total, bench.name(), bench.description());
 
         let result = run_single(bench.as_ref(), client, config).await;
 
@@ -128,7 +117,11 @@ async fn run_single(
     }
 
     // --- Timed iterations ---
-    print!("  Running {} iteration{}...", iter_count, if iter_count == 1 { "" } else { "s" });
+    print!(
+        "  Running {} iteration{}...",
+        iter_count,
+        if iter_count == 1 { "" } else { "s" }
+    );
     let mut durations = Vec::with_capacity(iter_count as usize);
     for i in 0..iter_count {
         let start = Instant::now();

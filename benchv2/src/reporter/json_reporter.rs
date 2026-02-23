@@ -24,7 +24,7 @@ pub fn write_json_report(
 
     let report = BenchmarkReport {
         version: version.to_string(),
-        server_url: config.url.clone(),
+        server_url: config.urls.join(", "),
         timestamp: timestamp.to_rfc3339(),
         config: ReportConfig {
             iterations: config.iterations,

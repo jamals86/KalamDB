@@ -759,7 +759,9 @@ impl HandlerRegistry {
 
             // Step 4: Execute statement (session is in context, no need to pass separately)
             handler.execute(statement, params, context).await
-        }.instrument(span).await
+        }
+        .instrument(span)
+        .await
     }
 
     /// Check if a handler is registered for a statement type

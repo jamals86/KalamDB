@@ -25,11 +25,7 @@ pub struct EntityEnvelope {
 }
 
 impl EntityEnvelope {
-    pub fn new(
-        codec_kind: CodecKind,
-        schema_version: u16,
-        payload: Vec<u8>,
-    ) -> Self {
+    pub fn new(codec_kind: CodecKind, schema_version: u16, payload: Vec<u8>) -> Self {
         Self {
             codec_kind,
             schema_version,

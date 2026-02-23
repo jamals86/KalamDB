@@ -31,16 +31,10 @@ impl Benchmark for AlterTableBench {
         Box::pin(async move {
             self.counter.store(0, Ordering::SeqCst);
             client
-                .sql_ok(&format!(
-                    "CREATE NAMESPACE IF NOT EXISTS {}",
-                    config.namespace
-                ))
+                .sql_ok(&format!("CREATE NAMESPACE IF NOT EXISTS {}", config.namespace))
                 .await?;
             let _ = client
-                .sql(&format!(
-                    "DROP TABLE IF EXISTS {}.alter_bench",
-                    config.namespace
-                ))
+                .sql(&format!("DROP TABLE IF EXISTS {}.alter_bench", config.namespace))
                 .await;
             client
                 .sql_ok(&format!(
@@ -113,10 +107,7 @@ impl Benchmark for AlterTableBench {
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
             let _ = client
-                .sql(&format!(
-                    "DROP TABLE IF EXISTS {}.alter_bench",
-                    config.namespace
-                ))
+                .sql(&format!("DROP TABLE IF EXISTS {}.alter_bench", config.namespace))
                 .await;
             Ok(())
         })

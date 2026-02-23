@@ -70,7 +70,15 @@ impl JwtClaims {
         expiry_hours: Option<i64>,
         issuer: &str,
     ) -> Self {
-        Self::with_token_type(user_id, username, role, email, expiry_hours, TokenType::Access, issuer)
+        Self::with_token_type(
+            user_id,
+            username,
+            role,
+            email,
+            expiry_hours,
+            TokenType::Access,
+            issuer,
+        )
     }
 
     /// Create new JWT claims with an explicit token type.

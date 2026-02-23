@@ -18,9 +18,7 @@ async fn seed_select_table(
     client
         .sql_ok(&format!("CREATE NAMESPACE IF NOT EXISTS {}", config.namespace))
         .await?;
-    let _ = client
-        .sql(&format!("DROP TABLE IF EXISTS {}", table))
-        .await;
+    let _ = client.sql(&format!("DROP TABLE IF EXISTS {}", table)).await;
     client
         .sql_ok(&format!(
             "CREATE TABLE {} (id INT PRIMARY KEY, name TEXT, score DOUBLE, active BOOLEAN)",
@@ -33,13 +31,7 @@ async fn seed_select_table(
         let values: Vec<String> = (0..50)
             .map(|i| {
                 let id = batch * 50 + i;
-                format!(
-                    "({}, 'user_{}', {:.2}, {})",
-                    id,
-                    id,
-                    id as f64 * 1.1,
-                    id % 3 == 0
-                )
+                format!("({}, 'user_{}', {:.2}, {})", id, id, id as f64 * 1.1, id % 3 == 0)
             })
             .collect();
         client
@@ -55,9 +47,7 @@ async fn seed_select_table(
 
 async fn teardown_select_table(client: &KalamClient, config: &Config, table_suffix: &str) {
     let table = format!("{}.select_{}", config.namespace, table_suffix);
-    let _ = client
-        .sql(&format!("DROP TABLE IF EXISTS {}", table))
-        .await;
+    let _ = client.sql(&format!("DROP TABLE IF EXISTS {}", table)).await;
 }
 
 // ---------------------------------------------------------------------------
@@ -91,9 +81,7 @@ impl Benchmark for SelectAllBench {
         _iteration: u32,
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
-            client
-                .sql_ok(&format!("SELECT * FROM {}.select_all", config.namespace))
-                .await?;
+            client.sql_ok(&format!("SELECT * FROM {}.select_all", config.namespace)).await?;
             Ok(())
         })
     }
@@ -196,10 +184,7 @@ impl Benchmark for SelectCountBench {
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
             client
-                .sql_ok(&format!(
-                    "SELECT COUNT(*) FROM {}.select_count",
-                    config.namespace
-                ))
+                .sql_ok(&format!("SELECT COUNT(*) FROM {}.select_count", config.namespace))
                 .await?;
             Ok(())
         })

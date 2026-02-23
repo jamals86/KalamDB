@@ -136,5 +136,8 @@ fn test_datatypes_json_preservation() {
     // Cleanup
     let drop_sql = format!("DROP TABLE IF EXISTS {}.{}", namespace, table_name);
     let _ = common::execute_sql_as_root_via_cli(&drop_sql);
-    let _ = common::execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = common::execute_sql_as_root_via_cli(&format!(
+        "DROP NAMESPACE IF EXISTS {} CASCADE",
+        namespace
+    ));
 }

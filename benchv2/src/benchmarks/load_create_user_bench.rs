@@ -155,9 +155,7 @@ impl Benchmark for DropUserBench {
                 return Err(format!("No pre-created user for iteration {}", iteration));
             }
             let username = &names[idx];
-            client
-                .sql_ok(&format!("DROP USER IF EXISTS {}", username))
-                .await?;
+            client.sql_ok(&format!("DROP USER IF EXISTS {}", username)).await?;
             Ok(())
         })
     }

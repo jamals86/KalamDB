@@ -27,17 +27,9 @@ impl Benchmark for Sql1kUsersBench {
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
             client
-                .sql_ok(&format!(
-                    "CREATE NAMESPACE IF NOT EXISTS {}",
-                    config.namespace
-                ))
+                .sql_ok(&format!("CREATE NAMESPACE IF NOT EXISTS {}", config.namespace))
                 .await?;
-            let _ = client
-                .sql(&format!(
-                    "DROP TABLE IF EXISTS {}.load_1k",
-                    config.namespace
-                ))
-                .await;
+            let _ = client.sql(&format!("DROP TABLE IF EXISTS {}.load_1k", config.namespace)).await;
             client
                 .sql_ok(&format!(
                     "CREATE TABLE {}.load_1k (id INT PRIMARY KEY, name TEXT, score DOUBLE)",
@@ -94,7 +86,7 @@ impl Benchmark for Sql1kUsersBench {
             let mut errors = 0u32;
             for h in handles {
                 match h.await {
-                    Ok(Ok(_)) => {}
+                    Ok(Ok(_)) => {},
                     Ok(Err(_)) => errors += 1,
                     Err(_) => errors += 1,
                 }
@@ -118,12 +110,7 @@ impl Benchmark for Sql1kUsersBench {
         config: &'a Config,
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
-            let _ = client
-                .sql(&format!(
-                    "DROP TABLE IF EXISTS {}.load_1k",
-                    config.namespace
-                ))
-                .await;
+            let _ = client.sql(&format!("DROP TABLE IF EXISTS {}.load_1k", config.namespace)).await;
             Ok(())
         })
     }

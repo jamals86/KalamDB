@@ -4,7 +4,9 @@
 //! Uses the new EntityStore architecture with StorageId keys.
 
 use crate::error::{SystemError, SystemResultExt};
-use crate::providers::base::{extract_filter_value, system_rows_to_batch, SimpleProviderDefinition};
+use crate::providers::base::{
+    extract_filter_value, system_rows_to_batch, SimpleProviderDefinition,
+};
 use crate::providers::storages::models::Storage;
 use crate::system_row_mapper::{model_to_system_row, system_row_to_model};
 use datafusion::arrow::array::RecordBatch;
@@ -39,14 +41,10 @@ impl StoragesTableProvider {
     pub fn new(backend: Arc<dyn StorageBackend>) -> Self {
         let store = IndexedEntityStore::new(
             backend,
-            crate::SystemTable::Storages
-                .column_family_name()
-                .expect("Storages is a table"),
+            crate::SystemTable::Storages.column_family_name().expect("Storages is a table"),
             Vec::new(),
         );
-        Self {
-            store,
-        }
+        Self { store }
     }
 
     /// Create a new storage entry
@@ -132,12 +130,7 @@ impl StoragesTableProvider {
     /// Use this in async contexts to avoid blocking the Tokio runtime.
     pub async fn update_storage_async(&self, storage: Storage) -> Result<(), SystemError> {
         // Check if storage exists
-        if self
-            .store
-            .get_async(storage.storage_id.clone())
-            .await?
-            .is_none()
-        {
+        if self.store.get_async(storage.storage_id.clone()).await?.is_none() {
             return Err(SystemError::NotFound(format!(
                 "Storage not found: {}",
                 storage.storage_id
@@ -189,10 +182,7 @@ impl StoragesTableProvider {
             .scan_all_async(None, None, None)
             .await
             .into_system_error("scan_all_async error")?;
-        results
-            .into_iter()
-            .map(|(_, row)| Self::decode_storage_row(&row))
-            .collect()
+        results.into_iter().map(|(_, row)| Self::decode_storage_row(&row)).collect()
     }
 
     /// Scan all storages and return as RecordBatch

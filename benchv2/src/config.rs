@@ -4,9 +4,15 @@ use clap::Parser;
 #[derive(Parser, Debug, Clone)]
 #[command(name = "kalamdb-bench", about = "KalamDB benchmark & report generator")]
 pub struct Config {
-    /// KalamDB server URL
-    #[arg(long, default_value = "http://localhost:8080", env = "KALAMDB_URL")]
-    pub url: String,
+    /// KalamDB server URLs (comma-separated).
+    /// Example: --urls http://127.0.0.1:8080,http://127.0.0.2:8080
+    #[arg(
+        long,
+        value_delimiter = ',',
+        default_value = "http://localhost:8080",
+        env = "KALAMDB_URLS"
+    )]
+    pub urls: Vec<String>,
 
     /// Username for Basic auth
     #[arg(long, default_value = "admin", env = "KALAMDB_USER")]

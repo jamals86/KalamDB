@@ -422,7 +422,8 @@ pub async fn start_rpc_server(
     // Cluster messaging service (notify_followers, forward_sql, ping)
     let cluster_service =
         super::cluster_handler::ClusterServiceImpl::new(cluster_handler, Arc::clone(&manager));
-    let cluster_server = super::cluster_service::cluster_server::ClusterServer::new(cluster_service);
+    let cluster_server =
+        super::cluster_service::cluster_server::ClusterServer::new(cluster_service);
 
     let rpc_tls = manager.config().rpc_tls.clone();
     let server_tls = if rpc_tls.enabled {
@@ -455,10 +456,7 @@ pub async fn start_rpc_server(
             ))
         })?;
         let key_pem = std::fs::read(node_key_path).map_err(|e| {
-            crate::RaftError::Config(format!(
-                "Failed reading node key '{}': {}",
-                node_key_path, e
-            ))
+            crate::RaftError::Config(format!("Failed reading node key '{}': {}", node_key_path, e))
         })?;
 
         Some(

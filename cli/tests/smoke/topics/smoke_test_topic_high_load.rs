@@ -941,9 +941,7 @@ async fn test_topic_fan_out_different_groups_receive_all() {
     execute_sql(&format!("CREATE TABLE {} (id INT PRIMARY KEY, data TEXT)", table))
         .await
         .expect("create table");
-    execute_sql(&format!("CREATE TOPIC {}", topic))
-        .await
-        .expect("create topic");
+    execute_sql(&format!("CREATE TOPIC {}", topic)).await.expect("create topic");
     execute_sql(&format!("ALTER TOPIC {} ADD SOURCE {} ON INSERT", topic, table))
         .await
         .expect("add source");
@@ -1077,9 +1075,7 @@ async fn test_topic_four_consumers_same_group_no_duplicates() {
     execute_sql(&format!("CREATE TABLE {} (id INT PRIMARY KEY, value TEXT)", table))
         .await
         .expect("create table");
-    execute_sql(&format!("CREATE TOPIC {}", topic))
-        .await
-        .expect("create topic");
+    execute_sql(&format!("CREATE TOPIC {}", topic)).await.expect("create topic");
     execute_sql(&format!("ALTER TOPIC {} ADD SOURCE {} ON INSERT", topic, table))
         .await
         .expect("add source");
@@ -1218,6 +1214,170 @@ async fn test_topic_four_consumers_same_group_no_duplicates() {
         "Expected at least {} unique messages, got {}",
         min_expected,
         combined.len()
+    );
+
+    let _ = execute_sql(&format!("DROP TOPIC {}", topic)).await;
+    let _ = execute_sql(&format!("DROP TABLE {}", table)).await;
+    let _ = execute_sql(&format!("DROP NAMESPACE {}", namespace)).await;
+}
+
+/// High-load recovery test:
+/// 1. Consumer A claims a range and never commits (simulated ack failure/crash).
+/// 2. After visibility timeout, Consumer B (same group) must recover and process
+///    the entire stream without offset gaps, even with per-message processing latency.
+#[tokio::test]
+#[ntest::timeout(180000)]
+async fn test_topic_ack_failure_recovery_no_message_loss_with_latency() {
+    let namespace = common::generate_unique_namespace("ack_recovery");
+    let table = format!("{}.events", namespace);
+    let topic = format!("{}.{}", namespace, common::generate_unique_table("ack_topic"));
+    let group_id = format!("ack-recovery-group-{}", common::random_string(8));
+
+    execute_sql(&format!("CREATE NAMESPACE {}", namespace))
+        .await
+        .expect("create namespace");
+    execute_sql(&format!("CREATE TABLE {} (id INT PRIMARY KEY, payload TEXT)", table))
+        .await
+        .expect("create table");
+    execute_sql(&format!("CREATE TOPIC {}", topic)).await.expect("create topic");
+    execute_sql(&format!("ALTER TOPIC {} ADD SOURCE {} ON INSERT", topic, table))
+        .await
+        .expect("add source");
+    wait_for_topic_ready(&topic, 1).await;
+
+    let expected_messages: usize = 480;
+    let publisher_parallelism = 12;
+    let per_publisher = expected_messages / publisher_parallelism;
+    let mut publisher_handles = Vec::with_capacity(publisher_parallelism);
+
+    for p in 0..publisher_parallelism {
+        let tbl = table.clone();
+        publisher_handles.push(tokio::spawn(async move {
+            for i in 0..per_publisher {
+                let id = (p * per_publisher + i) as i64;
+                execute_sql(&format!(
+                    "INSERT INTO {} (id, payload) VALUES ({}, 'payload_{}')",
+                    tbl, id, id
+                ))
+                .await
+                .expect("insert");
+            }
+        }));
+    }
+
+    for handle in publisher_handles {
+        handle.await.expect("publisher task");
+    }
+
+    let consumer_a_claim_target = 160usize;
+    let mut claimed_by_a = HashSet::<(u32, u64)>::new();
+    {
+        let client = create_test_client().await;
+        let mut consumer_a = client
+            .consumer()
+            .topic(&topic)
+            .group_id(&group_id)
+            .auto_offset_reset(AutoOffsetReset::Earliest)
+            .enable_auto_commit(false)
+            .max_poll_records(80)
+            .build()
+            .expect("build consumer-a");
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(35);
+        while std::time::Instant::now() < deadline && claimed_by_a.len() < consumer_a_claim_target {
+            match consumer_a.poll().await {
+                Ok(batch) if batch.is_empty() => {
+                    tokio::time::sleep(Duration::from_millis(80)).await;
+                },
+                Ok(batch) => {
+                    for rec in &batch {
+                        claimed_by_a.insert((rec.partition_id, rec.offset));
+                        consumer_a.mark_processed(rec);
+                    }
+                },
+                Err(err) => {
+                    let message = err.to_string();
+                    if message.contains("error decoding") || message.contains("network") {
+                        tokio::time::sleep(Duration::from_millis(80)).await;
+                        continue;
+                    }
+                    panic!("consumer-a poll error: {}", message);
+                },
+            }
+        }
+    } // drop without commit -> simulate crash/ack failure
+
+    assert!(
+        claimed_by_a.len() >= 120,
+        "Consumer A should claim a meaningful prefix before failure (claimed={})",
+        claimed_by_a.len()
+    );
+
+    // Topic visibility timeout is 60s in publisher service.
+    tokio::time::sleep(Duration::from_secs(65)).await;
+
+    let client = create_test_client().await;
+    let mut consumer_b = client
+        .consumer()
+        .topic(&topic)
+        .group_id(&group_id)
+        .auto_offset_reset(AutoOffsetReset::Earliest)
+        .enable_auto_commit(false)
+        .max_poll_records(120)
+        .build()
+        .expect("build consumer-b");
+
+    let mut recovered_offsets = HashSet::<(u32, u64)>::new();
+    let deadline = std::time::Instant::now() + Duration::from_secs(80);
+    let mut idle_loops = 0u32;
+
+    while std::time::Instant::now() < deadline && recovered_offsets.len() < expected_messages {
+        match consumer_b.poll().await {
+            Ok(batch) if batch.is_empty() => {
+                idle_loops += 1;
+                if idle_loops >= 25 && recovered_offsets.len() >= expected_messages {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(80)).await;
+            },
+            Ok(batch) => {
+                idle_loops = 0;
+                for rec in &batch {
+                    // Simulate downstream processing latency per message.
+                    tokio::time::sleep(Duration::from_millis(2)).await;
+                    recovered_offsets.insert((rec.partition_id, rec.offset));
+                    consumer_b.mark_processed(rec);
+                }
+            },
+            Err(err) => {
+                let message = err.to_string();
+                if message.contains("error decoding") || message.contains("network") {
+                    tokio::time::sleep(Duration::from_millis(80)).await;
+                    continue;
+                }
+                panic!("consumer-b poll error: {}", message);
+            },
+        }
+    }
+
+    if !recovered_offsets.is_empty() {
+        let _ = consumer_b.commit_sync().await;
+    }
+
+    assert_eq!(
+        recovered_offsets.len(),
+        expected_messages,
+        "Recovered consumer must process every produced message"
+    );
+
+    let mut offsets: Vec<u64> = recovered_offsets.iter().map(|(_, offset)| *offset).collect();
+    offsets.sort_unstable();
+
+    assert_eq!(offsets.first().copied(), Some(0), "Recovered stream should include offset 0");
+    assert_eq!(
+        offsets.last().copied(),
+        Some((expected_messages - 1) as u64),
+        "Recovered stream should include the latest produced offset"
     );
 
     let _ = execute_sql(&format!("DROP TOPIC {}", topic)).await;

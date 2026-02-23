@@ -29,16 +29,10 @@ impl Benchmark for AggregateQueryBench {
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
             client
-                .sql_ok(&format!(
-                    "CREATE NAMESPACE IF NOT EXISTS {}",
-                    config.namespace
-                ))
+                .sql_ok(&format!("CREATE NAMESPACE IF NOT EXISTS {}", config.namespace))
                 .await?;
             let _ = client
-                .sql(&format!(
-                    "DROP TABLE IF EXISTS {}.agg_bench",
-                    config.namespace
-                ))
+                .sql(&format!("DROP TABLE IF EXISTS {}.agg_bench", config.namespace))
                 .await;
             client
                 .sql_ok(&format!(
@@ -59,10 +53,8 @@ impl Benchmark for AggregateQueryBench {
                     let product = products[(id as usize) % products.len()];
                     let qty = (id * 7) % 100 + 1;
                     let price = (id * 13) % 1000 + 10;
-                    values.push(format!(
-                        "({}, '{}', '{}', {}, {})",
-                        id, region, product, qty, price
-                    ));
+                    values
+                        .push(format!("({}, '{}', '{}', {}, {})", id, region, product, qty, price));
                 }
                 client
                     .sql_ok(&format!(
@@ -93,7 +85,7 @@ impl Benchmark for AggregateQueryBench {
                             config.namespace
                         ))
                         .await?;
-                }
+                },
                 1 => {
                     // GROUP BY product, region (multi-level grouping)
                     client
@@ -103,7 +95,7 @@ impl Benchmark for AggregateQueryBench {
                             config.namespace
                         ))
                         .await?;
-                }
+                },
                 2 => {
                     // Filtered aggregation
                     client
@@ -113,7 +105,7 @@ impl Benchmark for AggregateQueryBench {
                             config.namespace
                         ))
                         .await?;
-                }
+                },
                 _ => {
                     // COUNT with HAVING equivalent (filtered after group)
                     client
@@ -123,7 +115,7 @@ impl Benchmark for AggregateQueryBench {
                             config.namespace
                         ))
                         .await?;
-                }
+                },
             }
             Ok(())
         })
@@ -136,10 +128,7 @@ impl Benchmark for AggregateQueryBench {
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
             let _ = client
-                .sql(&format!(
-                    "DROP TABLE IF EXISTS {}.agg_bench",
-                    config.namespace
-                ))
+                .sql(&format!("DROP TABLE IF EXISTS {}.agg_bench", config.namespace))
                 .await;
             Ok(())
         })

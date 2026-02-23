@@ -112,7 +112,8 @@ fn smoke_test_alter_table_add_column() {
     println!("✅ Verified ADD COLUMN with DEFAULT works");
 
     // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 }
 
 /// Test ALTER TABLE DROP COLUMN
@@ -192,7 +193,8 @@ fn smoke_test_alter_table_drop_column() {
     println!("✅ Verified column dropped and other data preserved");
 
     // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 }
 
 /// Test ALTER TABLE MODIFY COLUMN
@@ -263,7 +265,8 @@ fn smoke_test_alter_table_modify_column() {
     }
 
     // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 }
 
 /// Test ALTER TABLE SET TBLPROPERTIES for SHARED tables
@@ -338,7 +341,8 @@ fn smoke_test_alter_shared_table_access_level() {
     }
 
     // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 }
 
 /// Test error: ADD NOT NULL column without DEFAULT on non-empty table
@@ -412,7 +416,8 @@ fn smoke_test_alter_add_not_null_without_default_error() {
     println!("✅ Verified error when adding NOT NULL column without DEFAULT to non-empty table");
 
     // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 }
 
 /// Test error: Cannot ALTER system columns
@@ -493,5 +498,6 @@ fn smoke_test_alter_system_columns_error() {
     println!("✅ Verified system columns are protected from ALTER operations");
 
     // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 }

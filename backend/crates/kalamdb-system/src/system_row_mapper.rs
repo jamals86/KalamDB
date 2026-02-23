@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::conversions::{
     json_value_to_scalar_for_column as commons_json_value_to_scalar_for_column,
@@ -10,6 +9,7 @@ use kalamdb_commons::schemas::TableDefinition;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::{Map, Value};
+use std::collections::BTreeMap;
 
 use crate::error::SystemError;
 
@@ -42,12 +42,8 @@ pub fn system_row_to_model<T: DeserializeOwned>(
     let mut object = Map::new();
 
     for column in &table_def.columns {
-        let scalar = row
-            .fields
-            .values
-            .get(&column.column_name)
-            .cloned()
-            .unwrap_or(ScalarValue::Null);
+        let scalar =
+            row.fields.values.get(&column.column_name).cloned().unwrap_or(ScalarValue::Null);
         let json_value = scalar_to_json_for_column(&scalar, &column.data_type)?;
         object.insert(column.column_name.clone(), json_value);
     }
@@ -60,16 +56,18 @@ fn json_value_to_scalar_for_column(
     value: &Value,
     data_type: &KalamDataType,
 ) -> Result<ScalarValue, SystemError> {
-    commons_json_value_to_scalar_for_column(value, data_type)
-        .map_err(|e| SystemError::SerializationError(format!("json->scalar conversion failed: {e}")))
+    commons_json_value_to_scalar_for_column(value, data_type).map_err(|e| {
+        SystemError::SerializationError(format!("json->scalar conversion failed: {e}"))
+    })
 }
 
 fn scalar_to_json_for_column(
     scalar: &ScalarValue,
     data_type: &KalamDataType,
 ) -> Result<Value, SystemError> {
-    commons_scalar_to_json_for_column(scalar, data_type)
-        .map_err(|e| SystemError::SerializationError(format!("scalar->json conversion failed: {e}")))
+    commons_scalar_to_json_for_column(scalar, data_type).map_err(|e| {
+        SystemError::SerializationError(format!("scalar->json conversion failed: {e}"))
+    })
 }
 
 #[cfg(test)]

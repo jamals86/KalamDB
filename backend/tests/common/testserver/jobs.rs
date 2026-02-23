@@ -28,10 +28,7 @@ pub async fn wait_for_job_completion(
             anyhow::bail!("Timeout waiting for job {} to complete after {:?}", job_id, max_wait);
         }
 
-        let query = format!(
-            "SELECT status, message FROM system.jobs WHERE job_id = '{}'",
-            job_id
-        );
+        let query = format!("SELECT status, message FROM system.jobs WHERE job_id = '{}'", job_id);
         let resp = server.execute_sql(&query).await?;
 
         if resp.status != ResponseStatus::Success {
@@ -59,8 +56,7 @@ pub async fn wait_for_job_completion(
                     .to_string());
             },
             "failed" | "cancelled" => {
-                let error =
-                    row.get("message").and_then(|v| v.as_str()).unwrap_or("unknown error");
+                let error = row.get("message").and_then(|v| v.as_str()).unwrap_or("unknown error");
                 anyhow::bail!("Job {} {}: {}", job_id, status, error);
             },
             other => anyhow::bail!("Unknown job status for {}: {}", job_id, other),

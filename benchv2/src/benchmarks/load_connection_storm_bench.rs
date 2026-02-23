@@ -27,16 +27,10 @@ impl Benchmark for ConnectionStormBench {
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
             client
-                .sql_ok(&format!(
-                    "CREATE NAMESPACE IF NOT EXISTS {}",
-                    config.namespace
-                ))
+                .sql_ok(&format!("CREATE NAMESPACE IF NOT EXISTS {}", config.namespace))
                 .await?;
             let _ = client
-                .sql(&format!(
-                    "DROP TABLE IF EXISTS {}.storm_bench",
-                    config.namespace
-                ))
+                .sql(&format!("DROP TABLE IF EXISTS {}.storm_bench", config.namespace))
                 .await;
             client
                 .sql_ok(&format!(
@@ -64,9 +58,10 @@ impl Benchmark for ConnectionStormBench {
         Box::pin(async move {
             let conc = config.concurrency;
             let mut handles = Vec::new();
+            let urls = client.urls();
 
-            for _ in 0..conc {
-                let url = client.base_url().to_string();
+            for i in 0..conc {
+                let url = urls[(i as usize) % urls.len()].clone();
                 let user = config.user.clone();
                 let pass = config.password.clone();
                 let ns = config.namespace.clone();
@@ -76,12 +71,12 @@ impl Benchmark for ConnectionStormBench {
                     // Retry on 429 (rate limiting) with exponential backoff
                     let mut delay = std::time::Duration::from_millis(200);
                     let fresh = loop {
-                        match KalamClient::login(&url, &user, &pass).await {
+                        match KalamClient::login_single(&url, &user, &pass).await {
                             Ok(c) => break c,
                             Err(e) if e.contains("429") || e.contains("rate_limited") => {
                                 tokio::time::sleep(delay).await;
                                 delay = std::cmp::min(delay * 2, std::time::Duration::from_secs(5));
-                            }
+                            },
                             Err(e) => return Err(format!("Login storm failed: {}", e)),
                         }
                     };
@@ -107,10 +102,7 @@ impl Benchmark for ConnectionStormBench {
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
             let _ = client
-                .sql(&format!(
-                    "DROP TABLE IF EXISTS {}.storm_bench",
-                    config.namespace
-                ))
+                .sql(&format!("DROP TABLE IF EXISTS {}.storm_bench", config.namespace))
                 .await;
             Ok(())
         })

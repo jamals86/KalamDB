@@ -145,16 +145,12 @@ impl Benchmark for DropTableBench {
             for i in 0..config.warmup {
                 let id = 10_000 + i;
                 let _ = client
-                    .sql(&format!(
-                        "DROP TABLE IF EXISTS {}.dt_bench_{}", config.namespace, id
-                    ))
+                    .sql(&format!("DROP TABLE IF EXISTS {}.dt_bench_{}", config.namespace, id))
                     .await;
             }
             for i in 0..config.iterations {
                 let _ = client
-                    .sql(&format!(
-                        "DROP TABLE IF EXISTS {}.dt_bench_{}", config.namespace, i
-                    ))
+                    .sql(&format!("DROP TABLE IF EXISTS {}.dt_bench_{}", config.namespace, i))
                     .await;
             }
             Ok(())

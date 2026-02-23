@@ -1,10 +1,8 @@
-pub mod insert_bench;
-pub mod select_bench;
-pub mod update_bench;
-pub mod delete_bench;
 pub mod bulk_insert_bench;
 pub mod concurrent_bench;
 pub mod ddl_bench;
+pub mod delete_bench;
+pub mod insert_bench;
 pub mod load_connection_storm_bench;
 pub mod load_consumer_bench;
 pub mod load_create_user_bench;
@@ -13,7 +11,9 @@ pub mod load_publisher_bench;
 pub mod load_sql_1k_bench;
 pub mod load_subscriber_bench;
 pub mod load_wide_fanout_bench;
+pub mod select_bench;
 pub mod subscriber_scale_bench;
+pub mod update_bench;
 
 // --- New benchmarks ---
 pub mod aggregate_query_bench;
@@ -83,7 +83,9 @@ pub trait Benchmark: Send + Sync {
 pub fn all_benchmarks() -> Vec<Box<dyn Benchmark>> {
     vec![
         // --- Core operation benchmarks ---
-        Box::new(ddl_bench::CreateTableBench { counter: std::sync::atomic::AtomicU32::new(0) }),
+        Box::new(ddl_bench::CreateTableBench {
+            counter: std::sync::atomic::AtomicU32::new(0),
+        }),
         Box::new(ddl_bench::DropTableBench),
         Box::new(insert_bench::SingleInsertBench),
         Box::new(bulk_insert_bench::BulkInsertBench),
@@ -103,7 +105,9 @@ pub fn all_benchmarks() -> Vec<Box<dyn Benchmark>> {
         Box::new(wide_column_insert_bench::WideColumnInsertBench),
         Box::new(bulk_delete_bench::BulkDeleteBench),
         Box::new(sequential_crud_bench::SequentialCrudBench),
-        Box::new(alter_table_bench::AlterTableBench { counter: std::sync::atomic::AtomicU32::new(0) }),
+        Box::new(alter_table_bench::AlterTableBench {
+            counter: std::sync::atomic::AtomicU32::new(0),
+        }),
         // --- Concurrent / contention benchmarks ---
         Box::new(concurrent_update_bench::ConcurrentUpdateBench),
         Box::new(concurrent_mixed_dml_bench::ConcurrentMixedDmlBench),
@@ -119,7 +123,9 @@ pub fn all_benchmarks() -> Vec<Box<dyn Benchmark>> {
         Box::new(load_publisher_bench::ConcurrentPublisherBench),
         Box::new(load_consumer_bench::ConcurrentConsumerBench),
         Box::new(load_sql_1k_bench::Sql1kUsersBench),
-        Box::new(load_create_user_bench::CreateUserBench { counter: std::sync::atomic::AtomicU64::new(0) }),
+        Box::new(load_create_user_bench::CreateUserBench {
+            counter: std::sync::atomic::AtomicU64::new(0),
+        }),
         Box::new(load_create_user_bench::DropUserBench {
             counter: std::sync::atomic::AtomicU64::new(0),
             created_names: tokio::sync::Mutex::new(Vec::new()),

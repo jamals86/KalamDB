@@ -264,10 +264,7 @@ impl AppContext {
             // Register the system schema provider with the catalog
             // Views are created on first access, not eagerly at startup
             catalog
-                .register_schema(
-                    "system",
-                    Arc::clone(&system_schema) as Arc<dyn SchemaProvider>,
-                )
+                .register_schema("system", Arc::clone(&system_schema) as Arc<dyn SchemaProvider>)
                 .expect("Failed to register system schema");
 
             // Register existing namespaces as DataFusion schemas
@@ -1077,7 +1074,10 @@ impl AppContext {
     ///
     /// Convenience wrapper for system_tables().jobs().list_jobs()
     pub fn scan_all_jobs(&self) -> Result<Vec<Job>, crate::error::KalamDbError> {
-        self.system_tables().jobs().list_jobs().into_kalamdb_error("Failed to scan jobs")
+        self.system_tables()
+            .jobs()
+            .list_jobs()
+            .into_kalamdb_error("Failed to scan jobs")
     }
 
     /// Get server uptime in seconds

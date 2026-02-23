@@ -49,7 +49,13 @@ impl PreparedRow {
             json_string.hash(&mut hasher);
             hasher.finish()
         };
-        Ok(Self { key_payload, full_payload: None, json_string, is_empty, partition_hash })
+        Ok(Self {
+            key_payload,
+            full_payload: None,
+            json_string,
+            is_empty,
+            partition_hash,
+        })
     }
 
     /// Build a PreparedRow with pre-injected `_table` metadata for Full/Diff mode.

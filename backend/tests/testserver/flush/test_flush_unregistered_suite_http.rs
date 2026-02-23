@@ -72,22 +72,28 @@ async fn wait_for_id_absent(
     }
 }
 
-async fn wait_for_row_count(
+async fn wait_for_row_count_in_range(
     server: &HttpTestServer,
     auth: &str,
     ns: &str,
     table: &str,
-    expected: i64,
+    min_expected: i64,
+    max_expected: i64,
     timeout: Duration,
 ) -> anyhow::Result<i64> {
     let deadline = Instant::now() + timeout;
     loop {
         let cnt = count_rows(server, auth, ns, table).await?;
-        if cnt == expected {
+        if (min_expected..=max_expected).contains(&cnt) {
             return Ok(cnt);
         }
         if Instant::now() >= deadline {
-            return Err(anyhow::anyhow!("expected {} rows after deletes, got {}", expected, cnt));
+            return Err(anyhow::anyhow!(
+                "expected {}-{} rows, got {}",
+                min_expected,
+                max_expected,
+                cnt
+            ));
         }
         sleep(Duration::from_millis(50)).await;
     }
@@ -131,30 +137,11 @@ async fn flush_table_and_wait(
     ns: &str,
     table: &str,
 ) -> anyhow::Result<()> {
-    let sql = format!("STORAGE FLUSH TABLE {}.{}", ns, table);
-    let resp = server.execute_sql(&sql).await?;
-
-    if resp.status == ResponseStatus::Success {
-        return wait_for_flush_jobs_settled(server, ns, table).await;
-    }
-
-    let is_idempotent_conflict = resp
-        .error
-        .as_ref()
-        .map(|e| e.message.contains("Idempotent conflict"))
-        .unwrap_or(false);
-
-    if is_idempotent_conflict {
-        // A flush is already running/queued for this table. Treat this as success
-        // and wait for it to settle, matching old synchronous flush semantics.
-        return wait_for_flush_jobs_settled(server, ns, table).await;
-    }
-
-    anyhow::bail!("STORAGE FLUSH TABLE failed: {:?}", resp.error);
+    super::test_support::flush::flush_table_and_wait(server, ns, table).await
 }
 
 #[tokio::test]
-#[ntest::timeout(300000)] // 5 minutes max for this comprehensive test
+#[ntest::timeout(45000)] // observed up to ~15s in stress runs; keep 3x headroom
 async fn test_flush_concurrency_and_correctness_over_http() {
     let _guard = super::test_support::http_server::acquire_test_lock().await;
     (async {
@@ -231,12 +218,17 @@ async fn test_flush_concurrency_and_correctness_over_http() {
 
             flush_table_and_wait(server, &ns, table).await?;
 
-            let cnt = count_rows(server, &auth_a, &ns, table).await?;
-            anyhow::ensure!(
-                (27..=28).contains(&cnt),
-                "expected 27-28 rows after deletes, got {}",
-                cnt
-            );
+            wait_for_row_count_in_range(
+                server,
+                &auth_a,
+                &ns,
+                table,
+                27,
+                28,
+                Duration::from_secs(5),
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("expected 27-28 rows after deletes, {}", e))?;
 
             for deleted_id in [5, 15, 25] {
                 let resp = server
@@ -253,17 +245,12 @@ async fn test_flush_concurrency_and_correctness_over_http() {
                 );
             }
             flush_table_and_wait(server, &ns, table).await?;
-            for deleted_id in [5, 15, 25] {
-                wait_for_id_absent(
-                    server,
-                    &auth_a,
-                    &ns,
-                    table,
-                    deleted_id,
-                    Duration::from_secs(20),
-                )
-                .await?;
-            }
+            let delete_timeout = Duration::from_secs(20);
+            tokio::try_join!(
+                wait_for_id_absent(server, &auth_a, &ns, table, 5, delete_timeout),
+                wait_for_id_absent(server, &auth_a, &ns, table, 15, delete_timeout),
+                wait_for_id_absent(server, &auth_a, &ns, table, 25, delete_timeout)
+            )?;
 
             for deleted_id in [5, 15, 25] {
                 let resp = server
@@ -743,16 +730,23 @@ async fn test_flush_concurrency_and_correctness_over_http() {
             flush_table_and_wait(server, &ns, t2).await?;
 
             let delete_timeout = Duration::from_secs(20);
-            wait_for_id_absent(server, &auth_b, &ns, t2, 5, delete_timeout).await?;
-            wait_for_id_absent(server, &auth_b, &ns, t2, 15, delete_timeout).await?;
-            wait_for_id_absent(server, &auth_b, &ns, t2, 25, delete_timeout).await?;
+            tokio::try_join!(
+                wait_for_id_absent(server, &auth_b, &ns, t2, 5, delete_timeout),
+                wait_for_id_absent(server, &auth_b, &ns, t2, 15, delete_timeout),
+                wait_for_id_absent(server, &auth_b, &ns, t2, 25, delete_timeout)
+            )?;
 
-            let cnt2 = count_rows(server, &auth_b, &ns, t2).await?;
-            anyhow::ensure!(
-                (27..=28).contains(&cnt2),
-                "expected 27-28 rows after deletes, got {}",
-                cnt2
-            );
+            wait_for_row_count_in_range(
+                server,
+                &auth_b,
+                &ns,
+                t2,
+                27,
+                28,
+                Duration::from_secs(5),
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("expected 27-28 rows after deletes, {}", e))?;
 
             let resp = server
                 .execute_sql_with_auth(
