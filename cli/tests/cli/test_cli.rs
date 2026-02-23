@@ -47,6 +47,94 @@ fn test_cli_help_command() {
         .stdout(predicate::str::contains("--file"));
 }
 
+#[test]
+fn test_cli_init_agent_non_interactive_generates_project() {
+    let temp_dir = TempDir::new().expect("temp dir");
+    let output_root = temp_dir.path().join("generated");
+    fs::create_dir_all(&output_root).expect("create output dir");
+
+    let mut cmd = create_cli_command();
+    cmd.arg("--init-agent")
+        .arg("--init-agent-non-interactive")
+        .arg("--agent-name")
+        .arg("demo-agent")
+        .arg("--agent-output")
+        .arg(output_root.to_str().expect("utf8 path"))
+        .arg("--agent-table")
+        .arg("blog.blogs")
+        .arg("--agent-topic")
+        .arg("blog.summarizer")
+        .arg("--agent-group")
+        .arg("blog-summarizer-agent");
+
+    let output = cmd.output().expect("run cli");
+    assert!(
+        output.status.success(),
+        "init-agent should succeed\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let project_dir = output_root.join("demo-agent");
+    assert!(project_dir.exists(), "project directory should exist");
+    assert!(project_dir.join("package.json").exists(), "package.json should exist");
+    assert!(project_dir.join("setup.sh").exists(), "setup.sh should exist");
+    assert!(project_dir.join("setup.sql").exists(), "setup.sql should exist");
+    assert!(project_dir.join("src/agent.ts").exists(), "src/agent.ts should exist");
+    assert!(
+        project_dir.join("src/langchain-openai.d.ts").exists(),
+        "langchain declaration shim should exist"
+    );
+    assert!(
+        project_dir.join("scripts/ensure-sdk.sh").exists(),
+        "ensure-sdk.sh should exist"
+    );
+
+    let package_json = fs::read_to_string(project_dir.join("package.json")).expect("read package");
+    assert!(
+        package_json.contains("\"kalam-link\": \"file:"),
+        "generated package should depend on local sdk"
+    );
+
+    let agent_ts = fs::read_to_string(project_dir.join("src/agent.ts")).expect("read agent ts");
+    assert!(
+        agent_ts.contains("runAgent"),
+        "generated agent should use sdk runAgent runtime"
+    );
+}
+
+#[test]
+fn test_cli_init_agent_rejects_invalid_table_id() {
+    let temp_dir = TempDir::new().expect("temp dir");
+
+    let mut cmd = create_cli_command();
+    cmd.arg("--init-agent")
+        .arg("--init-agent-non-interactive")
+        .arg("--agent-name")
+        .arg("bad-agent")
+        .arg("--agent-output")
+        .arg(temp_dir.path().to_str().expect("utf8 path"))
+        .arg("--agent-table")
+        .arg("invalid_table")
+        .arg("--agent-topic")
+        .arg("blog.summarizer")
+        .arg("--agent-group")
+        .arg("blog-summarizer-agent");
+
+    let output = cmd.output().expect("run cli");
+    assert!(
+        !output.status.success(),
+        "init-agent should fail with invalid table id"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("agent-table must be namespace.table"),
+        "stderr should explain invalid table id, got: {}",
+        stderr
+    );
+}
+
 /// T060: Test color output control
 #[test]
 fn test_cli_color_output() {

@@ -134,6 +134,22 @@ verify() {
   fi
 
   log_info "Sample blog_id: $SAMPLE_BLOG_ID"
+
+  log_info "Verifying failure sink table blog.summary_failures"
+  local failure_result
+  if ! failure_result="$(execute_sql_raw "SELECT COUNT(*) AS c FROM blog.summary_failures")"; then
+    log_error "Expected table blog.summary_failures to exist, but verification query failed."
+    exit 1
+  fi
+
+  local failure_count
+  failure_count="$(echo "$failure_result" | jq -r '(try .results[0].rows[0].c catch empty) // (try .results[0].rows[0][0] catch empty)')"
+  if [[ -z "$failure_count" || "$failure_count" == "null" ]]; then
+    log_error "Could not read row count for blog.summary_failures."
+    exit 1
+  fi
+
+  log_info "summary_failures row_count=$failure_count"
 }
 
 generate_env_file() {
@@ -155,9 +171,11 @@ KALAMDB_TOPIC=blog.summarizer
 KALAMDB_GROUP=blog-summarizer-agent
 KALAMDB_SYSTEM_PROMPT=Write one concise sentence summarizing the blog content.
 
-# Optional LangChain/OpenAI settings
-OPENAI_API_KEY=
-OPENAI_MODEL=gpt-4o-mini
+# Gemini API (required for AI summaries)
+# Set one key value below before running npm run start
+GEMINI_API_KEY=
+# GOOGLE_GENERATIVE_AI_API_KEY=
+GEMINI_MODEL=gemini-2.5-flash
 EOF
 
   log_success "Wrote $(basename "$ENV_FILE")"

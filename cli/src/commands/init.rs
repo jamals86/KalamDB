@@ -512,6 +512,10 @@ fn generate_agent_project(
         &render_agent_ts(config, &failure_table),
     )?;
     write_file(
+        &project_dir.join("src/langchain-openai.d.ts"),
+        "declare module '@langchain/openai';\n",
+    )?;
+    write_file(
         &project_dir.join("README.md"),
         &render_readme(config),
     )?;
@@ -1117,7 +1121,7 @@ const TSCONFIG_TEMPLATE: &str = r#"{
     "resolveJsonModule": true,
     "types": ["node"]
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts", "src/**/*.d.ts"]
 }
 "#;
 
