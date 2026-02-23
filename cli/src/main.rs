@@ -26,6 +26,7 @@ mod connect;
 
 use args::Cli;
 use commands::credentials::{handle_credentials, login_and_store_credentials};
+use commands::init::handle_init_agent;
 use commands::subscriptions::handle_subscriptions;
 use connect::create_session;
 
@@ -41,6 +42,11 @@ async fn main() {
 async fn run() -> Result<()> {
     // Parse command-line arguments
     let mut cli = Cli::parse();
+
+    // Handle project scaffolding command before any network/session setup.
+    if handle_init_agent(&cli)? {
+        return Ok(());
+    }
 
     // If the password is explicitly set to an empty string, only prompt in interactive mode.
     // In non-interactive modes (--command/--file), an empty password may be valid (e.g. default root).

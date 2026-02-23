@@ -13,6 +13,16 @@ pub fn is_gzip(data: &[u8]) -> bool {
 ///
 /// Returns the decompressed bytes, or an error if decompression fails.
 pub fn decompress_gzip(data: &[u8]) -> Result<Vec<u8>, DecompressError> {
+    decompress_gzip_with_limit(data, usize::MAX)
+}
+
+/// Decompress gzip data with a maximum output size limit.
+///
+/// This prevents memory-exhaustion attacks from highly-compressed payloads.
+pub fn decompress_gzip_with_limit(
+    data: &[u8],
+    max_output_bytes: usize,
+) -> Result<Vec<u8>, DecompressError> {
     if data.len() < 18 {
         return Err(DecompressError::TooShort);
     }
@@ -65,14 +75,29 @@ pub fn decompress_gzip(data: &[u8]) -> Result<Vec<u8>, DecompressError> {
         return Err(DecompressError::InvalidHeader);
     }
 
-    // The deflate data is between header and 8-byte trailer
+    // The deflate data is between header and 8-byte trailer.
     let deflate_data = &data[pos..data.len() - 8];
 
+    // ISIZE (last 4 bytes of the gzip trailer) is the uncompressed size modulo
+    // 2^32. We use it as an early bound check.
+    let advertised_size = u32::from_le_bytes([
+        data[data.len() - 4],
+        data[data.len() - 3],
+        data[data.len() - 2],
+        data[data.len() - 1],
+    ]) as usize;
+    if advertised_size > max_output_bytes {
+        return Err(DecompressError::OutputTooLarge {
+            advertised: advertised_size,
+            limit: max_output_bytes,
+        });
+    }
+
     // Decompress using miniz_oxide
-    miniz_oxide::inflate::decompress_to_vec_zlib(deflate_data)
+    miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(deflate_data, max_output_bytes)
         .or_else(|_| {
             // Try raw deflate (without zlib header)
-            miniz_oxide::inflate::decompress_to_vec(deflate_data)
+            miniz_oxide::inflate::decompress_to_vec_with_limit(deflate_data, max_output_bytes)
         })
         .map_err(|_| DecompressError::DecompressFailed)
 }
@@ -103,6 +128,8 @@ pub enum DecompressError {
     InvalidHeader,
     /// Decompression failed
     DecompressFailed,
+    /// Advertised decompressed payload exceeds configured limit
+    OutputTooLarge { advertised: usize, limit: usize },
 }
 
 impl std::fmt::Display for DecompressError {
@@ -112,6 +139,13 @@ impl std::fmt::Display for DecompressError {
             Self::NotGzip => write!(f, "Not gzip compressed"),
             Self::InvalidHeader => write!(f, "Invalid gzip header"),
             Self::DecompressFailed => write!(f, "Decompression failed"),
+            Self::OutputTooLarge { advertised, limit } => {
+                write!(
+                    f,
+                    "Decompressed payload too large (advertised {} bytes > limit {} bytes)",
+                    advertised, limit
+                )
+            },
         }
     }
 }
@@ -135,5 +169,24 @@ mod tests {
         let plain = b"Hello, World!";
         let result = decompress_if_gzip(plain);
         assert_eq!(&*result, plain);
+    }
+
+    #[test]
+    fn test_decompress_gzip_with_limit_rejects_large_advertised_size() {
+        // Minimal gzip payload with empty deflate body and a forged trailer
+        // advertising a large uncompressed size.
+        let mut payload = vec![0x1f, 0x8b, 0x08, 0x00, 0, 0, 0, 0, 0, 0x03];
+        payload.extend_from_slice(&[0, 0, 0, 0]); // CRC32
+        payload.extend_from_slice(&(1024u32).to_le_bytes()); // ISIZE
+
+        let err =
+            decompress_gzip_with_limit(&payload, 16).expect_err("must reject oversize payload");
+        assert!(matches!(
+            err,
+            DecompressError::OutputTooLarge {
+                advertised: 1024,
+                limit: 16
+            }
+        ));
     }
 }

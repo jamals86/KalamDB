@@ -38,6 +38,7 @@
     "build:ts": "tsc",
     "build:copy-wasm": "node -e \"const fs=require('fs');const p=require('path');['dist/wasm','dist/.wasm-out'].forEach(d=>fs.mkdirSync(d,{recursive:true}));fs.readdirSync('.wasm-out').filter(f=>!f.includes('package.json')&&!f.includes('.gitignore')).forEach(f=>{fs.copyFileSync(p.join('.wasm-out',f),p.join('dist/wasm',f));fs.copyFileSync(p.join('.wasm-out',f),p.join('dist/.wasm-out',f))})\"",
     "build": "npm run clean && npm run build:wasm && npm run build:fix-types && npm run build:ts && npm run build:copy-wasm",
+    "test:agent-runtime": "npm run build:ts && node --test tests/agent-runtime.test.mjs",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {

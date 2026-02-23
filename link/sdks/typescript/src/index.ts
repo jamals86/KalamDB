@@ -89,6 +89,30 @@ export type {
   UploadProgress,
 } from './types.js';
 
+// Agent runtime
+export {
+  createLangChainAdapter,
+  runAgent,
+  runConsumer,
+} from './agent.js';
+
+export type {
+  AgentContext,
+  AgentFailureContext,
+  AgentFailureHandler,
+  AgentLLMAdapter,
+  AgentLLMContext,
+  AgentLLMInput,
+  AgentLLMMessage,
+  AgentLLMRole,
+  AgentRetryPolicy,
+  AgentRowParser,
+  AgentRunKeyFactory,
+  LangChainChatModelLike,
+  RunAgentOptions,
+  RunConsumerOptions,
+} from './agent.js';
+
 // Client
 export { createClient, KalamDBClient } from './client.js';
 

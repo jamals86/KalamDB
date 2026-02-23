@@ -9,7 +9,9 @@ use kalam_link::{
     ServerSetupRequest,
 };
 use std::io::{self, IsTerminal, Write};
+use std::net::IpAddr;
 use std::time::Duration;
+use url::Url;
 
 /// Build timeouts configuration from CLI arguments
 fn build_timeouts(cli: &Cli) -> KalamLinkTimeouts {
@@ -32,6 +34,64 @@ fn build_timeouts(cli: &Cli) -> KalamLinkTimeouts {
         .idle_timeout_secs(cli.subscription_timeout) // subscription_timeout is the idle timeout
         .keepalive_interval_secs(30) // Keep default
         .build()
+}
+
+fn is_localhost_url(url: &str) -> bool {
+    let parsed = match Url::parse(url.trim()) {
+        Ok(url) => url,
+        Err(_) => return false,
+    };
+
+    let host = match parsed.host_str() {
+        Some(host) => host,
+        None => return false,
+    };
+
+    let normalized_host = host.trim_start_matches('[').trim_end_matches(']');
+
+    if normalized_host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+
+    normalized_host.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback())
+}
+
+fn normalize_and_validate_server_url(server_url: &str) -> Result<String> {
+    let mut parsed = Url::parse(server_url.trim()).map_err(|e| {
+        CLIError::ConfigurationError(format!("Invalid server URL '{}': {}", server_url, e))
+    })?;
+
+    match parsed.scheme() {
+        "http" | "https" => {},
+        other => {
+            return Err(CLIError::ConfigurationError(format!(
+                "Unsupported URL scheme '{}'; expected http or https",
+                other
+            )));
+        },
+    }
+
+    if parsed.host_str().is_none() {
+        return Err(CLIError::ConfigurationError("Server URL must include a host".to_string()));
+    }
+
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err(CLIError::ConfigurationError(
+            "Server URL must not include embedded username/password".to_string(),
+        ));
+    }
+
+    if parsed.query().is_some() || parsed.fragment().is_some() {
+        return Err(CLIError::ConfigurationError(
+            "Server URL must not include query parameters or fragments".to_string(),
+        ));
+    }
+
+    parsed.set_query(None);
+    parsed.set_fragment(None);
+
+    let normalized = parsed.to_string();
+    Ok(normalized.trim_end_matches('/').to_string())
 }
 
 pub async fn create_session(
@@ -73,14 +133,7 @@ pub async fn create_session(
             }
         },
     };
-
-    // Helper function to check if URL is localhost
-    fn is_localhost_url(url: &str) -> bool {
-        url.contains("localhost")
-            || url.contains("127.0.0.1")
-            || url.contains("::1")
-            || url.contains("0.0.0.0")
-    }
+    let server_url = normalize_and_validate_server_url(&server_url)?;
 
     /// Result of a login attempt
     enum LoginResult {
@@ -956,5 +1009,46 @@ pub async fn create_session(
                 session_result
             }
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_localhost_url, normalize_and_validate_server_url};
+
+    #[test]
+    fn test_is_localhost_url_accepts_loopback_hosts() {
+        assert!(is_localhost_url("http://localhost:8080"));
+        assert!(is_localhost_url("https://127.0.0.1:8443"));
+        assert!(is_localhost_url("http://[::1]:8080"));
+        assert!(!is_localhost_url("http://0.0.0.0:8080"));
+    }
+
+    #[test]
+    fn test_is_localhost_url_rejects_spoofed_hosts() {
+        assert!(!is_localhost_url("http://localhost.evil.com:8080"));
+        assert!(!is_localhost_url("http://evil-localhost.example:8080"));
+        assert!(!is_localhost_url("http://example.com/?target=localhost"));
+        assert!(!is_localhost_url("not-a-url"));
+    }
+
+    #[test]
+    fn test_normalize_and_validate_server_url_accepts_http_https() {
+        assert_eq!(
+            normalize_and_validate_server_url("http://localhost:8080/").unwrap(),
+            "http://localhost:8080"
+        );
+        assert_eq!(
+            normalize_and_validate_server_url("https://db.example.com/base/").unwrap(),
+            "https://db.example.com/base"
+        );
+    }
+
+    #[test]
+    fn test_normalize_and_validate_server_url_rejects_sensitive_or_invalid_parts() {
+        assert!(normalize_and_validate_server_url("ftp://localhost:8080").is_err());
+        assert!(normalize_and_validate_server_url("http://user:pass@localhost:8080").is_err());
+        assert!(normalize_and_validate_server_url("http://localhost:8080?token=secret").is_err());
+        assert!(normalize_and_validate_server_url("http://localhost:8080/#fragment").is_err());
     }
 }

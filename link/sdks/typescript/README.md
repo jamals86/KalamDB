@@ -100,6 +100,44 @@ Node.js workers do not need manual WASM/WebSocket bootstrap. `createClient(...)`
 auto-configures runtime shims and auto-loads bundled WASM bytes, so the
 consumer above is enough.
 
+### Agent Runtime (`runAgent`)
+
+`runAgent` is a higher-level consumer runtime with bounded retries and explicit
+ack behavior:
+
+- no ack on handler failure
+- retry up to `retry.maxAttempts`
+- optional failure sink (`onFailed`)
+- ack after failure sink succeeds (`ackOnFailed: true`)
+
+```ts
+import { createClient, Auth, runAgent } from 'kalam-link';
+
+await runAgent({
+  client: createClient({
+    url: 'http://localhost:8080',
+    auth: Auth.basic('root', 'kalamdb123'),
+  }),
+  name: 'blog-summarizer',
+  topic: 'blog.summarizer',
+  groupId: 'blog-summarizer-agent',
+  retry: { maxAttempts: 3 },
+  onRow: async (ctx, row) => {
+    await ctx.sql(
+      'UPDATE blog.blogs SET summary = $1 WHERE blog_id = $2',
+      [String((row as any).content ?? '').slice(0, 80), (row as any).blog_id],
+    );
+  },
+  onFailed: async (ctx) => {
+    await ctx.sql(
+      'INSERT INTO blog.summary_failures (run_key, blog_id, error) VALUES ($1, $2, $3) ON CONFLICT (run_key) DO NOTHING',
+      [ctx.runKey, String((ctx.row as any).blog_id ?? 'unknown'), String(ctx.error ?? 'unknown')],
+    );
+  },
+  ackOnFailed: true,
+});
+```
+
 ### Consume one batch + ack manually
 
 ```ts

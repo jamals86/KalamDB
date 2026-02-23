@@ -736,17 +736,9 @@ async fn test_flush_concurrency_and_correctness_over_http() {
                 wait_for_id_absent(server, &auth_b, &ns, t2, 25, delete_timeout)
             )?;
 
-            wait_for_row_count_in_range(
-                server,
-                &auth_b,
-                &ns,
-                t2,
-                27,
-                28,
-                Duration::from_secs(5),
-            )
-            .await
-            .map_err(|e| anyhow::anyhow!("expected 27-28 rows after deletes, {}", e))?;
+            wait_for_row_count_in_range(server, &auth_b, &ns, t2, 27, 28, Duration::from_secs(5))
+                .await
+                .map_err(|e| anyhow::anyhow!("expected 27-28 rows after deletes, {}", e))?;
 
             let resp = server
                 .execute_sql_with_auth(

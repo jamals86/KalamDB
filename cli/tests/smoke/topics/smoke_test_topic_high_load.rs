@@ -1226,7 +1226,7 @@ async fn test_topic_four_consumers_same_group_no_duplicates() {
 /// 2. After visibility timeout, Consumer B (same group) must recover and process
 ///    the entire stream without offset gaps, even with per-message processing latency.
 #[tokio::test]
-#[ntest::timeout(180000)]
+#[ntest::timeout(101000)]
 async fn test_topic_ack_failure_recovery_no_message_loss_with_latency() {
     let namespace = common::generate_unique_namespace("ack_recovery");
     let table = format!("{}.events", namespace);

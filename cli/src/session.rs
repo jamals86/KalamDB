@@ -1088,11 +1088,8 @@ impl CLISession {
                         continue;
                     }
 
-                    // Add complete command to history (preserving newlines)
-                    // Skip adding \history, \h, \quit, and \q commands to history
-                    let skip_history =
-                        matches!(final_command.as_str(), "\\history" | "\\h" | "\\quit" | "\\q");
-                    if !skip_history {
+                    // Add complete command to history when it is safe to persist.
+                    if crate::history::should_persist_command(&final_command) {
                         let _ = rl.add_history_entry(&final_command);
                         let _ = history.append(&final_command);
                     }
@@ -2357,13 +2354,7 @@ impl CLISession {
                     if let Some(ref username) = creds.username {
                         println!("  Username: {}", username.green());
                     }
-                    // Show truncated JWT token
-                    let token_preview = if creds.jwt_token.len() > 30 {
-                        format!("{}...", &creds.jwt_token[..30])
-                    } else {
-                        creds.jwt_token.clone()
-                    };
-                    println!("  JWT Token: {}", token_preview.dimmed());
+                    println!("  JWT Token: {}", "[redacted]".dimmed());
                     if let Some(ref expires) = creds.expires_at {
                         let expired_marker = if creds.is_expired() {
                             " (EXPIRED)".red().to_string()
