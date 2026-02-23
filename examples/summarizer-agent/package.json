@@ -5,11 +5,15 @@
   "type": "module",
   "description": "Minimal topic consumer that summarizes blog posts with kalam-link",
   "scripts": {
+    "ensure-sdk": "bash scripts/ensure-sdk.sh",
+    "precheck": "npm run ensure-sdk",
+    "prestart": "npm run ensure-sdk",
     "start": "tsx src/agent.ts",
     "check": "tsc --noEmit",
     "setup": "bash ./setup.sh"
   },
   "dependencies": {
+    "@langchain/openai": "^0.3.17",
     "dotenv": "^17.3.1",
     "kalam-link": "file:../../link/sdks/typescript"
   },

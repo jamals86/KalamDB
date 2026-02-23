@@ -167,6 +167,51 @@ pub struct Cli {
     #[arg(long = "relaxed-timeouts")]
     pub relaxed_timeouts: bool,
 
+    // Agent project scaffolding
+    /// Generate a new TypeScript agent project scaffold
+    #[arg(long = "init-agent")]
+    pub init_agent: bool,
+
+    /// Disable interactive prompts for --init-agent and use defaults/flags
+    #[arg(long = "init-agent-non-interactive", requires = "init_agent")]
+    pub init_agent_non_interactive: bool,
+
+    /// Project name for --init-agent (directory name)
+    #[arg(long = "agent-name", requires = "init_agent")]
+    pub agent_name: Option<String>,
+
+    /// Output directory for --init-agent (default: current directory)
+    #[arg(long = "agent-output", requires = "init_agent")]
+    pub agent_output: Option<PathBuf>,
+
+    /// Table id (namespace.table) for --init-agent
+    #[arg(long = "agent-table", requires = "init_agent")]
+    pub agent_table: Option<String>,
+
+    /// Topic id for --init-agent
+    #[arg(long = "agent-topic", requires = "init_agent")]
+    pub agent_topic: Option<String>,
+
+    /// Consumer group id for --init-agent
+    #[arg(long = "agent-group", requires = "init_agent")]
+    pub agent_group: Option<String>,
+
+    /// Primary key column name in the target table
+    #[arg(long = "agent-id-column", requires = "init_agent")]
+    pub agent_id_column: Option<String>,
+
+    /// Input text column name to summarize
+    #[arg(long = "agent-input-column", requires = "init_agent")]
+    pub agent_input_column: Option<String>,
+
+    /// Output text column name for generated summary
+    #[arg(long = "agent-output-column", requires = "init_agent")]
+    pub agent_output_column: Option<String>,
+
+    /// Default system prompt for LLM summarization
+    #[arg(long = "agent-system-prompt", requires = "init_agent")]
+    pub agent_system_prompt: Option<String>,
+
     /// Unsubscribe from a subscription
     #[arg(long = "unsubscribe")]
     pub unsubscribe: Option<String>,

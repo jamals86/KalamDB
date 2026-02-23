@@ -232,3 +232,24 @@ export interface ClientOptions {
    */
   autoConnect?: boolean;
 }
+
+/* ================================================================== */
+/*  Agent Runtime Types                                               */
+/* ================================================================== */
+
+export type {
+  AgentContext,
+  AgentFailureContext,
+  AgentFailureHandler,
+  AgentLLMAdapter,
+  AgentLLMContext,
+  AgentLLMInput,
+  AgentLLMMessage,
+  AgentLLMRole,
+  AgentRetryPolicy,
+  AgentRowParser,
+  AgentRunKeyFactory,
+  LangChainChatModelLike,
+  RunAgentOptions,
+  RunConsumerOptions,
+} from './agent.js';
