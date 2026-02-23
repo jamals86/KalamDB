@@ -27,7 +27,7 @@ members = [
 exclude = ["benchv2"]
 
 [workspace.package]
-version = "0.3.0-alpha2"
+version = "0.4.0-alpha3"
 edition = "2021"
 rust-version = "1.92"
 authors = ["KalamDB Team"]
@@ -42,7 +42,7 @@ serde_json = "1.0.149"
 
 # Error handling
 thiserror = "2.0.18"
-anyhow = "1.0.101"
+anyhow = "1.0.102"
 
 # Logging
 log = "0.4.29"
@@ -54,13 +54,13 @@ tokio-stream = { version = "0.1", features = ["net"] }
 # HTTP client (with HTTP/2 support) - using rustls-tls for cross-compilation compatibility
 # Note: native-tls requires OpenSSL which is difficult to cross-compile for aarch64
 reqwest = { version = "0.13.1", default-features = false, features = ["json", "rustls", "http2", "multipart", "stream", "form"] }
-url = "2.5.7"
+url = "2.5.8"
 
 # WebSocket
 tokio-tungstenite = { version = "0.28.0", features = ["rustls-tls-webpki-roots"] }
 
 # Time handling
-chrono = { version = "0.4.43", features = ["serde"] }
+chrono = { version = "0.4.44", features = ["serde"] }
 
 # Storage
 rocksdb = { version = "0.24.0", default-features = false, features = ["snappy", "multi-threaded-cf"] }
@@ -74,11 +74,11 @@ sqlparser = { version = "0.60.0" }
 parquet = { version = "57.2.0", default-features = false, features = ["snap", "zstd", "arrow"] }
 
 # Web framework
-actix-web = { version = "4.12.1", features = ["http2"] }
+actix-web = { version = "4.13.0", features = ["http2"] }
 actix-ws = "0.3.1"
 actix-cors = "0.7"
 actix-rt = "2.10"
-actix-files = "0.6.9"
+actix-files = "0.6.10"
 actix-multipart = "0.7"
 
 # UUID generation
@@ -98,7 +98,7 @@ toml = "0.9.8"
 dotenv = "0.15"
 
 # CLI tools
-clap = { version = "4.5.59", features = ["derive", "color"] }
+clap = { version = "4.5.60", features = ["derive", "color"] }
 rustyline = { version = "17.0.2" }
 
 # System
@@ -118,8 +118,8 @@ criterion = { version = "0.8.2", features = ["html_reports"] }
 openraft = { version = "0.9.21", features = ["serde"] }
 
 # gRPC for Raft network layer
-tonic = { version = "0.14.4" }
-tonic-prost = "0.14.4"
+tonic = { version = "0.14.5" }
+tonic-prost = "0.14.5"
 tonic-build = "0.14.4"
 prost = "0.14.3"
 prost-types = "0.14.3"
@@ -153,7 +153,7 @@ http-body-util = "0.1.2"
 cc = "1.2.56"
 proc-macro2 = "1.0.106"
 quote = "1.0.44"
-syn = { version = "2.0.116", features = ["full", "extra-traits"] }
+syn = { version = "2.0.117", features = ["full", "extra-traits"] }
 
 # Object storage abstraction (S3/GCS/Azure/local)
 # Kept as a workspace dependency so only kalamdb-filestore needs to opt-in.
@@ -167,8 +167,8 @@ sha2 = "0.10"
 storekey = "0.11"
 moka = { version = "0.12.13", features = ["future", "sync"] }
 ntest = "0.9.5"
-wasm-bindgen = { version = "0.2.108" }
-wasm-bindgen-futures = { version = "0.4.58" }
+wasm-bindgen = { version = "0.2.111" }
+wasm-bindgen-futures = { version = "0.4.61" }
 js-sys = { version = "0.3.85" }
 libc = "0.2.182"
 web-sys = { version = "0.3.83" }
