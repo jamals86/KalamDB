@@ -277,3 +277,79 @@ jobs:
           git add .github/badges/tests.json
           git diff --staged --quiet || git commit -m "Update test badge [skip ci]"
           git push || echo "Nothing to push"
+
+  license_compliance:
+    name: License Compliance
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install cargo-license
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo install cargo-license --locked
+
+      - name: Generate Rust runtime license report
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p target/license
+          cargo license -j --avoid-dev-deps --avoid-build-deps -o target/license/rust-runtime-licenses.json
+
+      - name: Install UI dependencies
+        shell: bash
+        working-directory: ui
+        run: |
+          set -euo pipefail
+          npm install --no-audit --no-fund
+
+      - name: Generate UI production license report
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd ui
+          npx --yes license-checker --production --excludePrivatePackages --json > ../target/license/ui-licenses.json
+
+      - name: Install SDK dependencies
+        shell: bash
+        working-directory: link/sdks/typescript
+        run: |
+          set -euo pipefail
+          npm install --no-audit --no-fund
+
+      - name: Generate SDK production license report
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd link/sdks/typescript
+          npx --yes license-checker --production --json > ../../../target/license/sdk-licenses.json
+
+      - name: Validate licenses and generate third-party report
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/license_compliance.py \
+            --policy cargo-license-check.toml \
+            --rust-report target/license/rust-runtime-licenses.json \
+            --ui-report target/license/ui-licenses.json \
+            --sdk-report target/license/sdk-licenses.json \
+            --output target/license/THIRD_PARTY_LICENSES.md
+
+      - name: Upload license reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: license-reports
+          path: target/license/
+          if-no-files-found: error
