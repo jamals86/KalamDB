@@ -164,20 +164,23 @@ impl ClusterMessageHandler for CoreClusterHandler {
         let table_id = TableId::try_from_strings(&req.table_namespace, &req.table_name)
             .map_err(|e| format!("Invalid table_id in notify_followers: {}", e))?;
 
-        let Some(user_id_raw) = req.user_id.as_deref() else {
-            log::trace!(
-                "Ignoring forwarded notification without user_id for table_id={}",
-                table_id
-            );
-            return Ok(());
-        };
+        match req.user_id.as_deref() {
+            Some(user_id_raw) => {
+                // User table notification — dispatch to the specific user's subscribers
+                let user_id = UserId::try_new(user_id_raw)
+                    .map_err(|e| format!("Invalid user_id in notify_followers: {}", e))?;
 
-        let user_id = UserId::try_new(user_id_raw)
-            .map_err(|e| format!("Invalid user_id in notify_followers: {}", e))?;
-
-        self.notification_service
-            .notify_forwarded(user_id, table_id, notification)
-            .await;
+                self.notification_service
+                    .notify_forwarded(user_id, table_id, notification)
+                    .await;
+            },
+            None => {
+                // Shared table notification — dispatch to all local shared-table subscribers
+                self.notification_service
+                    .notify_forwarded_shared(table_id, notification)
+                    .await;
+            },
+        }
 
         Ok(())
     }

@@ -30,3 +30,6 @@ mod subscription_options_tests;
 
 #[path = "subscription/live_connection_tests.rs"]
 mod live_connection_tests;
+
+#[path = "subscription/slow_subscriber.rs"]
+mod slow_subscriber;

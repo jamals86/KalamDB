@@ -71,7 +71,7 @@ pub fn decompress_gzip_with_limit(
         pos += 2;
     }
 
-    if pos >= data.len() - 8 {
+    if pos > data.len() - 8 {
         return Err(DecompressError::InvalidHeader);
     }
 

@@ -255,6 +255,22 @@ impl KalamLinkClient {
             start.elapsed(),
             response.status()
         );
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            let message = if status.as_u16() == 403 {
+                format!(
+                    "Health check endpoint is restricted to localhost connections ({})",
+                    body
+                )
+            } else {
+                format!("HTTP {} — {}", status, body)
+            };
+            return Err(crate::error::KalamLinkError::ServerError {
+                status_code: status.as_u16(),
+                message,
+            });
+        }
         let health_response = response.json::<HealthCheckResponse>().await?;
         log::debug!("[HEALTH_CHECK] JSON parsed in {:?}", start.elapsed());
 

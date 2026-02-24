@@ -48,6 +48,39 @@ pub struct LiveQueryManager {
 }
 
 impl LiveQueryManager {
+    fn validate_table_subscription_permission(
+        user_role: Role,
+        table_def: &TableDefinition,
+        table_id: &TableId,
+    ) -> Result<(), KalamDbError> {
+        let is_admin = matches!(user_role, Role::Dba | Role::System);
+        match table_def.table_type {
+            kalamdb_commons::TableType::User => {
+                // USER tables are accessible to any authenticated user
+                // Row-level security filters data to only their rows during query execution
+                Ok(())
+            },
+            kalamdb_commons::TableType::System if !is_admin => Err(KalamDbError::PermissionDenied(
+                format!("Cannot subscribe to system table '{}': insufficient privileges. Only DBA and system roles can subscribe to system tables.", table_id)
+            )),
+            kalamdb_commons::TableType::Shared => {
+                // SHARED tables require access-level check:
+                // - Public: any authenticated user can subscribe
+                // - Private/Restricted: only DBA/System/Service roles
+                let access_level = kalamdb_session::permissions::shared_table_access_level(table_def);
+                if kalamdb_session::permissions::can_access_shared_table(access_level, user_role) {
+                    Ok(())
+                } else {
+                    Err(KalamDbError::PermissionDenied(format!(
+                        "Cannot subscribe to shared table '{}': access level '{}' requires elevated privileges.",
+                        table_id, access_level
+                    )))
+                }
+            },
+            _ => Ok(()),
+        }
+    }
+
     pub(crate) fn build_subscription_schema(
         table_def: &TableDefinition,
         projections: Option<&[String]>,
@@ -121,6 +154,7 @@ impl LiveQueryManager {
     /// - filter_expr: Optional parsed WHERE clause
     /// - projections: Optional column projections (None = SELECT *, all columns)
     /// - batch_size: Batch size for initial data loading
+    /// - table_type: Type of the table (User, Shared, System, Stream)
     pub async fn register_subscription(
         &self,
         connection_state: &SharedConnectionState,
@@ -129,6 +163,7 @@ impl LiveQueryManager {
         filter_expr: Option<Expr>,
         projections: Option<Vec<String>>,
         batch_size: usize,
+        table_type: kalamdb_commons::TableType,
     ) -> Result<LiveQueryId, KalamDbError> {
         self.subscription_service
             .register_subscription(
@@ -138,6 +173,7 @@ impl LiveQueryManager {
                 filter_expr,
                 projections,
                 batch_size,
+                table_type,
             )
             .await
     }
@@ -203,27 +239,8 @@ impl LiveQueryManager {
         // Permission check
         // - USER tables: Accessible to any authenticated user (RLS filters data to their rows)
         // - SYSTEM tables: Accessible only to DBA/System roles
-        // - SHARED tables: Don't support subscriptions (use direct queries)
-        let is_admin = matches!(user_role, Role::Dba | Role::System);
-        match table_def.table_type {
-            kalamdb_commons::TableType::User => {
-                // USER tables are accessible to any authenticated user
-                // Row-level security filters data to only their rows during query execution
-            },
-            kalamdb_commons::TableType::System if !is_admin => {
-                return Err(KalamDbError::PermissionDenied(
-                    format!("Cannot subscribe to system table '{}': insufficient privileges. Only DBA and system roles can subscribe to system tables.",
-                    table_id)
-                ));
-            },
-            kalamdb_commons::TableType::Shared => {
-                return Err(KalamDbError::InvalidOperation(
-                    format!("Cannot subscribe to shared table '{}': shared tables do not support live subscriptions. Use direct SELECT queries instead.",
-                    table_id)
-                ));
-            },
-            _ => {},
-        }
+        // - SHARED tables: Access-level gated (public OK, private/restricted require elevated role)
+        Self::validate_table_subscription_permission(user_role, &table_def, &table_id)?;
 
         // Determine batch size
         let batch_size = request
@@ -271,6 +288,7 @@ impl LiveQueryManager {
                 filter_expr,
                 projections.clone(),
                 batch_size,
+                table_def.table_type,
             )
             .await?;
 
@@ -520,5 +538,108 @@ impl LiveQueryManager {
     /// Get the total number of subscriptions
     pub fn total_subscriptions(&self) -> usize {
         self.registry.subscription_count()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LiveQueryManager;
+    use crate::error::KalamDbError;
+    use kalamdb_commons::models::{NamespaceId, TableId, TableName};
+    use kalamdb_commons::schemas::table_options::{SharedTableOptions, SystemTableOptions};
+    use kalamdb_commons::schemas::{TableDefinition, TableOptions};
+    use kalamdb_commons::{Role, TableAccess, TableType};
+
+    fn table_id() -> TableId {
+        TableId::new(NamespaceId::from("shared"), TableName::from("events"))
+    }
+
+    fn shared_table_def(access: TableAccess) -> TableDefinition {
+        TableDefinition {
+            namespace_id: NamespaceId::from("shared"),
+            table_name: TableName::from("events"),
+            table_type: TableType::Shared,
+            columns: vec![],
+            schema_version: 1,
+            next_column_id: 1,
+            table_options: TableOptions::Shared(SharedTableOptions {
+                storage_id: kalamdb_commons::StorageId::from("default"),
+                access_level: Some(access),
+                flush_policy: None,
+                compression: "none".to_string(),
+            }),
+            table_comment: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        }
+    }
+
+    fn system_table_def() -> TableDefinition {
+        TableDefinition {
+            namespace_id: NamespaceId::from("system"),
+            table_name: TableName::from("users"),
+            table_type: TableType::System,
+            columns: vec![],
+            schema_version: 1,
+            next_column_id: 1,
+            table_options: TableOptions::System(SystemTableOptions {
+                read_only: true,
+                enable_cache: true,
+                cache_ttl_seconds: 60,
+                localhost_only: false,
+            }),
+            table_comment: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        }
+    }
+
+    #[test]
+    fn test_validate_permission_allows_public_shared_for_user_role() {
+        let def = shared_table_def(TableAccess::Public);
+        let result =
+            LiveQueryManager::validate_table_subscription_permission(Role::User, &def, &table_id());
+        assert!(
+            result.is_ok(),
+            "public shared table subscriptions should be allowed for regular users"
+        );
+    }
+
+    #[test]
+    fn test_validate_permission_denies_private_shared_for_user_role() {
+        let def = shared_table_def(TableAccess::Private);
+        let result =
+            LiveQueryManager::validate_table_subscription_permission(Role::User, &def, &table_id());
+        assert!(
+            matches!(result, Err(KalamDbError::PermissionDenied(_))),
+            "private shared table subscriptions should be denied for regular users"
+        );
+    }
+
+    #[test]
+    fn test_validate_permission_allows_private_shared_for_dba() {
+        let def = shared_table_def(TableAccess::Private);
+        let result =
+            LiveQueryManager::validate_table_subscription_permission(Role::Dba, &def, &table_id());
+        assert!(
+            result.is_ok(),
+            "private shared table subscriptions should be allowed for DBA"
+        );
+    }
+
+    #[test]
+    fn test_validate_permission_denies_system_for_user_role() {
+        let def = system_table_def();
+        let result =
+            LiveQueryManager::validate_table_subscription_permission(Role::User, &def, &table_id());
+        assert!(matches!(result, Err(KalamDbError::PermissionDenied(_))));
+    }
+
+    #[test]
+    fn test_validate_permission_allows_system_for_dba() {
+        let def = system_table_def();
+        let result =
+            LiveQueryManager::validate_table_subscription_permission(Role::Dba, &def, &table_id());
+        assert!(result.is_ok());
     }
 }

@@ -178,6 +178,8 @@ pub struct SubscriptionState {
     pub current_batch_num: u32,
     /// Flow control for initial load buffering and snapshot gating
     pub flow_control: Arc<SubscriptionFlowControl>,
+    /// Whether this subscription is for a shared table (affects index cleanup)
+    pub is_shared: bool,
 }
 
 /// Connection state - everything about a connection in one struct

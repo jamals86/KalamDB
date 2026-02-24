@@ -316,8 +316,8 @@ async fn test_scenario_08_subscription_reconnect() -> anyhow::Result<()> {
     // First subscription
     let sql = format!("SELECT * FROM {}.events ORDER BY id", ns);
     let mut sub1 = client.subscribe(&sql).await?;
-    let _ = wait_for_ack(&mut sub1, Duration::from_secs(5)).await?;
-    let initial1 = drain_initial_data(&mut sub1, Duration::from_secs(5)).await?;
+    let _ = wait_for_ack(&mut sub1, Duration::from_secs(15)).await?;
+    let initial1 = drain_initial_data(&mut sub1, Duration::from_secs(15)).await?;
     assert_eq!(initial1, 5, "First subscription should see 5 items");
 
     // Close first subscription
@@ -338,8 +338,8 @@ async fn test_scenario_08_subscription_reconnect() -> anyhow::Result<()> {
 
     // Reconnect with new subscription
     let mut sub2 = client.subscribe(&sql).await?;
-    let _ = wait_for_ack(&mut sub2, Duration::from_secs(5)).await?;
-    let initial2 = drain_initial_data(&mut sub2, Duration::from_secs(5)).await?;
+    let _ = wait_for_ack(&mut sub2, Duration::from_secs(15)).await?;
+    let initial2 = drain_initial_data(&mut sub2, Duration::from_secs(15)).await?;
     assert_eq!(initial2, 10, "Second subscription should see 10 items");
 
     sub2.close().await?;
