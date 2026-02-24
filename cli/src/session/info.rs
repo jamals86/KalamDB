@@ -2,6 +2,7 @@ use super::CLISession;
 use crate::history::CommandHistory;
 use crate::CLI_VERSION;
 use colored::Colorize;
+use kalam_link::KalamLinkError;
 
 impl CLISession {
     fn normalize_server_field(value: String) -> Option<String> {
@@ -24,6 +25,11 @@ impl CLISession {
                 self.server_api_version = Self::normalize_server_field(health.api_version);
                 self.server_build_date = health.build_date.and_then(Self::normalize_server_field);
                 None
+            },
+            Err(KalamLinkError::ServerError { status_code: 403, .. }) => {
+                // Health endpoint is localhost-only; server is reachable but we can't
+                // refresh version info. Preserve the current connected state.
+                Some("Health endpoint is restricted to localhost (remote connection detected)".to_string())
             },
             Err(e) => {
                 self.connected = false;
@@ -60,7 +66,12 @@ impl CLISession {
             }
         );
         if let Some(ref err) = health_status {
-            println!("  Last check:     {}", format!("Failed ({})", err).red());
+            if self.connected {
+                // Server is reachable but health detail could not be retrieved (e.g. localhost-only restriction)
+                println!("  Health check:   {}", format!("Note ({})", err).yellow());
+            } else {
+                println!("  Last check:     {}", format!("Failed ({})", err).red());
+            }
         }
 
         // Session timing
