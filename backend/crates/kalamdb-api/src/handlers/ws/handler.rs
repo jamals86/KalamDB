@@ -12,7 +12,7 @@
 //! - No local tracking needed - everything is in ConnectionState
 
 use actix_web::{get, web, Error, HttpRequest, HttpResponse};
-use actix_ws::{CloseCode, CloseReason, Message, Session};
+use actix_ws::{CloseCode, CloseReason, Message, ProtocolError, Session};
 use futures_util::StreamExt;
 use kalamdb_auth::UserRepository;
 use kalamdb_commons::models::ConnectionInfo;
@@ -27,6 +27,41 @@ use kalamdb_core::live::{
 };
 use log::{debug, error, info, warn};
 use std::sync::Arc;
+
+/// Returns `true` for WebSocket errors that represent a normal client
+/// disconnect rather than a server-side fault.
+///
+/// Clients can disappear at any time (network drop, process killed, mobile
+/// radio sleep, 3G timeout, etc.). In those cases actix-ws surfaces a
+/// `ProtocolError::Io` carrying one of several standard OS error kinds or
+/// the actix-codec sentinel message "payload reached EOF before completing".
+/// Logging these at ERROR level produces misleading noise; they are expected
+/// in production and should be DEBUG.
+fn is_expected_ws_disconnect(e: &ProtocolError) -> bool {
+    match e {
+        ProtocolError::Io(io_err) => {
+            use std::io::ErrorKind::*;
+            // Standard OS-level disconnect signals
+            if matches!(
+                io_err.kind(),
+                BrokenPipe | ConnectionReset | ConnectionAborted | UnexpectedEof
+            ) {
+                return true;
+            }
+            // actix-codec raises ErrorKind::Other for an abrupt stream end;
+            // detect by message substring (stable across actix-http versions).
+            let msg = io_err.to_string().to_ascii_lowercase();
+            msg.contains("eof")
+                || msg.contains("connection reset")
+                || msg.contains("broken pipe")
+                || msg.contains("connection aborted")
+                || msg.contains("payload reached eof")
+                || msg.contains("connection closed")
+        }
+        // A clean close-frame received just before we polled is also harmless.
+        _ => false,
+    }
+}
 
 use super::events::{
     auth::handle_authenticate, batch::handle_next_batch, cleanup::cleanup_connection, send_error,
@@ -269,7 +304,11 @@ async fn handle_websocket(
                             // Continuation, Nop - ignore
                         }
                         Some(Err(e)) => {
-                            error!("WebSocket error: {}", e);
+                            if is_expected_ws_disconnect(&e) {
+                                debug!("WebSocket client disconnected ({}): {}", connection_id, e);
+                            } else {
+                                error!("WebSocket error ({}): {}", connection_id, e);
+                            }
                             break;
                         }
                         None => {
