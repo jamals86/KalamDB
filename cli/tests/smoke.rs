@@ -61,6 +61,8 @@ mod smoke_test_subscription_close;
 mod smoke_test_subscription_delete;
 #[path = "smoke/subscription/smoke_test_user_table_subscription.rs"]
 mod smoke_test_user_table_subscription;
+#[path = "smoke/subscription/smoke_test_shared_table_subscription.rs"]
+mod smoke_test_shared_table_subscription;
 
 // Topic tests
 #[path = "smoke/topics/smoke_test_topic_consumption.rs"]

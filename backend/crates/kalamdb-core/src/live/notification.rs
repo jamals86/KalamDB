@@ -767,3 +767,193 @@ impl NotificationServiceTrait for NotificationService {
         self.notify_async(user_id, table_id, notification);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::live::helpers::filter_eval::parse_where_clause;
+    use crate::live::models::{SubscriptionFlowControl, SubscriptionHandle};
+    use datafusion::scalar::ScalarValue;
+    use kalamdb_commons::models::rows::Row;
+    use kalamdb_commons::models::{ConnectionId, NamespaceId, TableName};
+    use kalamdb_commons::Notification;
+    use kalamdb_commons::NodeId;
+    use std::collections::BTreeMap;
+    use std::time::Duration;
+
+    fn make_table_id(ns: &str, table: &str) -> TableId {
+        TableId::new(NamespaceId::from(ns), TableName::from(table))
+    }
+
+    fn make_row(id: i64, body: &str, seq: i64) -> Row {
+        let mut values = BTreeMap::new();
+        values.insert("id".to_string(), ScalarValue::Int64(Some(id)));
+        values.insert("body".to_string(), ScalarValue::Utf8(Some(body.to_string())));
+        values.insert(
+            SystemColumnNames::SEQ.to_string(),
+            ScalarValue::Int64(Some(seq)),
+        );
+        Row::new(values)
+    }
+
+    fn make_shared_handle(
+        tx: Arc<crate::live::models::NotificationSender>,
+        flow_control: Arc<SubscriptionFlowControl>,
+        filter_expr: Option<&str>,
+        projections: Option<Vec<&str>>,
+    ) -> SubscriptionHandle {
+        SubscriptionHandle {
+            filter_expr: filter_expr
+                .map(|sql| parse_where_clause(sql).expect("filter should parse"))
+                .map(Arc::new),
+            projections: projections.map(|cols| {
+                Arc::new(cols.into_iter().map(std::string::ToString::to_string).collect())
+            }),
+            notification_tx: tx,
+            flow_control,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_notify_forwarded_shared_applies_filter_and_projection() {
+        let registry = ConnectionsManager::new(
+            NodeId::new(1),
+            Duration::from_secs(30),
+            Duration::from_secs(10),
+            Duration::from_secs(5),
+        );
+        let service = NotificationService::new(Arc::clone(&registry));
+
+        let table_id = make_table_id("shared", "events");
+        let conn_id = ConnectionId::new("c1");
+
+        let (tx_ok, mut rx_ok) = mpsc::channel(8);
+        let flow_ok = Arc::new(SubscriptionFlowControl::new());
+        flow_ok.mark_initial_complete();
+        registry.index_shared_subscription(
+            &conn_id,
+            LiveQueryId::new(UserId::new("u1"), conn_id.clone(), "sub_ok".to_string()),
+            table_id.clone(),
+            make_shared_handle(
+                Arc::new(tx_ok),
+                Arc::clone(&flow_ok),
+                Some("id >= 10"),
+                Some(vec!["id"]),
+            ),
+        );
+
+        let (tx_skip, mut rx_skip) = mpsc::channel(8);
+        let flow_skip = Arc::new(SubscriptionFlowControl::new());
+        flow_skip.mark_initial_complete();
+        registry.index_shared_subscription(
+            &conn_id,
+            LiveQueryId::new(UserId::new("u2"), conn_id.clone(), "sub_skip".to_string()),
+            table_id.clone(),
+            make_shared_handle(
+                Arc::new(tx_skip),
+                Arc::clone(&flow_skip),
+                Some("id >= 100"),
+                None,
+            ),
+        );
+
+        let change = ChangeNotification::insert(table_id.clone(), make_row(42, "hello", 42));
+        service.notify_forwarded_shared(table_id, change).await;
+
+        let delivered = rx_ok.recv().await.expect("matching subscriber gets message");
+        match delivered.as_ref() {
+            Notification::Change {
+                subscription_id,
+                rows,
+                old_values,
+                ..
+            } => {
+                assert_eq!(subscription_id, "sub_ok");
+                assert!(old_values.is_none());
+                let payload = rows.as_ref().expect("rows present for insert");
+                assert_eq!(payload.len(), 1);
+                assert!(payload[0].contains_key("id"));
+                assert!(!payload[0].contains_key("body"));
+                assert!(!payload[0].contains_key(SystemColumnNames::SEQ));
+            },
+            _ => panic!("expected change notification"),
+        }
+
+        assert!(rx_skip.try_recv().is_err(), "filtered subscriber should not receive");
+    }
+
+    #[tokio::test]
+    async fn test_notify_forwarded_shared_buffers_when_initial_load_incomplete() {
+        let registry = ConnectionsManager::new(
+            NodeId::new(1),
+            Duration::from_secs(30),
+            Duration::from_secs(10),
+            Duration::from_secs(5),
+        );
+        let service = NotificationService::new(Arc::clone(&registry));
+
+        let table_id = make_table_id("shared", "logs");
+        let conn_id = ConnectionId::new("c2");
+
+        let (tx, mut rx) = mpsc::channel(8);
+        let flow = Arc::new(SubscriptionFlowControl::new());
+        flow.set_snapshot_end_seq(Some(SeqId::from(10)));
+
+        registry.index_shared_subscription(
+            &conn_id,
+            LiveQueryId::new(UserId::new("u3"), conn_id.clone(), "sub_buffer".to_string()),
+            table_id.clone(),
+            make_shared_handle(Arc::new(tx), Arc::clone(&flow), None, None),
+        );
+
+        // seq=11 is newer than snapshot end seq=10, should be buffered (not sent yet)
+        let change = ChangeNotification::insert(table_id, make_row(7, "buffer-me", 11));
+        service.notify_forwarded_shared(make_table_id("shared", "logs"), change).await;
+
+        assert!(rx.try_recv().is_err(), "should not send while initial load incomplete");
+        let buffered = flow.drain_buffered_notifications();
+        assert_eq!(buffered.len(), 1, "notification should be buffered");
+    }
+
+    #[tokio::test]
+    async fn test_notify_async_shared_worker_dispatches() {
+        let registry = ConnectionsManager::new(
+            NodeId::new(1),
+            Duration::from_secs(30),
+            Duration::from_secs(10),
+            Duration::from_secs(5),
+        );
+        let service = NotificationService::new(Arc::clone(&registry));
+
+        let table_id = make_table_id("shared", "alerts");
+        let conn_id = ConnectionId::new("c3");
+
+        let (tx, mut rx) = mpsc::channel(8);
+        let flow = Arc::new(SubscriptionFlowControl::new());
+        flow.mark_initial_complete();
+
+        registry.index_shared_subscription(
+            &conn_id,
+            LiveQueryId::new(UserId::new("u4"), conn_id.clone(), "sub_async".to_string()),
+            table_id.clone(),
+            make_shared_handle(Arc::new(tx), flow, None, None),
+        );
+
+        let change = ChangeNotification::insert(table_id.clone(), make_row(1, "async", 1));
+        service.notify_async(None, table_id.clone(), change);
+
+        let delivered = tokio::time::timeout(Duration::from_secs(1), rx.recv())
+            .await
+            .expect("worker should dispatch within timeout")
+            .expect("message should be present");
+
+        match delivered.as_ref() {
+            Notification::Change { subscription_id, .. } => {
+                assert_eq!(subscription_id, "sub_async");
+            },
+            _ => panic!("expected change notification"),
+        }
+
+        assert!(NotificationServiceTrait::has_subscribers(&*service, None, &table_id));
+    }
+}

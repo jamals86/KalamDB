@@ -1,4 +1,5 @@
 use crate::common::*;
+use kalam_link::models::ChangeEvent;
 use kalam_link::KalamLinkTimeouts;
 use std::time::Duration;
 
@@ -49,9 +50,52 @@ fn subscribe_as_user(username: &str, password: &str, query: &str) -> Result<(), 
         .build()
         .map_err(|e| format!("Failed to build runtime: {}", e))?;
 
-    let subscribe_result = rt.block_on(async move { client.subscribe(query).await });
+    let subscribe_result = rt.block_on(async move {
+        let mut subscription = client.subscribe(query).await?;
+
+        // Wait for the first event: ACK means success, Error means permission denied.
+        // The server sends permission errors as WebSocket error events, not as connection
+        // failures, so we must read at least one event to detect the server's response.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                // Timeout without receiving any event — treat as success (subscription is alive).
+                return Ok::<(), kalam_link::error::KalamLinkError>(());
+            }
+            match tokio::time::timeout(remaining, subscription.next()).await {
+                Ok(Some(Ok(ChangeEvent::Error { code, message, .. }))) => {
+                    return Err(kalam_link::error::KalamLinkError::WebSocketError(format!(
+                        "{}: {}",
+                        code, message
+                    )));
+                },
+                Ok(Some(Ok(ChangeEvent::Ack { .. }))) => {
+                    // Subscription was accepted by the server.
+                    return Ok(());
+                },
+                Ok(Some(Ok(_))) => {
+                    // Any other event (initial data batch, etc.) means subscription worked.
+                    return Ok(());
+                },
+                Ok(Some(Err(e))) => {
+                    return Err(e);
+                },
+                Ok(None) => {
+                    // Stream closed without ACK — treat as error.
+                    return Err(kalam_link::error::KalamLinkError::WebSocketError(
+                        "Stream closed before receiving ACK".to_string(),
+                    ));
+                },
+                Err(_) => {
+                    // Timeout without any event — subscription is alive.
+                    return Ok(());
+                },
+            }
+        }
+    });
     match subscribe_result {
-        Ok(_subscription) => Err("Subscription succeeded unexpectedly".to_string()),
+        Ok(()) => Ok(()),
         Err(err) => Err(err.to_string()),
     }
 }
@@ -249,7 +293,11 @@ fn smoke_security_subscription_blocked_for_system_and_private_shared() {
 
     let public_query = format!("SELECT * FROM {}", full_public);
     let public_sub = subscribe_as_user(&regular_user, password, &public_query);
-    assert!(public_sub.is_err(), "Expected public shared table subscription to fail");
+    assert!(
+        public_sub.is_ok(),
+        "Expected public shared table subscription to succeed, but got: {:?}",
+        public_sub.err()
+    );
 
     let _ = execute_sql_as_root_via_client(&format!("DROP USER {}", regular_user));
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
