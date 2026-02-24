@@ -13,8 +13,9 @@ use clap::ValueEnum;
 use colored::*;
 use indicatif::{ProgressBar, ProgressStyle};
 use kalam_link::{
-    AuthProvider, ConnectionOptions, KalamLinkClient, KalamLinkTimeouts, SubscriptionConfig,
-    SubscriptionOptions, TimestampFormatter, UploadProgress, UploadProgressCallback,
+    AuthProvider, ConnectionOptions, KalamLinkClient, KalamLinkError, KalamLinkTimeouts,
+    SubscriptionConfig, SubscriptionOptions, TimestampFormatter, UploadProgress,
+    UploadProgressCallback,
 };
 use rustyline::completion::Completer;
 use rustyline::error::ReadlineError;
@@ -325,6 +326,10 @@ impl CLISession {
                     }),
                     true,
                 ),
+                // Health endpoint is localhost-only; treat as connected (version info unavailable)
+                Err(KalamLinkError::ServerError { status_code: 403, .. }) => {
+                    (None, None, None, true)
+                },
                 Err(_e) => (None, None, None, false),
             };
 
@@ -958,15 +963,11 @@ impl CLISession {
 
         println!("{}", "✓ Connected".green());
 
-        // Fetch cluster info to populate cluster_name and node address for prompt
+        // Fetch cluster info to populate cluster_name for prompt
+        // NOTE: Do NOT update server_host here — keep it as the address the user connected to,
+        // not the server's internal listening address (e.g. 0.0.0.0:8080).
         if let Some(cluster_info) = self.fetch_cluster_info().await {
             self.cluster_name = Some(cluster_info.cluster_name);
-            // Update server_host to use the connected node's address if available
-            if let Some(node) = &cluster_info.current_node {
-                if !node.api_addr.is_empty() {
-                    self.server_host = node.api_addr.clone();
-                }
-            }
         }
 
         // Connection and auth successful - print welcome banner
