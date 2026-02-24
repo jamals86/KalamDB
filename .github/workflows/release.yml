@@ -90,6 +90,97 @@ jobs:
           echo "pre_release=$PRE_RELEASE" >> "$GITHUB_OUTPUT"
           echo "✅ Version: $VERSION, Tag: $TAG, Pre-release: $PRE_RELEASE"
 
+  license_compliance:
+    name: License Compliance
+    runs-on: ubuntu-latest
+    needs: read_version
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install cargo-license
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo install cargo-license --locked
+
+      - name: Generate Rust runtime license report
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p target/license
+          cargo license -j --avoid-dev-deps --avoid-build-deps -o target/license/rust-runtime-licenses.json
+
+      - name: Install UI dependencies
+        shell: bash
+        working-directory: ui
+        run: |
+          set -euo pipefail
+          npm install --no-audit --no-fund
+
+      - name: Generate UI production license report
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd ui
+          npx --yes license-checker --production --excludePrivatePackages --json > ../target/license/ui-licenses.json
+
+      - name: Install SDK dependencies
+        shell: bash
+        working-directory: link/sdks/typescript
+        run: |
+          set -euo pipefail
+          npm install --no-audit --no-fund
+
+      - name: Generate SDK production license report
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd link/sdks/typescript
+          npx --yes license-checker --production --json > ../../../target/license/sdk-licenses.json
+
+      - name: Validate and generate third-party report
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/license_compliance.py \
+            --policy cargo-license-check.toml \
+            --rust-report target/license/rust-runtime-licenses.json \
+            --ui-report target/license/ui-licenses.json \
+            --sdk-report target/license/sdk-licenses.json \
+            --output target/license/THIRD_PARTY_LICENSES.md
+
+      - name: Build release license bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.read_version.outputs.version }}"
+          mkdir -p "dist/$VERSION"
+          cp LICENSE.txt "dist/$VERSION/LICENSE.txt"
+          cp NOTICE "dist/$VERSION/NOTICE"
+          cp target/license/THIRD_PARTY_LICENSES.md "dist/$VERSION/THIRD_PARTY_LICENSES.md"
+
+      - name: Upload license artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-licenses
+          path: |
+            dist/${{ needs.read_version.outputs.version }}/LICENSE.txt
+            dist/${{ needs.read_version.outputs.version }}/NOTICE
+            dist/${{ needs.read_version.outputs.version }}/THIRD_PARTY_LICENSES.md
+          if-no-files-found: error
+
   build_ui:
     name: Build Admin UI
     runs-on: ubuntu-latest
@@ -1025,6 +1116,7 @@ jobs:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
     needs:
+      - license_compliance
       - build_cli_linux_x86_64
       - build_cli_linux_aarch64
       - build_cli_windows_x86_64
@@ -1098,6 +1190,9 @@ jobs:
             dist/${{ needs.read_version.outputs.version }}/*.tar.gz
             dist/${{ needs.read_version.outputs.version }}/*.zip
             dist/${{ needs.read_version.outputs.version }}/SHA256SUMS
+            dist/${{ needs.read_version.outputs.version }}/LICENSE.txt
+            dist/${{ needs.read_version.outputs.version }}/NOTICE
+            dist/${{ needs.read_version.outputs.version }}/THIRD_PARTY_LICENSES.md
 
   docker:
     name: Push Docker image (Docker Hub)

@@ -1,13 +1,33 @@
 # cargo-license-check.toml
 
 [licenses]
-# List of allowed license types for dependencies
-allow = ["Apache-2.0", "MIT", "BSD-3-Clause", "ISC"]
+# Allowed licenses for runtime dependencies used in release artifacts.
+# These include permissive and notice-based licenses currently present in
+# Rust and npm production dependency graphs.
+allow = [
+	"Apache-2.0",
+	"Apache-2.0 WITH LLVM-exception",
+	"MIT",
+	"BSD-2-Clause",
+	"BSD-3-Clause",
+	"ISC",
+	"MPL-2.0",
+	"Unicode-3.0",
+	"Zlib",
+	"0BSD",
+	"BSL-1.0",
+	"CDLA-Permissive-2.0",
+	"CC0-1.0",
+	"Unlicense",
+	"OpenSSL",
+]
 
-# Deny copyleft or unclear licenses
-deny = ["GPL-2.0", "GPL-3.0", "LGPL-3.0", "AGPL-3.0"]
-
-# Require SPDX identifiers in all source files
-[[licenses.exceptions]]
-name = "SPDX-Header-Check"
-check = "spdx"
+# Strong copyleft / disallowed licenses.
+deny = [
+	"GPL-2.0",
+	"GPL-3.0",
+	"AGPL-3.0",
+	"LGPL-3.0",
+	"LGPL-2.1-only",
+	"LGPL-2.1-or-later",
+]

@@ -2,6 +2,8 @@
   "name": "kalamdb-admin-ui",
   "private": true,
   "version": "0.1.0",
+  "license": "Apache-2.0",
+  "author": "KalamDB Team",
   "type": "module",
   "scripts": {
     "build:sdk": "cd ../link/sdks/typescript && npm install && npm run build",
