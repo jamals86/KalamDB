@@ -859,13 +859,6 @@ UI Changes:
 
 
 
-Features:
-1) Emedding and vector search
-2) File uploading and storage inside the user's own table with a reference
-
-
-
-
 TODOS:
 11) backend\crates\kalamdb-raft\src\applier\system_applier.rs need to be type-safe, keep checking to find other str's which can be type-safe using the same types we already have, also struct SystemSnapshot can store the type-safe StorageId/TableId
 
@@ -1299,13 +1292,6 @@ pub(crate) fn compose_provider_username(issuer: &str, subject: &str) -> UserName
 
 192) make AuthErrorResponse typesafe error code
 
-193) force pre-checks before benchmark runs like open files/empty database/permissions and other things to make sure the benchmark runs smoothly without any issues
-
-
-
-
-
-
 
 
 
@@ -1318,7 +1304,7 @@ Main Epics:
 4) Add embedding + vector search support
 5) Combine the models of kalamdb-link and kalamdb-commons into kalamdb-shared crate and use it everywhere
 6) Service consumer - Subscription to shards
-7) Change the code to use FlatBuffers for: Raft/RocksDb storage
+7) Done - Change the code to use FlatBuffers for: Raft/RocksDb storage
 8) Done - Add page for Server Initial Setup
 9) In Progress - Check S3/WebDAV Storages
 10) Move permissions to Shared tables with policies
