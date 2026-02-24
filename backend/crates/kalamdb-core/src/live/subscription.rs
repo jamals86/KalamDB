@@ -21,7 +21,7 @@ use datafusion::sql::sqlparser::ast::Expr;
 use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::{ConnectionId, LiveQueryId, TableId, UserId};
 use kalamdb_commons::websocket::SubscriptionRequest;
-use kalamdb_commons::NodeId;
+use kalamdb_commons::{NodeId, TableType};
 use kalamdb_raft::UserDataCommand;
 use kalamdb_system::providers::live_queries::models::{LiveQuery, LiveQueryStatus};
 use log::debug;
@@ -66,6 +66,7 @@ impl SubscriptionService {
     /// - filter_expr: Optional parsed WHERE clause expression
     /// - projections: Optional column projections (None = SELECT *, i.e., all columns)
     /// - batch_size: Batch size for initial data fetching
+    /// - table_type: Type of the table (User, Shared, System, Stream)
     pub async fn register_subscription(
         &self,
         connection_state: &SharedConnectionState,
@@ -74,6 +75,7 @@ impl SubscriptionService {
         filter_expr: Option<Expr>,
         projections: Option<Vec<String>>,
         batch_size: usize,
+        table_type: TableType,
     ) -> Result<LiveQueryId, KalamDbError> {
         // Read connection info from state and check subscription limit
         let (connection_id, user_id, notification_tx) = {
@@ -111,6 +113,8 @@ impl SubscriptionService {
         // Create SubscriptionState with all necessary data (stored in ConnectionState)
         let flow_control = Arc::new(SubscriptionFlowControl::new());
 
+        let is_shared = table_type == TableType::Shared;
+
         let subscription_state = SubscriptionState {
             live_id: live_id.clone(),
             table_id: table_id.clone(),
@@ -121,6 +125,7 @@ impl SubscriptionService {
             snapshot_end_seq: None,
             current_batch_num: 0, // Start at batch 0
             flow_control: Arc::clone(&flow_control),
+            is_shared,
         };
 
         // Create lightweight handle for the index (~48 bytes vs ~800+ bytes)
@@ -141,13 +146,22 @@ impl SubscriptionService {
         }
 
         // Add lightweight handle to registry's table index for efficient lookups
-        self.registry.index_subscription(
-            &user_id,
-            &connection_id,
-            live_id.clone(),
-            table_id.clone(),
-            subscription_handle,
-        );
+        if table_type == TableType::Shared {
+            self.registry.index_shared_subscription(
+                &connection_id,
+                live_id.clone(),
+                table_id.clone(),
+                subscription_handle,
+            );
+        } else {
+            self.registry.index_subscription(
+                &user_id,
+                &connection_id,
+                live_id.clone(),
+                table_id.clone(),
+                subscription_handle,
+            );
+        }
 
         // Create live query through Raft for cluster-wide replication
         // This ensures all nodes see the same live queries in system.live_queries
@@ -178,7 +192,11 @@ impl SubscriptionService {
 
         if let Err(e) = self.app_context.executor().execute_user_data(&user_id, cmd).await {
             // Raft failed - clean up the subscription we just indexed
-            self.registry.unindex_subscription(&user_id, &live_id, &table_id);
+            if table_type == TableType::Shared {
+                self.registry.unindex_shared_subscription(&live_id, &table_id);
+            } else {
+                self.registry.unindex_subscription(&user_id, &live_id, &table_id);
+            }
             {
                 let state = connection_state.read();
                 state.subscriptions.remove(&request.id);
@@ -217,7 +235,7 @@ impl SubscriptionService {
         // ("user-conn-sub"), also try extracting just the trailing subscription part.
         // This handles the case where notifications were previously sending the full
         // LiveQueryId as the subscription_id and the client echoes it back.
-        let (connection_id, user_id, table_id) = {
+        let (connection_id, user_id, table_id, is_shared) = {
             let state = connection_state.read();
             let user_id = state.user_id.clone().ok_or_else(|| {
                 KalamDbError::InvalidOperation("Connection not authenticated".to_string())
@@ -231,7 +249,7 @@ impl SubscriptionService {
                     .and_then(|parsed| state.subscriptions.remove(parsed.subscription_id()))
             });
             match subscription {
-                Some((_, sub)) => (state.connection_id.clone(), user_id, sub.table_id),
+                Some((_, sub)) => (state.connection_id.clone(), user_id, sub.table_id, sub.is_shared),
                 None => {
                     // This is benign — the subscription may already have been
                     // removed by cleanup_connection (WS close race).
@@ -242,7 +260,11 @@ impl SubscriptionService {
         };
 
         // Remove from registry's table index
-        self.registry.unindex_subscription(&user_id, live_id, &table_id);
+        if is_shared {
+            self.registry.unindex_shared_subscription(live_id, &table_id);
+        } else {
+            self.registry.unindex_subscription(&user_id, live_id, &table_id);
+        }
 
         // Delete from system.live_queries through Raft for cluster-wide replication
         let cmd = UserDataCommand::DeleteLiveQuery {

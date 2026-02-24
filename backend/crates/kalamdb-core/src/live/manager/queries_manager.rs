@@ -121,6 +121,7 @@ impl LiveQueryManager {
     /// - filter_expr: Optional parsed WHERE clause
     /// - projections: Optional column projections (None = SELECT *, all columns)
     /// - batch_size: Batch size for initial data loading
+    /// - table_type: Type of the table (User, Shared, System, Stream)
     pub async fn register_subscription(
         &self,
         connection_state: &SharedConnectionState,
@@ -129,6 +130,7 @@ impl LiveQueryManager {
         filter_expr: Option<Expr>,
         projections: Option<Vec<String>>,
         batch_size: usize,
+        table_type: kalamdb_commons::TableType,
     ) -> Result<LiveQueryId, KalamDbError> {
         self.subscription_service
             .register_subscription(
@@ -138,6 +140,7 @@ impl LiveQueryManager {
                 filter_expr,
                 projections,
                 batch_size,
+                table_type,
             )
             .await
     }
@@ -217,10 +220,8 @@ impl LiveQueryManager {
                 ));
             },
             kalamdb_commons::TableType::Shared => {
-                return Err(KalamDbError::InvalidOperation(
-                    format!("Cannot subscribe to shared table '{}': shared tables do not support live subscriptions. Use direct SELECT queries instead.",
-                    table_id)
-                ));
+                // SHARED tables are accessible to any authenticated user
+                // All subscribers receive notifications regardless of which user made the change
             },
             _ => {},
         }
@@ -271,6 +272,7 @@ impl LiveQueryManager {
                 filter_expr,
                 projections.clone(),
                 batch_size,
+                table_def.table_type,
             )
             .await?;
 
