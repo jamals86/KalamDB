@@ -1,3 +1,5 @@
+use std::fs;
+use std::path::Path;
 use std::time::Instant;
 
 use clap::Parser;
@@ -10,18 +12,20 @@ mod metrics;
 mod preflight;
 mod reporter;
 mod runner;
+mod system_info;
 mod verdict;
 
 use client::KalamClient;
 use config::Config;
 use reporter::html_reporter;
 use reporter::json_reporter;
-
-const KALAMDB_VERSION: &str = "0.3.0-alpha2";
+use system_info::collect_system_info;
 
 #[tokio::main]
 async fn main() {
     let mut config = Config::parse();
+    let kalamdb_version = load_kalamdb_version();
+    let system = collect_system_info();
 
     if config.list_benches {
         println!("Available benchmarks:");
@@ -37,7 +41,10 @@ async fn main() {
     config.namespace = format!("{}_{}", config.namespace, run_id);
 
     println!("╔════════════════════════════════════════════════╗");
-    println!("║       KalamDB Benchmark Suite v0.1.0          ║");
+    println!(
+        "║   KalamDB Benchmark Suite v{:<18}║",
+        kalamdb_version
+    );
     println!("╚════════════════════════════════════════════════╝");
     println!();
     println!("  Servers:     {}", config.urls.join(", "));
@@ -52,6 +59,24 @@ async fn main() {
     if !config.bench.is_empty() {
         println!("  Benches:     {}", config.bench.join(", "));
     }
+    println!(
+        "  Machine:     {} ({})",
+        system.machine_model, system.hostname
+    );
+    println!(
+        "  CPU:         {} ({} logical / {} physical)",
+        system.cpu_model, system.cpu_logical_cores, system.cpu_physical_cores
+    );
+    println!(
+        "  Memory:      {} total, {} available ({:.1}% used)",
+        format_bytes(system.total_memory_bytes),
+        format_bytes(system.available_memory_bytes),
+        system.used_memory_percent
+    );
+    println!(
+        "  Platform:    {} {} ({})",
+        system.os_name, system.os_version, system.architecture
+    );
     println!();
 
     // Build client (login to get Bearer token)
@@ -101,7 +126,6 @@ async fn main() {
         std::process::exit(1);
     }
     let overall_elapsed = overall_start.elapsed();
-
     // ── Summary with verdict breakdown ─────────────────────────────
     let passed = results.iter().filter(|r| r.success).count();
     let failed = results.iter().filter(|r| !r.success).count();
@@ -132,7 +156,13 @@ async fn main() {
     println!("════════════════════════════════════════════════\n");
 
     // Generate reports
-    match json_reporter::write_json_report(&results, &config, &config.output_dir, KALAMDB_VERSION) {
+    match json_reporter::write_json_report(
+        &results,
+        &config,
+        &config.output_dir,
+        &kalamdb_version,
+        &system,
+    ) {
         Ok(path) => println!("  JSON report: {}", path),
         Err(e) => eprintln!("  Failed to write JSON report: {}", e),
     }
@@ -141,8 +171,9 @@ async fn main() {
         &results,
         &config,
         &config.output_dir,
-        KALAMDB_VERSION,
+        &kalamdb_version,
         previous.as_ref(),
+        &system,
     ) {
         Ok(path) => println!("  HTML report: {}", path),
         Err(e) => eprintln!("  Failed to write HTML report: {}", e),
@@ -154,5 +185,51 @@ async fn main() {
     println!();
     if failed > 0 {
         std::process::exit(1);
+    }
+}
+
+fn load_kalamdb_version() -> String {
+    let fallback = env!("CARGO_PKG_VERSION").to_string();
+    let root_manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("../Cargo.toml");
+
+    let content = match fs::read_to_string(root_manifest) {
+        Ok(value) => value,
+        Err(_) => return fallback,
+    };
+
+    parse_workspace_version(&content).unwrap_or(fallback)
+}
+
+fn parse_workspace_version(manifest_content: &str) -> Option<String> {
+    let mut in_workspace_package = false;
+
+    for line in manifest_content.lines() {
+        let trimmed = line.trim();
+
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            in_workspace_package = trimmed == "[workspace.package]";
+            continue;
+        }
+
+        if in_workspace_package && trimmed.starts_with("version") {
+            let value = trimmed.split_once('=')?.1.trim().trim_matches('"').to_string();
+            if !value.is_empty() {
+                return Some(value);
+            }
+        }
+    }
+
+    None
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
+    const MIB: f64 = 1024.0 * 1024.0;
+
+    let value = bytes as f64;
+    if value >= GIB {
+        format!("{:.2} GiB", value / GIB)
+    } else {
+        format!("{:.1} MiB", value / MIB)
     }
 }

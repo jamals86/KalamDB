@@ -1311,6 +1311,8 @@ Main Epics:
 11) A new option for STREAM table to only insert the row if the user is online option (delivery_policy = 'online_only'  -- or 'always') also For STREAM tables, to avoid unbounded RAM growth, we can implement a disk-backed buffer (e.g., mmap-backed ring buffer). mmap reduces heap usage, but we still need TTL eviction + max-bytes limits + backpressure to prevent OOM. https://lib.rs/crates/mmap-io, drop policy: drop_oldest
 13) backend/crates/kalamdb-core/src/providers - need to be removed
 14) Subscription - Send the schema before the initial load starts, so the client can prepare for the incoming data and also we can use it to validate the incoming data as well
+15) When insert support RETURNING id;
+
 
 
 Target Usecase:

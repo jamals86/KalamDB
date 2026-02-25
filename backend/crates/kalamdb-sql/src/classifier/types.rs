@@ -140,6 +140,18 @@ pub enum SqlStatementKind {
     /// DROP USER <username>
     DropUser(DropUserStatement),
 
+    // ===== Backup & Restore =====
+    /// BACKUP DATABASE TO '<path>'
+    BackupDatabase(BackupDatabaseStatement),
+    /// RESTORE DATABASE FROM '<path>'
+    RestoreDatabase(RestoreDatabaseStatement),
+
+    // ===== User Data Export =====
+    /// EXPORT USER DATA
+    ExportUserData(ExportUserDataStatement),
+    /// SHOW EXPORT
+    ShowExport(ShowExportStatement),
+
     // ===== Standard SQL (DataFusion/Native) - Typed markers =====
     /// SELECT ... (handled by DataFusion)
     Select,
@@ -235,6 +247,7 @@ impl SqlStatement {
             | SqlStatementKind::ShowManifest(_)
             | SqlStatementKind::ConsumeTopic(_)
             | SqlStatementKind::AckTopic(_)
+            | SqlStatementKind::ShowExport(_)
             | SqlStatementKind::DataFusionMetaCommand
             | SqlStatementKind::Unknown => false,
 
@@ -269,6 +282,9 @@ impl SqlStatement {
             | SqlStatementKind::CreateUser(_)
             | SqlStatementKind::AlterUser(_)
             | SqlStatementKind::DropUser(_)
+            | SqlStatementKind::BackupDatabase(_)
+            | SqlStatementKind::RestoreDatabase(_)
+            | SqlStatementKind::ExportUserData(_)
             | SqlStatementKind::BeginTransaction
             | SqlStatementKind::CommitTransaction
             | SqlStatementKind::RollbackTransaction
@@ -331,6 +347,10 @@ impl SqlStatement {
             SqlStatementKind::CreateUser(_) => "CREATE USER",
             SqlStatementKind::AlterUser(_) => "ALTER USER",
             SqlStatementKind::DropUser(_) => "DROP USER",
+            SqlStatementKind::BackupDatabase(_) => "BACKUP DATABASE",
+            SqlStatementKind::RestoreDatabase(_) => "RESTORE DATABASE",
+            SqlStatementKind::ExportUserData(_) => "EXPORT USER DATA",
+            SqlStatementKind::ShowExport(_) => "SHOW EXPORT",
             SqlStatementKind::Update(_) => "UPDATE",
             SqlStatementKind::Delete(_) => "DELETE",
             SqlStatementKind::Select => "SELECT",

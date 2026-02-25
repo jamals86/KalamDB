@@ -19,8 +19,10 @@ use crate::error::KalamDbError;
 use kalamdb_sql::statement_classifier::SqlStatement;
 
 // Typed handlers organized by category
+pub mod backup;
 pub mod cluster;
 pub mod compact;
+pub mod export;
 pub mod flush;
 pub mod jobs;
 pub mod namespace;

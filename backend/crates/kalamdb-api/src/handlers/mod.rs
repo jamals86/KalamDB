@@ -35,6 +35,7 @@ pub use auth::{
 };
 pub use cluster::cluster_health_handler;
 pub use files::download_file;
+pub use files::download_export;
 pub use health::{healthz_handler, readyz_handler};
 pub use sql::execute_sql_v1;
 pub use topics::{ack_handler, consume_handler};

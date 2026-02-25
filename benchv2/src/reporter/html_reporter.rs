@@ -3,7 +3,7 @@ use std::path::Path;
 
 use crate::comparison::{self, PreviousRun};
 use crate::config::Config;
-use crate::metrics::BenchmarkResult;
+use crate::metrics::{BenchmarkResult, SystemInfo};
 use crate::verdict;
 
 /// Write a self-contained HTML report (with embedded Chart.js) and return the file path.
@@ -13,6 +13,7 @@ pub fn write_html_report(
     output_dir: &str,
     version: &str,
     previous: Option<&PreviousRun>,
+  system: &SystemInfo,
 ) -> Result<String, String> {
     fs::create_dir_all(output_dir).map_err(|e| format!("Failed to create output dir: {}", e))?;
 
@@ -21,7 +22,7 @@ pub fn write_html_report(
     let filename = format!("bench-{}-{}.html", timestamp.format("%Y-%m-%d-%H%M%S"), version_slug);
     let path = Path::new(output_dir).join(&filename);
 
-    let html = build_html(results, config, &timestamp.to_rfc3339(), version, previous);
+    let html = build_html(results, config, &timestamp.to_rfc3339(), version, previous, system);
     fs::write(&path, html).map_err(|e| format!("Write error: {}", e))?;
 
     Ok(path.display().to_string())
@@ -69,6 +70,7 @@ fn build_html(
     timestamp: &str,
     version: &str,
     previous: Option<&PreviousRun>,
+  system: &SystemInfo,
 ) -> String {
     let passed = results.iter().filter(|r| r.success).count();
     let failed = results.iter().filter(|r| !r.success).count();
@@ -261,6 +263,38 @@ fn build_html(
   .card.pass .value {{ color: var(--green); }}
   .card.fail .value {{ color: var(--red); }}
 
+  .sys-panel {{
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.2rem;
+    margin-bottom: 1.5rem;
+  }}
+  .sys-grid {{
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 0.8rem 1.1rem;
+  }}
+  .sys-item {{
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.55rem 0.75rem;
+  }}
+  .sys-item .k {{
+    color: var(--text3);
+    font-size: 0.73rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.2rem;
+  }}
+  .sys-item .v {{
+    color: var(--text);
+    font-size: 0.88rem;
+    font-weight: 500;
+    word-break: break-word;
+  }}
+
   /* ── Charts ── */
   .charts {{
     display: grid;
@@ -444,6 +478,23 @@ fn build_html(
   </div>
 </div>
 
+<div class="sys-panel">
+  <div class="section-title">System Information</div>
+  <div class="sys-grid">
+    <div class="sys-item"><div class="k">Hostname</div><div class="v">{sys_hostname}</div></div>
+    <div class="sys-item"><div class="k">Machine Model</div><div class="v">{sys_model}</div></div>
+    <div class="sys-item"><div class="k">CPU Model</div><div class="v">{sys_cpu_model}</div></div>
+    <div class="sys-item"><div class="k">CPU Cores</div><div class="v">{sys_cpu_cores}</div></div>
+    <div class="sys-item"><div class="k">Total Memory</div><div class="v">{sys_mem_total}</div></div>
+    <div class="sys-item"><div class="k">Available Memory</div><div class="v">{sys_mem_available}</div></div>
+    <div class="sys-item"><div class="k">Used Memory</div><div class="v">{sys_mem_used}</div></div>
+    <div class="sys-item"><div class="k">Memory Usage</div><div class="v">{sys_mem_pct}</div></div>
+    <div class="sys-item"><div class="k">OS</div><div class="v">{sys_os}</div></div>
+    <div class="sys-item"><div class="k">Kernel</div><div class="v">{sys_kernel}</div></div>
+    <div class="sys-item"><div class="k">Architecture</div><div class="v">{sys_arch}</div></div>
+  </div>
+</div>
+
 <div class="charts">
   <div class="chart-box wide">
     <h3>Latency by Operation (µs)</h3>
@@ -576,8 +627,34 @@ new Chart(document.getElementById('categoryChart'), {{
         ops = chart_ops.join(","),
         pie_labels = pie_labels.join(","),
         pie_values = pie_values.join(","),
+        sys_hostname = html_escape(&system.hostname),
+        sys_model = html_escape(&system.machine_model),
+        sys_cpu_model = html_escape(&system.cpu_model),
+        sys_cpu_cores = format!(
+          "{} logical / {} physical",
+          system.cpu_logical_cores, system.cpu_physical_cores
+        ),
+        sys_mem_total = format_bytes(system.total_memory_bytes),
+        sys_mem_available = format_bytes(system.available_memory_bytes),
+        sys_mem_used = format_bytes(system.used_memory_bytes),
+        sys_mem_pct = format!("{:.1}%", system.used_memory_percent),
+        sys_os = html_escape(&format!("{} {}", system.os_name, system.os_version)),
+        sys_kernel = html_escape(&system.kernel_version),
+        sys_arch = html_escape(&system.architecture),
     )
 }
+
+    fn format_bytes(bytes: u64) -> String {
+      const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
+      const MIB: f64 = 1024.0 * 1024.0;
+
+      let b = bytes as f64;
+      if b >= GIB {
+        format!("{:.2} GiB", b / GIB)
+      } else {
+        format!("{:.1} MiB", b / MIB)
+      }
+    }
 
 fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;")

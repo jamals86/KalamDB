@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::config::Config;
-use crate::metrics::{BenchmarkReport, BenchmarkResult, ReportConfig, ReportSummary};
+use crate::metrics::{BenchmarkReport, BenchmarkResult, ReportConfig, ReportSummary, SystemInfo};
 
 /// Write a JSON report to disk and return the file path.
 pub fn write_json_report(
@@ -10,6 +10,7 @@ pub fn write_json_report(
     config: &Config,
     output_dir: &str,
     version: &str,
+    system: &SystemInfo,
 ) -> Result<String, String> {
     fs::create_dir_all(output_dir).map_err(|e| format!("Failed to create output dir: {}", e))?;
 
@@ -32,6 +33,7 @@ pub fn write_json_report(
             concurrency: config.concurrency,
             namespace: config.namespace.clone(),
         },
+        system: system.clone(),
         results: results.to_vec(),
         summary: ReportSummary {
             total_benchmarks: results.len() as u32,

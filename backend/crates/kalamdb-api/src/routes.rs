@@ -63,6 +63,8 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
                 )
                 // File download endpoint (outside of /api scope for shorter URLs)
                 .service(handlers::download_file)
+                // Export download endpoint
+                .service(handlers::download_export)
                 .service(handlers::websocket_handler),
         );
 }

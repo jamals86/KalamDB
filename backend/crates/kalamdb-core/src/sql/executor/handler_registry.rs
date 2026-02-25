@@ -22,6 +22,8 @@ use std::sync::Arc;
 use tracing::Instrument;
 
 // Import all typed handlers
+use crate::sql::executor::handlers::backup::{BackupDatabaseHandler, RestoreDatabaseHandler};
+use crate::sql::executor::handlers::export::{ExportUserDataHandler, ShowExportHandler};
 use crate::sql::executor::handlers::cluster::{
     ClusterClearHandler, ClusterListHandler, ClusterPurgeHandler, ClusterSnapshotHandler,
     ClusterStepdownHandler, ClusterTransferLeaderHandler, ClusterTriggerElectionHandler,
@@ -650,6 +652,56 @@ impl HandlerRegistry {
             AckHandler::new(app_context.clone()),
             |stmt| match stmt.kind() {
                 SqlStatementKind::AckTopic(s) => Some(s.clone()),
+                _ => None,
+            },
+        );
+
+        // ============================================================================
+        // BACKUP & RESTORE HANDLERS
+        // ============================================================================
+        use kalamdb_sql::ddl::{BackupDatabaseStatement, RestoreDatabaseStatement};
+
+        registry.register_typed(
+            SqlStatementKind::BackupDatabase(BackupDatabaseStatement {
+                backup_path: "_placeholder".to_string(),
+            }),
+            BackupDatabaseHandler::new(app_context.clone()),
+            |stmt| match stmt.kind() {
+                SqlStatementKind::BackupDatabase(s) => Some(s.clone()),
+                _ => None,
+            },
+        );
+
+        registry.register_typed(
+            SqlStatementKind::RestoreDatabase(RestoreDatabaseStatement {
+                backup_path: "_placeholder".to_string(),
+            }),
+            RestoreDatabaseHandler::new(app_context.clone()),
+            |stmt| match stmt.kind() {
+                SqlStatementKind::RestoreDatabase(s) => Some(s.clone()),
+                _ => None,
+            },
+        );
+
+        // ============================================================================
+        // USER DATA EXPORT HANDLERS
+        // ============================================================================
+        use kalamdb_sql::ddl::{ExportUserDataStatement, ShowExportStatement};
+
+        registry.register_typed(
+            SqlStatementKind::ExportUserData(ExportUserDataStatement),
+            ExportUserDataHandler::new(app_context.clone()),
+            |stmt| match stmt.kind() {
+                SqlStatementKind::ExportUserData(s) => Some(s.clone()),
+                _ => None,
+            },
+        );
+
+        registry.register_typed(
+            SqlStatementKind::ShowExport(ShowExportStatement),
+            ShowExportHandler::new(app_context.clone()),
+            |stmt| match stmt.kind() {
+                SqlStatementKind::ShowExport(s) => Some(s.clone()),
                 _ => None,
             },
         );

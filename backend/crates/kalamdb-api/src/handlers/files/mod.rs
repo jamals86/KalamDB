@@ -2,6 +2,7 @@
 //!
 //! ## Endpoints
 //! - GET /v1/files/{namespace}/{table_name}/{subfolder}/{file_id} - Download a file
+//! - GET /v1/exports/{user_id}/{export_id} - Download a user data export ZIP
 //!
 //! ## Download Flow
 //! 1. Parse path parameters (namespace, table_name, subfolder, file_id)
@@ -12,5 +13,7 @@
 pub mod models;
 
 mod download;
+mod export_download;
 
 pub use download::download_file;
+pub use export_download::download_export;

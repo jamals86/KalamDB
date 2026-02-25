@@ -307,6 +307,13 @@ impl SqlStatement {
                     ShowManifestStatement::parse(sql).map(SqlStatementKind::ShowManifest)
                 })
             },
+            // Show user export status / download link
+            ["SHOW", "EXPORT", ..] => {
+                Self::wrap(sql, || {
+                    crate::ddl::export_commands::ShowExportStatement::parse(sql)
+                        .map(SqlStatementKind::ShowExport)
+                })
+            },
 
             // Job management - require admin
             ["KILL", "JOB", ..] => {
@@ -524,6 +531,38 @@ impl SqlStatement {
                 })
             },
 
+            // Backup and restore operations - require admin
+            ["BACKUP", "DATABASE", ..] => {
+                if !is_admin {
+                    return Err(StatementClassificationError::Unauthorized(
+                        "Admin privileges (DBA or System role) required for backup operations"
+                            .to_string(),
+                    ));
+                }
+                Self::wrap(sql, || {
+                    BackupDatabaseStatement::parse(sql).map(SqlStatementKind::BackupDatabase)
+                })
+            },
+            ["RESTORE", "DATABASE", ..] => {
+                if !is_admin {
+                    return Err(StatementClassificationError::Unauthorized(
+                        "Admin privileges (DBA or System role) required for restore operations"
+                            .to_string(),
+                    ));
+                }
+                Self::wrap(sql, || {
+                    RestoreDatabaseStatement::parse(sql).map(SqlStatementKind::RestoreDatabase)
+                })
+            },
+
+            // Export user data - any authenticated user can export their own data
+            ["EXPORT", "USER", "DATA", ..] => {
+                Self::wrap(sql, || {
+                    crate::ddl::export_commands::ExportUserDataStatement::parse(sql)
+                        .map(SqlStatementKind::ExportUserData)
+                })
+            },
+
             // User management - require admin (except ALTER USER for self)
             ["CREATE", "USER", ..] => {
                 if !is_admin {
@@ -736,6 +775,8 @@ impl SqlStatement {
             | SqlStatementKind::ConsumeTopic(_)
             | SqlStatementKind::AckTopic(_)
             | SqlStatementKind::KillLiveQuery(_)
+            | SqlStatementKind::ExportUserData(_)
+            | SqlStatementKind::ShowExport(_)
             | SqlStatementKind::BeginTransaction
             | SqlStatementKind::CommitTransaction
             | SqlStatementKind::RollbackTransaction => Ok(()),
@@ -746,6 +787,12 @@ impl SqlStatement {
             | SqlStatementKind::ClearTopic(_)
             | SqlStatementKind::AddTopicSource(_) => {
                 Err("Admin privileges (DBA or System role) required for topic management"
+                    .to_string())
+            },
+
+            // Backup/Restore requires admin
+            SqlStatementKind::BackupDatabase(_) | SqlStatementKind::RestoreDatabase(_) => {
+                Err("Admin privileges (DBA or System role) required for backup/restore operations"
                     .to_string())
             },
 

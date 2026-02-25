@@ -8,7 +8,7 @@ use crate::error_extensions::KalamDbResultExt;
 use crate::jobs::executors::{
     BackupExecutor, CleanupExecutor, CompactExecutor, FlushExecutor, JobCleanupExecutor,
     JobRegistry, RestoreExecutor, RetentionExecutor, StreamEvictionExecutor, TopicCleanupExecutor,
-    TopicRetentionExecutor, UserCleanupExecutor,
+    TopicRetentionExecutor, UserCleanupExecutor, UserExportExecutor,
 };
 use crate::live::notification::NotificationService;
 use crate::live::ConnectionsManager;
@@ -305,6 +305,7 @@ impl AppContext {
             job_registry.register(Arc::new(RestoreExecutor::new()));
             job_registry.register(Arc::new(TopicRetentionExecutor::new()));
             job_registry.register(Arc::new(TopicCleanupExecutor::new()));
+            job_registry.register(Arc::new(UserExportExecutor::new()));
 
             // Create unified job manager (Phase 9, T154)
             let jobs_provider = system_tables.jobs();

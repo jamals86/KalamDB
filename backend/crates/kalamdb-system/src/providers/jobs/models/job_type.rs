@@ -19,6 +19,7 @@ pub enum JobType {
     ManifestEviction,
     TopicCleanup,
     TopicRetention,
+    UserExport,
     Unknown,
 }
 
@@ -37,6 +38,7 @@ impl JobType {
             JobType::ManifestEviction => "manifest_eviction",
             JobType::TopicCleanup => "topic_cleanup",
             JobType::TopicRetention => "topic_retention",
+            JobType::UserExport => "user_export",
             JobType::Unknown => "unknown",
         }
     }
@@ -68,6 +70,7 @@ impl JobType {
             JobType::TopicCleanup => "TC",
             JobType::ManifestEviction => "ME",
             JobType::TopicRetention => "TR",
+            JobType::UserExport => "UE",
             JobType::Unknown => "UN",
         }
     }
@@ -86,6 +89,7 @@ impl JobType {
             "topic_cleanup" => Some(JobType::TopicCleanup),
             "manifest_eviction" => Some(JobType::ManifestEviction),
             "topic_retention" => Some(JobType::TopicRetention),
+            "user_export" => Some(JobType::UserExport),
             "unknown" => Some(JobType::Unknown),
             _ => None,
         }
@@ -109,7 +113,8 @@ impl JobType {
             JobType::Restore |      // External storage download
             JobType::JobCleanup |   // Raft-replicated job table cleanup
             JobType::UserCleanup |  // Cascade via Raft
-            JobType::TopicCleanup // Delete topic messages + offsets
+            JobType::TopicCleanup | // Delete topic messages + offsets
+            JobType::UserExport // Export user data to zip
         )
     }
 
@@ -175,6 +180,7 @@ impl From<&str> for JobType {
             "manifest_eviction" => JobType::ManifestEviction,
             "topic_cleanup" => JobType::TopicCleanup,
             "topic_retention" => JobType::TopicRetention,
+            "user_export" => JobType::UserExport,
             "unknown" => JobType::Unknown,
             _ => JobType::Unknown,
         }
