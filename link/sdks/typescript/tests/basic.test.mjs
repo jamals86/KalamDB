@@ -16,6 +16,9 @@ const __dirname = dirname(__filename);
 // Import from parent directory (the SDK root)
 const sdkPath = join(__dirname, '..');
 
+// WASM output directory (wasm-pack places files here)
+const wasmOutPath = join(sdkPath, '.wasm-out');
+
 async function runTests() {
   console.log('🧪 Running Basic WASM Module Tests\n');
   
@@ -25,7 +28,7 @@ async function runTests() {
   // Test 1: Module loads
   console.log('Test 1: WASM module loads...');
   try {
-    const { default: init, KalamClient } = await import(join(sdkPath, 'kalam_link.js'));
+    const { default: init, KalamClient } = await import(join(wasmOutPath, 'kalam_link.js'));
     
     if (typeof init === 'function') {
       console.log('  ✓ init function exists');
@@ -50,10 +53,10 @@ async function runTests() {
   // Test 2: WASM initialization
   console.log('\nTest 2: WASM initializes...');
   try {
-    const { default: init } = await import(join(sdkPath, 'kalam_link.js'));
+    const { default: init } = await import(join(wasmOutPath, 'kalam_link.js'));
     
     // For Node.js, we need to pass the WASM file path explicitly
-    const wasmPath = join(sdkPath, 'kalam_link_bg.wasm');
+    const wasmPath = join(wasmOutPath, 'kalam_link_bg.wasm');
     const wasmBuffer = await readFile(wasmPath);
     
     await init(wasmBuffer);
@@ -67,9 +70,9 @@ async function runTests() {
   // Test 3: Client construction
   console.log('\nTest 3: KalamClient construction...');
   try {
-    const { KalamClient } = await import(join(sdkPath, 'kalam_link.js'));
+    const { KalamClient } = await import(join(wasmOutPath, 'kalam_link.js'));
     
-    const client = new KalamClient('ws://localhost:8080', 'test-api-key');
+    const client = new KalamClient('http://localhost:8080', 'admin', 'secret');
     
     if (client) {
       console.log('  ✓ KalamClient instance created');
@@ -159,25 +162,25 @@ async function runTests() {
   // Test 4: Required parameters validation
   console.log('\nTest 4: Constructor parameter validation...');
   try {
-    const { KalamClient } = await import(join(sdkPath, 'kalam_link.js'));
+    const { KalamClient } = await import(join(wasmOutPath, 'kalam_link.js'));
     
-    // Should throw without URL
+    // Should throw with empty URL
     try {
-      new KalamClient();
-      console.log('  ✗ Missing URL should throw error');
+      new KalamClient('', 'admin', 'secret');
+      console.log('  ✗ Empty URL should throw error');
       failed++;
     } catch (error) {
-      console.log('  ✓ Missing URL throws error');
+      console.log('  ✓ Empty URL throws error');
       passed++;
     }
 
-    // Should throw with only URL
+    // Should throw with empty username
     try {
-      new KalamClient('ws://localhost:8080');
-      console.log('  ✗ Missing API key should throw error');
+      new KalamClient('http://localhost:8080', '', 'secret');
+      console.log('  ✗ Empty username should throw error');
       failed++;
     } catch (error) {
-      console.log('  ✓ Missing API key throws error');
+      console.log('  ✓ Empty username throws error');
       passed++;
     }
 

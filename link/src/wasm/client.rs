@@ -21,7 +21,7 @@ use base64::Engine;
 use super::auth::WasmAuthProvider;
 use super::console_log;
 use super::helpers::{create_promise, subscription_hash};
-use super::reconnect::{reconnect_internal_with_auth, resubscribe_all};
+use super::reconnect::{self, reconnect_internal_with_auth, resubscribe_all};
 use super::state::SubscriptionState;
 use super::validation::{
     quote_table_name, validate_column_name, validate_row_id, validate_sql_identifier,
@@ -86,6 +86,8 @@ pub struct KalamClient {
     reconnect_attempts: Rc<RefCell<u32>>,
     /// Flag indicating if we're currently reconnecting
     is_reconnecting: Rc<RefCell<bool>>,
+    /// Active keepalive ping interval ID (from `setInterval`), or -1 if none.
+    ping_interval_id: Rc<RefCell<i32>>,
 }
 
 impl KalamClient {
@@ -98,6 +100,7 @@ impl KalamClient {
             connection_options: Rc::new(RefCell::new(ConnectionOptions::default())),
             reconnect_attempts: Rc::new(RefCell::new(0)),
             is_reconnecting: Rc::new(RefCell::new(false)),
+            ping_interval_id: Rc::new(RefCell::new(-1)),
         }
     }
 }
@@ -587,12 +590,19 @@ impl KalamClient {
         JsFuture::from(auth_promise).await?;
 
         console_log("KalamClient: WebSocket connection established and authenticated");
+
+        // Start keepalive ping timer (no-op when interval is 0)
+        self.start_ping_timer();
+
         Ok(())
     }
 
     /// Disconnect from KalamDB server (T046, T063E)
     pub async fn disconnect(&mut self) -> Result<(), JsValue> {
         console_log("KalamClient: Disconnecting from WebSocket...");
+
+        // Stop keepalive ping timer
+        self.stop_ping_timer();
 
         // Disable auto-reconnect during intentional disconnect
         self.connection_options.borrow_mut().auto_reconnect = false;
@@ -616,6 +626,76 @@ impl KalamClient {
     #[wasm_bindgen(js_name = isConnected)]
     pub fn is_connected(&self) -> bool {
         self.ws.borrow().as_ref().is_some_and(|ws| ws.ready_state() == WebSocket::OPEN)
+    }
+
+    /// Set the application-level keepalive ping interval in milliseconds.
+    ///
+    /// Browser WebSocket APIs do not expose protocol-level Ping frames, so
+    /// the WASM client sends a JSON `{"type":"ping"}` message at this
+    /// interval. Set to `0` to disable. Default: 30 000 ms.
+    ///
+    /// The change takes effect on the next `connect()` or reconnect.
+    ///
+    /// # Note
+    /// Takes `u32` (maps to TypeScript `number`); the internal store is `u64`.
+    #[wasm_bindgen(js_name = setPingInterval)]
+    pub fn set_ping_interval(&self, ms: u32) {
+        self.connection_options.borrow_mut().ping_interval_ms = ms as u64;
+    }
+
+    /// Send a single application-level keepalive ping to the server.
+    ///
+    /// Usually called automatically by the internal ping timer; exposed so
+    /// callers can send an ad-hoc ping if needed.
+    #[wasm_bindgen(js_name = sendPing)]
+    pub fn send_ping(&self) -> Result<(), JsValue> {
+        if let Some(ws) = self.ws.borrow().as_ref() {
+            if ws.ready_state() == WebSocket::OPEN {
+                let payload = serde_json::to_string(&ClientMessage::Ping)
+                    .map_err(|e| JsValue::from_str(&format!("Ping serialization error: {}", e)))?;
+                ws.send_with_str(&payload)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Start the internal keepalive ping interval (idempotent).
+    ///
+    /// Called automatically by `connect()` and after a successful reconnect.
+    fn start_ping_timer(&self) {
+        self.stop_ping_timer();
+
+        let interval_ms = self.connection_options.borrow().ping_interval_ms;
+        if interval_ms == 0 {
+            return;
+        }
+
+        let ws_ref = Rc::clone(&self.ws);
+        let ping_cb = Closure::wrap(Box::new(move || {
+            if let Some(ws) = ws_ref.borrow().as_ref() {
+                if ws.ready_state() == WebSocket::OPEN {
+                    if let Ok(payload) = serde_json::to_string(&ClientMessage::Ping) {
+                        let _ = ws.send_with_str(&payload);
+                    }
+                }
+            }
+        }) as Box<dyn FnMut()>);
+
+        let id = super::helpers::global_set_interval(
+            ping_cb.as_ref().unchecked_ref(),
+            interval_ms as i32,
+        );
+        ping_cb.forget();
+        *self.ping_interval_id.borrow_mut() = id;
+    }
+
+    /// Stop the internal keepalive ping interval (idempotent).
+    fn stop_ping_timer(&self) {
+        let id = *self.ping_interval_id.borrow();
+        if id >= 0 {
+            super::helpers::global_clear_interval(id);
+            *self.ping_interval_id.borrow_mut() = -1;
+        }
     }
 
     /// Insert data into a table (T048, T063G)
@@ -1269,6 +1349,7 @@ impl KalamClient {
         let reconnect_attempts = Rc::clone(&self.reconnect_attempts);
         let is_reconnecting = Rc::clone(&self.is_reconnecting);
         let ws_ref = Rc::clone(&self.ws);
+        let ping_interval_id = Rc::clone(&self.ping_interval_id);
         let url = self.url.clone();
         let auth = self.auth.clone();
 
@@ -1306,6 +1387,8 @@ impl KalamClient {
             let reconnect_attempts_clone = reconnect_attempts.clone();
             let subscription_state_clone = subscription_state.clone();
             let ws_ref_clone = ws_ref.clone();
+            let ping_interval_id_clone = ping_interval_id.clone();
+            let connection_options_clone = connection_options.clone();
             let url_clone = url.clone();
             let auth_clone = auth.clone();
 
@@ -1319,13 +1402,17 @@ impl KalamClient {
                 let subscription_state = subscription_state_clone.clone();
                 let is_reconnecting = is_reconnecting_clone.clone();
                 let reconnect_attempts = reconnect_attempts_clone.clone();
+                let ping_id = ping_interval_id_clone.clone();
+                let conn_opts = connection_options_clone.clone();
 
                 wasm_bindgen_futures::spawn_local(async move {
                     match reconnect_internal_with_auth(url, auth, ws_ref.clone()).await {
                         Ok(()) => {
                             console_log("KalamClient: Reconnection successful");
                             *reconnect_attempts.borrow_mut() = 0; // Reset attempts on success
-                            resubscribe_all(ws_ref, subscription_state).await;
+                            resubscribe_all(ws_ref.clone(), subscription_state).await;
+                            // Restart keepalive ping timer for the new connection
+                            reconnect::restart_ping_timer(&ws_ref, &conn_opts, &ping_id);
                         },
                         Err(e) => {
                             console_log(&format!("KalamClient: Reconnection failed: {:?}", e));

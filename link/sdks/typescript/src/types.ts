@@ -231,6 +231,18 @@ export interface ClientOptions {
    * connection lifecycle manually via `connect()` / `disconnect()`.
    */
   autoConnect?: boolean;
+
+  /**
+   * Interval in milliseconds at which the client sends an application-level
+   * keepalive ping over the WebSocket connection.
+   *
+   * Browser WebSocket APIs do not expose protocol-level Ping frames, so the
+   * SDK sends a JSON `{"type":"ping"}` message instead to prevent the
+   * server-side heartbeat timeout from closing idle connections.
+   *
+   * Defaults to `30000` (30 seconds). Set to `0` to disable.
+   */
+  pingIntervalMs?: number;
 }
 
 /* ================================================================== */

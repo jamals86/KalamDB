@@ -251,6 +251,14 @@ pub enum ClientMessage {
         /// The subscription ID to unsubscribe from
         subscription_id: String,
     },
+
+    /// Application-level keepalive ping.
+    ///
+    /// Browser WebSocket APIs do not expose protocol-level Ping frames, so
+    /// the TypeScript SDK sends this JSON message periodically to prevent
+    /// the server-side heartbeat timeout from firing on idle connections.
+    /// The server updates its last-activity timestamp and discards the message.
+    Ping,
 }
 
 /// Subscription request details

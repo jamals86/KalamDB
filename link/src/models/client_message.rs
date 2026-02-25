@@ -42,4 +42,11 @@ pub enum ClientMessage {
         /// The subscription ID to unsubscribe from
         subscription_id: String,
     },
+
+    /// Application-level keepalive ping.
+    ///
+    /// Browser WebSocket APIs do not expose protocol-level Ping frames, so
+    /// the WASM client sends this periodically to prevent the server-side
+    /// heartbeat timeout from firing on idle connections.
+    Ping,
 }
