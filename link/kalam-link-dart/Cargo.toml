@@ -1,0 +1,23 @@
+[package]
+name = "kalam-link-dart"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Flutter/Dart bridge for kalam-link via flutter_rust_bridge"
+
+[dependencies]
+kalam-link = { path = "..", features = ["tokio-runtime"] }
+flutter_rust_bridge = { workspace = true }
+tokio = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }
+anyhow = { workspace = true }
+
+[lib]
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[lints.rust]
+unexpected_cfgs = { level = "allow", check-cfg = ['cfg(frb_expand)'] }

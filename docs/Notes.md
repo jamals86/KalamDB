@@ -1292,6 +1292,9 @@ pub(crate) fn compose_provider_username(issuer: &str, subject: &str) -> UserName
 
 192) make AuthErrorResponse typesafe error code
 
+193) remove checkSetupStatus/serverSetup from the dart and typescript sdk
+
+
 
 
 

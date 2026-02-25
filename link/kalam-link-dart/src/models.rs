@@ -1,0 +1,440 @@
+//! FRB-friendly model types that mirror kalam-link models.
+//!
+//! All types here are simple structs/enums with only primitive fields
+//! and `Vec`/`Option` wrappers — fully compatible with flutter_rust_bridge codegen.
+
+use kalam_link::models::{
+    BatchStatus, ChangeEvent, ErrorDetail, HealthCheckResponse, LoginResponse,
+    LoginUserInfo, QueryResponse, QueryResult, ResponseStatus, SchemaField,
+};
+use kalam_link::models::{
+    ServerSetupRequest, ServerSetupResponse, SetupStatusResponse, SetupUserInfo,
+};
+
+// ---------------------------------------------------------------------------
+// Auth
+// ---------------------------------------------------------------------------
+
+/// Authentication method for connecting to KalamDB.
+pub enum DartAuthProvider {
+    /// HTTP Basic Auth with username and password.
+    BasicAuth { username: String, password: String },
+    /// JWT bearer token.
+    JwtToken { token: String },
+    /// No authentication (localhost bypass).
+    None,
+}
+
+impl DartAuthProvider {
+    pub(crate) fn into_native(self) -> kalam_link::AuthProvider {
+        match self {
+            Self::BasicAuth { username, password } => {
+                kalam_link::AuthProvider::basic_auth(username, password)
+            }
+            Self::JwtToken { token } => kalam_link::AuthProvider::jwt_token(token),
+            Self::None => kalam_link::AuthProvider::none(),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Query response models
+// ---------------------------------------------------------------------------
+
+pub struct DartQueryResponse {
+    pub success: bool,
+    pub results: Vec<DartQueryResult>,
+    /// Execution time in milliseconds.
+    pub took_ms: Option<f64>,
+    pub error: Option<DartErrorDetail>,
+}
+
+impl From<QueryResponse> for DartQueryResponse {
+    fn from(r: QueryResponse) -> Self {
+        Self {
+            success: r.status == ResponseStatus::Success,
+            results: r.results.into_iter().map(DartQueryResult::from).collect(),
+            took_ms: r.took,
+            error: r.error.map(DartErrorDetail::from),
+        }
+    }
+}
+
+pub struct DartQueryResult {
+    pub columns: Vec<DartSchemaField>,
+    /// Each row is a JSON-encoded string (array of values).
+    /// Dart side parses this into typed values.
+    pub rows_json: Vec<String>,
+    pub row_count: i64,
+    pub message: Option<String>,
+}
+
+impl From<QueryResult> for DartQueryResult {
+    fn from(r: QueryResult) -> Self {
+        let rows_json = r
+            .rows
+            .unwrap_or_default()
+            .into_iter()
+            .map(|row| serde_json::to_string(&row).unwrap_or_default())
+            .collect();
+        Self {
+            columns: r.schema.into_iter().map(DartSchemaField::from).collect(),
+            rows_json,
+            row_count: r.row_count as i64,
+            message: r.message,
+        }
+    }
+}
+
+pub struct DartSchemaField {
+    pub name: String,
+    pub data_type: String,
+    pub index: i32,
+    /// Comma-separated flag short names, e.g. `"pk,nn,uq"`.
+    /// `None` when no flags are present.
+    pub flags: Option<String>,
+}
+
+impl From<SchemaField> for DartSchemaField {
+    fn from(f: SchemaField) -> Self {
+        Self {
+            name: f.name,
+            data_type: format!("{:?}", f.data_type),
+            index: f.index as i32,
+            flags: f.flags.map(|fl| {
+                fl.iter()
+                    .map(|flag| match flag {
+                        kalam_link::FieldFlag::PrimaryKey => "pk",
+                        kalam_link::FieldFlag::NonNull => "nn",
+                        kalam_link::FieldFlag::Unique => "uq",
+                    })
+                    .collect::<Vec<_>>()
+                    .join(",")
+            }),
+        }
+    }
+}
+
+pub struct DartErrorDetail {
+    pub code: String,
+    pub message: String,
+    pub details: Option<String>,
+}
+
+impl From<ErrorDetail> for DartErrorDetail {
+    fn from(e: ErrorDetail) -> Self {
+        Self {
+            code: e.code,
+            message: e.message,
+            details: e.details,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Health check
+// ---------------------------------------------------------------------------
+
+pub struct DartHealthCheckResponse {
+    pub status: String,
+    pub version: String,
+    pub api_version: String,
+    pub build_date: Option<String>,
+}
+
+impl From<HealthCheckResponse> for DartHealthCheckResponse {
+    fn from(h: HealthCheckResponse) -> Self {
+        Self {
+            status: h.status,
+            version: h.version,
+            api_version: h.api_version,
+            build_date: h.build_date,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Login / Auth responses
+// ---------------------------------------------------------------------------
+
+pub struct DartLoginResponse {
+    pub access_token: String,
+    pub refresh_token: Option<String>,
+    pub expires_at: String,
+    pub refresh_expires_at: Option<String>,
+    pub user: DartLoginUserInfo,
+}
+
+impl From<LoginResponse> for DartLoginResponse {
+    fn from(l: LoginResponse) -> Self {
+        Self {
+            access_token: l.access_token,
+            refresh_token: l.refresh_token,
+            expires_at: l.expires_at,
+            refresh_expires_at: l.refresh_expires_at,
+            user: DartLoginUserInfo::from(l.user),
+        }
+    }
+}
+
+pub struct DartLoginUserInfo {
+    pub id: String,
+    pub username: String,
+    pub role: String,
+    pub email: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<LoginUserInfo> for DartLoginUserInfo {
+    fn from(u: LoginUserInfo) -> Self {
+        Self {
+            id: u.id,
+            username: u.username,
+            role: u.role,
+            email: u.email,
+            created_at: u.created_at,
+            updated_at: u.updated_at,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Server setup
+// ---------------------------------------------------------------------------
+
+pub struct DartServerSetupRequest {
+    pub username: String,
+    pub password: String,
+    pub root_password: String,
+    pub email: Option<String>,
+}
+
+impl DartServerSetupRequest {
+    pub(crate) fn into_native(self) -> ServerSetupRequest {
+        ServerSetupRequest {
+            username: self.username,
+            password: self.password,
+            root_password: self.root_password,
+            email: self.email,
+        }
+    }
+}
+
+pub struct DartServerSetupResponse {
+    pub message: String,
+    pub user: DartSetupUserInfo,
+}
+
+impl From<ServerSetupResponse> for DartServerSetupResponse {
+    fn from(r: ServerSetupResponse) -> Self {
+        Self {
+            message: r.message,
+            user: DartSetupUserInfo::from(r.user),
+        }
+    }
+}
+
+pub struct DartSetupUserInfo {
+    pub id: String,
+    pub username: String,
+    pub role: String,
+    pub email: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<SetupUserInfo> for DartSetupUserInfo {
+    fn from(u: SetupUserInfo) -> Self {
+        Self {
+            id: u.id,
+            username: u.username,
+            role: u.role,
+            email: u.email,
+            created_at: u.created_at,
+            updated_at: u.updated_at,
+        }
+    }
+}
+
+pub struct DartSetupStatusResponse {
+    pub needs_setup: bool,
+    pub message: String,
+}
+
+impl From<SetupStatusResponse> for DartSetupStatusResponse {
+    fn from(r: SetupStatusResponse) -> Self {
+        Self {
+            needs_setup: r.needs_setup,
+            message: r.message,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Subscription / Change events
+// ---------------------------------------------------------------------------
+
+/// A single change event from a live subscription.
+pub enum DartChangeEvent {
+    /// Subscription acknowledged — contains schema info.
+    Ack {
+        subscription_id: String,
+        total_rows: i32,
+        schema: Vec<DartSchemaField>,
+        batch_num: i32,
+        has_more: bool,
+        status: String,
+    },
+    /// Batch of initial data rows.
+    InitialDataBatch {
+        subscription_id: String,
+        /// Each entry is a JSON-encoded row object (`{"col": value, ...}`).
+        rows_json: Vec<String>,
+        batch_num: i32,
+        has_more: bool,
+        status: String,
+    },
+    /// One or more rows were inserted.
+    Insert {
+        subscription_id: String,
+        /// Each entry is a JSON-encoded row object.
+        rows_json: Vec<String>,
+    },
+    /// One or more rows were updated.
+    Update {
+        subscription_id: String,
+        rows_json: Vec<String>,
+        old_rows_json: Vec<String>,
+    },
+    /// One or more rows were deleted.
+    Delete {
+        subscription_id: String,
+        old_rows_json: Vec<String>,
+    },
+    /// Server-side error on this subscription.
+    Error {
+        subscription_id: String,
+        code: String,
+        message: String,
+    },
+}
+
+fn batch_status_str(bs: &BatchStatus) -> String {
+    match bs {
+        BatchStatus::Loading => "loading".to_owned(),
+        BatchStatus::LoadingBatch => "loading_batch".to_owned(),
+        BatchStatus::Ready => "ready".to_owned(),
+    }
+}
+
+fn json_vec(values: Vec<serde_json::Value>) -> Vec<String> {
+    values
+        .into_iter()
+        .map(|v| serde_json::to_string(&v).unwrap_or_default())
+        .collect()
+}
+
+impl From<ChangeEvent> for DartChangeEvent {
+    fn from(e: ChangeEvent) -> Self {
+        match e {
+            ChangeEvent::Ack {
+                subscription_id,
+                total_rows,
+                batch_control,
+                schema,
+            } => Self::Ack {
+                subscription_id,
+                total_rows: total_rows as i32,
+                schema: schema.into_iter().map(DartSchemaField::from).collect(),
+                batch_num: batch_control.batch_num as i32,
+                has_more: batch_control.has_more,
+                status: batch_status_str(&batch_control.status),
+            },
+            ChangeEvent::InitialDataBatch {
+                subscription_id,
+                rows,
+                batch_control,
+            } => Self::InitialDataBatch {
+                subscription_id,
+                rows_json: rows
+                    .into_iter()
+                    .map(|row| serde_json::to_string(&row).unwrap_or_default())
+                    .collect(),
+                batch_num: batch_control.batch_num as i32,
+                has_more: batch_control.has_more,
+                status: batch_status_str(&batch_control.status),
+            },
+            ChangeEvent::Insert {
+                subscription_id,
+                rows,
+            } => Self::Insert {
+                subscription_id,
+                rows_json: json_vec(rows),
+            },
+            ChangeEvent::Update {
+                subscription_id,
+                rows,
+                old_rows,
+            } => Self::Update {
+                subscription_id,
+                rows_json: json_vec(rows),
+                old_rows_json: json_vec(old_rows),
+            },
+            ChangeEvent::Delete {
+                subscription_id,
+                old_rows,
+            } => Self::Delete {
+                subscription_id,
+                old_rows_json: json_vec(old_rows),
+            },
+            ChangeEvent::Error {
+                subscription_id,
+                code,
+                message,
+            } => Self::Error {
+                subscription_id,
+                code,
+                message,
+            },
+            ChangeEvent::Unknown { raw } => Self::Error {
+                subscription_id: String::new(),
+                code: "unknown".to_owned(),
+                message: serde_json::to_string(&raw).unwrap_or_default(),
+            },
+        }
+    }
+}
+
+/// Subscription configuration.
+pub struct DartSubscriptionConfig {
+    pub sql: String,
+    /// Optional subscription ID (auto-generated if omitted).
+    pub id: Option<String>,
+    pub batch_size: Option<i32>,
+    pub last_rows: Option<i32>,
+}
+
+impl DartSubscriptionConfig {
+    pub(crate) fn into_native(self) -> kalam_link::SubscriptionConfig {
+        kalam_link::SubscriptionConfig {
+            id: self.id.unwrap_or_else(|| uuid_v4()),
+            sql: self.sql,
+            options: Some(kalam_link::SubscriptionOptions {
+                batch_size: self.batch_size.map(|v| v as usize),
+                last_rows: self.last_rows.map(|v| v as u32),
+                from_seq_id: None,
+            }),
+            ws_url: None,
+        }
+    }
+}
+
+fn uuid_v4() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    format!("dart-sub-{}", ts)
+}

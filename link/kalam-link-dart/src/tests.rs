@@ -1,0 +1,529 @@
+#[cfg(test)]
+mod tests {
+    use crate::models::*;
+    use kalam_link::models::{
+        BatchControl, BatchStatus, ChangeEvent, ErrorDetail, HealthCheckResponse, LoginResponse,
+        LoginUserInfo, QueryResponse, QueryResult, ResponseStatus, SchemaField,
+        ServerSetupResponse, SetupStatusResponse, SetupUserInfo,
+    };
+    use kalam_link::{FieldFlag, KalamDataType};
+    use std::collections::BTreeSet;
+
+    // -----------------------------------------------------------------------
+    // Auth provider conversion
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn auth_basic_converts_to_native() {
+        let auth = DartAuthProvider::BasicAuth {
+            username: "alice".into(),
+            password: "secret".into(),
+        };
+        // into_native() should not panic
+        let _native = auth.into_native();
+    }
+
+    #[test]
+    fn auth_jwt_converts_to_native() {
+        let auth = DartAuthProvider::JwtToken {
+            token: "eyJ...".into(),
+        };
+        let _native = auth.into_native();
+    }
+
+    #[test]
+    fn auth_none_converts_to_native() {
+        let auth = DartAuthProvider::None;
+        let _native = auth.into_native();
+    }
+
+    // -----------------------------------------------------------------------
+    // Schema field conversion
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn schema_field_with_no_flags() {
+        let sf = SchemaField {
+            name: "id".into(),
+            data_type: KalamDataType::Int,
+            index: 0,
+            flags: None,
+        };
+        let dart: DartSchemaField = sf.into();
+        assert_eq!(dart.name, "id");
+        assert_eq!(dart.index, 0);
+        assert!(dart.flags.is_none());
+    }
+
+    #[test]
+    fn schema_field_with_flags() {
+        let mut flags = BTreeSet::new();
+        flags.insert(FieldFlag::PrimaryKey);
+        flags.insert(FieldFlag::NonNull);
+        let sf = SchemaField {
+            name: "user_id".into(),
+            data_type: KalamDataType::Text,
+            index: 1,
+            flags: Some(flags),
+        };
+        let dart: DartSchemaField = sf.into();
+        assert_eq!(dart.name, "user_id");
+        assert_eq!(dart.index, 1);
+        let fl = dart.flags.unwrap();
+        assert!(fl.contains("pk"));
+        assert!(fl.contains("nn"));
+        assert!(!fl.contains("uq"));
+    }
+
+    #[test]
+    fn schema_field_all_flags() {
+        let mut flags = BTreeSet::new();
+        flags.insert(FieldFlag::PrimaryKey);
+        flags.insert(FieldFlag::NonNull);
+        flags.insert(FieldFlag::Unique);
+        let sf = SchemaField {
+            name: "email".into(),
+            data_type: KalamDataType::Text,
+            index: 2,
+            flags: Some(flags),
+        };
+        let dart: DartSchemaField = sf.into();
+        let fl = dart.flags.unwrap();
+        // BTreeSet is sorted by enum variant order: PrimaryKey < NonNull < Unique
+        assert_eq!(fl, "pk,nn,uq");
+    }
+
+    // -----------------------------------------------------------------------
+    // Error detail conversion
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn error_detail_converts() {
+        let e = ErrorDetail {
+            code: "table_not_found".into(),
+            message: "Table 'x' does not exist".into(),
+            details: Some("namespace: default".into()),
+        };
+        let dart: DartErrorDetail = e.into();
+        assert_eq!(dart.code, "table_not_found");
+        assert_eq!(dart.message, "Table 'x' does not exist");
+        assert_eq!(dart.details.unwrap(), "namespace: default");
+    }
+
+    #[test]
+    fn error_detail_without_details() {
+        let e = ErrorDetail {
+            code: "syntax".into(),
+            message: "Bad SQL".into(),
+            details: None,
+        };
+        let dart: DartErrorDetail = e.into();
+        assert!(dart.details.is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // QueryResponse / QueryResult conversion
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn query_response_success() {
+        let qr = QueryResult {
+            schema: vec![SchemaField {
+                name: "name".into(),
+                data_type: KalamDataType::Text,
+                index: 0,
+                flags: None,
+            }],
+            rows: Some(vec![vec![serde_json::json!("Alice")]]),
+            row_count: 1,
+            message: None,
+        };
+        let resp = QueryResponse {
+            status: ResponseStatus::Success,
+            results: vec![qr],
+            took: Some(1.5),
+            error: None,
+        };
+        let dart: DartQueryResponse = resp.into();
+        assert!(dart.success);
+        assert_eq!(dart.results.len(), 1);
+        assert_eq!(dart.results[0].row_count, 1);
+        assert_eq!(dart.results[0].columns.len(), 1);
+        assert_eq!(dart.results[0].columns[0].name, "name");
+        assert_eq!(dart.results[0].rows_json.len(), 1);
+        assert!(dart.results[0].rows_json[0].contains("Alice"));
+        assert!((dart.took_ms.unwrap() - 1.5).abs() < f64::EPSILON);
+        assert!(dart.error.is_none());
+    }
+
+    #[test]
+    fn query_response_error() {
+        let resp = QueryResponse {
+            status: ResponseStatus::Error,
+            results: vec![],
+            took: None,
+            error: Some(ErrorDetail {
+                code: "scan_fail".into(),
+                message: "IO error".into(),
+                details: None,
+            }),
+        };
+        let dart: DartQueryResponse = resp.into();
+        assert!(!dart.success);
+        assert!(dart.results.is_empty());
+        assert!(dart.error.is_some());
+        assert_eq!(dart.error.unwrap().code, "scan_fail");
+    }
+
+    #[test]
+    fn query_result_empty_rows() {
+        let qr = QueryResult {
+            schema: vec![],
+            rows: None,
+            row_count: 0,
+            message: Some("Table created".into()),
+        };
+        let dart: DartQueryResult = qr.into();
+        assert!(dart.columns.is_empty());
+        assert!(dart.rows_json.is_empty());
+        assert_eq!(dart.row_count, 0);
+        assert_eq!(dart.message.unwrap(), "Table created");
+    }
+
+    // -----------------------------------------------------------------------
+    // Health check conversion
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn health_check_converts() {
+        let h = HealthCheckResponse {
+            status: "healthy".into(),
+            version: "0.4.0".into(),
+            api_version: "v1".into(),
+            build_date: Some("2026-02-25".into()),
+        };
+        let dart: DartHealthCheckResponse = h.into();
+        assert_eq!(dart.status, "healthy");
+        assert_eq!(dart.version, "0.4.0");
+        assert_eq!(dart.api_version, "v1");
+        assert_eq!(dart.build_date.unwrap(), "2026-02-25");
+    }
+
+    // -----------------------------------------------------------------------
+    // Login response conversion
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn login_response_converts() {
+        let l = LoginResponse {
+            access_token: "tok123".into(),
+            refresh_token: Some("ref456".into()),
+            expires_at: "2026-02-25T12:00:00Z".into(),
+            refresh_expires_at: Some("2026-03-25T12:00:00Z".into()),
+            user: LoginUserInfo {
+                id: "user-1".into(),
+                username: "alice".into(),
+                role: "dba".into(),
+                email: Some("alice@example.com".into()),
+                created_at: "2026-01-01T00:00:00Z".into(),
+                updated_at: "2026-02-01T00:00:00Z".into(),
+            },
+        };
+        let dart: DartLoginResponse = l.into();
+        assert_eq!(dart.access_token, "tok123");
+        assert_eq!(dart.refresh_token.unwrap(), "ref456");
+        assert_eq!(dart.user.username, "alice");
+        assert_eq!(dart.user.role, "dba");
+        assert_eq!(dart.user.email.unwrap(), "alice@example.com");
+    }
+
+    // -----------------------------------------------------------------------
+    // Setup models conversion
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn setup_request_converts_to_native() {
+        let req = DartServerSetupRequest {
+            username: "admin".into(),
+            password: "pass123".into(),
+            root_password: "rootpw".into(),
+            email: Some("admin@test.com".into()),
+        };
+        let native = req.into_native();
+        assert_eq!(native.username, "admin");
+        assert_eq!(native.password, "pass123");
+        assert_eq!(native.root_password, "rootpw");
+        assert_eq!(native.email.unwrap(), "admin@test.com");
+    }
+
+    #[test]
+    fn setup_response_converts() {
+        let r = ServerSetupResponse {
+            message: "Setup complete".into(),
+            user: SetupUserInfo {
+                id: "u-1".into(),
+                username: "admin".into(),
+                role: "system".into(),
+                email: None,
+                created_at: "2026-02-25T00:00:00Z".into(),
+                updated_at: "2026-02-25T00:00:00Z".into(),
+            },
+        };
+        let dart: DartServerSetupResponse = r.into();
+        assert_eq!(dart.message, "Setup complete");
+        assert_eq!(dart.user.username, "admin");
+        assert!(dart.user.email.is_none());
+    }
+
+    #[test]
+    fn setup_status_converts() {
+        let s = SetupStatusResponse {
+            needs_setup: true,
+            message: "Server requires initial setup".into(),
+        };
+        let dart: DartSetupStatusResponse = s.into();
+        assert!(dart.needs_setup);
+        assert!(dart.message.contains("initial setup"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Change event conversion
+    // -----------------------------------------------------------------------
+
+    fn make_batch_control(batch_num: u32, has_more: bool, status: BatchStatus) -> BatchControl {
+        BatchControl {
+            batch_num,
+            has_more,
+            status,
+            last_seq_id: None,
+            snapshot_end_seq: None,
+        }
+    }
+
+    #[test]
+    fn change_event_ack_converts() {
+        let e = ChangeEvent::Ack {
+            subscription_id: "sub-1".into(),
+            total_rows: 100,
+            batch_control: make_batch_control(0, true, BatchStatus::Loading),
+            schema: vec![SchemaField {
+                name: "id".into(),
+                data_type: KalamDataType::Int,
+                index: 0,
+                flags: None,
+            }],
+        };
+        let dart: DartChangeEvent = e.into();
+        match dart {
+            DartChangeEvent::Ack {
+                subscription_id,
+                total_rows,
+                schema,
+                batch_num,
+                has_more,
+                status,
+            } => {
+                assert_eq!(subscription_id, "sub-1");
+                assert_eq!(total_rows, 100);
+                assert_eq!(schema.len(), 1);
+                assert_eq!(schema[0].name, "id");
+                assert_eq!(batch_num, 0);
+                assert!(has_more);
+                assert_eq!(status, "loading");
+            }
+            _ => panic!("Expected Ack variant"),
+        }
+    }
+
+    #[test]
+    fn change_event_initial_data_batch_converts() {
+        let mut row = std::collections::HashMap::new();
+        row.insert("name".to_string(), serde_json::json!("Alice"));
+        let e = ChangeEvent::InitialDataBatch {
+            subscription_id: "sub-2".into(),
+            rows: vec![row],
+            batch_control: make_batch_control(1, false, BatchStatus::Ready),
+        };
+        let dart: DartChangeEvent = e.into();
+        match dart {
+            DartChangeEvent::InitialDataBatch {
+                subscription_id,
+                rows_json,
+                batch_num,
+                has_more,
+                status,
+            } => {
+                assert_eq!(subscription_id, "sub-2");
+                assert_eq!(rows_json.len(), 1);
+                assert!(rows_json[0].contains("Alice"));
+                assert_eq!(batch_num, 1);
+                assert!(!has_more);
+                assert_eq!(status, "ready");
+            }
+            _ => panic!("Expected InitialDataBatch variant"),
+        }
+    }
+
+    #[test]
+    fn change_event_insert_converts() {
+        let e = ChangeEvent::Insert {
+            subscription_id: "sub-3".into(),
+            rows: vec![serde_json::json!({"id": 1, "name": "Bob"})],
+        };
+        let dart: DartChangeEvent = e.into();
+        match dart {
+            DartChangeEvent::Insert {
+                subscription_id,
+                rows_json,
+            } => {
+                assert_eq!(subscription_id, "sub-3");
+                assert_eq!(rows_json.len(), 1);
+                let parsed: serde_json::Value = serde_json::from_str(&rows_json[0]).unwrap();
+                assert_eq!(parsed["name"], "Bob");
+            }
+            _ => panic!("Expected Insert variant"),
+        }
+    }
+
+    #[test]
+    fn change_event_update_converts() {
+        let e = ChangeEvent::Update {
+            subscription_id: "sub-4".into(),
+            rows: vec![serde_json::json!({"id": 1, "name": "Bob2"})],
+            old_rows: vec![serde_json::json!({"id": 1, "name": "Bob"})],
+        };
+        let dart: DartChangeEvent = e.into();
+        match dart {
+            DartChangeEvent::Update {
+                subscription_id,
+                rows_json,
+                old_rows_json,
+            } => {
+                assert_eq!(subscription_id, "sub-4");
+                assert_eq!(rows_json.len(), 1);
+                assert_eq!(old_rows_json.len(), 1);
+                let new_val: serde_json::Value = serde_json::from_str(&rows_json[0]).unwrap();
+                let old_val: serde_json::Value = serde_json::from_str(&old_rows_json[0]).unwrap();
+                assert_eq!(new_val["name"], "Bob2");
+                assert_eq!(old_val["name"], "Bob");
+            }
+            _ => panic!("Expected Update variant"),
+        }
+    }
+
+    #[test]
+    fn change_event_delete_converts() {
+        let e = ChangeEvent::Delete {
+            subscription_id: "sub-5".into(),
+            old_rows: vec![serde_json::json!({"id": 99})],
+        };
+        let dart: DartChangeEvent = e.into();
+        match dart {
+            DartChangeEvent::Delete {
+                subscription_id,
+                old_rows_json,
+            } => {
+                assert_eq!(subscription_id, "sub-5");
+                assert_eq!(old_rows_json.len(), 1);
+            }
+            _ => panic!("Expected Delete variant"),
+        }
+    }
+
+    #[test]
+    fn change_event_error_converts() {
+        let e = ChangeEvent::Error {
+            subscription_id: "sub-6".into(),
+            code: "auth_fail".into(),
+            message: "Token expired".into(),
+        };
+        let dart: DartChangeEvent = e.into();
+        match dart {
+            DartChangeEvent::Error {
+                subscription_id,
+                code,
+                message,
+            } => {
+                assert_eq!(subscription_id, "sub-6");
+                assert_eq!(code, "auth_fail");
+                assert_eq!(message, "Token expired");
+            }
+            _ => panic!("Expected Error variant"),
+        }
+    }
+
+    #[test]
+    fn change_event_unknown_converts_to_error() {
+        let e = ChangeEvent::Unknown {
+            raw: serde_json::json!({"type": "weird"}),
+        };
+        let dart: DartChangeEvent = e.into();
+        match dart {
+            DartChangeEvent::Error { code, .. } => {
+                assert_eq!(code, "unknown");
+            }
+            _ => panic!("Expected Error variant for Unknown"),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Subscription config conversion
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn subscription_config_minimal() {
+        let cfg = DartSubscriptionConfig {
+            sql: "SELECT * FROM t".into(),
+            id: None,
+            batch_size: None,
+            last_rows: None,
+        };
+        let native = cfg.into_native();
+        assert_eq!(native.sql, "SELECT * FROM t");
+        assert!(native.id.starts_with("dart-sub-"));
+    }
+
+    #[test]
+    fn subscription_config_with_all_options() {
+        let cfg = DartSubscriptionConfig {
+            sql: "SELECT * FROM t".into(),
+            id: Some("my-sub-1".into()),
+            batch_size: Some(500),
+            last_rows: Some(10),
+        };
+        let native = cfg.into_native();
+        assert_eq!(native.id, "my-sub-1");
+        assert_eq!(native.sql, "SELECT * FROM t");
+        let opts = native.options.unwrap();
+        assert_eq!(opts.batch_size.unwrap(), 500);
+        assert_eq!(opts.last_rows.unwrap(), 10);
+    }
+
+    // -----------------------------------------------------------------------
+    // Data type formatting
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn data_types_format_correctly() {
+        let cases = vec![
+            (KalamDataType::Int, "Int"),
+            (KalamDataType::Text, "Text"),
+            (KalamDataType::Boolean, "Boolean"),
+            (KalamDataType::BigInt, "BigInt"),
+            (KalamDataType::Double, "Double"),
+            (KalamDataType::Timestamp, "Timestamp"),
+            (KalamDataType::Uuid, "Uuid"),
+            (KalamDataType::Json, "Json"),
+        ];
+        for (dt, expected) in cases {
+            let sf = SchemaField {
+                name: "col".into(),
+                data_type: dt,
+                index: 0,
+                flags: None,
+            };
+            let dart: DartSchemaField = sf.into();
+            assert_eq!(dart.data_type, expected);
+        }
+    }
+}
