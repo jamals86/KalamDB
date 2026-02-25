@@ -25,6 +25,7 @@ pub mod stream_eviction;
 pub mod topic_cleanup;
 pub mod topic_retention;
 pub mod user_cleanup;
+pub mod user_export;
 
 // Re-export key types
 // Export core trait and types
@@ -44,3 +45,4 @@ pub use stream_eviction::StreamEvictionExecutor;
 pub use topic_cleanup::TopicCleanupExecutor;
 pub use topic_retention::TopicRetentionExecutor;
 pub use user_cleanup::UserCleanupExecutor;
+pub use user_export::UserExportExecutor;

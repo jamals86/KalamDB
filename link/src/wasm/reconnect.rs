@@ -7,7 +7,7 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{ErrorEvent, MessageEvent, WebSocket};
 
-use crate::models::{ClientMessage, ServerMessage, SubscriptionRequest};
+use crate::models::{ClientMessage, ConnectionOptions, ServerMessage, SubscriptionRequest};
 
 use super::auth::WasmAuthProvider;
 use super::console_log;
@@ -103,6 +103,46 @@ pub(crate) async fn reconnect_internal_with_auth(
     JsFuture::from(auth_promise).await?;
 
     Ok(())
+}
+
+/// Restart the keepalive ping interval after a successful reconnection.
+///
+/// This mirrors `KalamClient::start_ping_timer` but operates on the shared
+/// Rc fields passed through the reconnect closure chain.
+pub(crate) fn restart_ping_timer(
+    ws_ref: &Rc<RefCell<Option<WebSocket>>>,
+    connection_options: &Rc<RefCell<ConnectionOptions>>,
+    ping_interval_id: &Rc<RefCell<i32>>,
+) {
+    // Stop any previous timer
+    let old_id = *ping_interval_id.borrow();
+    if old_id >= 0 {
+        super::helpers::global_clear_interval(old_id);
+        *ping_interval_id.borrow_mut() = -1;
+    }
+
+    let interval_ms = connection_options.borrow().ping_interval_ms;
+    if interval_ms == 0 {
+        return;
+    }
+
+    let ws_clone = Rc::clone(ws_ref);
+    let ping_cb = Closure::wrap(Box::new(move || {
+        if let Some(ws) = ws_clone.borrow().as_ref() {
+            if ws.ready_state() == WebSocket::OPEN {
+                if let Ok(payload) = serde_json::to_string(&ClientMessage::Ping) {
+                    let _ = ws.send_with_str(&payload);
+                }
+            }
+        }
+    }) as Box<dyn FnMut()>);
+
+    let id = super::helpers::global_set_interval(
+        ping_cb.as_ref().unchecked_ref(),
+        interval_ms as i32,
+    );
+    ping_cb.forget();
+    *ping_interval_id.borrow_mut() = id;
 }
 
 /// Re-subscribe to all subscriptions after reconnection with last seq_id

@@ -308,6 +308,102 @@ impl StorageBackend for RocksDBBackend {
         Ok(())
     }
 
+    fn backup_to(&self, backup_dir: &std::path::Path) -> crate::storage_trait::Result<()> {
+        use rocksdb::backup::{BackupEngine, BackupEngineOptions};
+        use rocksdb::Env;
+
+        std::fs::create_dir_all(backup_dir).map_err(|e| {
+            crate::storage_trait::StorageError::Other(format!(
+                "Failed to create backup directory '{}': {}",
+                backup_dir.display(),
+                e
+            ))
+        })?;
+
+        let opts = BackupEngineOptions::new(backup_dir).map_err(|e| {
+            crate::storage_trait::StorageError::Other(format!(
+                "BackupEngineOptions::new failed: {}",
+                e
+            ))
+        })?;
+        let env = Env::new().map_err(|e| {
+            crate::storage_trait::StorageError::Other(format!(
+                "Failed to create RocksDB Env: {}",
+                e
+            ))
+        })?;
+        let mut engine = BackupEngine::open(&opts, &env).map_err(|e| {
+            crate::storage_trait::StorageError::Other(format!(
+                "Failed to open BackupEngine: {}",
+                e
+            ))
+        })?;
+        // flush_before_backup=true ensures memtable data is included
+        engine.create_new_backup_flush(&*self.db, true).map_err(|e| {
+            crate::storage_trait::StorageError::Other(format!(
+                "RocksDB create_new_backup_flush failed: {}",
+                e
+            ))
+        })?;
+        Ok(())
+    }
+
+    fn restore_from(&self, backup_dir: &std::path::Path) -> crate::storage_trait::Result<()> {
+        use rocksdb::backup::{BackupEngine, BackupEngineOptions, RestoreOptions};
+        use rocksdb::Env;
+
+        let opts = BackupEngineOptions::new(backup_dir).map_err(|e| {
+            crate::storage_trait::StorageError::Other(format!(
+                "BackupEngineOptions::new failed: {}",
+                e
+            ))
+        })?;
+        let env = Env::new().map_err(|e| {
+            crate::storage_trait::StorageError::Other(format!(
+                "Failed to create RocksDB Env: {}",
+                e
+            ))
+        })?;
+        let mut engine = BackupEngine::open(&opts, &env).map_err(|e| {
+            crate::storage_trait::StorageError::Other(format!(
+                "Failed to open BackupEngine: {}",
+                e
+            ))
+        })?;
+        let restore_opts = RestoreOptions::default();
+
+        // Restore to a staging directory alongside the live DB rather than
+        // overwriting it while it is open. The caller must restart the server
+        // and swap `<db_path>_restore_pending` with `<db_path>` to complete.
+        let db_path = self.db.path();
+        let staging_path = {
+            let mut p = db_path.as_os_str().to_os_string();
+            p.push("_restore_pending");
+            std::path::PathBuf::from(p)
+        };
+
+        // Remove stale staging directory if present.
+        if staging_path.exists() {
+            std::fs::remove_dir_all(&staging_path).map_err(|e| {
+                crate::storage_trait::StorageError::Other(format!(
+                    "Failed to clear stale restore staging dir '{}': {}",
+                    staging_path.display(),
+                    e
+                ))
+            })?;
+        }
+
+        engine
+            .restore_from_latest_backup(&staging_path, &staging_path, &restore_opts)
+            .map_err(|e| {
+                crate::storage_trait::StorageError::Other(format!(
+                    "RocksDB restore_from_latest_backup failed: {}",
+                    e
+                ))
+            })?;
+        Ok(())
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }

@@ -105,10 +105,14 @@ mod smoke_test_storage_templates;
 // DDL tests
 #[path = "smoke/ddl/smoke_test_alter_with_data.rs"]
 mod smoke_test_alter_with_data;
+#[path = "smoke/ddl/smoke_test_backup_restore.rs"]
+mod smoke_test_backup_restore;
 #[path = "smoke/ddl/smoke_test_datatype_preservation.rs"]
 mod smoke_test_datatype_preservation;
 #[path = "smoke/ddl/smoke_test_ddl_alter.rs"]
 mod smoke_test_ddl_alter;
+#[path = "smoke/ddl/smoke_test_export_user_data.rs"]
+mod smoke_test_export_user_data;
 
 // DML tests
 #[path = "smoke/dml/smoke_test_dml_extended.rs"]

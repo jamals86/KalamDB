@@ -272,6 +272,12 @@ impl StorageSettings {
         let base = crate::file_helpers::normalize_dir_path(&self.data_path);
         crate::file_helpers::join_path(base, "snapshots")
     }
+
+    /// Get user exports directory path (data_path/exports)
+    pub fn exports_dir(&self) -> std::path::PathBuf {
+        let base = crate::file_helpers::normalize_dir_path(&self.data_path);
+        crate::file_helpers::join_path(base, "exports")
+    }
 }
 
 /// RocksDB-specific settings (MEMORY OPTIMIZED DEFAULTS)

@@ -418,5 +418,10 @@ async fn handle_text_message(
             handle_unsubscribe(connection_state, &subscription_id, rate_limiter, live_query_manager)
                 .await
         },
+        ClientMessage::Ping => {
+            // Application-level keepalive: heartbeat already updated by the
+            // text-message arm above; nothing else to do.
+            Ok(())
+        },
     }
 }

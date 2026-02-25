@@ -60,6 +60,7 @@
 //! ```
 
 use std::any::Any;
+use std::path::Path;
 
 pub use kalamdb_commons::storage::{KvIterator, Operation, Partition, Result, StorageError};
 
@@ -143,6 +144,32 @@ pub trait StorageBackend: Send + Sync {
     /// Returns `Ok(())` if compaction succeeds or if the backend doesn't support
     /// compaction (no-op for backends without compaction).
     fn compact_partition(&self, partition: &Partition) -> Result<()>;
+
+    /// Creates a native backup of the storage engine to the specified backup directory.
+    ///
+    /// For RocksDB this uses [`BackupEngine`](rocksdb::backup::BackupEngine) for an efficient
+    /// hot, consistent backup with deduplication across incremental snapshots.
+    /// The backup directory will be created if it does not exist.
+    ///
+    /// Returns `Err` for backends that do not support native backup.
+    fn backup_to(&self, _backup_dir: &Path) -> Result<()> {
+        Err(StorageError::Other(
+            "backup_to is not supported by this storage backend".to_string(),
+        ))
+    }
+
+    /// Restores the storage engine from a backup directory created by [`StorageBackend::backup_to`].
+    ///
+    /// For RocksDB this calls `BackupEngine::restore_from_latest_backup`, overwriting the
+    /// current data directory. **The server must be restarted after this call** to reload
+    /// the restored data into memory.
+    ///
+    /// Returns `Err` for backends that do not support native restore.
+    fn restore_from(&self, _backup_dir: &Path) -> Result<()> {
+        Err(StorageError::Other(
+            "restore_from is not supported by this storage backend".to_string(),
+        ))
+    }
 
     /// Downcast support to enable integration paths that need concrete backends.
     ///

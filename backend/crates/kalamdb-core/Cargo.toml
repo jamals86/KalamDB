@@ -78,6 +78,15 @@ once_cell = { workspace = true }
 # Regular expressions
 regex = { workspace = true }
 
+# ZIP archive creation
+zip = { workspace = true }
+
+# Parquet writer (for user export)
+parquet = { workspace = true }
+
+# Byte buffers
+bytes = { workspace = true }
+
 
 
 [dev-dependencies]

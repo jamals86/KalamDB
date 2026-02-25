@@ -91,6 +91,7 @@ export class KalamDBClient {
   private auth: AuthCredentials;
   private wasmUrl?: string | BufferSource;
   private autoConnect: boolean;
+  private pingIntervalMs: number;
 
   /** Track active subscriptions for management */
   private subscriptions: Map<string, SubscriptionInfo> = new Map();
@@ -119,6 +120,7 @@ export class KalamDBClient {
     this.auth = options.auth;
     this.wasmUrl = options.wasmUrl;
     this.autoConnect = options.autoConnect ?? true;
+    this.pingIntervalMs = options.pingIntervalMs ?? 30_000;
   }
 
   /* ---------------------------------------------------------------- */
@@ -196,6 +198,11 @@ export class KalamDBClient {
         // Auto-login: exchange Basic credentials for JWT before WebSocket connect
         if (this.auth.type === 'basic') {
           await this.login();
+        }
+
+        // Forward ping interval to the WASM client before connecting
+        if (this.pingIntervalMs !== 30_000) {
+          this.wasmClient.setPingInterval(this.pingIntervalMs);
         }
 
         await this.wasmClient.connect();

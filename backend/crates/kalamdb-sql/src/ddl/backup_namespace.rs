@@ -1,32 +1,31 @@
 //! BACKUP DATABASE statement parser
 //!
 //! Parses SQL statements like:
-//! - BACKUP DATABASE app TO 'path/to/backup'
-//! - BACKUP DATABASE IF EXISTS app TO '/backups/app'
+//! - BACKUP DATABASE TO '/backups/kalamdb_backup.tar.gz'
+//!
+//! Backs up the entire database (data directory + server.toml).
 
 use crate::ddl::DdlResult;
 
-use kalamdb_commons::models::NamespaceId;
-
 /// BACKUP DATABASE statement
+///
+/// Backs up the entire database to a compressed archive.
+/// The backup includes:
+/// - RocksDB data directory
+/// - Parquet storage files
+/// - Raft snapshots
+/// - server.toml configuration
 #[derive(Debug, Clone, PartialEq)]
 pub struct BackupDatabaseStatement {
-    /// Namespace ID to backup
-    pub namespace_id: NamespaceId,
-
-    /// Backup destination path
+    /// Backup destination path (should end in .tar.gz)
     pub backup_path: String,
-
-    /// If true, don't error if namespace doesn't exist
-    pub if_exists: bool,
 }
 
 impl BackupDatabaseStatement {
     /// Parse a BACKUP DATABASE statement from SQL
     ///
     /// Supports syntax:
-    /// - BACKUP DATABASE namespace TO 'path'
-    /// - BACKUP DATABASE IF EXISTS namespace TO 'path'
+    /// - BACKUP DATABASE TO 'path'
     pub fn parse(sql: &str) -> DdlResult<Self> {
         let sql_trimmed = sql.trim();
         let sql_upper = sql_trimmed.to_uppercase();
@@ -35,40 +34,17 @@ impl BackupDatabaseStatement {
             return Err("Expected BACKUP DATABASE statement".to_string());
         }
 
-        let if_exists = sql_upper.contains("IF EXISTS");
+        // Strip the prefix (case-insensitive)
+        let remaining = &sql_trimmed["BACKUP DATABASE".len()..];
+        let remaining = remaining.trim();
 
-        // Extract namespace name and path
-        let remaining = if if_exists {
-            sql_trimmed
-                .strip_prefix("BACKUP DATABASE")
-                .and_then(|s| s.trim().strip_prefix("IF EXISTS"))
-                .or_else(|| {
-                    sql_trimmed
-                        .strip_prefix("backup database")
-                        .and_then(|s| s.trim().strip_prefix("if exists"))
-                })
-                .map(|s| s.trim())
-        } else {
-            sql_trimmed
-                .strip_prefix("BACKUP DATABASE")
-                .or_else(|| sql_trimmed.strip_prefix("backup database"))
-                .map(|s| s.trim())
-        };
-
-        let remaining = remaining.ok_or_else(|| "Invalid BACKUP DATABASE syntax".to_string())?;
-
-        // Split by TO keyword
-        let to_upper = remaining.to_uppercase();
-        let to_pos = to_upper
-            .find(" TO ")
-            .ok_or_else(|| "Expected TO clause in BACKUP DATABASE".to_string())?;
-
-        let namespace_name = remaining[..to_pos].trim();
-        if namespace_name.is_empty() {
-            return Err("Namespace name is required".to_string());
+        // Expect TO keyword
+        let remaining_upper = remaining.to_uppercase();
+        if !remaining_upper.starts_with("TO") {
+            return Err("Expected TO clause in BACKUP DATABASE".to_string());
         }
 
-        let path_part = remaining[to_pos + 4..].trim(); // Skip " TO "
+        let path_part = remaining["TO".len()..].trim();
 
         // Extract path from quotes (single or double)
         let backup_path = if (path_part.starts_with('\'') && path_part.ends_with('\''))
@@ -86,11 +62,7 @@ impl BackupDatabaseStatement {
         // SECURITY: Validate backup path to prevent path traversal attacks
         Self::validate_backup_path(&backup_path)?;
 
-        Ok(Self {
-            namespace_id: NamespaceId::new(namespace_name),
-            backup_path,
-            if_exists,
-        })
+        Ok(Self { backup_path })
     }
 
     /// Validates backup path for security.
@@ -134,77 +106,62 @@ mod tests {
 
     #[test]
     fn test_parse_backup_database() {
-        let stmt = BackupDatabaseStatement::parse("BACKUP DATABASE app TO '/backups/app'").unwrap();
-        assert_eq!(stmt.namespace_id.as_str(), "app");
-        assert_eq!(stmt.backup_path, "/backups/app");
-        assert!(!stmt.if_exists);
-    }
-
-    #[test]
-    fn test_parse_backup_database_if_exists() {
         let stmt =
-            BackupDatabaseStatement::parse("BACKUP DATABASE IF EXISTS app TO '/backups/app'")
+            BackupDatabaseStatement::parse("BACKUP DATABASE TO '/backups/kalamdb.tar.gz'")
                 .unwrap();
-        assert_eq!(stmt.namespace_id.as_str(), "app");
-        assert_eq!(stmt.backup_path, "/backups/app");
-        assert!(stmt.if_exists);
+        assert_eq!(stmt.backup_path, "/backups/kalamdb.tar.gz");
     }
 
     #[test]
     fn test_parse_backup_database_double_quotes() {
         let stmt =
-            BackupDatabaseStatement::parse("BACKUP DATABASE app TO \"/backups/app\"").unwrap();
-        assert_eq!(stmt.backup_path, "/backups/app");
+            BackupDatabaseStatement::parse("BACKUP DATABASE TO \"/backups/kalamdb.tar.gz\"")
+                .unwrap();
+        assert_eq!(stmt.backup_path, "/backups/kalamdb.tar.gz");
     }
 
     #[test]
     fn test_parse_backup_database_lowercase() {
         let stmt =
-            BackupDatabaseStatement::parse("backup database myapp to '/backups/myapp'").unwrap();
-        assert_eq!(stmt.namespace_id.as_str(), "myapp");
-        assert_eq!(stmt.backup_path, "/backups/myapp");
-    }
-
-    #[test]
-    fn test_parse_backup_database_missing_namespace() {
-        let result = BackupDatabaseStatement::parse("BACKUP DATABASE TO '/backups/app'");
-        assert!(result.is_err());
+            BackupDatabaseStatement::parse("backup database to '/backups/kalamdb.tar.gz'")
+                .unwrap();
+        assert_eq!(stmt.backup_path, "/backups/kalamdb.tar.gz");
     }
 
     #[test]
     fn test_parse_backup_database_missing_to() {
-        let result = BackupDatabaseStatement::parse("BACKUP DATABASE app");
+        let result = BackupDatabaseStatement::parse("BACKUP DATABASE");
         assert!(result.is_err());
     }
 
     #[test]
     fn test_parse_backup_database_unquoted_path() {
-        let result = BackupDatabaseStatement::parse("BACKUP DATABASE app TO /backups/app");
+        let result = BackupDatabaseStatement::parse("BACKUP DATABASE TO /backups/app");
         assert!(result.is_err());
     }
 
     #[test]
     fn test_parse_backup_database_empty_path() {
-        let result = BackupDatabaseStatement::parse("BACKUP DATABASE app TO ''");
+        let result = BackupDatabaseStatement::parse("BACKUP DATABASE TO ''");
         assert!(result.is_err());
     }
 
     #[test]
     fn test_parse_backup_database_path_traversal_blocked() {
-        // Test that path traversal attempts are blocked
-        let result = BackupDatabaseStatement::parse("BACKUP DATABASE app TO '../../../etc/passwd'");
+        let result =
+            BackupDatabaseStatement::parse("BACKUP DATABASE TO '../../../etc/passwd'");
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("path traversal"));
 
         let result =
-            BackupDatabaseStatement::parse("BACKUP DATABASE app TO '/backups/../../../tmp/evil'");
+            BackupDatabaseStatement::parse("BACKUP DATABASE TO '/backups/../../../tmp/evil'");
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("path traversal"));
     }
 
     #[test]
     fn test_parse_backup_database_sensitive_paths_blocked() {
-        let result = BackupDatabaseStatement::parse("BACKUP DATABASE app TO '/etc/shadow'");
+        let result = BackupDatabaseStatement::parse("BACKUP DATABASE TO '/etc/shadow'");
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("sensitive directory"));
     }

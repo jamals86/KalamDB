@@ -22,7 +22,6 @@ impl DdlAst for FlushAllTablesStatement {}
 impl DdlAst for FlushTableStatement {}
 impl DdlAst for KillLiveQueryStatement {}
 impl DdlAst for RestoreDatabaseStatement {}
-impl DdlAst for ShowBackupStatement {}
 impl DdlAst for ShowNamespacesStatement {}
 impl DdlAst for ShowTableStatsStatement {}
 impl DdlAst for ShowTablesStatement {}
@@ -38,3 +37,5 @@ impl DdlAst for DropUserStatement {}
 impl DdlAst for JobCommand {}
 impl DdlAst for ShowManifestStatement {}
 impl DdlAst for CreateViewStatement {}
+impl DdlAst for ExportUserDataStatement {}
+impl DdlAst for ShowExportStatement {}

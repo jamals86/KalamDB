@@ -44,6 +44,14 @@ extern "C" {
     /// Call `setTimeout(callback, delay)` from the global scope.
     #[wasm_bindgen(js_name = "setTimeout")]
     pub(crate) fn global_set_timeout(closure: &js_sys::Function, delay: i32) -> i32;
+
+    /// Call `setInterval(callback, delay)` from the global scope.
+    #[wasm_bindgen(js_name = "setInterval")]
+    pub(crate) fn global_set_interval(closure: &js_sys::Function, delay: i32) -> i32;
+
+    /// Call `clearInterval(id)` from the global scope.
+    #[wasm_bindgen(js_name = "clearInterval")]
+    pub(crate) fn global_clear_interval(id: i32);
 }
 
 /// Portable replacement for `window.fetch_with_request(req)`.

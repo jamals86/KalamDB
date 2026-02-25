@@ -147,8 +147,27 @@ pub struct BenchmarkReport {
     pub server_url: String,
     pub timestamp: String,
     pub config: ReportConfig,
+    #[serde(default)]
+    pub system: SystemInfo,
     pub results: Vec<BenchmarkResult>,
     pub summary: ReportSummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SystemInfo {
+    pub hostname: String,
+    pub machine_model: String,
+    pub os_name: String,
+    pub os_version: String,
+    pub kernel_version: String,
+    pub architecture: String,
+    pub cpu_model: String,
+    pub cpu_logical_cores: usize,
+    pub cpu_physical_cores: usize,
+    pub total_memory_bytes: u64,
+    pub available_memory_bytes: u64,
+    pub used_memory_bytes: u64,
+    pub used_memory_percent: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

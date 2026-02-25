@@ -60,6 +60,17 @@ pub struct ConnectionOptions {
     #[serde(default)]
     pub timestamp_format: TimestampFormat,
 
+    /// Application-level keepalive ping interval in milliseconds.
+    ///
+    /// Browser WebSocket APIs do not expose protocol-level Ping frames, so
+    /// the WASM client sends a JSON `{"type":"ping"}` message at this
+    /// interval to prevent the server-side heartbeat timeout from firing
+    /// on idle connections.
+    ///
+    /// Set to `0` to disable.  Default: `30_000` (30 seconds).
+    #[serde(default = "default_ping_interval_ms")]
+    pub ping_interval_ms: u64,
+
     /// Optional local source IP addresses for outbound WebSocket connections.
     ///
     /// When non-empty, each subscription connection binds to one of these
@@ -84,6 +95,10 @@ fn default_max_reconnect_delay_ms() -> u64 {
     30000
 }
 
+fn default_ping_interval_ms() -> u64 {
+    30000
+}
+
 impl Default for ConnectionOptions {
     fn default() -> Self {
         Self {
@@ -93,6 +108,7 @@ impl Default for ConnectionOptions {
             max_reconnect_delay_ms: 30000,
             max_reconnect_attempts: None,
             timestamp_format: TimestampFormat::Iso8601,
+            ping_interval_ms: 30000,
             ws_local_bind_addresses: Vec::new(),
         }
     }
@@ -160,6 +176,14 @@ impl ConnectionOptions {
     /// Create a timestamp formatter from this configuration
     pub fn create_formatter(&self) -> TimestampFormatter {
         TimestampFormatter::new(self.timestamp_format)
+    }
+
+    /// Set the application-level keepalive ping interval in milliseconds.
+    ///
+    /// Set to `0` to disable pings.
+    pub fn with_ping_interval_ms(mut self, ms: u64) -> Self {
+        self.ping_interval_ms = ms;
+        self
     }
 
     /// Set local source IP addresses for outbound WebSocket connections.

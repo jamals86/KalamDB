@@ -73,6 +73,9 @@ pub async fn run_preflight_checks(client: &KalamClient, config: &Config) -> bool
     // 2. Endpoint reachability (all configured URLs)
     checks.push(check_all_urls_reachable(client, config).await);
 
+    // 2b. subscriber_scale capacity feasibility
+    checks.push(check_subscriber_scale_target_capacity(config));
+
     // 3. SQL connectivity
     checks.push(check_sql_connectivity(client).await);
 
@@ -111,6 +114,99 @@ pub async fn run_preflight_checks(client: &KalamClient, config: &Config) -> bool
     }
 
     true
+}
+
+fn check_subscriber_scale_target_capacity(config: &Config) -> CheckResult {
+    if !will_run_subscriber_scale(config) {
+        return CheckResult::pass(
+            "subscriber_scale target",
+            "Skipped (subscriber_scale not selected)",
+        );
+    }
+
+    let ws_targets = resolve_ws_targets(&config.urls);
+    let allow_single = std::env::var("KALAMDB_ALLOW_SINGLE_WS_TARGET").ok().as_deref() == Some("1");
+
+    if ws_targets.len() == 1 && config.max_subscribers > 32_000 && !allow_single {
+        return CheckResult::fail(
+            "subscriber_scale target",
+            format!(
+                "Single WS target ({}) with --max-subscribers={} likely hits local ephemeral-port ceiling near ~32K. Use --urls with multiple endpoints or set KALAMDB_ALLOW_SINGLE_WS_TARGET=1.",
+                ws_targets[0], config.max_subscribers
+            ),
+        );
+    }
+
+    if ws_targets.len() == 1 && config.max_subscribers > 32_000 && allow_single {
+        return CheckResult::warn(
+            "subscriber_scale target",
+            format!(
+                "Forced via KALAMDB_ALLOW_SINGLE_WS_TARGET=1 on single target {} (ephemeral-port risk near ~32K).",
+                ws_targets[0]
+            ),
+        );
+    }
+
+    CheckResult::pass(
+        "subscriber_scale target",
+        format!(
+            "{} WS target(s) for max_subscribers={}",
+            ws_targets.len(), config.max_subscribers
+        ),
+    )
+}
+
+fn will_run_subscriber_scale(config: &Config) -> bool {
+    if !config.bench.is_empty() {
+        return config.bench.iter().any(|b| b == "subscriber_scale");
+    }
+
+    if let Some(filter) = &config.filter {
+        let f = filter.to_lowercase();
+        let name = "subscriber_scale";
+        let category = "scale";
+        return name.contains(&f) || category.contains(&f);
+    }
+
+    true
+}
+
+fn resolve_ws_targets(urls: &[String]) -> Vec<String> {
+    let mut targets = Vec::new();
+
+    for raw in urls {
+        if let Some(target) = normalize_ws_endpoint(raw) {
+            if !targets.contains(&target) {
+                targets.push(target);
+            }
+        }
+    }
+
+    targets
+}
+
+fn normalize_ws_endpoint(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let normalized = trimmed.trim_end_matches('/');
+    let mut url = if normalized.starts_with("ws://") || normalized.starts_with("wss://") {
+        normalized.to_string()
+    } else if normalized.starts_with("http://") || normalized.starts_with("https://") {
+        normalized.replace("http://", "ws://").replace("https://", "wss://")
+    } else {
+        format!("ws://{}", normalized)
+    };
+
+    let authority_start = url.find("://").map(|idx| idx + 3).unwrap_or(0);
+    let has_path = url[authority_start..].contains('/');
+    if !has_path {
+        url.push_str("/v1/ws");
+    }
+
+    Some(url)
 }
 
 /// Check the process file descriptor limit.
