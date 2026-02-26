@@ -19,7 +19,7 @@ KalamDB is a SQL-first realtime database. Every user or tenant gets a private na
 
 ```yaml
 dependencies:
-  kalam_link: ^0.1.1
+  kalam_link: ^0.1.2
 ```
 
 ```bash
