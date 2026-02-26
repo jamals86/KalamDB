@@ -15,7 +15,7 @@ KalamDB is a SQL-first realtime database. Every user or tenant gets a private na
 - **Per-tenant isolation** — each user gets a private namespace; no app-side `WHERE user_id = ?` filters needed
 - **Topics & Pub/Sub** — publish events to topics and consume them from any client or agent
 - **Authentication** — HTTP Basic Auth, JWT tokens, dynamic `authProvider` callback, or anonymous access
-- **Cross-platform** — iOS, Android, macOS, Windows, Linux, and Web (WASM)
+- **Cross-platform (Flutter + FFI)** — iOS, Android, macOS, Windows, Linux (powered by `flutter_rust_bridge`)
 
 ## Installation
 
