@@ -60,6 +60,9 @@ pub struct DartKalamClient {
 /// * `enable_connection_events` — when `true`, connection lifecycle events
 ///   (connect, disconnect, error, receive, send) are queued internally and
 ///   can be retrieved via [`dart_next_connection_event`].
+/// * `disable_compression` — when `true`, the WebSocket URL includes
+///   `?compress=false` so the server sends plain-text JSON frames instead of
+///   gzip-compressed binary frames. Useful during development.
 #[frb(sync)]
 pub fn dart_create_client(
     base_url: String,
@@ -67,8 +70,16 @@ pub fn dart_create_client(
     timeout_ms: Option<i64>,
     max_retries: Option<i32>,
     enable_connection_events: Option<bool>,
+    disable_compression: Option<bool>,
 ) -> anyhow::Result<DartKalamClient> {
-    create_client_inner(base_url, auth, timeout_ms, max_retries, enable_connection_events)
+    create_client_inner(
+        base_url,
+        auth,
+        timeout_ms,
+        max_retries,
+        enable_connection_events,
+        disable_compression,
+    )
 }
 
 /// Internal helper that performs the actual client construction.
@@ -82,6 +93,7 @@ fn create_client_inner(
     timeout_ms: Option<i64>,
     max_retries: Option<i32>,
     enable_connection_events: Option<bool>,
+    disable_compression: Option<bool>,
 ) -> anyhow::Result<DartKalamClient> {
     let event_queue: Arc<std::sync::Mutex<VecDeque<DartConnectionEvent>>> =
         Arc::new(std::sync::Mutex::new(VecDeque::new()));
@@ -97,6 +109,11 @@ fn create_client_inner(
     }
     if let Some(r) = max_retries {
         builder = builder.max_retries(r as u32);
+    }
+    if disable_compression.unwrap_or(false) {
+        builder = builder.connection_options(
+            kalam_link::ConnectionOptions::default().with_disable_compression(true),
+        );
     }
 
     // Wire connection lifecycle event handlers that push into the queue.
@@ -114,6 +131,25 @@ fn create_client_inner(
         event_notify,
         events_enabled,
     })
+}
+
+/// Update the authentication credentials on a live client.
+///
+/// This is used to implement refresh-token flows from Dart:
+/// before re-subscribing or on a schedule, Dart calls the user's
+/// `authProvider` callback, receives a new [Auth], and calls this
+/// function to push updated credentials into the Rust client.
+///
+/// The new credentials take effect on the next `subscribe()` call.
+#[frb(sync)]
+pub fn dart_update_auth(
+    client: &mut DartKalamClient,
+    auth: DartAuthProvider,
+) -> anyhow::Result<()> {
+    client
+        .inner
+        .set_auth(auth.into_native());
+    Ok(())
 }
 
 /// Build [`EventHandlers`](kalam_link::EventHandlers) that push events into

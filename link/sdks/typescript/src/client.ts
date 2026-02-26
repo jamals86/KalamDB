@@ -8,7 +8,7 @@
 
 import init, { KalamClient as WasmClient } from '../.wasm-out/kalam_link.js';
 
-import type { AuthCredentials } from './auth.js';
+import type { AuthCredentials, AuthProvider } from './auth.js';
 import { buildAuthHeader } from './auth.js';
 
 import type {
@@ -94,6 +94,8 @@ export class KalamDBClient {
   private connecting: Promise<void> | null = null;
   private url: string;
   private auth: AuthCredentials;
+  private _authProvider?: AuthProvider;
+  private disableCompression: boolean;
   private wasmUrl?: string | BufferSource;
   private autoConnect: boolean;
   private pingIntervalMs: number;
@@ -126,10 +128,14 @@ export class KalamDBClient {
    */
   constructor(options: ClientOptions) {
     if (!options.url) throw new Error('KalamDBClient: url is required');
-    if (!options.auth) throw new Error('KalamDBClient: auth is required');
+    if (!options.auth && !options.authProvider) {
+      throw new Error('KalamDBClient: either auth or authProvider is required');
+    }
 
     this.url = options.url;
-    this.auth = options.auth;
+    this.auth = options.auth ?? { type: 'none' };
+    this._authProvider = options.authProvider;
+    this.disableCompression = options.disableCompression ?? false;
     this.wasmUrl = options.wasmUrl;
     this.autoConnect = options.autoConnect ?? true;
     this.pingIntervalMs = options.pingIntervalMs ?? 30_000;
@@ -185,6 +191,23 @@ export class KalamDBClient {
           break;
       }
 
+      // Wire authProvider if configured — takes precedence over static auth
+      if (this._authProvider) {
+        const provider = this._authProvider;
+        this.wasmClient.setAuthProvider(async () => {
+          const creds = await provider();
+          if (creds.type === 'jwt') {
+            return { jwt: { token: creds.token } };
+          }
+          return null;
+        });
+      }
+
+      // Wire disable compression option
+      if (this.disableCompression) {
+        this.wasmClient.setDisableCompression(true);
+      }
+
       this.initialized = true;
       console.log('[kalam-link] Initialization complete');
 
@@ -215,8 +238,9 @@ export class KalamDBClient {
         await this.initialize();
         if (!this.wasmClient) throw new Error('WASM client not initialized');
 
-        // Auto-login: exchange Basic credentials for JWT before WebSocket connect
-        if (this.auth.type === 'basic') {
+        // Auto-login: exchange Basic credentials for JWT before WebSocket connect.
+        // Skipped when an authProvider is set (it handles credentials itself).
+        if (this.auth.type === 'basic' && !this._authProvider) {
           await this.login();
         }
 

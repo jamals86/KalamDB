@@ -26,10 +26,13 @@ import 'generated/frb_generated.dart';
 class KalamClient {
   final bridge.DartKalamClient _handle;
   final ConnectionHandlers? _connectionHandlers;
+  final AuthProvider? _authProvider;
   var _isDisposed = false;
   Future<void>? _connectionEventPump;
 
-  KalamClient._(this._handle, this._connectionHandlers);
+  KalamClient._(this._handle, this._connectionHandlers,
+      {AuthProvider? authProvider})
+      : _authProvider = authProvider;
 
   /// Initialize the Rust runtime. Call once at app startup before any
   /// [KalamClient.connect] calls.
@@ -46,26 +49,58 @@ class KalamClient {
   /// Connect to a KalamDB server.
   ///
   /// * [url] — server URL, e.g. `"https://db.example.com"`.
-  /// * [auth] — authentication method. Defaults to [Auth.none].
+  /// * [auth] — **Deprecated.** Use [authProvider] instead. Static credentials
+  ///   cannot refresh automatically — tokens expire mid-session without
+  ///   transparent reconnect support.  Defaults to [Auth.none].
+  ///   Ignored when [authProvider] is set.
+  /// * [authProvider] — async callback invoked to obtain fresh credentials
+  ///   before each connection attempt. Use this for refresh-token flows.
+  ///   Takes precedence over [auth].
+  /// * [disableCompression] — set to `true` to disable gzip compression for
+  ///   WebSocket messages (useful during development for easier inspection).
+  ///   Defaults to `false`.
   /// * [timeout] — HTTP request timeout. Defaults to 30 seconds.
   /// * [maxRetries] — retry count for idempotent (SELECT) queries. Defaults to 3.
   static Future<KalamClient> connect({
     required String url,
     Auth auth = const NoAuth(),
+    AuthProvider? authProvider,
+    bool disableCompression = false,
     Duration timeout = const Duration(seconds: 30),
     int maxRetries = 3,
     ConnectionHandlers? connectionHandlers,
   }) async {
+    // Resolve initial auth from provider if set.
+    final effectiveAuth = authProvider != null ? await authProvider() : auth;
+
     final handle = bridge.dartCreateClient(
       baseUrl: url,
-      auth: _toBridgeAuth(auth),
+      auth: _toBridgeAuth(effectiveAuth),
       timeoutMs: timeout.inMilliseconds,
       maxRetries: maxRetries,
       enableConnectionEvents: connectionHandlers?.hasAny ?? false,
+      disableCompression: disableCompression,
     );
-    final client = KalamClient._(handle, connectionHandlers);
+    final client =
+        KalamClient._(handle, connectionHandlers, authProvider: authProvider);
     client._startConnectionEventPumpIfNeeded();
     return client;
+  }
+
+  /// Refresh authentication credentials using the configured [authProvider].
+  ///
+  /// Call this before re-subscribing after a token expiry, or on a schedule
+  /// to keep credentials fresh. Has no effect when no [authProvider] is set.
+  ///
+  /// ```dart
+  /// // Refresh tokens every 55 minutes
+  /// Timer.periodic(Duration(minutes: 55), (_) => client.refreshAuth());
+  /// ```
+  Future<void> refreshAuth() async {
+    final provider = _authProvider;
+    if (provider == null) return;
+    final freshAuth = await provider();
+    bridge.dartUpdateAuth(client: _handle, auth: _toBridgeAuth(freshAuth));
   }
 
   // ---------------------------------------------------------------------------

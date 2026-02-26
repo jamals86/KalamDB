@@ -46,3 +46,24 @@ final class JwtAuth extends Auth {
 final class NoAuth extends Auth {
   const NoAuth() : super._();
 }
+
+/// Async authentication provider callback.
+///
+/// Called before each (re-)connection attempt to obtain fresh credentials.
+/// Ideal for implementing refresh-token flows.
+///
+/// The returned [Auth] should be [Auth.jwt] or [Auth.none].
+/// Returning [Auth.basic] will cause a [StateError] at connect time.
+///
+/// ```dart
+/// Future<KalamClient> create() async {
+///   return KalamClient.connect(
+///     url: 'https://db.example.com',
+///     authProvider: () async {
+///       final token = await myApp.getOrRefreshJwt();
+///       return Auth.jwt(token);
+///     },
+///   );
+/// }
+/// ```
+typedef AuthProvider = Future<Auth> Function();

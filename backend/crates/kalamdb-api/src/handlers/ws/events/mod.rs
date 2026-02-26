@@ -29,7 +29,7 @@ pub async fn send_auth_error(mut session: Session, message: &str) -> Result<(), 
         message: message.to_string(),
     };
     if let Ok(json) = serde_json::to_string(&msg) {
-        let _ = send_data(&mut session, json.as_bytes()).await;
+        let _ = send_data(&mut session, json.as_bytes(), true).await;
     }
     session
         .close(Some(CloseReason {
@@ -48,23 +48,36 @@ pub async fn send_error(
     message: &str,
 ) -> Result<(), ()> {
     let msg = Notification::error(id.to_string(), code.to_string(), message.to_string());
-    send_json(session, &msg).await
+    send_json(session, &msg, true).await
 }
 
-/// Send JSON message with automatic compression for large payloads
-pub async fn send_json<T: serde::Serialize>(session: &mut Session, msg: &T) -> Result<(), ()> {
+/// Send JSON message with optional compression for large payloads.
+///
+/// When `compress` is `false` the payload is always sent as a text frame
+/// regardless of size, which is useful during development.
+pub async fn send_json<T: serde::Serialize>(
+    session: &mut Session,
+    msg: &T,
+    compress: bool,
+) -> Result<(), ()> {
     if let Ok(json) = serde_json::to_string(msg) {
-        send_data(session, json.as_bytes()).await
+        send_data(session, json.as_bytes(), compress).await
     } else {
         Err(())
     }
 }
 
-/// Send raw data with automatic compression
+/// Send raw data with optional compression.
 ///
-/// Messages over 512 bytes are automatically gzip compressed and sent as binary frames.
-/// Smaller messages are sent as text frames for efficiency.
-async fn send_data(session: &mut Session, data: &[u8]) -> Result<(), ()> {
+/// When `compress` is `true`, messages over 512 bytes are gzip compressed and
+/// sent as binary frames.  When `false`, the raw payload is always sent as a
+/// text frame, which is easier to inspect during development.
+async fn send_data(session: &mut Session, data: &[u8], compress: bool) -> Result<(), ()> {
+    if !compress {
+        let text = String::from_utf8_lossy(data);
+        return session.text(text.into_owned()).await.map_err(|_| ());
+    }
+
     let (payload, compressed) = maybe_compress(data);
 
     if compressed && is_gzip(&payload) {

@@ -1,12 +1,19 @@
 # kalam-link
 
-Official TypeScript/JavaScript SDK for [KalamDB](https://github.com/jamals86/KalamDB).
+Official TypeScript / JavaScript SDK for [KalamDB](https://kalamdb.org) — private, realtime storage for AI agents.
+
+> Status: **Alpha** — the API surface is still evolving and may include breaking changes between releases.
+
+KalamDB is a SQL-first realtime database built in Rust. Every user or tenant gets a private namespace. Subscribe to SQL queries live over WebSocket. Publish and consume events via Topics. Store recent data on local disk (RocksDB) and move cold history to object storage (S3, GCS, Azure, or local FS).
+
+→ **[kalamdb.org](https://kalamdb.org)** · [Docs](https://kalamdb.org/docs) · [GitHub](https://github.com/jamals86/KalamDB)
 
 `kalam-link` provides:
 
 - SQL execution over HTTP
-- realtime query subscriptions over WebSocket
-- topic consumer APIs (`consumer`, `consumeBatch`, `ack`)
+- realtime query subscriptions over WebSocket (`SUBSCRIBE TO` any SQL query)
+- per-tenant namespaces — no app-side `WHERE user_id = ?` filters needed
+- topic consumer APIs (`consumer`, `consumeBatch`, `ack`) for pub/sub event streams
 - auth helpers (`Auth.basic`, `Auth.jwt`, `Auth.none`)
 - FILE upload/download helpers
 
@@ -156,20 +163,43 @@ if (batch.messages.length > 0) {
 
 ## Authentication
 
+### `authProvider` — recommended
+
+Use `authProvider` for OAuth flows, refresh tokens, or any credentials that can expire. The callback is invoked before every connection attempt, so tokens are always fresh.
+
+```ts
+import { createClient, Auth, type AuthProvider } from 'kalam-link';
+
+const authProvider: AuthProvider = async () => {
+  const token = await myApp.getOrRefreshJwt(); // your refresh logic
+  return Auth.jwt(token);
+};
+
+const client = createClient({
+  url: 'http://localhost:8080',
+  authProvider,
+});
+```
+
+### Static auth
+
 ```ts
 import { createClient, Auth } from 'kalam-link';
 
-const basicClient = createClient({
+// HTTP Basic Auth
+const client = createClient({
   url: 'http://localhost:8080',
   auth: Auth.basic('alice', 'Secret123!'),
 });
 
-const jwtClient = createClient({
+// JWT token
+const client = createClient({
   url: 'http://localhost:8080',
   auth: Auth.jwt('<JWT_TOKEN>'),
 });
 
-const noAuthClient = createClient({
+// No authentication
+const client = createClient({
   url: 'http://localhost:8080',
   auth: Auth.none(),
 });
@@ -178,14 +208,14 @@ const noAuthClient = createClient({
 ### `login()` and `refreshToken()`
 
 - `login()` requires current auth type = `basic`
-- on success, SDK updates in-memory auth to JWT
+- on success, the SDK updates in-memory auth to JWT automatically
 - `refreshToken()` also updates in-memory auth to JWT
 
 ```ts
-const login = await basicClient.login();
+const login = await client.login();
 console.log(login.access_token, login.refresh_token);
 
-const refreshed = await basicClient.refreshToken(login.refresh_token!);
+const refreshed = await client.refreshToken(login.refresh_token!);
 console.log(refreshed.access_token);
 ```
 
@@ -194,17 +224,31 @@ console.log(refreshed.access_token);
 By default (`autoConnect: true`) the client is fully lazy:
 
 - `query()` boots WASM and runs an HTTP POST — no WebSocket needed.
-- `subscribe()` / `subscribeWithSql()` boot WASM, call `login()` automatically
-  if you're using Basic auth, and open the WebSocket — all on the first call.
+- `subscribe()` / `subscribeWithSql()` boot WASM, call `login()` automatically if you're using Basic auth, and open the WebSocket — all on the first call.
 
-You only need to call `connect()` manually when `autoConnect: false`:
+### Manual WASM initialization
+
+In most environments WASM is loaded automatically. If you need explicit control (e.g. custom `wasmUrl`, strict CSP, or pre-warming), call `initialize()` before the first query:
 
 ```ts
-// Opt out of lazy connect for full lifecycle control:
 const client = createClient({
   url: 'http://localhost:8080',
   auth: Auth.basic('admin', 'pass'),
-  autoConnect: false,  // default is true
+  wasmUrl: '/assets/kalam_link_bg.wasm', // custom WASM path
+});
+
+await client.initialize(); // load WASM explicitly
+```
+
+### Manual connect / full lifecycle control
+
+Set `autoConnect: false` for complete control over connection timing:
+
+```ts
+const client = createClient({
+  url: 'http://localhost:8080',
+  auth: Auth.basic('admin', 'pass'),
+  autoConnect: false,
 });
 
 await client.login();    // exchange Basic creds for JWT
@@ -218,6 +262,40 @@ client.setMaxReconnectAttempts(0); // 0 = infinite
 console.log(client.getReconnectAttempts(), client.isReconnecting());
 
 await client.disconnect();
+```
+
+### `using` / `await using` (explicit resource management)
+
+```ts
+// Async dispose
+async function demo() {
+  await using client = createClient({ url, auth });
+  await client.query('SELECT 1');
+} // disconnect() called automatically
+```
+
+## Event Handlers
+
+Hook into connection events for logging, metrics, or UI state. Can be set via `ClientOptions` at construction time or by calling the methods after creation:
+
+```ts
+// At construction:
+const client = createClient({
+  url: 'http://localhost:8080',
+  auth: Auth.basic('admin', 'pass'),
+  onConnect: () => console.log('Connected'),
+  onDisconnect: (reason) => console.log('Disconnected:', reason.message),
+  onError: (err) => console.error('Error:', err.message, 'recoverable:', err.recoverable),
+  onReceive: (msg) => console.log('[RECV]', msg),
+  onSend: (msg) => console.log('[SEND]', msg),
+});
+
+// Or after construction:
+client.onConnect(() => console.log('Connected'));
+client.onDisconnect((reason) => console.log('Disconnected:', reason.message));
+client.onError((err) => console.error('Error:', err.message));
+client.onReceive((msg) => console.log('[RECV]', msg));
+client.onSend((msg) => console.log('[SEND]', msg));
 ```
 
 ## Query API
@@ -433,6 +511,13 @@ connect(): Promise<void>
 disconnect(): Promise<void>
 isConnected(): boolean
 
+// event handlers (also settable via ClientOptions)
+onConnect(callback: () => void): void
+onDisconnect(callback: (reason: { message: string; code?: number }) => void): void
+onError(callback: (error: { message: string; recoverable: boolean }) => void): void
+onReceive(callback: (message: string) => void): void
+onSend(callback: (message: string) => void): void
+
 // auth/lifecycle helpers
 getAuthType(): 'basic' | 'jwt' | 'none'
 setAutoReconnect(enabled: boolean): void
@@ -483,8 +568,29 @@ ack(topic: string, groupId: string, partitionId: number, uptoOffset: number): Pr
 ```ts
 interface ClientOptions {
   url: string;
-  auth: AuthCredentials;
+
+  /** @deprecated Use authProvider instead */
+  auth?: AuthCredentials;
+
+  /**
+   * Async callback invoked before every connection.
+   * Recommended for OAuth / refresh-token flows.
+   * const authProvider: AuthProvider = async () => Auth.jwt(await getToken());
+   */
+  authProvider?: AuthProvider;
+
+  /** Custom WASM URL or buffer (default: bundled WASM) */
   wasmUrl?: string | BufferSource;
+
+  /** Set to false to disable lazy connect (default: true) */
+  autoConnect?: boolean;
+
+  // Event callbacks (can also be set via client.onConnect(...) etc.)
+  onConnect?: () => void;
+  onDisconnect?: (reason: { message: string; code?: number }) => void;
+  onError?: (error: { message: string; recoverable: boolean }) => void;
+  onReceive?: (message: string) => void;
+  onSend?: (message: string) => void;
 }
 
 interface QueryResponse {
@@ -513,33 +619,22 @@ interface ConsumeRequest {
 }
 ```
 
-## Advanced: Low-Level WASM Entrypoint
-
-```ts
-import init, {
-  KalamClient,
-  WasmTimestampFormatter,
-  parseIso8601,
-  timestampNow,
-  initSync,
-} from 'kalam-link/wasm';
-```
-
-Use this only if you need raw WASM APIs; most applications should use high-level `kalam-link` exports.
-
-## Build From Source
-
-```bash
-cd link/sdks/typescript
-npm install
-npm run build
-```
-
 ## License
 
 Apache-2.0
 
-## Repository
+## Links
 
-- Source: https://github.com/jamals86/KalamDB
-- Issues: https://github.com/jamals86/KalamDB/issues
+- Website: [kalamdb.org](https://kalamdb.org)
+- Docs: [kalamdb.org/docs](https://kalamdb.org/docs)
+- SDK reference: [kalamdb.org/docs/sdk](https://kalamdb.org/docs/sdk)
+- Authentication & token setup: [kalamdb.org/docs/getting-started/authentication](https://kalamdb.org/docs/getting-started/authentication)
+- Docker deployment: [kalamdb.org/docs/getting-started/docker](https://kalamdb.org/docs/getting-started/docker)
+- Live Query / WebSocket architecture: [kalamdb.org/docs/architecture/live-query](https://kalamdb.org/docs/architecture/live-query)
+- WebSocket protocol reference: [kalamdb.org/docs/api/websocket-protocol](https://kalamdb.org/docs/api/websocket-protocol)
+- Source: [github.com/jamals86/KalamDB](https://github.com/jamals86/KalamDB)
+- Issues: [github.com/jamals86/KalamDB/issues](https://github.com/jamals86/KalamDB/issues)
+
+---
+
+> Browser and Node.js support is powered by a Rust core compiled to WebAssembly (WASM). See [DEV.md](DEV.md) for build and contribution details.

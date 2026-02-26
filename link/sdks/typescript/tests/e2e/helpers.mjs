@@ -1,0 +1,85 @@
+/**
+ * Shared test helpers for KalamDB TypeScript SDK e2e tests.
+ *
+ * Requires a running KalamDB server.
+ * Configure via env vars:
+ *   KALAMDB_URL      (default: http://localhost:8080)
+ *   KALAMDB_USER     (default: admin)
+ *   KALAMDB_PASSWORD (default: kalamdb123)
+ */
+
+import { createClient, Auth, KalamDBClient } from '../../dist/src/index.js';
+
+export const SERVER_URL = process.env.KALAMDB_URL || 'http://localhost:8080';
+export const ADMIN_USER = process.env.KALAMDB_USER || 'admin';
+export const ADMIN_PASS = process.env.KALAMDB_PASSWORD || 'kalamdb123';
+
+/** Generate a unique name for test isolation (namespace or table). */
+export function uniqueName(prefix) {
+  const ts = Date.now();
+  const rand = Math.random().toString(36).slice(2, 8);
+  return `${prefix}_${ts}_${rand}`;
+}
+
+/**
+ * Create a client that logs in with basic auth, obtains a JWT, then
+ * returns a JWT-authenticated KalamDBClient.
+ */
+export async function connectJwtClient() {
+  const client = createClient({
+    url: SERVER_URL,
+    auth: Auth.basic(ADMIN_USER, ADMIN_PASS),
+  });
+  await client.connect();
+  return client;
+}
+
+/**
+ * Create a client with authProvider (recommended API).
+ */
+export async function connectWithAuthProvider() {
+  let cachedToken = null;
+
+  const client = createClient({
+    url: SERVER_URL,
+    authProvider: async () => {
+      if (!cachedToken) {
+        // Bootstrap: do a basic-auth login to get a JWT
+        const bootstrapClient = createClient({
+          url: SERVER_URL,
+          auth: Auth.basic(ADMIN_USER, ADMIN_PASS),
+        });
+        const loginResp = await bootstrapClient.login();
+        cachedToken = loginResp.access_token;
+        await bootstrapClient.disconnect();
+      }
+      return Auth.jwt(cachedToken);
+    },
+  });
+  await client.connect();
+  return client;
+}
+
+/**
+ * Ensure a test namespace exists, return its name.
+ */
+export async function ensureNamespace(client, name) {
+  await client.query(`CREATE NAMESPACE IF NOT EXISTS ${name}`);
+  return name;
+}
+
+/**
+ * Drop a table, ignoring errors.
+ */
+export async function dropTable(client, fullTable) {
+  try {
+    await client.query(`DROP TABLE IF EXISTS ${fullTable}`);
+  } catch (_) {
+    // ignore
+  }
+}
+
+/** Sleep for ms. */
+export function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}

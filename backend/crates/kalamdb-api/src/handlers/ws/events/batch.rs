@@ -83,7 +83,7 @@ pub async fn handle_next_batch(
                 rows_json,
                 batch_control,
             );
-            let _ = send_json(session, &msg).await;
+            let _ = send_json(session, &msg, true).await;
 
             if !result.has_more {
                 let flushed = connection_state.read().complete_initial_load(subscription_id);

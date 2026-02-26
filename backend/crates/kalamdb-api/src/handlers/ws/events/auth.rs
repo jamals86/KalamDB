@@ -132,7 +132,7 @@ async fn authenticate_with_request(
         user_id: auth_result.user_id.clone(),
         role: format!("{:?}", auth_result.role),
     };
-    let _ = send_json(session, &msg).await;
+    let _ = send_json(session, &msg, true).await;
 
     debug!(
         "WebSocket authenticated: {} as {} ({:?})",

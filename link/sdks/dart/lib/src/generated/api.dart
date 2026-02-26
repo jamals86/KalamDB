@@ -18,18 +18,35 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 /// * `enable_connection_events` — when `true`, connection lifecycle events
 ///   (connect, disconnect, error, receive, send) are queued internally and
 ///   can be retrieved via [`dart_next_connection_event`].
+/// * `disable_compression` — when `true`, the WebSocket URL includes
+///   `?compress=false` so the server sends plain-text JSON frames instead of
+///   gzip-compressed binary frames. Useful during development.
 DartKalamClient dartCreateClient(
         {required String baseUrl,
         required DartAuthProvider auth,
         PlatformInt64? timeoutMs,
         int? maxRetries,
-        bool? enableConnectionEvents}) =>
+        bool? enableConnectionEvents,
+        bool? disableCompression}) =>
     RustLib.instance.api.crateApiDartCreateClient(
         baseUrl: baseUrl,
         auth: auth,
         timeoutMs: timeoutMs,
         maxRetries: maxRetries,
-        enableConnectionEvents: enableConnectionEvents);
+        enableConnectionEvents: enableConnectionEvents,
+        disableCompression: disableCompression);
+
+/// Update the authentication credentials on a live client.
+///
+/// This is used to implement refresh-token flows from Dart:
+/// before re-subscribing or on a schedule, Dart calls the user's
+/// `authProvider` callback, receives a new [Auth], and calls this
+/// function to push updated credentials into the Rust client.
+///
+/// The new credentials take effect on the next `subscribe()` call.
+void dartUpdateAuth(
+        {required DartKalamClient client, required DartAuthProvider auth}) =>
+    RustLib.instance.api.crateApiDartUpdateAuth(client: client, auth: auth);
 
 /// Execute a SQL query, optionally with parameters and namespace.
 ///

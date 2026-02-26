@@ -81,6 +81,18 @@ pub struct ConnectionOptions {
     /// Values must be IP literals (IPv4 or IPv6), not hostnames.
     #[serde(default)]
     pub ws_local_bind_addresses: Vec<String>,
+
+    /// Disable server-side gzip compression on this WebSocket connection.
+    ///
+    /// When `true` the client appends `?compress=false` to the WebSocket URL.
+    /// The server will then send all messages as plain JSON text frames instead
+    /// of gzip-compressed binary frames, making traffic inspectable in browser
+    /// DevTools or packet-capture tools.
+    ///
+    /// **Do not enable in production** — compression reduces bandwidth by ~70%
+    /// for large payloads.  Default: `false`.
+    #[serde(default)]
+    pub disable_compression: bool,
 }
 
 fn default_auto_reconnect() -> bool {
@@ -110,6 +122,7 @@ impl Default for ConnectionOptions {
             timestamp_format: TimestampFormat::Iso8601,
             ping_interval_ms: 30000,
             ws_local_bind_addresses: Vec::new(),
+            disable_compression: false,
         }
     }
 }
@@ -192,6 +205,17 @@ impl ConnectionOptions {
     /// bind to `<ip>:0` prior to connect.
     pub fn with_ws_local_bind_addresses(mut self, addresses: Vec<String>) -> Self {
         self.ws_local_bind_addresses = addresses;
+        self
+    }
+
+    /// Disable server-side gzip compression for debugging.
+    ///
+    /// Appends `?compress=false` to the WebSocket URL so the server skips
+    /// compression and sends plain JSON text frames.
+    ///
+    /// **Do not enable in production.**
+    pub fn with_disable_compression(mut self, disable: bool) -> Self {
+        self.disable_compression = disable;
         self
     }
 }

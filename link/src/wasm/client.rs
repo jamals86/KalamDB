@@ -33,6 +33,7 @@ use super::validation::{
 /// - Basic Auth: `new KalamClient(url, username, password)`
 /// - JWT Token: `KalamClient.withJwt(url, token)`
 /// - Anonymous: `KalamClient.anonymous(url)`
+/// - Dynamic Auth: `KalamClient.anonymous(url)` + `setAuthProvider(async () => ({ jwt: { token } }))`
 ///
 /// # Example (JavaScript)
 /// ```js
@@ -48,13 +49,20 @@ use super::validation::{
 /// );
 ///
 /// // JWT Token Auth
-/// const jwtClient = KalamClientWithJwt.new(
+/// const jwtClient = KalamClient.withJwt(
 ///   "http://localhost:8080",
 ///   "eyJhbGciOiJIUzI1NiIs..."
 /// );
 ///
 /// // Anonymous (localhost bypass)
-/// const anonClient = KalamClientAnonymous.new("http://localhost:8080");
+/// const anonClient = KalamClient.anonymous("http://localhost:8080");
+///
+/// // Dynamic async auth provider (e.g. refresh token flow)
+/// const dynClient = KalamClient.anonymous("http://localhost:8080");
+/// dynClient.setAuthProvider(async () => {
+///   const token = await myApp.getOrRefreshToken();
+///   return { jwt: { token } };
+/// });
 ///
 /// // Configure auto-reconnect (enabled by default)
 /// client.setAutoReconnect(true);
@@ -94,6 +102,11 @@ pub struct KalamClient {
     on_error_cb: Rc<RefCell<Option<js_sys::Function>>>,
     on_receive_cb: Rc<RefCell<Option<js_sys::Function>>>,
     on_send_cb: Rc<RefCell<Option<js_sys::Function>>>,
+    /// Optional async auth provider callback.
+    /// Called before each (re-)connection to obtain a fresh JWT token.
+    /// The callback must return a Promise that resolves to an object of the
+    /// shape `{ jwt: { token: string } }` or `{ none: null }`.
+    auth_provider_cb: Rc<RefCell<Option<js_sys::Function>>>,
 }
 
 impl KalamClient {
@@ -112,6 +125,7 @@ impl KalamClient {
             on_error_cb: Rc::new(RefCell::new(None)),
             on_receive_cb: Rc::new(RefCell::new(None)),
             on_send_cb: Rc::new(RefCell::new(None)),
+            auth_provider_cb: Rc::new(RefCell::new(None)),
         }
     }
 }
@@ -343,14 +357,96 @@ impl KalamClient {
         *self.on_send_cb.borrow_mut() = Some(callback);
     }
 
-    /// Connect to KalamDB server via WebSocket (T045, T063C-T063D)
+    /// Set an async authentication provider callback.
+    ///
+    /// When set, this callback is invoked before each (re-)connection attempt
+    /// to obtain a fresh JWT token.  This is the recommended approach for
+    /// applications that implement refresh-token flows.
+    ///
+    /// The callback must be an `async function` (or any function returning a
+    /// `Promise`) that resolves to **either**:
+    /// - `{ jwt: { token: "eyJ..." } }` — authenticates with the given JWT
+    /// - `null` / `undefined` — treated as anonymous (no authentication)
+    ///
+    /// The static `auth` set at construction time is ignored once a provider
+    /// is registered.
+    ///
+    /// # Example (JavaScript)
+    /// ```js
+    /// client.setAuthProvider(async () => {
+    ///   const token = await myApp.getOrRefreshJwt();
+    ///   return { jwt: { token } };
+    /// });
+    /// ```
+    #[wasm_bindgen(js_name = setAuthProvider)]
+    pub fn set_auth_provider(&self, callback: js_sys::Function) {
+        *self.auth_provider_cb.borrow_mut() = Some(callback);
+    }
+
+    /// Clear a previously set auth provider, reverting to the static auth
+    /// configured at construction time.
+    #[wasm_bindgen(js_name = clearAuthProvider)]
+    pub fn clear_auth_provider(&self) {
+        *self.auth_provider_cb.borrow_mut() = None;
+    }
+
+    /// Enable or disable compression for WebSocket messages.
+    ///
+    /// When set to `true` (default) the server sends gzip-compressed binary
+    /// frames for large payloads.  Set to `false` during development to receive
+    /// plain-text JSON frames that are easier to inspect.
+    ///
+    /// Takes effect on the **next** `connect()` call.
+    ///
+    /// # Example (JavaScript)
+    /// ```js
+    /// client.setDisableCompression(true); // plain-text frames
+    /// await client.connect();
+    /// ```
+    #[wasm_bindgen(js_name = setDisableCompression)]
+    pub fn set_disable_compression(&self, disable: bool) {
+        self.connection_options.borrow_mut().disable_compression = disable;
+    }
+
     ///
     /// # Returns
     /// Promise that resolves when connection is established and authenticated
     pub async fn connect(&mut self) -> Result<(), JsValue> {
-        if matches!(self.auth, WasmAuthProvider::Basic { .. }) {
+        // Resolve auth: dynamic provider takes precedence over static auth.
+        let resolved_auth = if let Some(cb) = self.auth_provider_cb.borrow().as_ref() {
+            // Call the JS async callback and await the Promise it returns.
+            let result = JsFuture::from(js_sys::Promise::resolve(
+                &cb.call0(&JsValue::NULL)
+                    .map_err(|e| JsValue::from_str(&format!("authProvider threw: {:?}", e)))?,
+            ))
+            .await?;
+
+            // Expect `{ jwt: { token: "..." } }` or null/undefined (anonymous).
+            if result.is_null() || result.is_undefined() {
+                WasmAuthProvider::None
+            } else {
+                let jwt_obj = js_sys::Reflect::get(&result, &"jwt".into()).ok();
+                if let Some(jwt) = jwt_obj.filter(|v| !v.is_undefined() && !v.is_null()) {
+                    let token = js_sys::Reflect::get(&jwt, &"token".into())
+                        .ok()
+                        .and_then(|v| v.as_string())
+                        .ok_or_else(|| {
+                            JsValue::from_str(
+                                "authProvider result must have shape { jwt: { token: string } }",
+                            )
+                        })?;
+                    WasmAuthProvider::Jwt { token }
+                } else {
+                    WasmAuthProvider::None
+                }
+            }
+        } else {
+            self.auth.clone()
+        };
+
+        if matches!(resolved_auth, WasmAuthProvider::Basic { .. }) {
             return Err(JsValue::from_str(
-                "WebSocket authentication requires a JWT token. Use KalamClientWithJwt or login first.",
+                "WebSocket authentication requires a JWT token. Use KalamClient.withJwt, login first, or set an authProvider.",
             ));
         }
 
@@ -364,7 +460,8 @@ impl KalamClient {
         console_log("KalamClient: Connecting to WebSocket...");
 
         // Convert http(s) URL to ws(s) URL (no auth in URL)
-        let ws_url = super::helpers::ws_url_from_http(&self.url)?;
+        let disable_compression = self.connection_options.borrow().disable_compression;
+        let ws_url = super::helpers::ws_url_from_http_opts(&self.url, disable_compression)?;
 
         // T063C: Implement proper WebSocket connection using web-sys::WebSocket
         let ws = WebSocket::new(&ws_url)?;
@@ -376,12 +473,12 @@ impl KalamClient {
         let (connect_promise, connect_resolve, connect_reject) = create_promise();
 
         // For anonymous auth, we don't need to wait for auth_promise
-        let requires_auth = !matches!(self.auth, WasmAuthProvider::None);
+        let requires_auth = !matches!(resolved_auth, WasmAuthProvider::None);
 
         let (auth_promise, auth_resolve, auth_reject) = create_promise();
 
         // Clone auth message for the onopen handler
-        let auth_message = self.auth.to_ws_auth_message();
+        let auth_message = resolved_auth.to_ws_auth_message();
         let ws_clone_for_auth = ws.clone();
         let auth_resolve_for_anon = auth_resolve.clone();
         let on_send_for_open = Rc::clone(&self.on_send_cb);
@@ -1502,6 +1599,7 @@ impl KalamClient {
         let ping_interval_id = Rc::clone(&self.ping_interval_id);
         let url = self.url.clone();
         let auth = self.auth.clone();
+        let auth_provider_cb = Rc::clone(&self.auth_provider_cb);
 
         let onclose_reconnect = Closure::wrap(Box::new(move |_e: CloseEvent| {
             let opts = connection_options.borrow();
@@ -1532,6 +1630,8 @@ impl KalamClient {
                 current_attempts + 1
             ));
 
+            let disable_compression = opts.disable_compression;
+
             // Clone for async closure
             let is_reconnecting_clone = is_reconnecting.clone();
             let reconnect_attempts_clone = reconnect_attempts.clone();
@@ -1541,6 +1641,7 @@ impl KalamClient {
             let connection_options_clone = connection_options.clone();
             let url_clone = url.clone();
             let auth_clone = auth.clone();
+            let auth_provider_cb_clone = auth_provider_cb.borrow().clone();
 
             let reconnect_fn = Closure::wrap(Box::new(move || {
                 *is_reconnecting_clone.borrow_mut() = true;
@@ -1554,9 +1655,10 @@ impl KalamClient {
                 let reconnect_attempts = reconnect_attempts_clone.clone();
                 let ping_id = ping_interval_id_clone.clone();
                 let conn_opts = connection_options_clone.clone();
+                let cb = auth_provider_cb_clone.clone();
 
                 wasm_bindgen_futures::spawn_local(async move {
-                    match reconnect_internal_with_auth(url, auth, ws_ref.clone()).await {
+                    match reconnect_internal_with_auth(url, auth, ws_ref.clone(), cb, disable_compression).await {
                         Ok(()) => {
                             console_log("KalamClient: Reconnection successful");
                             *reconnect_attempts.borrow_mut() = 0; // Reset attempts on success

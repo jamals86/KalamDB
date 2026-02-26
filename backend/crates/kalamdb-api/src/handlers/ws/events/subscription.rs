@@ -118,7 +118,7 @@ pub async fn handle_subscribe(
                 batch_control.clone(),
                 result.schema.clone(),
             );
-            let _ = send_json(session, &ack).await;
+            let _ = send_json(session, &ack, true).await;
 
             if let Some(initial) = result.initial_data {
                 // Convert Row objects to HashMap (always using simple JSON format)
@@ -145,7 +145,7 @@ pub async fn handle_subscribe(
                     rows_json,
                     batch_control,
                 );
-                let _ = send_json(session, &batch_msg).await;
+                let _ = send_json(session, &batch_msg, true).await;
 
                 if !initial.has_more {
                     let flushed = connection_state.read().complete_initial_load(&subscription_id);

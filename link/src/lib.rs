@@ -128,7 +128,7 @@ pub mod wasm;
 
 // Re-export main types for convenience
 #[cfg(feature = "tokio-runtime")]
-pub use auth::AuthProvider;
+pub use auth::{AuthProvider, ArcDynAuthProvider, DynamicAuthProvider, ResolvedAuth};
 #[cfg(feature = "tokio-runtime")]
 pub use client::KalamLinkClient;
 #[cfg(feature = "tokio-runtime")]

@@ -44,6 +44,7 @@ export type {
   BasicAuthCredentials,
   JwtAuthCredentials,
   NoAuthCredentials,
+  AuthProvider,
 } from './auth.js';
 
 // Types & enums

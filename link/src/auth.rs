@@ -1,9 +1,36 @@
 //! Authentication provider for KalamDB client.
 //!
-//! Handles JWT tokens and HTTP Basic Auth, attaching appropriate headers to HTTP requests.
+//! Handles JWT tokens, HTTP Basic Auth, and async dynamic auth providers.
+//!
+//! ## Dynamic Auth Provider
+//!
+//! Use [`DynamicAuthProvider`] to supply credentials lazily — called on every
+//! connect or reconnect.  This is the right choice for:
+//! - OAuth / OIDC token flows where tokens expire
+//! - Credentials fetched from secure storage (e.g. keychain, secret manager)
+//! - Automatic refresh-token rotation
+//!
+//! ```rust,no_run
+//! use kalam_link::{AuthProvider, DynamicAuthProvider};
+//! use std::sync::Arc;
+//!
+//! struct MyTokenStore { /* ... */ }
+//!
+//! #[async_trait::async_trait]
+//! impl DynamicAuthProvider for MyTokenStore {
+//!     async fn get_auth(&self) -> kalam_link::Result<AuthProvider> {
+//!         // fetch / refresh token here
+//!         Ok(AuthProvider::jwt_token("fresh-token".into()))
+//!     }
+//! }
+//!
+//! // Wrap in Arc and pass to the builder:
+//! // .auth_provider(Arc::new(MyTokenStore { ... }))
+//! ```
 
 use crate::error::Result;
 use base64::{engine::general_purpose, Engine as _};
+use std::sync::Arc;
 
 /// Authentication credentials for KalamDB server.
 ///
@@ -106,6 +133,114 @@ impl AuthProvider {
     /// Check if authentication is configured
     pub fn is_authenticated(&self) -> bool {
         !matches!(self, Self::None)
+    }
+}
+
+// ── Dynamic (async) auth provider ────────────────────────────────────────────
+
+/// Async authentication provider called on every connect or reconnect.
+///
+/// Implement this trait to supply credentials lazily from any source:
+/// OAuth token refresh, secure storage, interactive login, etc.
+///
+/// The client calls [`DynamicAuthProvider::get_auth`] once per connection
+/// attempt and uses the returned [`AuthProvider`] for that session.  Implement
+/// token caching and refresh logic inside `get_auth`.
+///
+/// ## Token refresh pattern
+///
+/// ```rust,no_run
+/// use kalam_link::{AuthProvider, DynamicAuthProvider, Result};
+/// use std::sync::Arc;
+/// use tokio::sync::Mutex;
+///
+/// struct RefreshingAuth {
+///     access_token: Mutex<String>,
+///     refresh_token: String,
+///     base_url: String,
+/// }
+///
+/// #[async_trait::async_trait]
+/// impl DynamicAuthProvider for RefreshingAuth {
+///     async fn get_auth(&self) -> Result<AuthProvider> {
+///         // Build a temporary no-auth client just for the refresh call
+///         let client = kalam_link::KalamLinkClient::builder()
+///             .base_url(&self.base_url)
+///             .build()?;
+///         let resp = client.refresh_access_token(&self.refresh_token).await?;
+///         *self.access_token.lock().await = resp.access_token.clone();
+///         Ok(AuthProvider::jwt_token(resp.access_token))
+///     }
+/// }
+/// ```
+#[async_trait::async_trait]
+pub trait DynamicAuthProvider: Send + Sync + 'static {
+    /// Return the current (or freshly refreshed) credentials.
+    ///
+    /// Called on every WebSocket connect/reconnect.  May perform I/O
+    /// (token refresh, keychain lookup, etc.).  Errors abort the connection.
+    async fn get_auth(&self) -> Result<AuthProvider>;
+}
+
+/// A boxed, reference-counted [`DynamicAuthProvider`].
+pub type ArcDynAuthProvider = Arc<dyn DynamicAuthProvider>;
+
+// Blanket impl so an `async fn` wrapped in a struct works automatically.
+// Users can also pass `Arc::new(|..| async { ... })` via a newtype if needed.
+
+/// Resolves the effective [`AuthProvider`] for a connection.
+///
+/// Holds either a static provider or a dynamic one.  Call [`resolve`] before
+/// each connect/reconnect to obtain a fresh [`AuthProvider`].
+///
+/// [`resolve`]: ResolvedAuth::resolve
+#[derive(Clone)]
+pub enum ResolvedAuth {
+    /// Static credentials set at construction time.
+    Static(AuthProvider),
+    /// Dynamic provider called on every connect.
+    Dynamic(ArcDynAuthProvider),
+}
+
+impl ResolvedAuth {
+    /// Obtain effective credentials, calling the dynamic provider if present.
+    pub async fn resolve(&self) -> Result<AuthProvider> {
+        match self {
+            Self::Static(p) => Ok(p.clone()),
+            Self::Dynamic(provider) => provider.get_auth().await,
+        }
+    }
+
+    /// `true` when no credentials of either kind are configured.
+    pub fn is_none(&self) -> bool {
+        matches!(self, Self::Static(AuthProvider::None))
+    }
+}
+
+impl std::fmt::Debug for ResolvedAuth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Static(p) => write!(f, "ResolvedAuth::Static({:?})", p),
+            Self::Dynamic(_) => write!(f, "ResolvedAuth::Dynamic(<fn>)"),
+        }
+    }
+}
+
+impl Default for ResolvedAuth {
+    fn default() -> Self {
+        Self::Static(AuthProvider::None)
+    }
+}
+
+impl From<AuthProvider> for ResolvedAuth {
+    fn from(p: AuthProvider) -> Self {
+        Self::Static(p)
+    }
+}
+
+impl From<ArcDynAuthProvider> for ResolvedAuth {
+    fn from(p: ArcDynAuthProvider) -> Self {
+        Self::Dynamic(p)
     }
 }
 

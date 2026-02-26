@@ -4,7 +4,7 @@
 //! and executing operations.
 
 use crate::{
-    auth::AuthProvider,
+    auth::{AuthProvider, ResolvedAuth},
     consumer::ConsumerBuilder,
     error::{KalamLinkError, Result},
     event_handlers::EventHandlers,
@@ -45,6 +45,9 @@ use tokio::sync::Mutex;
 pub struct KalamLinkClient {
     base_url: String,
     http_client: reqwest::Client,
+    /// Dynamic or static authentication source.
+    resolved_auth: ResolvedAuth,
+    /// Last successfully resolved static credentials (cached for subscriptions/queries).
     auth: AuthProvider,
     query_executor: QueryExecutor,
     health_cache: Arc<Mutex<HealthCheckCache>>,
@@ -199,10 +202,13 @@ impl KalamLinkClient {
         &self,
         config: SubscriptionConfig,
     ) -> Result<SubscriptionManager> {
+        // Resolve fresh credentials — essential when using a DynamicAuthProvider
+        // so that expired tokens are refreshed before the WebSocket connects.
+        let auth = self.resolved_auth.resolve().await?;
         SubscriptionManager::new(
             &self.base_url,
             config,
-            &self.auth,
+            &auth,
             &self.timeouts,
             &self.connection_options,
             &self.event_handlers,
@@ -235,6 +241,39 @@ impl KalamLinkClient {
 
     pub(crate) fn auth(&self) -> &AuthProvider {
         &self.auth
+    }
+
+    /// Return the resolved auth source (static or dynamic).
+    pub fn resolved_auth(&self) -> &ResolvedAuth {
+        &self.resolved_auth
+    }
+
+    /// Replace the static authentication credentials at runtime.
+    ///
+    /// Useful when a Dart/FFI caller has obtained fresh credentials via its own
+    /// auth provider callback and wants to push them into the Rust client before
+    /// the next subscribe call.
+    ///
+    /// For dynamic auth flows prefer using a [`DynamicAuthProvider`] instead.
+    ///
+    /// [`DynamicAuthProvider`]: crate::auth::DynamicAuthProvider
+    pub fn set_auth(&mut self, auth: AuthProvider) {
+        self.auth = auth.clone();
+        self.resolved_auth = ResolvedAuth::Static(auth);
+    }
+
+    /// Resolve fresh credentials from the auth source.
+    ///
+    /// For static auth this is a cheap clone.  For a [`DynamicAuthProvider`]
+    /// this calls `get_auth()`, which may perform network I/O (token refresh,
+    /// secret-manager lookup, etc.).
+    ///
+    /// Callers that open WebSocket connections should call this before each
+    /// connect attempt to guarantee up-to-date tokens.
+    ///
+    /// [`DynamicAuthProvider`]: crate::auth::DynamicAuthProvider
+    pub async fn fresh_auth(&self) -> Result<AuthProvider> {
+        self.resolved_auth.resolve().await
     }
 
     /// Check server health and get server information
@@ -558,7 +597,7 @@ impl KalamLinkClient {
 pub struct KalamLinkClientBuilder {
     base_url: Option<String>,
     timeout: Duration,
-    auth: AuthProvider,
+    resolved_auth: ResolvedAuth,
     max_retries: u32,
     timeouts: KalamLinkTimeouts,
     connection_options: ConnectionOptions,
@@ -570,7 +609,7 @@ impl KalamLinkClientBuilder {
         Self {
             base_url: None,
             timeout: Duration::from_secs(30),
-            auth: AuthProvider::none(),
+            resolved_auth: ResolvedAuth::default(),
             max_retries: 3,
             timeouts: KalamLinkTimeouts::default(),
             connection_options: ConnectionOptions::default(),
@@ -592,7 +631,7 @@ impl KalamLinkClientBuilder {
 
     /// Set JWT token authentication
     pub fn jwt_token(mut self, token: impl Into<String>) -> Self {
-        self.auth = AuthProvider::jwt_token(token.into());
+        self.resolved_auth = ResolvedAuth::Static(AuthProvider::jwt_token(token.into()));
         self
     }
 
@@ -614,7 +653,57 @@ impl KalamLinkClientBuilder {
     /// # }
     /// ```
     pub fn auth(mut self, auth: AuthProvider) -> Self {
-        self.auth = auth;
+        self.resolved_auth = ResolvedAuth::Static(auth);
+        self
+    }
+
+    /// Set a dynamic (async) authentication provider.
+    ///
+    /// The provider's [`get_auth`] method is called on every WebSocket
+    /// connect/reconnect, enabling automatic token refresh and rotation.
+    ///
+    /// This takes precedence over [`auth`] / [`jwt_token`] if both are set.
+    ///
+    /// [`get_auth`]: crate::auth::DynamicAuthProvider::get_auth
+    /// [`auth`]: KalamLinkClientBuilder::auth
+    /// [`jwt_token`]: KalamLinkClientBuilder::jwt_token
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use kalam_link::{AuthProvider, DynamicAuthProvider, KalamLinkClient, Result};
+    /// use std::sync::Arc;
+    /// use tokio::sync::Mutex;
+    ///
+    /// struct TokenStore {
+    ///     refresh_token: String,
+    ///     base_url: String,
+    /// }
+    ///
+    /// #[async_trait::async_trait]
+    /// impl DynamicAuthProvider for TokenStore {
+    ///     async fn get_auth(&self) -> Result<AuthProvider> {
+    ///         let client = KalamLinkClient::builder()
+    ///             .base_url(&self.base_url)
+    ///             .build()?;
+    ///         let resp = client.refresh_access_token(&self.refresh_token).await?;
+    ///         Ok(AuthProvider::jwt_token(resp.access_token))
+    ///     }
+    /// }
+    ///
+    /// # async fn example() -> Result<()> {
+    /// let client = KalamLinkClient::builder()
+    ///     .base_url("http://localhost:3000")
+    ///     .auth_provider(Arc::new(TokenStore {
+    ///         refresh_token: "rt_xxx".into(),
+    ///         base_url: "http://localhost:3000".into(),
+    ///     }))
+    ///     .build()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn auth_provider(mut self, provider: crate::auth::ArcDynAuthProvider) -> Self {
+        self.resolved_auth = ResolvedAuth::Dynamic(provider);
         self
     }
 
@@ -737,6 +826,13 @@ impl KalamLinkClientBuilder {
             .base_url
             .ok_or_else(|| KalamLinkError::ConfigurationError("base_url is required".into()))?;
 
+        // Snapshot static auth for the QueryExecutor (HTTP requests).
+        // Dynamic auth is resolved per-subscribe in subscribe_with_config.
+        let static_auth = match &self.resolved_auth {
+            ResolvedAuth::Static(p) => p.clone(),
+            ResolvedAuth::Dynamic(_) => AuthProvider::none(),
+        };
+
         // Build HTTP client with connection pooling for better throughput
         // Keep-alive connections reduce TCP handshake overhead significantly
         let mut client_builder = reqwest::Client::builder()
@@ -774,14 +870,15 @@ impl KalamLinkClientBuilder {
         let query_executor = QueryExecutor::new(
             base_url.clone(),
             http_client.clone(),
-            self.auth.clone(),
+            static_auth.clone(),
             self.max_retries,
         );
 
         Ok(KalamLinkClient {
             base_url,
             http_client,
-            auth: self.auth,
+            resolved_auth: self.resolved_auth,
+            auth: static_auth,
             query_executor,
             health_cache: Arc::new(Mutex::new(HealthCheckCache::default())),
             timeouts: self.timeouts,

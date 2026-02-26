@@ -117,6 +117,12 @@ pub async fn websocket_handler(
         }
     }
 
+    // Parse ?compress=false query parameter for development/debug mode
+    let compression_enabled = !req
+        .query_string()
+        .split('&')
+        .any(|kv| kv.eq_ignore_ascii_case("compress=false"));
+
     // Generate unique connection ID
     let connection_id = ConnectionId::new(uuid::Uuid::new_v4().simple().to_string());
 
@@ -161,6 +167,7 @@ pub async fn websocket_handler(
             lq_manager,
             user_repository,
             max_message_size,
+            compression_enabled,
         )
         .await;
 
@@ -186,6 +193,7 @@ async fn handle_websocket(
     live_query_manager: Arc<kalamdb_core::live::LiveQueryManager>,
     user_repo: Arc<dyn UserRepository>,
     max_message_size: usize,
+    compression_enabled: bool,
 ) {
     let mut event_rx = registration.event_rx;
     let mut notification_rx = registration.notification_rx;
@@ -209,7 +217,7 @@ async fn handle_websocket(
                             let msg = WebSocketMessage::AuthError {
                                 message: "Authentication timeout - no auth message received within 3 seconds".to_string(),
                             };
-                            let _ = send_json(&mut session, &msg).await;
+                            let _ = send_json(&mut session, &msg, compression_enabled).await;
                             let _ = session.close(Some(CloseReason {
                                 code: CloseCode::Policy,
                                 description: Some("Authentication timeout".into()),
@@ -324,7 +332,7 @@ async fn handle_websocket(
                     match notification {
                         Some(notif) => {
                             // Use send_json for automatic compression of large payloads
-                            if send_json(&mut session, notif.as_ref()).await.is_err() {
+                            if send_json(&mut session, notif.as_ref(), compression_enabled).await.is_err() {
                                 break;
                             }
                         }

@@ -275,8 +275,56 @@ export interface ConsumerHandle {
 export interface ClientOptions {
   /** Server URL (e.g., 'http://localhost:8080') */
   url: string;
-  /** Authentication credentials (type-safe) */
-  auth: import('./auth.js').AuthCredentials;
+  /**
+   * Static authentication credentials.
+   *
+   * @deprecated Use `authProvider` instead. Static credentials cannot
+   * refresh automatically — tokens will expire mid-session without
+   * reconnect support.  `authProvider` is invoked before every
+   * (re-)connection and handles refresh transparently.
+   *
+   * ```typescript
+   * // Before (deprecated)
+   * createClient({ url, auth: Auth.jwt(token) });
+   *
+   * // After
+   * createClient({ url, authProvider: async () => Auth.jwt(await getToken()) });
+   * ```
+   *
+   * Ignored when `authProvider` is set.  At least one of `auth` or
+   * `authProvider` must be provided.
+   */
+  auth?: import('./auth.js').AuthCredentials;
+  /**
+   * Async authentication provider callback.
+   *
+   * When set, this is called before each (re-)connection to obtain fresh
+   * credentials — ideal for refresh-token flows.  Takes precedence over the
+   * static `auth` option.
+   *
+   * @example
+   * ```typescript
+   * import { Auth, type AuthProvider } from 'kalam-link';
+   *
+   * const authProvider: AuthProvider = async () => {
+   *   const token = await myApp.getOrRefreshJwt();
+   *   return Auth.jwt(token);
+   * };
+   *
+   * const client = createClient({ url: '...', authProvider });
+   * ```
+   */
+  authProvider?: import('./auth.js').AuthProvider;
+  /**
+   * Disable server-side gzip compression for WebSocket messages.
+   *
+   * When `true`, the client passes `?compress=false` in the WebSocket URL and
+   * the server sends plain-text JSON frames instead of gzip-compressed binary
+   * frames.  Useful during development for easier message inspection.
+   *
+   * Defaults to `false` (compression enabled).
+   */
+  disableCompression?: boolean;
   /**
    * Explicit URL or buffer for the WASM file.
    * - Browser: string URL like '/wasm/kalam_link_bg.wasm'
