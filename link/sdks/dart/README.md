@@ -2,6 +2,8 @@
 
 Official Dart and Flutter SDK for [KalamDB](https://kalamdb.org) — private, realtime storage for AI agents.
 
+> Status: **Alpha** — the API surface is still evolving and may include breaking changes between releases.
+
 KalamDB is a SQL-first realtime database. Every user or tenant gets a private namespace. Subscribe to any SQL query live over WebSocket. Publish and consume events via Topics. Store recent data fast and move cold history to object storage.
 
 → **[kalamdb.org](https://kalamdb.org)** · [Docs](https://kalamdb.org/docs) · [GitHub](https://github.com/jamals86/KalamDB)
@@ -19,7 +21,7 @@ KalamDB is a SQL-first realtime database. Every user or tenant gets a private na
 
 ```yaml
 dependencies:
-  kalam_link: ^0.1.2
+  kalam_link: ^0.1.3-alpha.1
 ```
 
 ```bash

@@ -2,6 +2,8 @@
 
 Official TypeScript / JavaScript SDK for [KalamDB](https://kalamdb.org) — private, realtime storage for AI agents.
 
+> Status: **Alpha** — the API surface is still evolving and may include breaking changes between releases.
+
 KalamDB is a SQL-first realtime database built in Rust. Every user or tenant gets a private namespace. Subscribe to SQL queries live over WebSocket. Publish and consume events via Topics. Store recent data on local disk (RocksDB) and move cold history to object storage (S3, GCS, Azure, or local FS).
 
 → **[kalamdb.org](https://kalamdb.org)** · [Docs](https://kalamdb.org/docs) · [GitHub](https://github.com/jamals86/KalamDB)
