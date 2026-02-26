@@ -4,6 +4,25 @@ use std::hash::{Hash, Hasher};
 use wasm_bindgen::prelude::*;
 use web_sys::Request;
 
+/// Convert an `http(s)://` base URL to its `ws(s)://` WebSocket equivalent.
+///
+/// Appends `/v1/ws` to the converted URL. Performs basic validation to reject
+/// URLs that already use `ws://` or `wss://`.
+pub(crate) fn ws_url_from_http(base_url: &str) -> Result<String, JsValue> {
+    let ws_url = if base_url.starts_with("https://") {
+        base_url.replacen("https://", "wss://", 1)
+    } else if base_url.starts_with("http://") {
+        base_url.replacen("http://", "ws://", 1)
+    } else {
+        return Err(JsValue::from_str(
+            "Base URL must start with http:// or https://",
+        ));
+    };
+    // Strip trailing slash before appending path
+    let ws_url = ws_url.trim_end_matches('/');
+    Ok(format!("{}/v1/ws", ws_url))
+}
+
 /// Hash a SQL string to produce a deterministic subscription ID suffix.
 ///
 /// Uses `DefaultHasher` (SipHash) — fast and collision-resistant enough for

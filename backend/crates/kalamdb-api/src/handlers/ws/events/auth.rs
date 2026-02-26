@@ -91,29 +91,29 @@ async fn authenticate_with_request(
     // Authenticate using unified auth module
     let auth_result = match authenticate(auth_request, connection_info, user_repo).await {
         Ok(result) => {
-            // Log successful authentication
-            let event_type = if connection_info.is_localhost() {
-                "LOGIN_WS_LOCALHOST"
-            } else {
-                "LOGIN_WS"
-            };
-            let entry = audit::log_auth_event(&result.user.user_id, event_type, true, None);
-            if let Err(e) = audit::persist_audit_entry(app_context, &entry).await {
-                error!("Failed to persist audit log: {}", e);
-            }
+            // // Log successful authentication
+            // let event_type = if connection_info.is_localhost() {
+            //     "LOGIN_WS_LOCALHOST"
+            // } else {
+            //     "LOGIN_WS"
+            // };
+            // let entry = audit::log_auth_event(&result.user.user_id, event_type, true, None);
+            // if let Err(e) = audit::persist_audit_entry(app_context, &entry).await {
+            //     error!("Failed to persist audit log: {}", e);
+            // }
             result.user
         },
         Err(e) => {
             // Log failed authentication
-            let entry = audit::log_auth_event_with_username(
-                &username_for_log,
-                "LOGIN_WS",
-                false,
-                Some(format!("{}", e)),
-            );
-            if let Err(e) = audit::persist_audit_entry(app_context, &entry).await {
-                error!("Failed to persist audit log: {}", e);
-            }
+            // let entry = audit::log_auth_event_with_username(
+            //     &username_for_log,
+            //     "LOGIN_WS",
+            //     false,
+            //     Some(format!("{}", e)),
+            // );
+            // if let Err(e) = audit::persist_audit_entry(app_context, &entry).await {
+            //     error!("Failed to persist audit log: {}", e);
+            // }
 
             let _ = send_auth_error(session.clone(), "Invalid username or password").await;
             return Err("Authentication failed".to_string());

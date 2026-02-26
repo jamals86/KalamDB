@@ -7,6 +7,7 @@ use crate::{
     auth::AuthProvider,
     consumer::ConsumerBuilder,
     error::{KalamLinkError, Result},
+    event_handlers::EventHandlers,
     models::{
         ConnectionOptions, HealthCheckResponse, HttpVersion, QueryResponse, SubscriptionConfig,
     },
@@ -49,6 +50,7 @@ pub struct KalamLinkClient {
     health_cache: Arc<Mutex<HealthCheckCache>>,
     timeouts: KalamLinkTimeouts,
     connection_options: ConnectionOptions,
+    event_handlers: EventHandlers,
 }
 
 impl KalamLinkClient {
@@ -203,8 +205,14 @@ impl KalamLinkClient {
             &self.auth,
             &self.timeouts,
             &self.connection_options,
+            &self.event_handlers,
         )
         .await
+    }
+
+    /// Get the current event handlers
+    pub fn event_handlers(&self) -> &EventHandlers {
+        &self.event_handlers
     }
 
     /// Get the configured timeouts
@@ -554,6 +562,7 @@ pub struct KalamLinkClientBuilder {
     max_retries: u32,
     timeouts: KalamLinkTimeouts,
     connection_options: ConnectionOptions,
+    event_handlers: EventHandlers,
 }
 
 impl KalamLinkClientBuilder {
@@ -565,6 +574,7 @@ impl KalamLinkClientBuilder {
             max_retries: 3,
             timeouts: KalamLinkTimeouts::default(),
             connection_options: ConnectionOptions::default(),
+            event_handlers: EventHandlers::default(),
         }
     }
 
@@ -691,6 +701,36 @@ impl KalamLinkClientBuilder {
         self
     }
 
+    /// Set connection lifecycle event handlers.
+    ///
+    /// Registers callbacks for connect, disconnect, error, and message
+    /// debug hooks. All handlers are optional.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use kalam_link::{KalamLinkClient, EventHandlers};
+    ///
+    /// # async fn example() -> kalam_link::Result<()> {
+    /// let client = KalamLinkClient::builder()
+    ///     .base_url("http://localhost:3000")
+    ///     .event_handlers(
+    ///         EventHandlers::new()
+    ///             .on_connect(|| println!("Connected!"))
+    ///             .on_disconnect(|reason| println!("Disconnected: {}", reason))
+    ///             .on_error(|err| eprintln!("Error: {}", err))
+    ///             .on_receive(|msg| println!("[RECV] {}", msg))
+    ///             .on_send(|msg| println!("[SEND] {}", msg)),
+    ///     )
+    ///     .build()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn event_handlers(mut self, handlers: EventHandlers) -> Self {
+        self.event_handlers = handlers;
+        self
+    }
+
     /// Build the client
     pub fn build(self) -> Result<KalamLinkClient> {
         let base_url = self
@@ -746,6 +786,7 @@ impl KalamLinkClientBuilder {
             health_cache: Arc::new(Mutex::new(HealthCheckCache::default())),
             timeouts: self.timeouts,
             connection_options: self.connection_options,
+            event_handlers: self.event_handlers,
         })
     }
 }

@@ -20,7 +20,7 @@ TOKEN_PATTERN = re.compile(
 SPDX_KEYWORDS = {"AND", "OR", "WITH"}
 
 
-def load_policy(policy_path: Path) -> tuple[set[str], set[str]]:
+def load_policy(policy_path: Path) -> tuple[set[str], set[str], dict[str, str]]:
     with policy_path.open("rb") as f:
         data = tomllib.load(f)
 
@@ -31,7 +31,15 @@ def load_policy(policy_path: Path) -> tuple[set[str], set[str]]:
     if not allow:
         raise ValueError("[licenses].allow is empty in policy file")
 
-    return allow, deny
+    overrides = data.get("overrides", {})
+    rust_overrides_raw = overrides.get("rust", {}) if isinstance(overrides, dict) else {}
+    rust_overrides = {
+        str(key).strip(): str(value).strip()
+        for key, value in rust_overrides_raw.items()
+        if str(key).strip() and str(value).strip()
+    }
+
+    return allow, deny, rust_overrides
 
 
 def tokenize(expression: str) -> set[str]:
@@ -75,6 +83,7 @@ def validate_rust(
     rust_report_path: Path,
     allow: set[str],
     deny: set[str],
+    rust_overrides: dict[str, str],
 ) -> tuple[list[str], list[dict], Counter[str]]:
     data = json.loads(rust_report_path.read_text(encoding="utf-8"))
     errors: list[str] = []
@@ -85,6 +94,9 @@ def validate_rust(
         name = dep.get("name", "<unknown>")
         version = dep.get("version", "<unknown>")
         license_expr = (dep.get("license") or "").strip()
+        if not license_expr:
+            exact_key = f"{name}@{version}"
+            license_expr = rust_overrides.get(exact_key, rust_overrides.get(name, ""))
         counts[license_expr or "<missing>"] += 1
 
         issues = evaluate_expression(license_expr, allow, deny)
@@ -237,9 +249,14 @@ def main() -> int:
     sdk_report_path = Path(args.sdk_report)
     output_path = Path(args.output)
 
-    allow, deny = load_policy(policy_path)
+    allow, deny, rust_overrides = load_policy(policy_path)
 
-    rust_errors, rust_entries, rust_counts = validate_rust(rust_report_path, allow, deny)
+    rust_errors, rust_entries, rust_counts = validate_rust(
+        rust_report_path,
+        allow,
+        deny,
+        rust_overrides,
+    )
     ui_errors, ui_entries, ui_counts = validate_npm(ui_report_path, "kalamdb-admin-ui", allow, deny)
     sdk_errors, sdk_entries, sdk_counts = validate_npm(sdk_report_path, "kalam-link", allow, deny)
 

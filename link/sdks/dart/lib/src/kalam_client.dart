@@ -25,8 +25,11 @@ import 'generated/frb_generated.dart';
 /// ```
 class KalamClient {
   final bridge.DartKalamClient _handle;
+  final ConnectionHandlers? _connectionHandlers;
+  var _isDisposed = false;
+  Future<void>? _connectionEventPump;
 
-  KalamClient._(this._handle);
+  KalamClient._(this._handle, this._connectionHandlers);
 
   /// Initialize the Rust runtime. Call once at app startup before any
   /// [KalamClient.connect] calls.
@@ -51,14 +54,18 @@ class KalamClient {
     Auth auth = const NoAuth(),
     Duration timeout = const Duration(seconds: 30),
     int maxRetries = 3,
+    ConnectionHandlers? connectionHandlers,
   }) async {
     final handle = bridge.dartCreateClient(
       baseUrl: url,
       auth: _toBridgeAuth(auth),
       timeoutMs: timeout.inMilliseconds,
       maxRetries: maxRetries,
+      enableConnectionEvents: connectionHandlers?.hasAny ?? false,
     );
-    return KalamClient._(handle);
+    final client = KalamClient._(handle, connectionHandlers);
+    client._startConnectionEventPumpIfNeeded();
+    return client;
   }
 
   // ---------------------------------------------------------------------------
@@ -219,7 +226,9 @@ class KalamClient {
           sub = await bridge.dartSubscribe(
             client: _handle,
             sql: sql,
-            config: (batchSize != null || lastRows != null || subscriptionId != null)
+            config: (batchSize != null ||
+                    lastRows != null ||
+                    subscriptionId != null)
                 ? gen.DartSubscriptionConfig(
                     sql: sql,
                     batchSize: batchSize,
@@ -251,6 +260,8 @@ class KalamClient {
 
   /// Release resources. The client should not be used after this call.
   Future<void> dispose() async {
+    _isDisposed = true;
+    await _connectionEventPump;
     // FRB handles dropping the Rust-side client automatically when
     // the Dart object is garbage collected. This method is provided
     // for explicit cleanup if desired.
@@ -272,17 +283,21 @@ class KalamClient {
   static QueryResponse _fromBridgeQueryResponse(gen.DartQueryResponse resp) {
     return QueryResponse(
       success: resp.success,
-      results: resp.results.map((r) => QueryResult(
-        columns: r.columns.map((c) => SchemaField(
-          name: c.name,
-          dataType: c.dataType,
-          index: c.index,
-          flags: c.flags,
-        )).toList(),
-        rowsJson: r.rowsJson,
-        rowCount: r.rowCount,
-        message: r.message,
-      )).toList(),
+      results: resp.results
+          .map((r) => QueryResult(
+                columns: r.columns
+                    .map((c) => SchemaField(
+                          name: c.name,
+                          dataType: c.dataType,
+                          index: c.index,
+                          flags: c.flags,
+                        ))
+                    .toList(),
+                rowsJson: r.rowsJson,
+                rowCount: r.rowCount,
+                message: r.message,
+              ))
+          .toList(),
       tookMs: resp.tookMs,
       error: resp.error != null
           ? ErrorDetail(
@@ -313,21 +328,36 @@ class KalamClient {
 
   static ChangeEvent _fromBridgeChangeEvent(gen.DartChangeEvent event) {
     return switch (event) {
-      gen.DartChangeEvent_Ack(:final subscriptionId, :final totalRows, :final schema, :final batchNum, :final hasMore, :final status) =>
+      gen.DartChangeEvent_Ack(
+        :final subscriptionId,
+        :final totalRows,
+        :final schema,
+        :final batchNum,
+        :final hasMore,
+        :final status
+      ) =>
         AckEvent(
           subscriptionId: subscriptionId,
           totalRows: totalRows,
-          schema: schema.map((s) => SchemaField(
-            name: s.name,
-            dataType: s.dataType,
-            index: s.index,
-            flags: s.flags,
-          )).toList(),
+          schema: schema
+              .map((s) => SchemaField(
+                    name: s.name,
+                    dataType: s.dataType,
+                    index: s.index,
+                    flags: s.flags,
+                  ))
+              .toList(),
           batchNum: batchNum,
           hasMore: hasMore,
           status: status,
         ),
-      gen.DartChangeEvent_InitialDataBatch(:final subscriptionId, :final rowsJson, :final batchNum, :final hasMore, :final status) =>
+      gen.DartChangeEvent_InitialDataBatch(
+        :final subscriptionId,
+        :final rowsJson,
+        :final batchNum,
+        :final hasMore,
+        :final status
+      ) =>
         InitialDataBatch(
           subscriptionId: subscriptionId,
           rowsJson: rowsJson,
@@ -337,12 +367,76 @@ class KalamClient {
         ),
       gen.DartChangeEvent_Insert(:final subscriptionId, :final rowsJson) =>
         InsertEvent(subscriptionId: subscriptionId, rowsJson: rowsJson),
-      gen.DartChangeEvent_Update(:final subscriptionId, :final rowsJson, :final oldRowsJson) =>
-        UpdateEvent(subscriptionId: subscriptionId, rowsJson: rowsJson, oldRowsJson: oldRowsJson),
+      gen.DartChangeEvent_Update(
+        :final subscriptionId,
+        :final rowsJson,
+        :final oldRowsJson
+      ) =>
+        UpdateEvent(
+            subscriptionId: subscriptionId,
+            rowsJson: rowsJson,
+            oldRowsJson: oldRowsJson),
       gen.DartChangeEvent_Delete(:final subscriptionId, :final oldRowsJson) =>
         DeleteEvent(subscriptionId: subscriptionId, oldRowsJson: oldRowsJson),
-      gen.DartChangeEvent_Error(:final subscriptionId, :final code, :final message) =>
-        SubscriptionError(subscriptionId: subscriptionId, code: code, message: message),
+      gen.DartChangeEvent_Error(
+        :final subscriptionId,
+        :final code,
+        :final message
+      ) =>
+        SubscriptionError(
+            subscriptionId: subscriptionId, code: code, message: message),
+    };
+  }
+
+  void _startConnectionEventPumpIfNeeded() {
+    final handlers = _connectionHandlers;
+    if (handlers == null || !handlers.hasAny || _connectionEventPump != null) {
+      return;
+    }
+
+    _connectionEventPump = () async {
+      try {
+        while (!_isDisposed) {
+          final event = await bridge.dartNextConnectionEvent(client: _handle);
+          if (_isDisposed || event == null) {
+            break;
+          }
+          handlers.dispatch(_fromBridgeConnectionEvent(event));
+        }
+      } catch (error) {
+        if (!_isDisposed) {
+          handlers.onError?.call(
+            ConnectionErrorInfo(
+              message: error.toString(),
+              recoverable: false,
+            ),
+          );
+        }
+      }
+    }();
+  }
+
+  static ConnectionEvent _fromBridgeConnectionEvent(
+    gen.DartConnectionEvent event,
+  ) {
+    return switch (event) {
+      gen.DartConnectionEvent_Connect() => const ConnectEvent(),
+      gen.DartConnectionEvent_Disconnect(:final reason) => DisconnectEvent(
+          reason: DisconnectReason(
+            message: reason.message,
+            code: reason.code,
+          ),
+        ),
+      gen.DartConnectionEvent_Error(:final error) => ConnectionErrorEvent(
+          error: ConnectionErrorInfo(
+            message: error.message,
+            recoverable: error.recoverable,
+          ),
+        ),
+      gen.DartConnectionEvent_Receive(:final message) =>
+        ReceiveEvent(message: message),
+      gen.DartConnectionEvent_Send(:final message) =>
+        SendEvent(message: message),
     };
   }
 }

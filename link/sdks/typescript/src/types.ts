@@ -103,6 +103,67 @@ export type TypedSubscriptionCallback<T extends Record<string, unknown>> = (
  */
 export type Unsubscribe = () => Promise<void>;
 
+/* ================================================================== */
+/*  Connection Lifecycle Event Handlers                               */
+/* ================================================================== */
+
+/**
+ * Reason for a disconnect event.
+ */
+export interface DisconnectReason {
+  /** Human-readable description of why the connection closed. */
+  message: string;
+  /** WebSocket close code, if available (e.g. 1000 = normal, 1006 = abnormal). */
+  code?: number;
+}
+
+/**
+ * Error information passed to the onError handler.
+ */
+export interface ConnectionError {
+  /** Human-readable error message. */
+  message: string;
+  /** Whether this error is recoverable (i.e. auto-reconnect may succeed). */
+  recoverable: boolean;
+}
+
+/**
+ * Callback invoked when the WebSocket connection is established and authenticated.
+ */
+export type OnConnectCallback = () => void;
+
+/**
+ * Callback invoked when the WebSocket connection is closed.
+ *
+ * @param reason - Details about why the connection was closed
+ */
+export type OnDisconnectCallback = (reason: DisconnectReason) => void;
+
+/**
+ * Callback invoked when a connection error occurs.
+ *
+ * @param error - Details about the error
+ */
+export type OnErrorCallback = (error: ConnectionError) => void;
+
+/**
+ * Callback invoked for every raw message received from the server.
+ *
+ * Debug/tracing hook — receives the raw JSON string before parsing.
+ *
+ * @param message - Raw message string
+ */
+export type OnReceiveCallback = (message: string) => void;
+
+/**
+ * Callback invoked for every raw message sent to the server.
+ *
+ * Debug/tracing hook — receives the raw JSON string of outgoing messages.
+ *
+ * @param message - Raw message string
+ */
+export type OnSendCallback = (message: string) => void;
+
 /**
  * Information about an active subscription
  */
@@ -243,6 +304,78 @@ export interface ClientOptions {
    * Defaults to `30000` (30 seconds). Set to `0` to disable.
    */
   pingIntervalMs?: number;
+
+  /**
+   * Called when the WebSocket connection is established and authenticated.
+   *
+   * @example
+   * ```typescript
+   * const client = createClient({
+   *   url: 'http://localhost:8080',
+   *   auth: Auth.basic('admin', 'secret'),
+   *   onConnect: () => console.log('Connected!'),
+   * });
+   * ```
+   */
+  onConnect?: OnConnectCallback;
+
+  /**
+   * Called when the WebSocket connection is closed.
+   *
+   * @example
+   * ```typescript
+   * const client = createClient({
+   *   url: 'http://localhost:8080',
+   *   auth: Auth.basic('admin', 'secret'),
+   *   onDisconnect: (reason) => console.log('Disconnected:', reason.message),
+   * });
+   * ```
+   */
+  onDisconnect?: OnDisconnectCallback;
+
+  /**
+   * Called when a connection error occurs.
+   *
+   * @example
+   * ```typescript
+   * const client = createClient({
+   *   url: 'http://localhost:8080',
+   *   auth: Auth.basic('admin', 'secret'),
+   *   onError: (err) => console.error('Error:', err.message, 'recoverable:', err.recoverable),
+   * });
+   * ```
+   */
+  onError?: OnErrorCallback;
+
+  /**
+   * Called for every raw message received from the server.
+   * Debug/tracing hook — not needed for normal operation.
+   *
+   * @example
+   * ```typescript
+   * const client = createClient({
+   *   url: 'http://localhost:8080',
+   *   auth: Auth.basic('admin', 'secret'),
+   *   onReceive: (msg) => console.log('[RECV]', msg),
+   * });
+   * ```
+   */
+  onReceive?: OnReceiveCallback;
+
+  /**
+   * Called for every raw message sent to the server.
+   * Debug/tracing hook — not needed for normal operation.
+   *
+   * @example
+   * ```typescript
+   * const client = createClient({
+   *   url: 'http://localhost:8080',
+   *   auth: Auth.basic('admin', 'secret'),
+   *   onSend: (msg) => console.log('[SEND]', msg),
+   * });
+   * ```
+   */
+  onSend?: OnSendCallback;
 }
 
 /* ================================================================== */

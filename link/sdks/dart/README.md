@@ -87,6 +87,60 @@ flutter pub get
 flutter run
 ```
 
+### Local scripts
+
+```bash
+# From link/sdks/dart
+./build.sh   # pub get + optional FRB generation + analyze
+./test.sh    # pub get + analyze + flutter test
+
+# Force FRB generation / disable it explicitly
+FRB_GENERATE=always ./build.sh
+FRB_GENERATE=never ./build.sh
+```
+
+### Live server integration tests
+
+```bash
+# Requires a running KalamDB server
+cd link/sdks/dart
+KALAM_INTEGRATION_TEST=1 \
+KALAM_URL=http://localhost:8080 \
+KALAM_USER=admin \
+KALAM_PASS=kalamdb123 \
+flutter test test/live_server_test.dart
+```
+
+Notes:
+- The integration test creates and drops temporary tables.
+- `KALAM_BUILD_DART_BRIDGE=1` (default) auto-builds the Rust bridge if needed.
+
+### Connection lifecycle handlers
+
+`KalamClient.connect` supports optional connection callbacks via
+`ConnectionHandlers`:
+
+```dart
+final client = await KalamClient.connect(
+  url: 'https://db.example.com',
+  auth: Auth.jwt(token),
+  connectionHandlers: ConnectionHandlers(
+    onConnect: () => print('connected'),
+    onDisconnect: (reason) => print('disconnected: ${reason.message}'),
+    onError: (error) => print('error: ${error.message}'),
+    onReceive: (message) => print('[recv] $message'),
+    onSend: (message) => print('[send] $message'),
+  ),
+);
+```
+
+Supported lifecycle/debug events:
+- `onConnect`
+- `onDisconnect`
+- `onError`
+- `onReceive`
+- `onSend`
+
 ## Architecture
 
 ```

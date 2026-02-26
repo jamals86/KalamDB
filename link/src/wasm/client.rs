@@ -88,6 +88,12 @@ pub struct KalamClient {
     is_reconnecting: Rc<RefCell<bool>>,
     /// Active keepalive ping interval ID (from `setInterval`), or -1 if none.
     ping_interval_id: Rc<RefCell<i32>>,
+    /// Connection lifecycle event handlers
+    on_connect_cb: Rc<RefCell<Option<js_sys::Function>>>,
+    on_disconnect_cb: Rc<RefCell<Option<js_sys::Function>>>,
+    on_error_cb: Rc<RefCell<Option<js_sys::Function>>>,
+    on_receive_cb: Rc<RefCell<Option<js_sys::Function>>>,
+    on_send_cb: Rc<RefCell<Option<js_sys::Function>>>,
 }
 
 impl KalamClient {
@@ -101,6 +107,11 @@ impl KalamClient {
             reconnect_attempts: Rc::new(RefCell::new(0)),
             is_reconnecting: Rc::new(RefCell::new(false)),
             ping_interval_id: Rc::new(RefCell::new(-1)),
+            on_connect_cb: Rc::new(RefCell::new(None)),
+            on_disconnect_cb: Rc::new(RefCell::new(None)),
+            on_error_cb: Rc::new(RefCell::new(None)),
+            on_receive_cb: Rc::new(RefCell::new(None)),
+            on_send_cb: Rc::new(RefCell::new(None)),
         }
     }
 }
@@ -267,6 +278,71 @@ impl KalamClient {
             .and_then(|state| state.last_seq_id.map(|seq| seq.to_string()))
     }
 
+    /// Register a callback invoked when the WebSocket connection is established.
+    ///
+    /// The callback receives no arguments.
+    ///
+    /// # Example (JavaScript)
+    /// ```js
+    /// client.onConnect(() => console.log('Connected!'));
+    /// ```
+    #[wasm_bindgen(js_name = onConnect)]
+    pub fn on_connect(&self, callback: js_sys::Function) {
+        *self.on_connect_cb.borrow_mut() = Some(callback);
+    }
+
+    /// Register a callback invoked when the WebSocket connection is closed.
+    ///
+    /// The callback receives an object: `{ message: string, code?: number }`.
+    ///
+    /// # Example (JavaScript)
+    /// ```js
+    /// client.onDisconnect((reason) => console.log('Disconnected:', reason.message));
+    /// ```
+    #[wasm_bindgen(js_name = onDisconnect)]
+    pub fn on_disconnect(&self, callback: js_sys::Function) {
+        *self.on_disconnect_cb.borrow_mut() = Some(callback);
+    }
+
+    /// Register a callback invoked when a connection error occurs.
+    ///
+    /// The callback receives an object: `{ message: string, recoverable: boolean }`.
+    ///
+    /// # Example (JavaScript)
+    /// ```js
+    /// client.onError((err) => console.error('Error:', err.message, 'recoverable:', err.recoverable));
+    /// ```
+    #[wasm_bindgen(js_name = onError)]
+    pub fn on_error(&self, callback: js_sys::Function) {
+        *self.on_error_cb.borrow_mut() = Some(callback);
+    }
+
+    /// Register a callback invoked for every raw message received from the server.
+    ///
+    /// This is a debug/tracing hook. The callback receives the raw JSON string.
+    ///
+    /// # Example (JavaScript)
+    /// ```js
+    /// client.onReceive((msg) => console.log('[RECV]', msg));
+    /// ```
+    #[wasm_bindgen(js_name = onReceive)]
+    pub fn on_receive(&self, callback: js_sys::Function) {
+        *self.on_receive_cb.borrow_mut() = Some(callback);
+    }
+
+    /// Register a callback invoked for every raw message sent to the server.
+    ///
+    /// This is a debug/tracing hook. The callback receives the raw JSON string.
+    ///
+    /// # Example (JavaScript)
+    /// ```js
+    /// client.onSend((msg) => console.log('[SEND]', msg));
+    /// ```
+    #[wasm_bindgen(js_name = onSend)]
+    pub fn on_send(&self, callback: js_sys::Function) {
+        *self.on_send_cb.borrow_mut() = Some(callback);
+    }
+
     /// Connect to KalamDB server via WebSocket (T045, T063C-T063D)
     ///
     /// # Returns
@@ -288,8 +364,7 @@ impl KalamClient {
         console_log("KalamClient: Connecting to WebSocket...");
 
         // Convert http(s) URL to ws(s) URL (no auth in URL)
-        let ws_url = self.url.replace("http://", "ws://").replace("https://", "wss://");
-        let ws_url = format!("{}/v1/ws", ws_url);
+        let ws_url = super::helpers::ws_url_from_http(&self.url)?;
 
         // T063C: Implement proper WebSocket connection using web-sys::WebSocket
         let ws = WebSocket::new(&ws_url)?;
@@ -309,6 +384,8 @@ impl KalamClient {
         let auth_message = self.auth.to_ws_auth_message();
         let ws_clone_for_auth = ws.clone();
         let auth_resolve_for_anon = auth_resolve.clone();
+        let on_send_for_open = Rc::clone(&self.on_send_cb);
+        let on_connect_for_open = Rc::clone(&self.on_connect_cb);
 
         // Set up onopen handler to send authentication message
         let connect_resolve_clone = connect_resolve.clone();
@@ -318,13 +395,20 @@ impl KalamClient {
             // Send authentication message if we have one
             if let Some(auth_msg) = &auth_message {
                 if let Ok(json) = serde_json::to_string(&auth_msg) {
+                    // Emit on_send for the auth message
+                    if let Some(cb) = on_send_for_open.borrow().as_ref() {
+                        let _ = cb.call1(&JsValue::NULL, &JsValue::from_str(&json));
+                    }
                     if let Err(e) = ws_clone_for_auth.send_with_str(&json) {
                         console_log(&format!("KalamClient: Failed to send auth message: {:?}", e));
                     }
                 }
             } else {
-                // No auth needed (anonymous), resolve auth immediately
+                // No auth needed (anonymous), resolve auth immediately and emit on_connect
                 console_log("KalamClient: Anonymous connection, skipping authentication");
+                if let Some(cb) = on_connect_for_open.borrow().as_ref() {
+                    let _ = cb.call0(&JsValue::NULL);
+                }
                 let _ = auth_resolve_for_anon.call0(&JsValue::NULL);
             }
 
@@ -336,8 +420,20 @@ impl KalamClient {
         // T063L: Implement WebSocket error and close handlers
         let connect_reject_clone = connect_reject.clone();
         let auth_reject_clone = auth_reject.clone();
+        let on_error_for_err = Rc::clone(&self.on_error_cb);
         let onerror_callback = Closure::wrap(Box::new(move |e: ErrorEvent| {
             console_log(&format!("KalamClient: WebSocket error: {:?}", e));
+            // Emit on_error callback
+            if let Some(cb) = on_error_for_err.borrow().as_ref() {
+                let err_obj = js_sys::Object::new();
+                let _ = js_sys::Reflect::set(
+                    &err_obj,
+                    &"message".into(),
+                    &JsValue::from_str("WebSocket connection failed"),
+                );
+                let _ = js_sys::Reflect::set(&err_obj, &"recoverable".into(), &JsValue::TRUE);
+                let _ = cb.call1(&JsValue::NULL, &err_obj);
+            }
             let error_msg = JsValue::from_str("WebSocket connection failed");
             let _ = connect_reject_clone.call1(&JsValue::NULL, &error_msg);
             let _ = auth_reject_clone.call1(&JsValue::NULL, &error_msg);
@@ -345,12 +441,28 @@ impl KalamClient {
         ws.set_onerror(Some(onerror_callback.as_ref().unchecked_ref()));
         onerror_callback.forget();
 
+        let on_disconnect_for_close = Rc::clone(&self.on_disconnect_cb);
         let onclose_callback = Closure::wrap(Box::new(move |e: CloseEvent| {
             console_log(&format!(
                 "KalamClient: WebSocket closed: code={}, reason={}",
                 e.code(),
                 e.reason()
             ));
+            // Emit on_disconnect callback
+            if let Some(cb) = on_disconnect_for_close.borrow().as_ref() {
+                let reason_obj = js_sys::Object::new();
+                let _ = js_sys::Reflect::set(
+                    &reason_obj,
+                    &"message".into(),
+                    &JsValue::from_str(&e.reason()),
+                );
+                let _ = js_sys::Reflect::set(
+                    &reason_obj,
+                    &"code".into(),
+                    &JsValue::from_f64(e.code() as f64),
+                );
+                let _ = cb.call1(&JsValue::NULL, &reason_obj);
+            }
             // Note: Auto-reconnection is handled via the setup_auto_reconnect callback
         }) as Box<dyn FnMut(CloseEvent)>);
         ws.set_onclose(Some(onclose_callback.as_ref().unchecked_ref()));
@@ -365,6 +477,9 @@ impl KalamClient {
         let auth_reject_clone2 = auth_reject.clone();
         let auth_handled = Rc::new(RefCell::new(!requires_auth)); // Already handled if anonymous
         let auth_handled_clone = Rc::clone(&auth_handled);
+        let on_receive_for_msg = Rc::clone(&self.on_receive_cb);
+        let on_connect_for_msg = Rc::clone(&self.on_connect_cb);
+        let on_error_for_msg = Rc::clone(&self.on_error_cb);
 
         let onmessage_callback = Closure::wrap(Box::new(move |e: MessageEvent| {
             // Handle Text, ArrayBuffer, and Blob messages
@@ -438,6 +553,11 @@ impl KalamClient {
                 ));
             }
 
+            // Emit on_receive callback for debug tracing
+            if let Some(cb) = on_receive_for_msg.borrow().as_ref() {
+                let _ = cb.call1(&JsValue::NULL, &JsValue::from_str(&message));
+            }
+
             // Parse message using ServerMessage enum
             if let Ok(event) = serde_json::from_str::<ServerMessage>(&message) {
                 // Check for authentication response first
@@ -449,6 +569,10 @@ impl KalamClient {
                                 user_id, role
                             ));
                             *auth_handled_clone.borrow_mut() = true;
+                            // Emit on_connect — connection is fully established and authenticated
+                            if let Some(cb) = on_connect_for_msg.borrow().as_ref() {
+                                let _ = cb.call0(&JsValue::NULL);
+                            }
                             let _ = auth_resolve_clone.call0(&JsValue::NULL);
                             return;
                         },
@@ -458,6 +582,24 @@ impl KalamClient {
                                 error_msg
                             ));
                             *auth_handled_clone.borrow_mut() = true;
+                            // Emit on_error for auth failure
+                            if let Some(cb) = on_error_for_msg.borrow().as_ref() {
+                                let err_obj = js_sys::Object::new();
+                                let _ = js_sys::Reflect::set(
+                                    &err_obj,
+                                    &"message".into(),
+                                    &JsValue::from_str(&format!(
+                                        "Authentication failed: {}",
+                                        error_msg
+                                    )),
+                                );
+                                let _ = js_sys::Reflect::set(
+                                    &err_obj,
+                                    &"recoverable".into(),
+                                    &JsValue::FALSE,
+                                );
+                                let _ = cb.call1(&JsValue::NULL, &err_obj);
+                            }
                             let error =
                                 JsValue::from_str(&format!("Authentication failed: {}", error_msg));
                             let _ = auth_reject_clone2.call1(&JsValue::NULL, &error);
@@ -922,6 +1064,10 @@ impl KalamClient {
                 "KalamClient: Sending subscribe request - id: {}, sql: {}",
                 subscription_id, sql
             ));
+            // Emit on_send for debug tracing
+            if let Some(cb) = self.on_send_cb.borrow().as_ref() {
+                let _ = cb.call1(&JsValue::NULL, &JsValue::from_str(&payload));
+            }
             ws.send_with_str(&payload)?;
         }
 
@@ -948,6 +1094,10 @@ impl KalamClient {
             };
             let payload = serde_json::to_string(&unsubscribe_msg)
                 .map_err(|e| JsValue::from_str(&format!("Serialization error: {}", e)))?;
+            // Emit on_send for debug tracing
+            if let Some(cb) = self.on_send_cb.borrow().as_ref() {
+                let _ = cb.call1(&JsValue::NULL, &JsValue::from_str(&payload));
+            }
             ws.send_with_str(&payload)?;
         }
 

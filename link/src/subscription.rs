@@ -6,6 +6,7 @@
 use crate::{
     auth::AuthProvider,
     error::{KalamLinkError, Result},
+    event_handlers::{ConnectionError, DisconnectReason, EventHandlers},
     models::{
         BatchStatus, ChangeEvent, ClientMessage, ConnectionOptions, ServerMessage,
         SubscriptionConfig, SubscriptionOptions, SubscriptionRequest, WsAuthCredentials,
@@ -15,6 +16,7 @@ use crate::{
 use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
 use reqwest::Url;
+use crate::models::ChangeTypeRaw;
 use serde_json::Value;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::VecDeque;
@@ -23,6 +25,9 @@ use std::io::{Error as IoError, ErrorKind};
 use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 use tokio::net::{lookup_host, TcpSocket, TcpStream};
+use tokio::sync::{mpsc, oneshot};
+use tokio::task::JoinHandle;
+use tokio::time::Instant as TokioInstant;
 use tokio_tungstenite::{
     client_async_tls_with_config, connect_async,
     tungstenite::{
@@ -41,6 +46,11 @@ type WebSocketStream =
 const MAX_WS_TEXT_MESSAGE_BYTES: usize = 64 << 20; // 64 MiB
 const MAX_WS_BINARY_MESSAGE_BYTES: usize = 16 << 20; // 16 MiB
 const MAX_WS_DECOMPRESSED_MESSAGE_BYTES: usize = 64 << 20; // 64 MiB
+
+/// Default capacity for the internal event channel between the background
+/// reader task and the consumer. When full, the reader applies back-pressure
+/// by pausing WebSocket reads.
+const DEFAULT_EVENT_CHANNEL_CAPACITY: usize = 8192;
 
 /// Manages WebSocket subscriptions for real-time change notifications.
 ///
@@ -331,56 +341,74 @@ async fn send_auth_and_wait(
         KalamLinkError::WebSocketError(format!("Failed to send auth message: {}", e))
     })?;
 
-    // Wait for AuthSuccess or AuthError response with configured timeout
-    let response = tokio::time::timeout(auth_timeout, ws_stream.next()).await;
+    // Loop until we receive AuthSuccess/AuthError, tolerating Ping/Pong and
+    // other non-auth frames that the server may send during the handshake.
+    let deadline = TokioInstant::now() + auth_timeout;
+    loop {
+        let remaining = deadline.saturating_duration_since(TokioInstant::now());
+        if remaining.is_zero() {
+            return Err(KalamLinkError::TimeoutError(format!(
+                "Authentication timeout ({:?})",
+                auth_timeout
+            )));
+        }
 
-    match response {
-        Ok(Some(Ok(Message::Text(text)))) => {
-            // Parse as ServerMessage to check for auth response
-            match serde_json::from_str::<ServerMessage>(&text) {
-                Ok(ServerMessage::AuthSuccess {
-                    user_id: _,
-                    role: _,
-                }) => {
-                    // Authentication successful
-                    Ok(())
-                },
-                Ok(ServerMessage::AuthError { message }) => {
-                    Err(KalamLinkError::AuthenticationError(format!(
-                        "WebSocket authentication failed: {}",
-                        message
-                    )))
-                },
-                Ok(other) => {
-                    // Unexpected message type
-                    Err(KalamLinkError::WebSocketError(format!(
-                        "Unexpected response during authentication: {:?}",
-                        other
-                    )))
-                },
-                Err(e) => Err(KalamLinkError::WebSocketError(format!(
-                    "Failed to parse auth response: {}",
+        match tokio::time::timeout(remaining, ws_stream.next()).await {
+            Ok(Some(Ok(Message::Text(text)))) => {
+                match serde_json::from_str::<ServerMessage>(&text) {
+                    Ok(ServerMessage::AuthSuccess {
+                        user_id: _,
+                        role: _,
+                    }) => return Ok(()),
+                    Ok(ServerMessage::AuthError { message }) => {
+                        return Err(KalamLinkError::AuthenticationError(format!(
+                            "WebSocket authentication failed: {}",
+                            message
+                        )));
+                    },
+                    // Tolerate other messages (e.g. server heartbeats) during
+                    // the handshake — keep waiting for the auth reply.
+                    Ok(_) => continue,
+                    Err(e) => {
+                        return Err(KalamLinkError::WebSocketError(format!(
+                            "Failed to parse auth response: {}",
+                            e
+                        )));
+                    },
+                }
+            },
+            Ok(Some(Ok(Message::Ping(payload)))) => {
+                // Reply to pings during the handshake.
+                let _ = ws_stream.send(Message::Pong(payload)).await;
+            },
+            Ok(Some(Ok(
+                Message::Pong(_) | Message::Binary(_) | Message::Frame(_),
+            ))) => {
+                continue;
+            },
+            Ok(Some(Ok(Message::Close(_)))) => {
+                return Err(KalamLinkError::WebSocketError(
+                    "Connection closed during authentication".to_string(),
+                ));
+            },
+            Ok(Some(Err(e))) => {
+                return Err(KalamLinkError::WebSocketError(format!(
+                    "WebSocket error during authentication: {}",
                     e
-                ))),
-            }
-        },
-        Ok(Some(Ok(Message::Close(_)))) => Err(KalamLinkError::WebSocketError(
-            "Connection closed during authentication".to_string(),
-        )),
-        Ok(Some(Ok(_))) => Err(KalamLinkError::WebSocketError(
-            "Unexpected message type during authentication".to_string(),
-        )),
-        Ok(Some(Err(e))) => Err(KalamLinkError::WebSocketError(format!(
-            "WebSocket error during authentication: {}",
-            e
-        ))),
-        Ok(None) => Err(KalamLinkError::WebSocketError(
-            "Connection closed before authentication completed".to_string(),
-        )),
-        Err(_) => Err(KalamLinkError::TimeoutError(format!(
-            "Authentication timeout ({:?})",
-            auth_timeout
-        ))),
+                )));
+            },
+            Ok(None) => {
+                return Err(KalamLinkError::WebSocketError(
+                    "Connection closed before authentication completed".to_string(),
+                ));
+            },
+            Err(_) => {
+                return Err(KalamLinkError::TimeoutError(format!(
+                    "Authentication timeout ({:?})",
+                    auth_timeout
+                )));
+            },
+        }
     }
 }
 
@@ -447,7 +475,6 @@ fn parse_message(text: &str) -> Result<Option<ChangeEvent>> {
                     rows,
                     old_values,
                 } => {
-                    use crate::models::ChangeTypeRaw;
                     match change_type {
                         ChangeTypeRaw::Insert => ChangeEvent::Insert {
                             subscription_id,
@@ -537,16 +564,260 @@ fn jitter_keepalive_interval(base: Duration, subscription_id: &str) -> Duration 
     Duration::from_millis(jittered_ms)
 }
 
-pub struct SubscriptionManager {
-    ws_stream: Option<WebSocketStream>,
+// ── Standalone helpers used by the background reader task ───────────────────
+
+/// Decode a binary (gzip-compressed) WebSocket payload into a UTF-8 string.
+fn decode_ws_payload(data: &[u8]) -> Result<String> {
+    if data.len() > MAX_WS_BINARY_MESSAGE_BYTES {
+        return Err(KalamLinkError::WebSocketError(format!(
+            "Binary WebSocket message too large ({} bytes > {} bytes)",
+            data.len(),
+            MAX_WS_BINARY_MESSAGE_BYTES
+        )));
+    }
+
+    let decompressed = crate::compression::decompress_gzip_with_limit(
+        data,
+        MAX_WS_DECOMPRESSED_MESSAGE_BYTES,
+    )
+    .map_err(|e| {
+        KalamLinkError::WebSocketError(format!("Failed to decompress message: {}", e))
+    })?;
+    String::from_utf8(decompressed).map_err(|e| {
+        KalamLinkError::WebSocketError(format!(
+            "Invalid UTF-8 in decompressed message: {}",
+            e
+        ))
+    })
+}
+
+/// Send a `NextBatch` request through the WebSocket stream.
+async fn send_next_batch_request(
+    ws_stream: &mut WebSocketStream,
+    subscription_id: &str,
+    last_seq_id: Option<crate::seq_id::SeqId>,
+) -> Result<()> {
+    let message = ClientMessage::NextBatch {
+        subscription_id: subscription_id.to_string(),
+        last_seq_id,
+    };
+    let payload = serde_json::to_string(&message).map_err(|e| {
+        KalamLinkError::WebSocketError(format!("Failed to serialize NextBatch: {}", e))
+    })?;
+    ws_stream
+        .send(Message::Text(payload.into()))
+        .await
+        .map_err(|e| KalamLinkError::WebSocketError(format!("Failed to send NextBatch: {}", e)))
+}
+
+/// Best-effort Unsubscribe + Close over a WebSocket stream.
+async fn send_unsubscribe_and_close(
+    ws_stream: &mut WebSocketStream,
+    subscription_id: &str,
+) {
+    let message = ClientMessage::Unsubscribe {
+        subscription_id: subscription_id.to_string(),
+    };
+    if let Ok(payload) = serde_json::to_string(&message) {
+        let _ = ws_stream.send(Message::Text(payload.into())).await;
+    }
+    let _ = ws_stream.close(None).await;
+}
+
+/// Parse a text payload, auto-request the next batch when needed, and forward
+/// the parsed event to the bounded channel.
+///
+/// Returns `true` when the reader loop should exit (channel closed or fatal).
+async fn process_and_forward(
+    text: &str,
+    ws_stream: &mut WebSocketStream,
+    event_tx: &mpsc::Sender<Result<ChangeEvent>>,
+    subscription_id: &str,
+) -> bool {
+    match parse_message(text) {
+        Ok(Some(event)) => {
+            // Auto-request next batch when initial data has more pages
+            if let ChangeEvent::InitialDataBatch {
+                ref batch_control, ..
+            } = event
+            {
+                if batch_control.has_more {
+                    if let Err(e) = send_next_batch_request(
+                        ws_stream,
+                        subscription_id,
+                        batch_control.last_seq_id,
+                    )
+                    .await
+                    {
+                        let _ = event_tx.send(Err(e)).await;
+                        return true;
+                    }
+                }
+            }
+            event_tx.send(Ok(event)).await.is_err()
+        },
+        Ok(None) => false, // skip auth acks etc.
+        Err(e) => event_tx.send(Err(e)).await.is_err(),
+    }
+}
+
+/// Background task that owns the WebSocket stream and forwards parsed events
+/// through a bounded channel.
+///
+/// Responsibilities:
+/// - Read WS frames, decompress binary payloads, parse JSON into `ChangeEvent`
+/// - Auto-request next batch when `InitialDataBatch.has_more` is set
+/// - Send periodic keepalive pings when idle
+/// - Graceful shutdown on close signal or stream end
+/// - Emit lifecycle events via `EventHandlers`
+async fn ws_reader_loop(
+    mut ws_stream: WebSocketStream,
+    event_tx: mpsc::Sender<Result<ChangeEvent>>,
+    close_rx: oneshot::Receiver<()>,
     subscription_id: String,
+    keepalive_interval: Option<Duration>,
+    event_handlers: EventHandlers,
+) {
+    // NOTE: emit_connect is called by SubscriptionManager::new() before this
+    // task is spawned, so we only handle disconnect / error / receive here.
+    tokio::pin!(close_rx);
+
+    let keepalive_dur = keepalive_interval.unwrap_or(Duration::MAX);
+    let has_keepalive = keepalive_interval.is_some();
+    let mut idle_deadline = TokioInstant::now() + keepalive_dur;
+
+    loop {
+        let idle_sleep = tokio::time::sleep_until(idle_deadline);
+        tokio::pin!(idle_sleep);
+
+        let frame = tokio::select! {
+            biased;
+
+            // Highest priority: graceful shutdown requested by close() / Drop.
+            _ = &mut close_rx => {
+                send_unsubscribe_and_close(&mut ws_stream, &subscription_id).await;
+                event_handlers.emit_disconnect(
+                    DisconnectReason::with_code("Subscription closed by client".to_string(), 1000),
+                );
+                return;
+            }
+
+            // Second priority: keepalive idle timer.
+            _ = &mut idle_sleep, if has_keepalive => {
+                if let Err(e) = ws_stream.send(Message::Ping(Bytes::new())).await {
+                    let _ = event_tx
+                        .send(Err(KalamLinkError::WebSocketError(format!(
+                            "Failed to send keepalive ping: {}", e
+                        ))))
+                        .await;
+                    event_handlers.emit_disconnect(
+                        DisconnectReason::new(format!("Keepalive ping failed: {}", e)),
+                    );
+                    return;
+                }
+                event_handlers.emit_send("[ping]");
+                idle_deadline = TokioInstant::now() + keepalive_dur;
+                continue;
+            }
+
+            // Normal path: read the next WebSocket frame.
+            msg = ws_stream.next() => {
+                idle_deadline = TokioInstant::now() + keepalive_dur;
+                msg
+            }
+        };
+
+        match frame {
+            Some(Ok(Message::Text(text))) => {
+                if text.len() > MAX_WS_TEXT_MESSAGE_BYTES {
+                    let _ = event_tx
+                        .send(Err(KalamLinkError::WebSocketError(format!(
+                            "Text message too large ({} bytes > {} bytes)",
+                            text.len(),
+                            MAX_WS_TEXT_MESSAGE_BYTES
+                        ))))
+                        .await;
+                    return;
+                }
+                event_handlers.emit_receive(&text);
+                if process_and_forward(&text, &mut ws_stream, &event_tx, &subscription_id)
+                    .await
+                {
+                    return;
+                }
+            },
+            Some(Ok(Message::Binary(data))) => match decode_ws_payload(&data) {
+                Ok(text) => {
+                    event_handlers.emit_receive(&text);
+                    if process_and_forward(
+                        &text,
+                        &mut ws_stream,
+                        &event_tx,
+                        &subscription_id,
+                    )
+                    .await
+                    {
+                        return;
+                    }
+                },
+                Err(e) => {
+                    event_handlers.emit_error(ConnectionError::new(e.to_string(), false));
+                    if event_tx.send(Err(e)).await.is_err() {
+                        return;
+                    }
+                },
+            },
+            Some(Ok(Message::Close(frame))) => {
+                let reason = if let Some(f) = frame {
+                    DisconnectReason::with_code(f.reason.to_string(), f.code.into())
+                } else {
+                    DisconnectReason::new("Server closed connection")
+                };
+                event_handlers.emit_disconnect(reason);
+                return;
+            },
+            Some(Ok(Message::Ping(payload))) => {
+                // tokio-tungstenite auto-responds, but be explicit for clarity.
+                let _ = ws_stream.send(Message::Pong(payload)).await;
+            },
+            Some(Ok(Message::Pong(_))) | Some(Ok(Message::Frame(_))) => {},
+            Some(Err(e)) => {
+                let msg = e.to_string();
+                event_handlers.emit_error(ConnectionError::new(&msg, false));
+                event_handlers
+                    .emit_disconnect(DisconnectReason::new(format!("WebSocket error: {}", msg)));
+                let _ = event_tx
+                    .send(Err(KalamLinkError::WebSocketError(msg)))
+                    .await;
+                return;
+            },
+            None => {
+                event_handlers
+                    .emit_disconnect(DisconnectReason::new("WebSocket stream ended"));
+                return;
+            },
+        }
+    }
+}
+
+pub struct SubscriptionManager {
+    subscription_id: String,
+    /// Receives parsed events from the background WS reader task.
+    event_rx: mpsc::Receiver<Result<ChangeEvent>>,
+    /// Signal the background task to initiate graceful shutdown.
+    /// `None` after `close()` has been called (or consumed by `Drop`).
+    close_tx: Option<oneshot::Sender<()>>,
+    /// Handle to the background reader task — kept to prevent detached-task
+    /// warnings and to allow future `.await` on shutdown.
+    _reader_handle: JoinHandle<()>,
+    /// Local event buffer for yielding batched events from a single WS message.
     event_queue: VecDeque<ChangeEvent>,
+    /// Changes received while initial data is still loading.
     buffered_changes: Vec<ChangeEvent>,
+    /// Whether initial data is still loading.
     is_loading: bool,
     timeouts: KalamLinkTimeouts,
     closed: bool,
-    /// Keepalive interval — `None` means keepalive pings are disabled.
-    keepalive_interval: Option<Duration>,
 }
 
 impl SubscriptionManager {
@@ -559,6 +830,7 @@ impl SubscriptionManager {
         auth: &AuthProvider,
         timeouts: &KalamLinkTimeouts,
         connection_options: &ConnectionOptions,
+        event_handlers: &EventHandlers,
     ) -> Result<Self> {
         let SubscriptionConfig {
             id,
@@ -623,16 +895,18 @@ impl SubscriptionManager {
                         }
                     },
                 };
+                event_handlers.emit_error(ConnectionError::new(&message, false));
                 return Err(KalamLinkError::WebSocketError(message));
             },
             Ok(Err(e)) => {
-                return Err(KalamLinkError::WebSocketError(format!("Connection failed: {}", e)));
+                let msg = format!("Connection failed: {}", e);
+                event_handlers.emit_error(ConnectionError::new(&msg, true));
+                return Err(KalamLinkError::WebSocketError(msg));
             },
             Err(_) => {
-                return Err(KalamLinkError::TimeoutError(format!(
-                    "Connection timeout ({:?})",
-                    timeouts.connection_timeout
-                )));
+                let msg = format!("Connection timeout ({:?})", timeouts.connection_timeout);
+                event_handlers.emit_error(ConnectionError::new(&msg, true));
+                return Err(KalamLinkError::TimeoutError(msg));
             },
         };
 
@@ -641,6 +915,9 @@ impl SubscriptionManager {
         // Send authentication message and wait for AuthSuccess
         // (WebSocket protocol requires explicit Authenticate message even with HTTP headers)
         send_auth_and_wait(&mut ws_stream, auth, timeouts.auth_timeout).await?;
+
+        // Emit on_connect event — WebSocket is established and authenticated
+        event_handlers.emit_connect();
 
         // Use the provided subscription ID (now required)
         let subscription_id = id;
@@ -653,15 +930,28 @@ impl SubscriptionManager {
         // Send subscription request
         send_subscription_request(&mut ws_stream, &subscription_id, &sql, options).await?;
 
+        // Spawn background reader task — all WS I/O happens there from now on.
+        let (event_tx, event_rx) = mpsc::channel(DEFAULT_EVENT_CHANNEL_CAPACITY);
+        let (close_tx, close_rx) = oneshot::channel();
+        let reader_handle = tokio::spawn(ws_reader_loop(
+            ws_stream,
+            event_tx,
+            close_rx,
+            subscription_id.clone(),
+            keepalive_interval,
+            event_handlers.clone(),
+        ));
+
         Ok(Self {
-            ws_stream: Some(ws_stream),
             subscription_id,
+            event_rx,
+            close_tx: Some(close_tx),
+            _reader_handle: reader_handle,
             event_queue: VecDeque::new(),
             buffered_changes: Vec::new(),
             is_loading: true,
             timeouts: timeouts.clone(),
             closed: false,
-            keepalive_interval,
         })
     }
 
@@ -671,27 +961,12 @@ impl SubscriptionManager {
         }
     }
 
-    /// Process a parsed change event: request next batch if needed and apply
-    /// buffering logic. Returns `Some` if the caller should yield early (error
-    /// while requesting next batch).
+    /// Buffer incoming events: hold live changes while initial data is loading,
+    /// then flush them in order once the snapshot is complete.
     ///
-    /// NOTE: We intentionally do NOT overwrite `self.subscription_id` from
-    /// server-sent events. The client keeps the original ID it passed during
-    /// subscribe so that Unsubscribe sends the correct key.
-    async fn process_event(&mut self, event: ChangeEvent) -> Option<Result<ChangeEvent>> {
-        // Request next batch when initial data has more pages
-        if let ChangeEvent::InitialDataBatch {
-            ref batch_control, ..
-        } = event
-        {
-            if batch_control.has_more {
-                if let Err(e) = self.request_next_batch(batch_control.last_seq_id).await {
-                    return Some(Err(e));
-                }
-            }
-        }
-
-        // Buffering logic: hold live changes while initial data is still loading
+    /// NOTE: `NextBatch` requests are handled by the background reader task,
+    /// not here.  This method only handles local event ordering.
+    fn apply_buffering(&mut self, event: ChangeEvent) {
         match event {
             ChangeEvent::Ack {
                 ref batch_control, ..
@@ -718,171 +993,41 @@ impl SubscriptionManager {
                 self.event_queue.push_back(event);
             },
         }
-
-        None // no early return needed
     }
 
-    /// Decode a raw WebSocket payload (text or binary/gzip) into a UTF-8 string.
-    fn decode_ws_payload(data: &[u8], is_binary: bool) -> Result<String> {
-        if is_binary {
-            if data.len() > MAX_WS_BINARY_MESSAGE_BYTES {
-                return Err(KalamLinkError::WebSocketError(format!(
-                    "Binary WebSocket message too large ({} bytes > {} bytes)",
-                    data.len(),
-                    MAX_WS_BINARY_MESSAGE_BYTES
-                )));
-            }
-
-            let decompressed = crate::compression::decompress_gzip_with_limit(
-                data,
-                MAX_WS_DECOMPRESSED_MESSAGE_BYTES,
-            )
-            .map_err(|e| {
-                KalamLinkError::WebSocketError(format!("Failed to decompress message: {}", e))
-            })?;
-            String::from_utf8(decompressed).map_err(|e| {
-                KalamLinkError::WebSocketError(format!(
-                    "Invalid UTF-8 in decompressed message: {}",
-                    e
-                ))
-            })
-        } else {
-            // Text is already valid UTF-8 (enforced by tokio-tungstenite)
-            Ok(String::from_utf8_lossy(data).into_owned())
-        }
-    }
-
-    /// Receive the next change event from the subscription
+    /// Receive the next change event from the subscription.
     ///
-    /// **Implements T080**: WebSocket message parsing for ChangeEvent enum
+    /// Events are delivered by a background reader task through a bounded
+    /// channel.  The consumer applies initial-data buffering so live changes
+    /// are held until the snapshot is complete.
     ///
     /// Returns `None` when the connection is closed.
-    /// Automatically requests next batches when initial data has more batches available.
-    /// Sends periodic keepalive pings when `keepalive_interval` is configured so the
-    /// server-side heartbeat timeout never fires for healthy idle connections.
     pub async fn next(&mut self) -> Option<Result<ChangeEvent>> {
         loop {
-            // 1. Drain event queue first
+            // 1. Drain local event queue first
             if let Some(event) = self.event_queue.pop_front() {
                 return Some(Ok(event));
             }
 
-            // 2. If closed or stream taken, signal end-of-stream
-            let ws_stream = match self.ws_stream.as_mut() {
-                Some(s) => s,
-                None => return None,
-            };
+            // 2. If already closed, signal end-of-stream
+            if self.closed {
+                return None;
+            }
 
-            // 3. Await next WS frame, with an optional keepalive timeout.
-            //    If the timeout fires before any frame arrives we send a Ping
-            //    and loop — the server will see the Ping as heartbeat activity.
-            let msg_result = if let Some(interval) = self.keepalive_interval {
-                match tokio::time::timeout(interval, ws_stream.next()).await {
-                    Ok(msg) => msg,
-                    Err(_) => {
-                        // Keepalive timeout: send a Ping to refresh the server heartbeat.
-                        if let Err(e) = ws_stream.send(Message::Ping(Bytes::new())).await {
-                            return Some(Err(KalamLinkError::WebSocketError(e.to_string())));
-                        }
-                        continue;
-                    },
-                }
-            } else {
-                ws_stream.next().await
-            };
-
-            match msg_result {
-                Some(Ok(Message::Text(text))) => {
-                    if text.len() > MAX_WS_TEXT_MESSAGE_BYTES {
-                        return Some(Err(KalamLinkError::WebSocketError(format!(
-                            "Text WebSocket message too large ({} bytes > {} bytes)",
-                            text.len(),
-                            MAX_WS_TEXT_MESSAGE_BYTES
-                        ))));
-                    }
-
-                    match parse_message(text.as_ref()) {
-                        Ok(Some(event)) => {
-                            if let Some(early) = self.process_event(event).await {
-                                return Some(early);
-                            }
-                        },
-                        Ok(None) => continue,
-                        Err(e) => return Some(Err(e)),
-                    }
+            // 3. Read next parsed event from the background reader task
+            match self.event_rx.recv().await {
+                Some(Ok(event)) => {
+                    self.apply_buffering(event);
+                    // Loop back to drain event_queue
                 },
-                Some(Ok(Message::Binary(data))) => {
-                    let text = match Self::decode_ws_payload(data.as_ref(), true) {
-                        Ok(s) => s,
-                        Err(e) => return Some(Err(e)),
-                    };
-
-                    match parse_message(&text) {
-                        Ok(Some(event)) => {
-                            if let Some(early) = self.process_event(event).await {
-                                return Some(early);
-                            }
-                        },
-                        Ok(None) => continue,
-                        Err(e) => return Some(Err(e)),
-                    }
-                },
-                Some(Ok(Message::Close(_))) => {
-                    // WebSocket closed normally
-                    return None;
-                },
-                Some(Ok(Message::Ping(payload))) => {
-                    // Reply to ping to keep connection alive
-                    if let Some(ref mut ws) = self.ws_stream {
-                        if let Err(e) = ws.send(Message::Pong(payload)).await {
-                            return Some(Err(KalamLinkError::WebSocketError(e.to_string())));
-                        }
-                    }
-                    continue;
-                },
-                Some(Ok(Message::Pong(_))) => {
-                    // Keepalive response
-                    continue;
-                },
-                Some(Ok(Message::Frame(_))) => {
-                    // Raw frame - ignore
-                    continue;
-                },
-                Some(Err(e)) => {
-                    return Some(Err(KalamLinkError::WebSocketError(e.to_string())));
-                },
+                Some(Err(e)) => return Some(Err(e)),
                 None => {
-                    // Stream ended
+                    // Channel closed — reader task has exited
+                    self.closed = true;
                     return None;
                 },
             }
         }
-    }
-
-    /// Request the next batch of initial data
-    async fn request_next_batch(
-        &mut self,
-        last_seq_id: Option<crate::seq_id::SeqId>,
-    ) -> Result<()> {
-        use crate::models::ClientMessage;
-
-        let message = ClientMessage::NextBatch {
-            subscription_id: self.subscription_id.clone(),
-            last_seq_id,
-        };
-
-        let payload = serde_json::to_string(&message).map_err(|e| {
-            KalamLinkError::WebSocketError(format!("Failed to serialize NextBatch: {}", e))
-        })?;
-
-        let ws_stream = self.ws_stream.as_mut().ok_or_else(|| {
-            KalamLinkError::WebSocketError("Subscription already closed".to_string())
-        })?;
-
-        ws_stream
-            .send(Message::Text(payload.into()))
-            .await
-            .map_err(|e| KalamLinkError::WebSocketError(format!("Failed to send NextBatch: {}", e)))
     }
 
     /// Get the subscription ID assigned by the server
@@ -897,30 +1042,18 @@ impl SubscriptionManager {
 
     /// Close the subscription gracefully.
     ///
-    /// Sends an Unsubscribe message and closes the WebSocket connection.
-    /// Safe to call multiple times — subsequent calls are no-ops.
-    /// If not called explicitly, the `Drop` impl will spawn a best-effort
-    /// background cleanup task.
+    /// Signals the background reader task to send an Unsubscribe message and
+    /// close the WebSocket connection.  Safe to call multiple times —
+    /// subsequent calls are no-ops.
     pub async fn close(&mut self) -> Result<()> {
         if self.closed {
             return Ok(());
         }
         self.closed = true;
 
-        if let Some(mut ws_stream) = self.ws_stream.take() {
-            use crate::models::ClientMessage;
-
-            // Attempt best-effort unsubscribe before closing
-            let message = ClientMessage::Unsubscribe {
-                subscription_id: self.subscription_id.clone(),
-            };
-
-            if let Ok(payload) = serde_json::to_string(&message) {
-                let _ = ws_stream.send(Message::Text(payload.into())).await;
-            }
-
-            // Close WebSocket connection (best-effort)
-            let _ = ws_stream.close(None).await;
+        // Signal the background reader task to initiate graceful shutdown.
+        if let Some(tx) = self.close_tx.take() {
+            let _ = tx.send(());
         }
 
         Ok(())
@@ -934,27 +1067,14 @@ impl SubscriptionManager {
 
 impl Drop for SubscriptionManager {
     fn drop(&mut self) {
-        if self.closed {
-            return;
-        }
-        // Take ownership of the stream so the background task is 'static
-        if let Some(mut ws_stream) = self.ws_stream.take() {
-            let subscription_id = self.subscription_id.clone();
-
-            // Best-effort: only spawn if we're inside a tokio runtime.
-            // If no runtime is available the TCP stream will simply be dropped,
-            // which sends a TCP RST — acceptable as a last resort.
-            if let Ok(handle) = tokio::runtime::Handle::try_current() {
-                handle.spawn(async move {
-                    use crate::models::ClientMessage;
-
-                    let message = ClientMessage::Unsubscribe { subscription_id };
-                    if let Ok(payload) = serde_json::to_string(&message) {
-                        let _ = ws_stream.send(Message::Text(payload.into())).await;
-                    }
-                    let _ = ws_stream.close(None).await;
-                });
-            }
+        // Send the close signal so the background reader task can attempt a
+        // graceful Unsubscribe + Close.  If close() was already called,
+        // `close_tx` is `None` and this is a no-op.
+        //
+        // Even without the signal, the reader task will eventually notice that
+        // the `event_rx` (Receiver) side was dropped and shut itself down.
+        if let Some(tx) = self.close_tx.take() {
+            let _ = tx.send(());
         }
     }
 }
@@ -967,16 +1087,26 @@ mod tests {
 
     /// Create a minimal `SubscriptionManager` with no real WebSocket for
     /// testing state-flag logic without a network connection.
-    fn make_closed_sub() -> SubscriptionManager {
+    ///
+    /// A dummy reader task and channel pair are created so the struct is valid;
+    /// the sender is immediately dropped so `event_rx.recv()` returns `None`.
+    async fn make_test_sub() -> SubscriptionManager {
+        let (_tx, rx) = mpsc::channel(1);
+        let (close_tx, close_rx) = oneshot::channel();
+        let handle = tokio::spawn(async move {
+            // Wait for close signal or sender drop, then exit.
+            let _ = close_rx.await;
+        });
         SubscriptionManager {
-            ws_stream: None,
             subscription_id: "unit-test-id".to_string(),
+            event_rx: rx,
+            close_tx: Some(close_tx),
+            _reader_handle: handle,
             event_queue: VecDeque::new(),
             buffered_changes: Vec::new(),
             is_loading: false,
             timeouts: KalamLinkTimeouts::default(),
             closed: false,
-            keepalive_interval: None,
         }
     }
 
@@ -1067,15 +1197,15 @@ mod tests {
 
     // ── state-flag unit tests (no network) ────────────────────────────────
 
-    #[test]
-    fn test_is_not_closed_initially() {
-        let sub = make_closed_sub();
+    #[tokio::test]
+    async fn test_is_not_closed_initially() {
+        let sub = make_test_sub().await;
         assert!(!sub.is_closed(), "subscription should start as open");
     }
 
     #[tokio::test]
     async fn test_close_marks_subscription_as_closed() {
-        let mut sub = make_closed_sub();
+        let mut sub = make_test_sub().await;
         assert!(!sub.is_closed());
         sub.close().await.expect("close should succeed on a stream-less sub");
         assert!(sub.is_closed(), "subscription should be closed after close()");
@@ -1083,7 +1213,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_close_is_idempotent() {
-        let mut sub = make_closed_sub();
+        let mut sub = make_test_sub().await;
         sub.close().await.expect("first close should succeed");
         sub.close().await.expect("second close should also succeed (no-op)");
         assert!(sub.is_closed());
@@ -1091,8 +1221,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_next_returns_none_when_stream_is_none() {
-        let mut sub = make_closed_sub();
-        // ws_stream is None, so next() must immediately return None
+        let mut sub = make_test_sub().await;
+        // Channel sender is dropped, so next() must return None quickly
         let result = tokio::time::timeout(std::time::Duration::from_millis(100), sub.next())
             .await
             .expect("next() should complete quickly when stream is None");
@@ -1101,7 +1231,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_next_returns_none_after_close() {
-        let mut sub = make_closed_sub();
+        let mut sub = make_test_sub().await;
         sub.close().await.unwrap();
         let result = tokio::time::timeout(std::time::Duration::from_millis(100), sub.next())
             .await
@@ -1110,20 +1240,26 @@ mod tests {
     }
 
     /// Verify Drop does not panic even outside a tokio runtime.
+    ///
+    /// We construct the `SubscriptionManager` inside a temporary runtime,
+    /// then drop it after the runtime has shut down.
     #[test]
     fn test_drop_without_runtime_does_not_panic() {
-        let sub = make_closed_sub();
-        drop(sub); // no tokio runtime in scope — should be a silent no-op
+        let sub = {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async { make_test_sub().await })
+        };
+        // Runtime is gone; Drop only sends on a oneshot channel — no panic.
+        drop(sub);
     }
 
-    /// Verify Drop inside a tokio runtime spawns a cleanup task without
-    /// panicking. We cannot easily observe the network side here, but we
-    /// verify the Drop code path at least runs without error.
+    /// Verify Drop inside a tokio runtime sends the close signal without
+    /// panicking.
     #[tokio::test]
     async fn test_drop_inside_runtime_does_not_panic() {
-        let sub = make_closed_sub();
+        let sub = make_test_sub().await;
         drop(sub);
-        // Yield to let any spawned cleanup tasks run
+        // Yield to let the reader task process the close signal.
         tokio::task::yield_now().await;
     }
 }

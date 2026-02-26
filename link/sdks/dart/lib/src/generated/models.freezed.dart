@@ -1,5 +1,5 @@
-// coverage:ignore-file
 // GENERATED CODE - DO NOT MODIFY BY HAND
+// coverage:ignore-file
 // ignore_for_file: type=lint
 // ignore_for_file: unused_element, deprecated_member_use, deprecated_member_use_from_same_package, use_function_type_syntax_for_parameters, unnecessary_const, avoid_init_to_null, invalid_override_different_default_values_named, prefer_expression_function_bodies, annotate_overrides, invalid_annotation_target, unnecessary_question_mark
 
@@ -9,143 +9,245 @@ part of 'models.dart';
 // FreezedGenerator
 // **************************************************************************
 
+// dart format off
 T _$identity<T>(T value) => value;
-
-final _privateConstructorUsedError = UnsupportedError(
-    'It seems like you constructed your class using `MyClass._()`. This constructor is only meant to be used by freezed and you are not supposed to need it nor use it.\nPlease check the documentation here for more information: https://github.com/rrousselGit/freezed#adding-getters-and-methods-to-our-models');
 
 /// @nodoc
 mixin _$DartAuthProvider {
-  @optionalTypeArgs
-  TResult when<TResult extends Object?>({
-    required TResult Function(String username, String password) basicAuth,
-    required TResult Function(String token) jwtToken,
-    required TResult Function() none,
-  }) =>
-      throw _privateConstructorUsedError;
-  @optionalTypeArgs
-  TResult? whenOrNull<TResult extends Object?>({
-    TResult? Function(String username, String password)? basicAuth,
-    TResult? Function(String token)? jwtToken,
-    TResult? Function()? none,
-  }) =>
-      throw _privateConstructorUsedError;
-  @optionalTypeArgs
-  TResult maybeWhen<TResult extends Object?>({
-    TResult Function(String username, String password)? basicAuth,
-    TResult Function(String token)? jwtToken,
-    TResult Function()? none,
-    required TResult orElse(),
-  }) =>
-      throw _privateConstructorUsedError;
-  @optionalTypeArgs
-  TResult map<TResult extends Object?>({
-    required TResult Function(DartAuthProvider_BasicAuth value) basicAuth,
-    required TResult Function(DartAuthProvider_JwtToken value) jwtToken,
-    required TResult Function(DartAuthProvider_None value) none,
-  }) =>
-      throw _privateConstructorUsedError;
-  @optionalTypeArgs
-  TResult? mapOrNull<TResult extends Object?>({
-    TResult? Function(DartAuthProvider_BasicAuth value)? basicAuth,
-    TResult? Function(DartAuthProvider_JwtToken value)? jwtToken,
-    TResult? Function(DartAuthProvider_None value)? none,
-  }) =>
-      throw _privateConstructorUsedError;
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType && other is DartAuthProvider);
+  }
+
+  @override
+  int get hashCode => runtimeType.hashCode;
+
+  @override
+  String toString() {
+    return 'DartAuthProvider()';
+  }
+}
+
+/// @nodoc
+class $DartAuthProviderCopyWith<$Res> {
+  $DartAuthProviderCopyWith(
+      DartAuthProvider _, $Res Function(DartAuthProvider) __);
+}
+
+/// Adds pattern-matching-related methods to [DartAuthProvider].
+extension DartAuthProviderPatterns on DartAuthProvider {
+  /// A variant of `map` that fallback to returning `orElse`.
+  ///
+  /// It is equivalent to doing:
+  /// ```dart
+  /// switch (sealedClass) {
+  ///   case final Subclass value:
+  ///     return ...;
+  ///   case _:
+  ///     return orElse();
+  /// }
+  /// ```
+
   @optionalTypeArgs
   TResult maybeMap<TResult extends Object?>({
     TResult Function(DartAuthProvider_BasicAuth value)? basicAuth,
     TResult Function(DartAuthProvider_JwtToken value)? jwtToken,
     TResult Function(DartAuthProvider_None value)? none,
     required TResult orElse(),
-  }) =>
-      throw _privateConstructorUsedError;
-}
-
-/// @nodoc
-abstract class $DartAuthProviderCopyWith<$Res> {
-  factory $DartAuthProviderCopyWith(
-          DartAuthProvider value, $Res Function(DartAuthProvider) then) =
-      _$DartAuthProviderCopyWithImpl<$Res, DartAuthProvider>;
-}
-
-/// @nodoc
-class _$DartAuthProviderCopyWithImpl<$Res, $Val extends DartAuthProvider>
-    implements $DartAuthProviderCopyWith<$Res> {
-  _$DartAuthProviderCopyWithImpl(this._value, this._then);
-
-  // ignore: unused_field
-  final $Val _value;
-  // ignore: unused_field
-  final $Res Function($Val) _then;
-
-  /// Create a copy of DartAuthProvider
-  /// with the given fields replaced by the non-null parameter values.
-}
-
-/// @nodoc
-abstract class _$$DartAuthProvider_BasicAuthImplCopyWith<$Res> {
-  factory _$$DartAuthProvider_BasicAuthImplCopyWith(
-          _$DartAuthProvider_BasicAuthImpl value,
-          $Res Function(_$DartAuthProvider_BasicAuthImpl) then) =
-      __$$DartAuthProvider_BasicAuthImplCopyWithImpl<$Res>;
-  @useResult
-  $Res call({String username, String password});
-}
-
-/// @nodoc
-class __$$DartAuthProvider_BasicAuthImplCopyWithImpl<$Res>
-    extends _$DartAuthProviderCopyWithImpl<$Res,
-        _$DartAuthProvider_BasicAuthImpl>
-    implements _$$DartAuthProvider_BasicAuthImplCopyWith<$Res> {
-  __$$DartAuthProvider_BasicAuthImplCopyWithImpl(
-      _$DartAuthProvider_BasicAuthImpl _value,
-      $Res Function(_$DartAuthProvider_BasicAuthImpl) _then)
-      : super(_value, _then);
-
-  /// Create a copy of DartAuthProvider
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  @override
-  $Res call({
-    Object? username = null,
-    Object? password = null,
   }) {
-    return _then(_$DartAuthProvider_BasicAuthImpl(
-      username: null == username
-          ? _value.username
-          : username // ignore: cast_nullable_to_non_nullable
-              as String,
-      password: null == password
-          ? _value.password
-          : password // ignore: cast_nullable_to_non_nullable
-              as String,
-    ));
+    final _that = this;
+    switch (_that) {
+      case DartAuthProvider_BasicAuth() when basicAuth != null:
+        return basicAuth(_that);
+      case DartAuthProvider_JwtToken() when jwtToken != null:
+        return jwtToken(_that);
+      case DartAuthProvider_None() when none != null:
+        return none(_that);
+      case _:
+        return orElse();
+    }
+  }
+
+  /// A `switch`-like method, using callbacks.
+  ///
+  /// Callbacks receives the raw object, upcasted.
+  /// It is equivalent to doing:
+  /// ```dart
+  /// switch (sealedClass) {
+  ///   case final Subclass value:
+  ///     return ...;
+  ///   case final Subclass2 value:
+  ///     return ...;
+  /// }
+  /// ```
+
+  @optionalTypeArgs
+  TResult map<TResult extends Object?>({
+    required TResult Function(DartAuthProvider_BasicAuth value) basicAuth,
+    required TResult Function(DartAuthProvider_JwtToken value) jwtToken,
+    required TResult Function(DartAuthProvider_None value) none,
+  }) {
+    final _that = this;
+    switch (_that) {
+      case DartAuthProvider_BasicAuth():
+        return basicAuth(_that);
+      case DartAuthProvider_JwtToken():
+        return jwtToken(_that);
+      case DartAuthProvider_None():
+        return none(_that);
+    }
+  }
+
+  /// A variant of `map` that fallback to returning `null`.
+  ///
+  /// It is equivalent to doing:
+  /// ```dart
+  /// switch (sealedClass) {
+  ///   case final Subclass value:
+  ///     return ...;
+  ///   case _:
+  ///     return null;
+  /// }
+  /// ```
+
+  @optionalTypeArgs
+  TResult? mapOrNull<TResult extends Object?>({
+    TResult? Function(DartAuthProvider_BasicAuth value)? basicAuth,
+    TResult? Function(DartAuthProvider_JwtToken value)? jwtToken,
+    TResult? Function(DartAuthProvider_None value)? none,
+  }) {
+    final _that = this;
+    switch (_that) {
+      case DartAuthProvider_BasicAuth() when basicAuth != null:
+        return basicAuth(_that);
+      case DartAuthProvider_JwtToken() when jwtToken != null:
+        return jwtToken(_that);
+      case DartAuthProvider_None() when none != null:
+        return none(_that);
+      case _:
+        return null;
+    }
+  }
+
+  /// A variant of `when` that fallback to an `orElse` callback.
+  ///
+  /// It is equivalent to doing:
+  /// ```dart
+  /// switch (sealedClass) {
+  ///   case Subclass(:final field):
+  ///     return ...;
+  ///   case _:
+  ///     return orElse();
+  /// }
+  /// ```
+
+  @optionalTypeArgs
+  TResult maybeWhen<TResult extends Object?>({
+    TResult Function(String username, String password)? basicAuth,
+    TResult Function(String token)? jwtToken,
+    TResult Function()? none,
+    required TResult orElse(),
+  }) {
+    final _that = this;
+    switch (_that) {
+      case DartAuthProvider_BasicAuth() when basicAuth != null:
+        return basicAuth(_that.username, _that.password);
+      case DartAuthProvider_JwtToken() when jwtToken != null:
+        return jwtToken(_that.token);
+      case DartAuthProvider_None() when none != null:
+        return none();
+      case _:
+        return orElse();
+    }
+  }
+
+  /// A `switch`-like method, using callbacks.
+  ///
+  /// As opposed to `map`, this offers destructuring.
+  /// It is equivalent to doing:
+  /// ```dart
+  /// switch (sealedClass) {
+  ///   case Subclass(:final field):
+  ///     return ...;
+  ///   case Subclass2(:final field2):
+  ///     return ...;
+  /// }
+  /// ```
+
+  @optionalTypeArgs
+  TResult when<TResult extends Object?>({
+    required TResult Function(String username, String password) basicAuth,
+    required TResult Function(String token) jwtToken,
+    required TResult Function() none,
+  }) {
+    final _that = this;
+    switch (_that) {
+      case DartAuthProvider_BasicAuth():
+        return basicAuth(_that.username, _that.password);
+      case DartAuthProvider_JwtToken():
+        return jwtToken(_that.token);
+      case DartAuthProvider_None():
+        return none();
+    }
+  }
+
+  /// A variant of `when` that fallback to returning `null`
+  ///
+  /// It is equivalent to doing:
+  /// ```dart
+  /// switch (sealedClass) {
+  ///   case Subclass(:final field):
+  ///     return ...;
+  ///   case _:
+  ///     return null;
+  /// }
+  /// ```
+
+  @optionalTypeArgs
+  TResult? whenOrNull<TResult extends Object?>({
+    TResult? Function(String username, String password)? basicAuth,
+    TResult? Function(String token)? jwtToken,
+    TResult? Function()? none,
+  }) {
+    final _that = this;
+    switch (_that) {
+      case DartAuthProvider_BasicAuth() when basicAuth != null:
+        return basicAuth(_that.username, _that.password);
+      case DartAuthProvider_JwtToken() when jwtToken != null:
+        return jwtToken(_that.token);
+      case DartAuthProvider_None() when none != null:
+        return none();
+      case _:
+        return null;
+    }
   }
 }
 
 /// @nodoc
 
-class _$DartAuthProvider_BasicAuthImpl extends DartAuthProvider_BasicAuth {
-  const _$DartAuthProvider_BasicAuthImpl(
+class DartAuthProvider_BasicAuth extends DartAuthProvider {
+  const DartAuthProvider_BasicAuth(
       {required this.username, required this.password})
       : super._();
 
-  @override
   final String username;
-  @override
   final String password;
 
-  @override
-  String toString() {
-    return 'DartAuthProvider.basicAuth(username: $username, password: $password)';
-  }
+  /// Create a copy of DartAuthProvider
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $DartAuthProvider_BasicAuthCopyWith<DartAuthProvider_BasicAuth>
+      get copyWith =>
+          _$DartAuthProvider_BasicAuthCopyWithImpl<DartAuthProvider_BasicAuth>(
+              this, _$identity);
 
   @override
   bool operator ==(Object other) {
     return identical(this, other) ||
         (other.runtimeType == runtimeType &&
-            other is _$DartAuthProvider_BasicAuthImpl &&
+            other is DartAuthProvider_BasicAuth &&
             (identical(other.username, username) ||
                 other.username == username) &&
             (identical(other.password, password) ||
@@ -155,130 +257,109 @@ class _$DartAuthProvider_BasicAuthImpl extends DartAuthProvider_BasicAuth {
   @override
   int get hashCode => Object.hash(runtimeType, username, password);
 
-  /// Create a copy of DartAuthProvider
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
   @override
-  @pragma('vm:prefer-inline')
-  _$$DartAuthProvider_BasicAuthImplCopyWith<_$DartAuthProvider_BasicAuthImpl>
-      get copyWith => __$$DartAuthProvider_BasicAuthImplCopyWithImpl<
-          _$DartAuthProvider_BasicAuthImpl>(this, _$identity);
-
-  @override
-  @optionalTypeArgs
-  TResult when<TResult extends Object?>({
-    required TResult Function(String username, String password) basicAuth,
-    required TResult Function(String token) jwtToken,
-    required TResult Function() none,
-  }) {
-    return basicAuth(username, password);
+  String toString() {
+    return 'DartAuthProvider.basicAuth(username: $username, password: $password)';
   }
-
-  @override
-  @optionalTypeArgs
-  TResult? whenOrNull<TResult extends Object?>({
-    TResult? Function(String username, String password)? basicAuth,
-    TResult? Function(String token)? jwtToken,
-    TResult? Function()? none,
-  }) {
-    return basicAuth?.call(username, password);
-  }
-
-  @override
-  @optionalTypeArgs
-  TResult maybeWhen<TResult extends Object?>({
-    TResult Function(String username, String password)? basicAuth,
-    TResult Function(String token)? jwtToken,
-    TResult Function()? none,
-    required TResult orElse(),
-  }) {
-    if (basicAuth != null) {
-      return basicAuth(username, password);
-    }
-    return orElse();
-  }
-
-  @override
-  @optionalTypeArgs
-  TResult map<TResult extends Object?>({
-    required TResult Function(DartAuthProvider_BasicAuth value) basicAuth,
-    required TResult Function(DartAuthProvider_JwtToken value) jwtToken,
-    required TResult Function(DartAuthProvider_None value) none,
-  }) {
-    return basicAuth(this);
-  }
-
-  @override
-  @optionalTypeArgs
-  TResult? mapOrNull<TResult extends Object?>({
-    TResult? Function(DartAuthProvider_BasicAuth value)? basicAuth,
-    TResult? Function(DartAuthProvider_JwtToken value)? jwtToken,
-    TResult? Function(DartAuthProvider_None value)? none,
-  }) {
-    return basicAuth?.call(this);
-  }
-
-  @override
-  @optionalTypeArgs
-  TResult maybeMap<TResult extends Object?>({
-    TResult Function(DartAuthProvider_BasicAuth value)? basicAuth,
-    TResult Function(DartAuthProvider_JwtToken value)? jwtToken,
-    TResult Function(DartAuthProvider_None value)? none,
-    required TResult orElse(),
-  }) {
-    if (basicAuth != null) {
-      return basicAuth(this);
-    }
-    return orElse();
-  }
-}
-
-abstract class DartAuthProvider_BasicAuth extends DartAuthProvider {
-  const factory DartAuthProvider_BasicAuth(
-      {required final String username,
-      required final String password}) = _$DartAuthProvider_BasicAuthImpl;
-  const DartAuthProvider_BasicAuth._() : super._();
-
-  String get username;
-  String get password;
-
-  /// Create a copy of DartAuthProvider
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  _$$DartAuthProvider_BasicAuthImplCopyWith<_$DartAuthProvider_BasicAuthImpl>
-      get copyWith => throw _privateConstructorUsedError;
 }
 
 /// @nodoc
-abstract class _$$DartAuthProvider_JwtTokenImplCopyWith<$Res> {
-  factory _$$DartAuthProvider_JwtTokenImplCopyWith(
-          _$DartAuthProvider_JwtTokenImpl value,
-          $Res Function(_$DartAuthProvider_JwtTokenImpl) then) =
-      __$$DartAuthProvider_JwtTokenImplCopyWithImpl<$Res>;
+abstract mixin class $DartAuthProvider_BasicAuthCopyWith<$Res>
+    implements $DartAuthProviderCopyWith<$Res> {
+  factory $DartAuthProvider_BasicAuthCopyWith(DartAuthProvider_BasicAuth value,
+          $Res Function(DartAuthProvider_BasicAuth) _then) =
+      _$DartAuthProvider_BasicAuthCopyWithImpl;
+  @useResult
+  $Res call({String username, String password});
+}
+
+/// @nodoc
+class _$DartAuthProvider_BasicAuthCopyWithImpl<$Res>
+    implements $DartAuthProvider_BasicAuthCopyWith<$Res> {
+  _$DartAuthProvider_BasicAuthCopyWithImpl(this._self, this._then);
+
+  final DartAuthProvider_BasicAuth _self;
+  final $Res Function(DartAuthProvider_BasicAuth) _then;
+
+  /// Create a copy of DartAuthProvider
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? username = null,
+    Object? password = null,
+  }) {
+    return _then(DartAuthProvider_BasicAuth(
+      username: null == username
+          ? _self.username
+          : username // ignore: cast_nullable_to_non_nullable
+              as String,
+      password: null == password
+          ? _self.password
+          : password // ignore: cast_nullable_to_non_nullable
+              as String,
+    ));
+  }
+}
+
+/// @nodoc
+
+class DartAuthProvider_JwtToken extends DartAuthProvider {
+  const DartAuthProvider_JwtToken({required this.token}) : super._();
+
+  final String token;
+
+  /// Create a copy of DartAuthProvider
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $DartAuthProvider_JwtTokenCopyWith<DartAuthProvider_JwtToken> get copyWith =>
+      _$DartAuthProvider_JwtTokenCopyWithImpl<DartAuthProvider_JwtToken>(
+          this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is DartAuthProvider_JwtToken &&
+            (identical(other.token, token) || other.token == token));
+  }
+
+  @override
+  int get hashCode => Object.hash(runtimeType, token);
+
+  @override
+  String toString() {
+    return 'DartAuthProvider.jwtToken(token: $token)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $DartAuthProvider_JwtTokenCopyWith<$Res>
+    implements $DartAuthProviderCopyWith<$Res> {
+  factory $DartAuthProvider_JwtTokenCopyWith(DartAuthProvider_JwtToken value,
+          $Res Function(DartAuthProvider_JwtToken) _then) =
+      _$DartAuthProvider_JwtTokenCopyWithImpl;
   @useResult
   $Res call({String token});
 }
 
 /// @nodoc
-class __$$DartAuthProvider_JwtTokenImplCopyWithImpl<$Res>
-    extends _$DartAuthProviderCopyWithImpl<$Res,
-        _$DartAuthProvider_JwtTokenImpl>
-    implements _$$DartAuthProvider_JwtTokenImplCopyWith<$Res> {
-  __$$DartAuthProvider_JwtTokenImplCopyWithImpl(
-      _$DartAuthProvider_JwtTokenImpl _value,
-      $Res Function(_$DartAuthProvider_JwtTokenImpl) _then)
-      : super(_value, _then);
+class _$DartAuthProvider_JwtTokenCopyWithImpl<$Res>
+    implements $DartAuthProvider_JwtTokenCopyWith<$Res> {
+  _$DartAuthProvider_JwtTokenCopyWithImpl(this._self, this._then);
+
+  final DartAuthProvider_JwtToken _self;
+  final $Res Function(DartAuthProvider_JwtToken) _then;
 
   /// Create a copy of DartAuthProvider
   /// with the given fields replaced by the non-null parameter values.
   @pragma('vm:prefer-inline')
-  @override
   $Res call({
     Object? token = null,
   }) {
-    return _then(_$DartAuthProvider_JwtTokenImpl(
+    return _then(DartAuthProvider_JwtToken(
       token: null == token
-          ? _value.token
+          ? _self.token
           : token // ignore: cast_nullable_to_non_nullable
               as String,
     ));
@@ -287,237 +368,277 @@ class __$$DartAuthProvider_JwtTokenImplCopyWithImpl<$Res>
 
 /// @nodoc
 
-class _$DartAuthProvider_JwtTokenImpl extends DartAuthProvider_JwtToken {
-  const _$DartAuthProvider_JwtTokenImpl({required this.token}) : super._();
-
-  @override
-  final String token;
-
-  @override
-  String toString() {
-    return 'DartAuthProvider.jwtToken(token: $token)';
-  }
+class DartAuthProvider_None extends DartAuthProvider {
+  const DartAuthProvider_None() : super._();
 
   @override
   bool operator ==(Object other) {
     return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is _$DartAuthProvider_JwtTokenImpl &&
-            (identical(other.token, token) || other.token == token));
-  }
-
-  @override
-  int get hashCode => Object.hash(runtimeType, token);
-
-  /// Create a copy of DartAuthProvider
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @override
-  @pragma('vm:prefer-inline')
-  _$$DartAuthProvider_JwtTokenImplCopyWith<_$DartAuthProvider_JwtTokenImpl>
-      get copyWith => __$$DartAuthProvider_JwtTokenImplCopyWithImpl<
-          _$DartAuthProvider_JwtTokenImpl>(this, _$identity);
-
-  @override
-  @optionalTypeArgs
-  TResult when<TResult extends Object?>({
-    required TResult Function(String username, String password) basicAuth,
-    required TResult Function(String token) jwtToken,
-    required TResult Function() none,
-  }) {
-    return jwtToken(token);
-  }
-
-  @override
-  @optionalTypeArgs
-  TResult? whenOrNull<TResult extends Object?>({
-    TResult? Function(String username, String password)? basicAuth,
-    TResult? Function(String token)? jwtToken,
-    TResult? Function()? none,
-  }) {
-    return jwtToken?.call(token);
-  }
-
-  @override
-  @optionalTypeArgs
-  TResult maybeWhen<TResult extends Object?>({
-    TResult Function(String username, String password)? basicAuth,
-    TResult Function(String token)? jwtToken,
-    TResult Function()? none,
-    required TResult orElse(),
-  }) {
-    if (jwtToken != null) {
-      return jwtToken(token);
-    }
-    return orElse();
-  }
-
-  @override
-  @optionalTypeArgs
-  TResult map<TResult extends Object?>({
-    required TResult Function(DartAuthProvider_BasicAuth value) basicAuth,
-    required TResult Function(DartAuthProvider_JwtToken value) jwtToken,
-    required TResult Function(DartAuthProvider_None value) none,
-  }) {
-    return jwtToken(this);
-  }
-
-  @override
-  @optionalTypeArgs
-  TResult? mapOrNull<TResult extends Object?>({
-    TResult? Function(DartAuthProvider_BasicAuth value)? basicAuth,
-    TResult? Function(DartAuthProvider_JwtToken value)? jwtToken,
-    TResult? Function(DartAuthProvider_None value)? none,
-  }) {
-    return jwtToken?.call(this);
-  }
-
-  @override
-  @optionalTypeArgs
-  TResult maybeMap<TResult extends Object?>({
-    TResult Function(DartAuthProvider_BasicAuth value)? basicAuth,
-    TResult Function(DartAuthProvider_JwtToken value)? jwtToken,
-    TResult Function(DartAuthProvider_None value)? none,
-    required TResult orElse(),
-  }) {
-    if (jwtToken != null) {
-      return jwtToken(this);
-    }
-    return orElse();
-  }
-}
-
-abstract class DartAuthProvider_JwtToken extends DartAuthProvider {
-  const factory DartAuthProvider_JwtToken({required final String token}) =
-      _$DartAuthProvider_JwtTokenImpl;
-  const DartAuthProvider_JwtToken._() : super._();
-
-  String get token;
-
-  /// Create a copy of DartAuthProvider
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  _$$DartAuthProvider_JwtTokenImplCopyWith<_$DartAuthProvider_JwtTokenImpl>
-      get copyWith => throw _privateConstructorUsedError;
-}
-
-/// @nodoc
-abstract class _$$DartAuthProvider_NoneImplCopyWith<$Res> {
-  factory _$$DartAuthProvider_NoneImplCopyWith(
-          _$DartAuthProvider_NoneImpl value,
-          $Res Function(_$DartAuthProvider_NoneImpl) then) =
-      __$$DartAuthProvider_NoneImplCopyWithImpl<$Res>;
-}
-
-/// @nodoc
-class __$$DartAuthProvider_NoneImplCopyWithImpl<$Res>
-    extends _$DartAuthProviderCopyWithImpl<$Res, _$DartAuthProvider_NoneImpl>
-    implements _$$DartAuthProvider_NoneImplCopyWith<$Res> {
-  __$$DartAuthProvider_NoneImplCopyWithImpl(_$DartAuthProvider_NoneImpl _value,
-      $Res Function(_$DartAuthProvider_NoneImpl) _then)
-      : super(_value, _then);
-
-  /// Create a copy of DartAuthProvider
-  /// with the given fields replaced by the non-null parameter values.
-}
-
-/// @nodoc
-
-class _$DartAuthProvider_NoneImpl extends DartAuthProvider_None {
-  const _$DartAuthProvider_NoneImpl() : super._();
-
-  @override
-  String toString() {
-    return 'DartAuthProvider.none()';
-  }
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is _$DartAuthProvider_NoneImpl);
+        (other.runtimeType == runtimeType && other is DartAuthProvider_None);
   }
 
   @override
   int get hashCode => runtimeType.hashCode;
 
   @override
-  @optionalTypeArgs
-  TResult when<TResult extends Object?>({
-    required TResult Function(String username, String password) basicAuth,
-    required TResult Function(String token) jwtToken,
-    required TResult Function() none,
-  }) {
-    return none();
+  String toString() {
+    return 'DartAuthProvider.none()';
   }
-
-  @override
-  @optionalTypeArgs
-  TResult? whenOrNull<TResult extends Object?>({
-    TResult? Function(String username, String password)? basicAuth,
-    TResult? Function(String token)? jwtToken,
-    TResult? Function()? none,
-  }) {
-    return none?.call();
-  }
-
-  @override
-  @optionalTypeArgs
-  TResult maybeWhen<TResult extends Object?>({
-    TResult Function(String username, String password)? basicAuth,
-    TResult Function(String token)? jwtToken,
-    TResult Function()? none,
-    required TResult orElse(),
-  }) {
-    if (none != null) {
-      return none();
-    }
-    return orElse();
-  }
-
-  @override
-  @optionalTypeArgs
-  TResult map<TResult extends Object?>({
-    required TResult Function(DartAuthProvider_BasicAuth value) basicAuth,
-    required TResult Function(DartAuthProvider_JwtToken value) jwtToken,
-    required TResult Function(DartAuthProvider_None value) none,
-  }) {
-    return none(this);
-  }
-
-  @override
-  @optionalTypeArgs
-  TResult? mapOrNull<TResult extends Object?>({
-    TResult? Function(DartAuthProvider_BasicAuth value)? basicAuth,
-    TResult? Function(DartAuthProvider_JwtToken value)? jwtToken,
-    TResult? Function(DartAuthProvider_None value)? none,
-  }) {
-    return none?.call(this);
-  }
-
-  @override
-  @optionalTypeArgs
-  TResult maybeMap<TResult extends Object?>({
-    TResult Function(DartAuthProvider_BasicAuth value)? basicAuth,
-    TResult Function(DartAuthProvider_JwtToken value)? jwtToken,
-    TResult Function(DartAuthProvider_None value)? none,
-    required TResult orElse(),
-  }) {
-    if (none != null) {
-      return none(this);
-    }
-    return orElse();
-  }
-}
-
-abstract class DartAuthProvider_None extends DartAuthProvider {
-  const factory DartAuthProvider_None() = _$DartAuthProvider_NoneImpl;
-  const DartAuthProvider_None._() : super._();
 }
 
 /// @nodoc
 mixin _$DartChangeEvent {
-  String get subscriptionId => throw _privateConstructorUsedError;
+  String get subscriptionId;
+
+  /// Create a copy of DartChangeEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $DartChangeEventCopyWith<DartChangeEvent> get copyWith =>
+      _$DartChangeEventCopyWithImpl<DartChangeEvent>(
+          this as DartChangeEvent, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is DartChangeEvent &&
+            (identical(other.subscriptionId, subscriptionId) ||
+                other.subscriptionId == subscriptionId));
+  }
+
+  @override
+  int get hashCode => Object.hash(runtimeType, subscriptionId);
+
+  @override
+  String toString() {
+    return 'DartChangeEvent(subscriptionId: $subscriptionId)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $DartChangeEventCopyWith<$Res> {
+  factory $DartChangeEventCopyWith(
+          DartChangeEvent value, $Res Function(DartChangeEvent) _then) =
+      _$DartChangeEventCopyWithImpl;
+  @useResult
+  $Res call({String subscriptionId});
+}
+
+/// @nodoc
+class _$DartChangeEventCopyWithImpl<$Res>
+    implements $DartChangeEventCopyWith<$Res> {
+  _$DartChangeEventCopyWithImpl(this._self, this._then);
+
+  final DartChangeEvent _self;
+  final $Res Function(DartChangeEvent) _then;
+
+  /// Create a copy of DartChangeEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  @override
+  $Res call({
+    Object? subscriptionId = null,
+  }) {
+    return _then(_self.copyWith(
+      subscriptionId: null == subscriptionId
+          ? _self.subscriptionId
+          : subscriptionId // ignore: cast_nullable_to_non_nullable
+              as String,
+    ));
+  }
+}
+
+/// Adds pattern-matching-related methods to [DartChangeEvent].
+extension DartChangeEventPatterns on DartChangeEvent {
+  /// A variant of `map` that fallback to returning `orElse`.
+  ///
+  /// It is equivalent to doing:
+  /// ```dart
+  /// switch (sealedClass) {
+  ///   case final Subclass value:
+  ///     return ...;
+  ///   case _:
+  ///     return orElse();
+  /// }
+  /// ```
+
+  @optionalTypeArgs
+  TResult maybeMap<TResult extends Object?>({
+    TResult Function(DartChangeEvent_Ack value)? ack,
+    TResult Function(DartChangeEvent_InitialDataBatch value)? initialDataBatch,
+    TResult Function(DartChangeEvent_Insert value)? insert,
+    TResult Function(DartChangeEvent_Update value)? update,
+    TResult Function(DartChangeEvent_Delete value)? delete,
+    TResult Function(DartChangeEvent_Error value)? error,
+    required TResult orElse(),
+  }) {
+    final _that = this;
+    switch (_that) {
+      case DartChangeEvent_Ack() when ack != null:
+        return ack(_that);
+      case DartChangeEvent_InitialDataBatch() when initialDataBatch != null:
+        return initialDataBatch(_that);
+      case DartChangeEvent_Insert() when insert != null:
+        return insert(_that);
+      case DartChangeEvent_Update() when update != null:
+        return update(_that);
+      case DartChangeEvent_Delete() when delete != null:
+        return delete(_that);
+      case DartChangeEvent_Error() when error != null:
+        return error(_that);
+      case _:
+        return orElse();
+    }
+  }
+
+  /// A `switch`-like method, using callbacks.
+  ///
+  /// Callbacks receives the raw object, upcasted.
+  /// It is equivalent to doing:
+  /// ```dart
+  /// switch (sealedClass) {
+  ///   case final Subclass value:
+  ///     return ...;
+  ///   case final Subclass2 value:
+  ///     return ...;
+  /// }
+  /// ```
+
+  @optionalTypeArgs
+  TResult map<TResult extends Object?>({
+    required TResult Function(DartChangeEvent_Ack value) ack,
+    required TResult Function(DartChangeEvent_InitialDataBatch value)
+        initialDataBatch,
+    required TResult Function(DartChangeEvent_Insert value) insert,
+    required TResult Function(DartChangeEvent_Update value) update,
+    required TResult Function(DartChangeEvent_Delete value) delete,
+    required TResult Function(DartChangeEvent_Error value) error,
+  }) {
+    final _that = this;
+    switch (_that) {
+      case DartChangeEvent_Ack():
+        return ack(_that);
+      case DartChangeEvent_InitialDataBatch():
+        return initialDataBatch(_that);
+      case DartChangeEvent_Insert():
+        return insert(_that);
+      case DartChangeEvent_Update():
+        return update(_that);
+      case DartChangeEvent_Delete():
+        return delete(_that);
+      case DartChangeEvent_Error():
+        return error(_that);
+    }
+  }
+
+  /// A variant of `map` that fallback to returning `null`.
+  ///
+  /// It is equivalent to doing:
+  /// ```dart
+  /// switch (sealedClass) {
+  ///   case final Subclass value:
+  ///     return ...;
+  ///   case _:
+  ///     return null;
+  /// }
+  /// ```
+
+  @optionalTypeArgs
+  TResult? mapOrNull<TResult extends Object?>({
+    TResult? Function(DartChangeEvent_Ack value)? ack,
+    TResult? Function(DartChangeEvent_InitialDataBatch value)? initialDataBatch,
+    TResult? Function(DartChangeEvent_Insert value)? insert,
+    TResult? Function(DartChangeEvent_Update value)? update,
+    TResult? Function(DartChangeEvent_Delete value)? delete,
+    TResult? Function(DartChangeEvent_Error value)? error,
+  }) {
+    final _that = this;
+    switch (_that) {
+      case DartChangeEvent_Ack() when ack != null:
+        return ack(_that);
+      case DartChangeEvent_InitialDataBatch() when initialDataBatch != null:
+        return initialDataBatch(_that);
+      case DartChangeEvent_Insert() when insert != null:
+        return insert(_that);
+      case DartChangeEvent_Update() when update != null:
+        return update(_that);
+      case DartChangeEvent_Delete() when delete != null:
+        return delete(_that);
+      case DartChangeEvent_Error() when error != null:
+        return error(_that);
+      case _:
+        return null;
+    }
+  }
+
+  /// A variant of `when` that fallback to an `orElse` callback.
+  ///
+  /// It is equivalent to doing:
+  /// ```dart
+  /// switch (sealedClass) {
+  ///   case Subclass(:final field):
+  ///     return ...;
+  ///   case _:
+  ///     return orElse();
+  /// }
+  /// ```
+
+  @optionalTypeArgs
+  TResult maybeWhen<TResult extends Object?>({
+    TResult Function(
+            String subscriptionId,
+            int totalRows,
+            List<DartSchemaField> schema,
+            int batchNum,
+            bool hasMore,
+            String status)?
+        ack,
+    TResult Function(String subscriptionId, List<String> rowsJson, int batchNum,
+            bool hasMore, String status)?
+        initialDataBatch,
+    TResult Function(String subscriptionId, List<String> rowsJson)? insert,
+    TResult Function(String subscriptionId, List<String> rowsJson,
+            List<String> oldRowsJson)?
+        update,
+    TResult Function(String subscriptionId, List<String> oldRowsJson)? delete,
+    TResult Function(String subscriptionId, String code, String message)? error,
+    required TResult orElse(),
+  }) {
+    final _that = this;
+    switch (_that) {
+      case DartChangeEvent_Ack() when ack != null:
+        return ack(_that.subscriptionId, _that.totalRows, _that.schema,
+            _that.batchNum, _that.hasMore, _that.status);
+      case DartChangeEvent_InitialDataBatch() when initialDataBatch != null:
+        return initialDataBatch(_that.subscriptionId, _that.rowsJson,
+            _that.batchNum, _that.hasMore, _that.status);
+      case DartChangeEvent_Insert() when insert != null:
+        return insert(_that.subscriptionId, _that.rowsJson);
+      case DartChangeEvent_Update() when update != null:
+        return update(_that.subscriptionId, _that.rowsJson, _that.oldRowsJson);
+      case DartChangeEvent_Delete() when delete != null:
+        return delete(_that.subscriptionId, _that.oldRowsJson);
+      case DartChangeEvent_Error() when error != null:
+        return error(_that.subscriptionId, _that.code, _that.message);
+      case _:
+        return orElse();
+    }
+  }
+
+  /// A `switch`-like method, using callbacks.
+  ///
+  /// As opposed to `map`, this offers destructuring.
+  /// It is equivalent to doing:
+  /// ```dart
+  /// switch (sealedClass) {
+  ///   case Subclass(:final field):
+  ///     return ...;
+  ///   case Subclass2(:final field2):
+  ///     return ...;
+  /// }
+  /// ```
+
   @optionalTypeArgs
   TResult when<TResult extends Object?>({
     required TResult Function(
@@ -541,8 +662,38 @@ mixin _$DartChangeEvent {
     required TResult Function(
             String subscriptionId, String code, String message)
         error,
-  }) =>
-      throw _privateConstructorUsedError;
+  }) {
+    final _that = this;
+    switch (_that) {
+      case DartChangeEvent_Ack():
+        return ack(_that.subscriptionId, _that.totalRows, _that.schema,
+            _that.batchNum, _that.hasMore, _that.status);
+      case DartChangeEvent_InitialDataBatch():
+        return initialDataBatch(_that.subscriptionId, _that.rowsJson,
+            _that.batchNum, _that.hasMore, _that.status);
+      case DartChangeEvent_Insert():
+        return insert(_that.subscriptionId, _that.rowsJson);
+      case DartChangeEvent_Update():
+        return update(_that.subscriptionId, _that.rowsJson, _that.oldRowsJson);
+      case DartChangeEvent_Delete():
+        return delete(_that.subscriptionId, _that.oldRowsJson);
+      case DartChangeEvent_Error():
+        return error(_that.subscriptionId, _that.code, _that.message);
+    }
+  }
+
+  /// A variant of `when` that fallback to returning `null`
+  ///
+  /// It is equivalent to doing:
+  /// ```dart
+  /// switch (sealedClass) {
+  ///   case Subclass(:final field):
+  ///     return ...;
+  ///   case _:
+  ///     return null;
+  /// }
+  /// ```
+
   @optionalTypeArgs
   TResult? whenOrNull<TResult extends Object?>({
     TResult? Function(
@@ -563,175 +714,33 @@ mixin _$DartChangeEvent {
     TResult? Function(String subscriptionId, List<String> oldRowsJson)? delete,
     TResult? Function(String subscriptionId, String code, String message)?
         error,
-  }) =>
-      throw _privateConstructorUsedError;
-  @optionalTypeArgs
-  TResult maybeWhen<TResult extends Object?>({
-    TResult Function(
-            String subscriptionId,
-            int totalRows,
-            List<DartSchemaField> schema,
-            int batchNum,
-            bool hasMore,
-            String status)?
-        ack,
-    TResult Function(String subscriptionId, List<String> rowsJson, int batchNum,
-            bool hasMore, String status)?
-        initialDataBatch,
-    TResult Function(String subscriptionId, List<String> rowsJson)? insert,
-    TResult Function(String subscriptionId, List<String> rowsJson,
-            List<String> oldRowsJson)?
-        update,
-    TResult Function(String subscriptionId, List<String> oldRowsJson)? delete,
-    TResult Function(String subscriptionId, String code, String message)? error,
-    required TResult orElse(),
-  }) =>
-      throw _privateConstructorUsedError;
-  @optionalTypeArgs
-  TResult map<TResult extends Object?>({
-    required TResult Function(DartChangeEvent_Ack value) ack,
-    required TResult Function(DartChangeEvent_InitialDataBatch value)
-        initialDataBatch,
-    required TResult Function(DartChangeEvent_Insert value) insert,
-    required TResult Function(DartChangeEvent_Update value) update,
-    required TResult Function(DartChangeEvent_Delete value) delete,
-    required TResult Function(DartChangeEvent_Error value) error,
-  }) =>
-      throw _privateConstructorUsedError;
-  @optionalTypeArgs
-  TResult? mapOrNull<TResult extends Object?>({
-    TResult? Function(DartChangeEvent_Ack value)? ack,
-    TResult? Function(DartChangeEvent_InitialDataBatch value)? initialDataBatch,
-    TResult? Function(DartChangeEvent_Insert value)? insert,
-    TResult? Function(DartChangeEvent_Update value)? update,
-    TResult? Function(DartChangeEvent_Delete value)? delete,
-    TResult? Function(DartChangeEvent_Error value)? error,
-  }) =>
-      throw _privateConstructorUsedError;
-  @optionalTypeArgs
-  TResult maybeMap<TResult extends Object?>({
-    TResult Function(DartChangeEvent_Ack value)? ack,
-    TResult Function(DartChangeEvent_InitialDataBatch value)? initialDataBatch,
-    TResult Function(DartChangeEvent_Insert value)? insert,
-    TResult Function(DartChangeEvent_Update value)? update,
-    TResult Function(DartChangeEvent_Delete value)? delete,
-    TResult Function(DartChangeEvent_Error value)? error,
-    required TResult orElse(),
-  }) =>
-      throw _privateConstructorUsedError;
-
-  /// Create a copy of DartChangeEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  $DartChangeEventCopyWith<DartChangeEvent> get copyWith =>
-      throw _privateConstructorUsedError;
-}
-
-/// @nodoc
-abstract class $DartChangeEventCopyWith<$Res> {
-  factory $DartChangeEventCopyWith(
-          DartChangeEvent value, $Res Function(DartChangeEvent) then) =
-      _$DartChangeEventCopyWithImpl<$Res, DartChangeEvent>;
-  @useResult
-  $Res call({String subscriptionId});
-}
-
-/// @nodoc
-class _$DartChangeEventCopyWithImpl<$Res, $Val extends DartChangeEvent>
-    implements $DartChangeEventCopyWith<$Res> {
-  _$DartChangeEventCopyWithImpl(this._value, this._then);
-
-  // ignore: unused_field
-  final $Val _value;
-  // ignore: unused_field
-  final $Res Function($Val) _then;
-
-  /// Create a copy of DartChangeEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  @override
-  $Res call({
-    Object? subscriptionId = null,
   }) {
-    return _then(_value.copyWith(
-      subscriptionId: null == subscriptionId
-          ? _value.subscriptionId
-          : subscriptionId // ignore: cast_nullable_to_non_nullable
-              as String,
-    ) as $Val);
-  }
-}
-
-/// @nodoc
-abstract class _$$DartChangeEvent_AckImplCopyWith<$Res>
-    implements $DartChangeEventCopyWith<$Res> {
-  factory _$$DartChangeEvent_AckImplCopyWith(_$DartChangeEvent_AckImpl value,
-          $Res Function(_$DartChangeEvent_AckImpl) then) =
-      __$$DartChangeEvent_AckImplCopyWithImpl<$Res>;
-  @override
-  @useResult
-  $Res call(
-      {String subscriptionId,
-      int totalRows,
-      List<DartSchemaField> schema,
-      int batchNum,
-      bool hasMore,
-      String status});
-}
-
-/// @nodoc
-class __$$DartChangeEvent_AckImplCopyWithImpl<$Res>
-    extends _$DartChangeEventCopyWithImpl<$Res, _$DartChangeEvent_AckImpl>
-    implements _$$DartChangeEvent_AckImplCopyWith<$Res> {
-  __$$DartChangeEvent_AckImplCopyWithImpl(_$DartChangeEvent_AckImpl _value,
-      $Res Function(_$DartChangeEvent_AckImpl) _then)
-      : super(_value, _then);
-
-  /// Create a copy of DartChangeEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  @override
-  $Res call({
-    Object? subscriptionId = null,
-    Object? totalRows = null,
-    Object? schema = null,
-    Object? batchNum = null,
-    Object? hasMore = null,
-    Object? status = null,
-  }) {
-    return _then(_$DartChangeEvent_AckImpl(
-      subscriptionId: null == subscriptionId
-          ? _value.subscriptionId
-          : subscriptionId // ignore: cast_nullable_to_non_nullable
-              as String,
-      totalRows: null == totalRows
-          ? _value.totalRows
-          : totalRows // ignore: cast_nullable_to_non_nullable
-              as int,
-      schema: null == schema
-          ? _value._schema
-          : schema // ignore: cast_nullable_to_non_nullable
-              as List<DartSchemaField>,
-      batchNum: null == batchNum
-          ? _value.batchNum
-          : batchNum // ignore: cast_nullable_to_non_nullable
-              as int,
-      hasMore: null == hasMore
-          ? _value.hasMore
-          : hasMore // ignore: cast_nullable_to_non_nullable
-              as bool,
-      status: null == status
-          ? _value.status
-          : status // ignore: cast_nullable_to_non_nullable
-              as String,
-    ));
+    final _that = this;
+    switch (_that) {
+      case DartChangeEvent_Ack() when ack != null:
+        return ack(_that.subscriptionId, _that.totalRows, _that.schema,
+            _that.batchNum, _that.hasMore, _that.status);
+      case DartChangeEvent_InitialDataBatch() when initialDataBatch != null:
+        return initialDataBatch(_that.subscriptionId, _that.rowsJson,
+            _that.batchNum, _that.hasMore, _that.status);
+      case DartChangeEvent_Insert() when insert != null:
+        return insert(_that.subscriptionId, _that.rowsJson);
+      case DartChangeEvent_Update() when update != null:
+        return update(_that.subscriptionId, _that.rowsJson, _that.oldRowsJson);
+      case DartChangeEvent_Delete() when delete != null:
+        return delete(_that.subscriptionId, _that.oldRowsJson);
+      case DartChangeEvent_Error() when error != null:
+        return error(_that.subscriptionId, _that.code, _that.message);
+      case _:
+        return null;
+    }
   }
 }
 
 /// @nodoc
 
-class _$DartChangeEvent_AckImpl extends DartChangeEvent_Ack {
-  const _$DartChangeEvent_AckImpl(
+class DartChangeEvent_Ack extends DartChangeEvent {
+  const DartChangeEvent_Ack(
       {required this.subscriptionId,
       required this.totalRows,
       required final List<DartSchemaField> schema,
@@ -743,33 +752,31 @@ class _$DartChangeEvent_AckImpl extends DartChangeEvent_Ack {
 
   @override
   final String subscriptionId;
-  @override
   final int totalRows;
   final List<DartSchemaField> _schema;
-  @override
   List<DartSchemaField> get schema {
     if (_schema is EqualUnmodifiableListView) return _schema;
     // ignore: implicit_dynamic_type
     return EqualUnmodifiableListView(_schema);
   }
 
-  @override
   final int batchNum;
-  @override
   final bool hasMore;
-  @override
   final String status;
 
+  /// Create a copy of DartChangeEvent
+  /// with the given fields replaced by the non-null parameter values.
   @override
-  String toString() {
-    return 'DartChangeEvent.ack(subscriptionId: $subscriptionId, totalRows: $totalRows, schema: $schema, batchNum: $batchNum, hasMore: $hasMore, status: $status)';
-  }
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $DartChangeEvent_AckCopyWith<DartChangeEvent_Ack> get copyWith =>
+      _$DartChangeEvent_AckCopyWithImpl<DartChangeEvent_Ack>(this, _$identity);
 
   @override
   bool operator ==(Object other) {
     return identical(this, other) ||
         (other.runtimeType == runtimeType &&
-            other is _$DartChangeEvent_AckImpl &&
+            other is DartChangeEvent_Ack &&
             (identical(other.subscriptionId, subscriptionId) ||
                 other.subscriptionId == subscriptionId) &&
             (identical(other.totalRows, totalRows) ||
@@ -785,225 +792,72 @@ class _$DartChangeEvent_AckImpl extends DartChangeEvent_Ack {
   int get hashCode => Object.hash(runtimeType, subscriptionId, totalRows,
       const DeepCollectionEquality().hash(_schema), batchNum, hasMore, status);
 
-  /// Create a copy of DartChangeEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
   @override
-  @pragma('vm:prefer-inline')
-  _$$DartChangeEvent_AckImplCopyWith<_$DartChangeEvent_AckImpl> get copyWith =>
-      __$$DartChangeEvent_AckImplCopyWithImpl<_$DartChangeEvent_AckImpl>(
-          this, _$identity);
-
-  @override
-  @optionalTypeArgs
-  TResult when<TResult extends Object?>({
-    required TResult Function(
-            String subscriptionId,
-            int totalRows,
-            List<DartSchemaField> schema,
-            int batchNum,
-            bool hasMore,
-            String status)
-        ack,
-    required TResult Function(String subscriptionId, List<String> rowsJson,
-            int batchNum, bool hasMore, String status)
-        initialDataBatch,
-    required TResult Function(String subscriptionId, List<String> rowsJson)
-        insert,
-    required TResult Function(String subscriptionId, List<String> rowsJson,
-            List<String> oldRowsJson)
-        update,
-    required TResult Function(String subscriptionId, List<String> oldRowsJson)
-        delete,
-    required TResult Function(
-            String subscriptionId, String code, String message)
-        error,
-  }) {
-    return ack(subscriptionId, totalRows, schema, batchNum, hasMore, status);
+  String toString() {
+    return 'DartChangeEvent.ack(subscriptionId: $subscriptionId, totalRows: $totalRows, schema: $schema, batchNum: $batchNum, hasMore: $hasMore, status: $status)';
   }
-
-  @override
-  @optionalTypeArgs
-  TResult? whenOrNull<TResult extends Object?>({
-    TResult? Function(
-            String subscriptionId,
-            int totalRows,
-            List<DartSchemaField> schema,
-            int batchNum,
-            bool hasMore,
-            String status)?
-        ack,
-    TResult? Function(String subscriptionId, List<String> rowsJson,
-            int batchNum, bool hasMore, String status)?
-        initialDataBatch,
-    TResult? Function(String subscriptionId, List<String> rowsJson)? insert,
-    TResult? Function(String subscriptionId, List<String> rowsJson,
-            List<String> oldRowsJson)?
-        update,
-    TResult? Function(String subscriptionId, List<String> oldRowsJson)? delete,
-    TResult? Function(String subscriptionId, String code, String message)?
-        error,
-  }) {
-    return ack?.call(
-        subscriptionId, totalRows, schema, batchNum, hasMore, status);
-  }
-
-  @override
-  @optionalTypeArgs
-  TResult maybeWhen<TResult extends Object?>({
-    TResult Function(
-            String subscriptionId,
-            int totalRows,
-            List<DartSchemaField> schema,
-            int batchNum,
-            bool hasMore,
-            String status)?
-        ack,
-    TResult Function(String subscriptionId, List<String> rowsJson, int batchNum,
-            bool hasMore, String status)?
-        initialDataBatch,
-    TResult Function(String subscriptionId, List<String> rowsJson)? insert,
-    TResult Function(String subscriptionId, List<String> rowsJson,
-            List<String> oldRowsJson)?
-        update,
-    TResult Function(String subscriptionId, List<String> oldRowsJson)? delete,
-    TResult Function(String subscriptionId, String code, String message)? error,
-    required TResult orElse(),
-  }) {
-    if (ack != null) {
-      return ack(subscriptionId, totalRows, schema, batchNum, hasMore, status);
-    }
-    return orElse();
-  }
-
-  @override
-  @optionalTypeArgs
-  TResult map<TResult extends Object?>({
-    required TResult Function(DartChangeEvent_Ack value) ack,
-    required TResult Function(DartChangeEvent_InitialDataBatch value)
-        initialDataBatch,
-    required TResult Function(DartChangeEvent_Insert value) insert,
-    required TResult Function(DartChangeEvent_Update value) update,
-    required TResult Function(DartChangeEvent_Delete value) delete,
-    required TResult Function(DartChangeEvent_Error value) error,
-  }) {
-    return ack(this);
-  }
-
-  @override
-  @optionalTypeArgs
-  TResult? mapOrNull<TResult extends Object?>({
-    TResult? Function(DartChangeEvent_Ack value)? ack,
-    TResult? Function(DartChangeEvent_InitialDataBatch value)? initialDataBatch,
-    TResult? Function(DartChangeEvent_Insert value)? insert,
-    TResult? Function(DartChangeEvent_Update value)? update,
-    TResult? Function(DartChangeEvent_Delete value)? delete,
-    TResult? Function(DartChangeEvent_Error value)? error,
-  }) {
-    return ack?.call(this);
-  }
-
-  @override
-  @optionalTypeArgs
-  TResult maybeMap<TResult extends Object?>({
-    TResult Function(DartChangeEvent_Ack value)? ack,
-    TResult Function(DartChangeEvent_InitialDataBatch value)? initialDataBatch,
-    TResult Function(DartChangeEvent_Insert value)? insert,
-    TResult Function(DartChangeEvent_Update value)? update,
-    TResult Function(DartChangeEvent_Delete value)? delete,
-    TResult Function(DartChangeEvent_Error value)? error,
-    required TResult orElse(),
-  }) {
-    if (ack != null) {
-      return ack(this);
-    }
-    return orElse();
-  }
-}
-
-abstract class DartChangeEvent_Ack extends DartChangeEvent {
-  const factory DartChangeEvent_Ack(
-      {required final String subscriptionId,
-      required final int totalRows,
-      required final List<DartSchemaField> schema,
-      required final int batchNum,
-      required final bool hasMore,
-      required final String status}) = _$DartChangeEvent_AckImpl;
-  const DartChangeEvent_Ack._() : super._();
-
-  @override
-  String get subscriptionId;
-  int get totalRows;
-  List<DartSchemaField> get schema;
-  int get batchNum;
-  bool get hasMore;
-  String get status;
-
-  /// Create a copy of DartChangeEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @override
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  _$$DartChangeEvent_AckImplCopyWith<_$DartChangeEvent_AckImpl> get copyWith =>
-      throw _privateConstructorUsedError;
 }
 
 /// @nodoc
-abstract class _$$DartChangeEvent_InitialDataBatchImplCopyWith<$Res>
+abstract mixin class $DartChangeEvent_AckCopyWith<$Res>
     implements $DartChangeEventCopyWith<$Res> {
-  factory _$$DartChangeEvent_InitialDataBatchImplCopyWith(
-          _$DartChangeEvent_InitialDataBatchImpl value,
-          $Res Function(_$DartChangeEvent_InitialDataBatchImpl) then) =
-      __$$DartChangeEvent_InitialDataBatchImplCopyWithImpl<$Res>;
+  factory $DartChangeEvent_AckCopyWith(
+          DartChangeEvent_Ack value, $Res Function(DartChangeEvent_Ack) _then) =
+      _$DartChangeEvent_AckCopyWithImpl;
   @override
   @useResult
   $Res call(
       {String subscriptionId,
-      List<String> rowsJson,
+      int totalRows,
+      List<DartSchemaField> schema,
       int batchNum,
       bool hasMore,
       String status});
 }
 
 /// @nodoc
-class __$$DartChangeEvent_InitialDataBatchImplCopyWithImpl<$Res>
-    extends _$DartChangeEventCopyWithImpl<$Res,
-        _$DartChangeEvent_InitialDataBatchImpl>
-    implements _$$DartChangeEvent_InitialDataBatchImplCopyWith<$Res> {
-  __$$DartChangeEvent_InitialDataBatchImplCopyWithImpl(
-      _$DartChangeEvent_InitialDataBatchImpl _value,
-      $Res Function(_$DartChangeEvent_InitialDataBatchImpl) _then)
-      : super(_value, _then);
+class _$DartChangeEvent_AckCopyWithImpl<$Res>
+    implements $DartChangeEvent_AckCopyWith<$Res> {
+  _$DartChangeEvent_AckCopyWithImpl(this._self, this._then);
+
+  final DartChangeEvent_Ack _self;
+  final $Res Function(DartChangeEvent_Ack) _then;
 
   /// Create a copy of DartChangeEvent
   /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
   @override
+  @pragma('vm:prefer-inline')
   $Res call({
     Object? subscriptionId = null,
-    Object? rowsJson = null,
+    Object? totalRows = null,
+    Object? schema = null,
     Object? batchNum = null,
     Object? hasMore = null,
     Object? status = null,
   }) {
-    return _then(_$DartChangeEvent_InitialDataBatchImpl(
+    return _then(DartChangeEvent_Ack(
       subscriptionId: null == subscriptionId
-          ? _value.subscriptionId
+          ? _self.subscriptionId
           : subscriptionId // ignore: cast_nullable_to_non_nullable
               as String,
-      rowsJson: null == rowsJson
-          ? _value._rowsJson
-          : rowsJson // ignore: cast_nullable_to_non_nullable
-              as List<String>,
+      totalRows: null == totalRows
+          ? _self.totalRows
+          : totalRows // ignore: cast_nullable_to_non_nullable
+              as int,
+      schema: null == schema
+          ? _self._schema
+          : schema // ignore: cast_nullable_to_non_nullable
+              as List<DartSchemaField>,
       batchNum: null == batchNum
-          ? _value.batchNum
+          ? _self.batchNum
           : batchNum // ignore: cast_nullable_to_non_nullable
               as int,
       hasMore: null == hasMore
-          ? _value.hasMore
+          ? _self.hasMore
           : hasMore // ignore: cast_nullable_to_non_nullable
               as bool,
       status: null == status
-          ? _value.status
+          ? _self.status
           : status // ignore: cast_nullable_to_non_nullable
               as String,
     ));
@@ -1012,9 +866,8 @@ class __$$DartChangeEvent_InitialDataBatchImplCopyWithImpl<$Res>
 
 /// @nodoc
 
-class _$DartChangeEvent_InitialDataBatchImpl
-    extends DartChangeEvent_InitialDataBatch {
-  const _$DartChangeEvent_InitialDataBatchImpl(
+class DartChangeEvent_InitialDataBatch extends DartChangeEvent {
+  const DartChangeEvent_InitialDataBatch(
       {required this.subscriptionId,
       required final List<String> rowsJson,
       required this.batchNum,
@@ -1030,30 +883,30 @@ class _$DartChangeEvent_InitialDataBatchImpl
   final List<String> _rowsJson;
 
   /// Each entry is a JSON-encoded row object (`{"col": value, ...}`).
-  @override
   List<String> get rowsJson {
     if (_rowsJson is EqualUnmodifiableListView) return _rowsJson;
     // ignore: implicit_dynamic_type
     return EqualUnmodifiableListView(_rowsJson);
   }
 
-  @override
   final int batchNum;
-  @override
   final bool hasMore;
-  @override
   final String status;
 
+  /// Create a copy of DartChangeEvent
+  /// with the given fields replaced by the non-null parameter values.
   @override
-  String toString() {
-    return 'DartChangeEvent.initialDataBatch(subscriptionId: $subscriptionId, rowsJson: $rowsJson, batchNum: $batchNum, hasMore: $hasMore, status: $status)';
-  }
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $DartChangeEvent_InitialDataBatchCopyWith<DartChangeEvent_InitialDataBatch>
+      get copyWith => _$DartChangeEvent_InitialDataBatchCopyWithImpl<
+          DartChangeEvent_InitialDataBatch>(this, _$identity);
 
   @override
   bool operator ==(Object other) {
     return identical(this, other) ||
         (other.runtimeType == runtimeType &&
-            other is _$DartChangeEvent_InitialDataBatchImpl &&
+            other is DartChangeEvent_InitialDataBatch &&
             (identical(other.subscriptionId, subscriptionId) ||
                 other.subscriptionId == subscriptionId) &&
             const DeepCollectionEquality().equals(other._rowsJson, _rowsJson) &&
@@ -1072,218 +925,77 @@ class _$DartChangeEvent_InitialDataBatchImpl
       hasMore,
       status);
 
-  /// Create a copy of DartChangeEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
   @override
-  @pragma('vm:prefer-inline')
-  _$$DartChangeEvent_InitialDataBatchImplCopyWith<
-          _$DartChangeEvent_InitialDataBatchImpl>
-      get copyWith => __$$DartChangeEvent_InitialDataBatchImplCopyWithImpl<
-          _$DartChangeEvent_InitialDataBatchImpl>(this, _$identity);
-
-  @override
-  @optionalTypeArgs
-  TResult when<TResult extends Object?>({
-    required TResult Function(
-            String subscriptionId,
-            int totalRows,
-            List<DartSchemaField> schema,
-            int batchNum,
-            bool hasMore,
-            String status)
-        ack,
-    required TResult Function(String subscriptionId, List<String> rowsJson,
-            int batchNum, bool hasMore, String status)
-        initialDataBatch,
-    required TResult Function(String subscriptionId, List<String> rowsJson)
-        insert,
-    required TResult Function(String subscriptionId, List<String> rowsJson,
-            List<String> oldRowsJson)
-        update,
-    required TResult Function(String subscriptionId, List<String> oldRowsJson)
-        delete,
-    required TResult Function(
-            String subscriptionId, String code, String message)
-        error,
-  }) {
-    return initialDataBatch(
-        subscriptionId, rowsJson, batchNum, hasMore, status);
+  String toString() {
+    return 'DartChangeEvent.initialDataBatch(subscriptionId: $subscriptionId, rowsJson: $rowsJson, batchNum: $batchNum, hasMore: $hasMore, status: $status)';
   }
-
-  @override
-  @optionalTypeArgs
-  TResult? whenOrNull<TResult extends Object?>({
-    TResult? Function(
-            String subscriptionId,
-            int totalRows,
-            List<DartSchemaField> schema,
-            int batchNum,
-            bool hasMore,
-            String status)?
-        ack,
-    TResult? Function(String subscriptionId, List<String> rowsJson,
-            int batchNum, bool hasMore, String status)?
-        initialDataBatch,
-    TResult? Function(String subscriptionId, List<String> rowsJson)? insert,
-    TResult? Function(String subscriptionId, List<String> rowsJson,
-            List<String> oldRowsJson)?
-        update,
-    TResult? Function(String subscriptionId, List<String> oldRowsJson)? delete,
-    TResult? Function(String subscriptionId, String code, String message)?
-        error,
-  }) {
-    return initialDataBatch?.call(
-        subscriptionId, rowsJson, batchNum, hasMore, status);
-  }
-
-  @override
-  @optionalTypeArgs
-  TResult maybeWhen<TResult extends Object?>({
-    TResult Function(
-            String subscriptionId,
-            int totalRows,
-            List<DartSchemaField> schema,
-            int batchNum,
-            bool hasMore,
-            String status)?
-        ack,
-    TResult Function(String subscriptionId, List<String> rowsJson, int batchNum,
-            bool hasMore, String status)?
-        initialDataBatch,
-    TResult Function(String subscriptionId, List<String> rowsJson)? insert,
-    TResult Function(String subscriptionId, List<String> rowsJson,
-            List<String> oldRowsJson)?
-        update,
-    TResult Function(String subscriptionId, List<String> oldRowsJson)? delete,
-    TResult Function(String subscriptionId, String code, String message)? error,
-    required TResult orElse(),
-  }) {
-    if (initialDataBatch != null) {
-      return initialDataBatch(
-          subscriptionId, rowsJson, batchNum, hasMore, status);
-    }
-    return orElse();
-  }
-
-  @override
-  @optionalTypeArgs
-  TResult map<TResult extends Object?>({
-    required TResult Function(DartChangeEvent_Ack value) ack,
-    required TResult Function(DartChangeEvent_InitialDataBatch value)
-        initialDataBatch,
-    required TResult Function(DartChangeEvent_Insert value) insert,
-    required TResult Function(DartChangeEvent_Update value) update,
-    required TResult Function(DartChangeEvent_Delete value) delete,
-    required TResult Function(DartChangeEvent_Error value) error,
-  }) {
-    return initialDataBatch(this);
-  }
-
-  @override
-  @optionalTypeArgs
-  TResult? mapOrNull<TResult extends Object?>({
-    TResult? Function(DartChangeEvent_Ack value)? ack,
-    TResult? Function(DartChangeEvent_InitialDataBatch value)? initialDataBatch,
-    TResult? Function(DartChangeEvent_Insert value)? insert,
-    TResult? Function(DartChangeEvent_Update value)? update,
-    TResult? Function(DartChangeEvent_Delete value)? delete,
-    TResult? Function(DartChangeEvent_Error value)? error,
-  }) {
-    return initialDataBatch?.call(this);
-  }
-
-  @override
-  @optionalTypeArgs
-  TResult maybeMap<TResult extends Object?>({
-    TResult Function(DartChangeEvent_Ack value)? ack,
-    TResult Function(DartChangeEvent_InitialDataBatch value)? initialDataBatch,
-    TResult Function(DartChangeEvent_Insert value)? insert,
-    TResult Function(DartChangeEvent_Update value)? update,
-    TResult Function(DartChangeEvent_Delete value)? delete,
-    TResult Function(DartChangeEvent_Error value)? error,
-    required TResult orElse(),
-  }) {
-    if (initialDataBatch != null) {
-      return initialDataBatch(this);
-    }
-    return orElse();
-  }
-}
-
-abstract class DartChangeEvent_InitialDataBatch extends DartChangeEvent {
-  const factory DartChangeEvent_InitialDataBatch(
-      {required final String subscriptionId,
-      required final List<String> rowsJson,
-      required final int batchNum,
-      required final bool hasMore,
-      required final String status}) = _$DartChangeEvent_InitialDataBatchImpl;
-  const DartChangeEvent_InitialDataBatch._() : super._();
-
-  @override
-  String get subscriptionId;
-
-  /// Each entry is a JSON-encoded row object (`{"col": value, ...}`).
-  List<String> get rowsJson;
-  int get batchNum;
-  bool get hasMore;
-  String get status;
-
-  /// Create a copy of DartChangeEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @override
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  _$$DartChangeEvent_InitialDataBatchImplCopyWith<
-          _$DartChangeEvent_InitialDataBatchImpl>
-      get copyWith => throw _privateConstructorUsedError;
 }
 
 /// @nodoc
-abstract class _$$DartChangeEvent_InsertImplCopyWith<$Res>
+abstract mixin class $DartChangeEvent_InitialDataBatchCopyWith<$Res>
     implements $DartChangeEventCopyWith<$Res> {
-  factory _$$DartChangeEvent_InsertImplCopyWith(
-          _$DartChangeEvent_InsertImpl value,
-          $Res Function(_$DartChangeEvent_InsertImpl) then) =
-      __$$DartChangeEvent_InsertImplCopyWithImpl<$Res>;
+  factory $DartChangeEvent_InitialDataBatchCopyWith(
+          DartChangeEvent_InitialDataBatch value,
+          $Res Function(DartChangeEvent_InitialDataBatch) _then) =
+      _$DartChangeEvent_InitialDataBatchCopyWithImpl;
   @override
   @useResult
-  $Res call({String subscriptionId, List<String> rowsJson});
+  $Res call(
+      {String subscriptionId,
+      List<String> rowsJson,
+      int batchNum,
+      bool hasMore,
+      String status});
 }
 
 /// @nodoc
-class __$$DartChangeEvent_InsertImplCopyWithImpl<$Res>
-    extends _$DartChangeEventCopyWithImpl<$Res, _$DartChangeEvent_InsertImpl>
-    implements _$$DartChangeEvent_InsertImplCopyWith<$Res> {
-  __$$DartChangeEvent_InsertImplCopyWithImpl(
-      _$DartChangeEvent_InsertImpl _value,
-      $Res Function(_$DartChangeEvent_InsertImpl) _then)
-      : super(_value, _then);
+class _$DartChangeEvent_InitialDataBatchCopyWithImpl<$Res>
+    implements $DartChangeEvent_InitialDataBatchCopyWith<$Res> {
+  _$DartChangeEvent_InitialDataBatchCopyWithImpl(this._self, this._then);
+
+  final DartChangeEvent_InitialDataBatch _self;
+  final $Res Function(DartChangeEvent_InitialDataBatch) _then;
 
   /// Create a copy of DartChangeEvent
   /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
   @override
+  @pragma('vm:prefer-inline')
   $Res call({
     Object? subscriptionId = null,
     Object? rowsJson = null,
+    Object? batchNum = null,
+    Object? hasMore = null,
+    Object? status = null,
   }) {
-    return _then(_$DartChangeEvent_InsertImpl(
+    return _then(DartChangeEvent_InitialDataBatch(
       subscriptionId: null == subscriptionId
-          ? _value.subscriptionId
+          ? _self.subscriptionId
           : subscriptionId // ignore: cast_nullable_to_non_nullable
               as String,
       rowsJson: null == rowsJson
-          ? _value._rowsJson
+          ? _self._rowsJson
           : rowsJson // ignore: cast_nullable_to_non_nullable
               as List<String>,
+      batchNum: null == batchNum
+          ? _self.batchNum
+          : batchNum // ignore: cast_nullable_to_non_nullable
+              as int,
+      hasMore: null == hasMore
+          ? _self.hasMore
+          : hasMore // ignore: cast_nullable_to_non_nullable
+              as bool,
+      status: null == status
+          ? _self.status
+          : status // ignore: cast_nullable_to_non_nullable
+              as String,
     ));
   }
 }
 
 /// @nodoc
 
-class _$DartChangeEvent_InsertImpl extends DartChangeEvent_Insert {
-  const _$DartChangeEvent_InsertImpl(
+class DartChangeEvent_Insert extends DartChangeEvent {
+  const DartChangeEvent_Insert(
       {required this.subscriptionId, required final List<String> rowsJson})
       : _rowsJson = rowsJson,
         super._();
@@ -1295,23 +1007,26 @@ class _$DartChangeEvent_InsertImpl extends DartChangeEvent_Insert {
   final List<String> _rowsJson;
 
   /// Each entry is a JSON-encoded row object.
-  @override
   List<String> get rowsJson {
     if (_rowsJson is EqualUnmodifiableListView) return _rowsJson;
     // ignore: implicit_dynamic_type
     return EqualUnmodifiableListView(_rowsJson);
   }
 
+  /// Create a copy of DartChangeEvent
+  /// with the given fields replaced by the non-null parameter values.
   @override
-  String toString() {
-    return 'DartChangeEvent.insert(subscriptionId: $subscriptionId, rowsJson: $rowsJson)';
-  }
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $DartChangeEvent_InsertCopyWith<DartChangeEvent_Insert> get copyWith =>
+      _$DartChangeEvent_InsertCopyWithImpl<DartChangeEvent_Insert>(
+          this, _$identity);
 
   @override
   bool operator ==(Object other) {
     return identical(this, other) ||
         (other.runtimeType == runtimeType &&
-            other is _$DartChangeEvent_InsertImpl &&
+            other is DartChangeEvent_Insert &&
             (identical(other.subscriptionId, subscriptionId) ||
                 other.subscriptionId == subscriptionId) &&
             const DeepCollectionEquality().equals(other._rowsJson, _rowsJson));
@@ -1321,204 +1036,47 @@ class _$DartChangeEvent_InsertImpl extends DartChangeEvent_Insert {
   int get hashCode => Object.hash(runtimeType, subscriptionId,
       const DeepCollectionEquality().hash(_rowsJson));
 
-  /// Create a copy of DartChangeEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
   @override
-  @pragma('vm:prefer-inline')
-  _$$DartChangeEvent_InsertImplCopyWith<_$DartChangeEvent_InsertImpl>
-      get copyWith => __$$DartChangeEvent_InsertImplCopyWithImpl<
-          _$DartChangeEvent_InsertImpl>(this, _$identity);
-
-  @override
-  @optionalTypeArgs
-  TResult when<TResult extends Object?>({
-    required TResult Function(
-            String subscriptionId,
-            int totalRows,
-            List<DartSchemaField> schema,
-            int batchNum,
-            bool hasMore,
-            String status)
-        ack,
-    required TResult Function(String subscriptionId, List<String> rowsJson,
-            int batchNum, bool hasMore, String status)
-        initialDataBatch,
-    required TResult Function(String subscriptionId, List<String> rowsJson)
-        insert,
-    required TResult Function(String subscriptionId, List<String> rowsJson,
-            List<String> oldRowsJson)
-        update,
-    required TResult Function(String subscriptionId, List<String> oldRowsJson)
-        delete,
-    required TResult Function(
-            String subscriptionId, String code, String message)
-        error,
-  }) {
-    return insert(subscriptionId, rowsJson);
+  String toString() {
+    return 'DartChangeEvent.insert(subscriptionId: $subscriptionId, rowsJson: $rowsJson)';
   }
-
-  @override
-  @optionalTypeArgs
-  TResult? whenOrNull<TResult extends Object?>({
-    TResult? Function(
-            String subscriptionId,
-            int totalRows,
-            List<DartSchemaField> schema,
-            int batchNum,
-            bool hasMore,
-            String status)?
-        ack,
-    TResult? Function(String subscriptionId, List<String> rowsJson,
-            int batchNum, bool hasMore, String status)?
-        initialDataBatch,
-    TResult? Function(String subscriptionId, List<String> rowsJson)? insert,
-    TResult? Function(String subscriptionId, List<String> rowsJson,
-            List<String> oldRowsJson)?
-        update,
-    TResult? Function(String subscriptionId, List<String> oldRowsJson)? delete,
-    TResult? Function(String subscriptionId, String code, String message)?
-        error,
-  }) {
-    return insert?.call(subscriptionId, rowsJson);
-  }
-
-  @override
-  @optionalTypeArgs
-  TResult maybeWhen<TResult extends Object?>({
-    TResult Function(
-            String subscriptionId,
-            int totalRows,
-            List<DartSchemaField> schema,
-            int batchNum,
-            bool hasMore,
-            String status)?
-        ack,
-    TResult Function(String subscriptionId, List<String> rowsJson, int batchNum,
-            bool hasMore, String status)?
-        initialDataBatch,
-    TResult Function(String subscriptionId, List<String> rowsJson)? insert,
-    TResult Function(String subscriptionId, List<String> rowsJson,
-            List<String> oldRowsJson)?
-        update,
-    TResult Function(String subscriptionId, List<String> oldRowsJson)? delete,
-    TResult Function(String subscriptionId, String code, String message)? error,
-    required TResult orElse(),
-  }) {
-    if (insert != null) {
-      return insert(subscriptionId, rowsJson);
-    }
-    return orElse();
-  }
-
-  @override
-  @optionalTypeArgs
-  TResult map<TResult extends Object?>({
-    required TResult Function(DartChangeEvent_Ack value) ack,
-    required TResult Function(DartChangeEvent_InitialDataBatch value)
-        initialDataBatch,
-    required TResult Function(DartChangeEvent_Insert value) insert,
-    required TResult Function(DartChangeEvent_Update value) update,
-    required TResult Function(DartChangeEvent_Delete value) delete,
-    required TResult Function(DartChangeEvent_Error value) error,
-  }) {
-    return insert(this);
-  }
-
-  @override
-  @optionalTypeArgs
-  TResult? mapOrNull<TResult extends Object?>({
-    TResult? Function(DartChangeEvent_Ack value)? ack,
-    TResult? Function(DartChangeEvent_InitialDataBatch value)? initialDataBatch,
-    TResult? Function(DartChangeEvent_Insert value)? insert,
-    TResult? Function(DartChangeEvent_Update value)? update,
-    TResult? Function(DartChangeEvent_Delete value)? delete,
-    TResult? Function(DartChangeEvent_Error value)? error,
-  }) {
-    return insert?.call(this);
-  }
-
-  @override
-  @optionalTypeArgs
-  TResult maybeMap<TResult extends Object?>({
-    TResult Function(DartChangeEvent_Ack value)? ack,
-    TResult Function(DartChangeEvent_InitialDataBatch value)? initialDataBatch,
-    TResult Function(DartChangeEvent_Insert value)? insert,
-    TResult Function(DartChangeEvent_Update value)? update,
-    TResult Function(DartChangeEvent_Delete value)? delete,
-    TResult Function(DartChangeEvent_Error value)? error,
-    required TResult orElse(),
-  }) {
-    if (insert != null) {
-      return insert(this);
-    }
-    return orElse();
-  }
-}
-
-abstract class DartChangeEvent_Insert extends DartChangeEvent {
-  const factory DartChangeEvent_Insert(
-      {required final String subscriptionId,
-      required final List<String> rowsJson}) = _$DartChangeEvent_InsertImpl;
-  const DartChangeEvent_Insert._() : super._();
-
-  @override
-  String get subscriptionId;
-
-  /// Each entry is a JSON-encoded row object.
-  List<String> get rowsJson;
-
-  /// Create a copy of DartChangeEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @override
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  _$$DartChangeEvent_InsertImplCopyWith<_$DartChangeEvent_InsertImpl>
-      get copyWith => throw _privateConstructorUsedError;
 }
 
 /// @nodoc
-abstract class _$$DartChangeEvent_UpdateImplCopyWith<$Res>
+abstract mixin class $DartChangeEvent_InsertCopyWith<$Res>
     implements $DartChangeEventCopyWith<$Res> {
-  factory _$$DartChangeEvent_UpdateImplCopyWith(
-          _$DartChangeEvent_UpdateImpl value,
-          $Res Function(_$DartChangeEvent_UpdateImpl) then) =
-      __$$DartChangeEvent_UpdateImplCopyWithImpl<$Res>;
+  factory $DartChangeEvent_InsertCopyWith(DartChangeEvent_Insert value,
+          $Res Function(DartChangeEvent_Insert) _then) =
+      _$DartChangeEvent_InsertCopyWithImpl;
   @override
   @useResult
-  $Res call(
-      {String subscriptionId, List<String> rowsJson, List<String> oldRowsJson});
+  $Res call({String subscriptionId, List<String> rowsJson});
 }
 
 /// @nodoc
-class __$$DartChangeEvent_UpdateImplCopyWithImpl<$Res>
-    extends _$DartChangeEventCopyWithImpl<$Res, _$DartChangeEvent_UpdateImpl>
-    implements _$$DartChangeEvent_UpdateImplCopyWith<$Res> {
-  __$$DartChangeEvent_UpdateImplCopyWithImpl(
-      _$DartChangeEvent_UpdateImpl _value,
-      $Res Function(_$DartChangeEvent_UpdateImpl) _then)
-      : super(_value, _then);
+class _$DartChangeEvent_InsertCopyWithImpl<$Res>
+    implements $DartChangeEvent_InsertCopyWith<$Res> {
+  _$DartChangeEvent_InsertCopyWithImpl(this._self, this._then);
+
+  final DartChangeEvent_Insert _self;
+  final $Res Function(DartChangeEvent_Insert) _then;
 
   /// Create a copy of DartChangeEvent
   /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
   @override
+  @pragma('vm:prefer-inline')
   $Res call({
     Object? subscriptionId = null,
     Object? rowsJson = null,
-    Object? oldRowsJson = null,
   }) {
-    return _then(_$DartChangeEvent_UpdateImpl(
+    return _then(DartChangeEvent_Insert(
       subscriptionId: null == subscriptionId
-          ? _value.subscriptionId
+          ? _self.subscriptionId
           : subscriptionId // ignore: cast_nullable_to_non_nullable
               as String,
       rowsJson: null == rowsJson
-          ? _value._rowsJson
+          ? _self._rowsJson
           : rowsJson // ignore: cast_nullable_to_non_nullable
-              as List<String>,
-      oldRowsJson: null == oldRowsJson
-          ? _value._oldRowsJson
-          : oldRowsJson // ignore: cast_nullable_to_non_nullable
               as List<String>,
     ));
   }
@@ -1526,8 +1084,8 @@ class __$$DartChangeEvent_UpdateImplCopyWithImpl<$Res>
 
 /// @nodoc
 
-class _$DartChangeEvent_UpdateImpl extends DartChangeEvent_Update {
-  const _$DartChangeEvent_UpdateImpl(
+class DartChangeEvent_Update extends DartChangeEvent {
+  const DartChangeEvent_Update(
       {required this.subscriptionId,
       required final List<String> rowsJson,
       required final List<String> oldRowsJson})
@@ -1538,7 +1096,6 @@ class _$DartChangeEvent_UpdateImpl extends DartChangeEvent_Update {
   @override
   final String subscriptionId;
   final List<String> _rowsJson;
-  @override
   List<String> get rowsJson {
     if (_rowsJson is EqualUnmodifiableListView) return _rowsJson;
     // ignore: implicit_dynamic_type
@@ -1546,23 +1103,26 @@ class _$DartChangeEvent_UpdateImpl extends DartChangeEvent_Update {
   }
 
   final List<String> _oldRowsJson;
-  @override
   List<String> get oldRowsJson {
     if (_oldRowsJson is EqualUnmodifiableListView) return _oldRowsJson;
     // ignore: implicit_dynamic_type
     return EqualUnmodifiableListView(_oldRowsJson);
   }
 
+  /// Create a copy of DartChangeEvent
+  /// with the given fields replaced by the non-null parameter values.
   @override
-  String toString() {
-    return 'DartChangeEvent.update(subscriptionId: $subscriptionId, rowsJson: $rowsJson, oldRowsJson: $oldRowsJson)';
-  }
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $DartChangeEvent_UpdateCopyWith<DartChangeEvent_Update> get copyWith =>
+      _$DartChangeEvent_UpdateCopyWithImpl<DartChangeEvent_Update>(
+          this, _$identity);
 
   @override
   bool operator ==(Object other) {
     return identical(this, other) ||
         (other.runtimeType == runtimeType &&
-            other is _$DartChangeEvent_UpdateImpl &&
+            other is DartChangeEvent_Update &&
             (identical(other.subscriptionId, subscriptionId) ||
                 other.subscriptionId == subscriptionId) &&
             const DeepCollectionEquality().equals(other._rowsJson, _rowsJson) &&
@@ -1577,197 +1137,52 @@ class _$DartChangeEvent_UpdateImpl extends DartChangeEvent_Update {
       const DeepCollectionEquality().hash(_rowsJson),
       const DeepCollectionEquality().hash(_oldRowsJson));
 
-  /// Create a copy of DartChangeEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
   @override
-  @pragma('vm:prefer-inline')
-  _$$DartChangeEvent_UpdateImplCopyWith<_$DartChangeEvent_UpdateImpl>
-      get copyWith => __$$DartChangeEvent_UpdateImplCopyWithImpl<
-          _$DartChangeEvent_UpdateImpl>(this, _$identity);
-
-  @override
-  @optionalTypeArgs
-  TResult when<TResult extends Object?>({
-    required TResult Function(
-            String subscriptionId,
-            int totalRows,
-            List<DartSchemaField> schema,
-            int batchNum,
-            bool hasMore,
-            String status)
-        ack,
-    required TResult Function(String subscriptionId, List<String> rowsJson,
-            int batchNum, bool hasMore, String status)
-        initialDataBatch,
-    required TResult Function(String subscriptionId, List<String> rowsJson)
-        insert,
-    required TResult Function(String subscriptionId, List<String> rowsJson,
-            List<String> oldRowsJson)
-        update,
-    required TResult Function(String subscriptionId, List<String> oldRowsJson)
-        delete,
-    required TResult Function(
-            String subscriptionId, String code, String message)
-        error,
-  }) {
-    return update(subscriptionId, rowsJson, oldRowsJson);
+  String toString() {
+    return 'DartChangeEvent.update(subscriptionId: $subscriptionId, rowsJson: $rowsJson, oldRowsJson: $oldRowsJson)';
   }
-
-  @override
-  @optionalTypeArgs
-  TResult? whenOrNull<TResult extends Object?>({
-    TResult? Function(
-            String subscriptionId,
-            int totalRows,
-            List<DartSchemaField> schema,
-            int batchNum,
-            bool hasMore,
-            String status)?
-        ack,
-    TResult? Function(String subscriptionId, List<String> rowsJson,
-            int batchNum, bool hasMore, String status)?
-        initialDataBatch,
-    TResult? Function(String subscriptionId, List<String> rowsJson)? insert,
-    TResult? Function(String subscriptionId, List<String> rowsJson,
-            List<String> oldRowsJson)?
-        update,
-    TResult? Function(String subscriptionId, List<String> oldRowsJson)? delete,
-    TResult? Function(String subscriptionId, String code, String message)?
-        error,
-  }) {
-    return update?.call(subscriptionId, rowsJson, oldRowsJson);
-  }
-
-  @override
-  @optionalTypeArgs
-  TResult maybeWhen<TResult extends Object?>({
-    TResult Function(
-            String subscriptionId,
-            int totalRows,
-            List<DartSchemaField> schema,
-            int batchNum,
-            bool hasMore,
-            String status)?
-        ack,
-    TResult Function(String subscriptionId, List<String> rowsJson, int batchNum,
-            bool hasMore, String status)?
-        initialDataBatch,
-    TResult Function(String subscriptionId, List<String> rowsJson)? insert,
-    TResult Function(String subscriptionId, List<String> rowsJson,
-            List<String> oldRowsJson)?
-        update,
-    TResult Function(String subscriptionId, List<String> oldRowsJson)? delete,
-    TResult Function(String subscriptionId, String code, String message)? error,
-    required TResult orElse(),
-  }) {
-    if (update != null) {
-      return update(subscriptionId, rowsJson, oldRowsJson);
-    }
-    return orElse();
-  }
-
-  @override
-  @optionalTypeArgs
-  TResult map<TResult extends Object?>({
-    required TResult Function(DartChangeEvent_Ack value) ack,
-    required TResult Function(DartChangeEvent_InitialDataBatch value)
-        initialDataBatch,
-    required TResult Function(DartChangeEvent_Insert value) insert,
-    required TResult Function(DartChangeEvent_Update value) update,
-    required TResult Function(DartChangeEvent_Delete value) delete,
-    required TResult Function(DartChangeEvent_Error value) error,
-  }) {
-    return update(this);
-  }
-
-  @override
-  @optionalTypeArgs
-  TResult? mapOrNull<TResult extends Object?>({
-    TResult? Function(DartChangeEvent_Ack value)? ack,
-    TResult? Function(DartChangeEvent_InitialDataBatch value)? initialDataBatch,
-    TResult? Function(DartChangeEvent_Insert value)? insert,
-    TResult? Function(DartChangeEvent_Update value)? update,
-    TResult? Function(DartChangeEvent_Delete value)? delete,
-    TResult? Function(DartChangeEvent_Error value)? error,
-  }) {
-    return update?.call(this);
-  }
-
-  @override
-  @optionalTypeArgs
-  TResult maybeMap<TResult extends Object?>({
-    TResult Function(DartChangeEvent_Ack value)? ack,
-    TResult Function(DartChangeEvent_InitialDataBatch value)? initialDataBatch,
-    TResult Function(DartChangeEvent_Insert value)? insert,
-    TResult Function(DartChangeEvent_Update value)? update,
-    TResult Function(DartChangeEvent_Delete value)? delete,
-    TResult Function(DartChangeEvent_Error value)? error,
-    required TResult orElse(),
-  }) {
-    if (update != null) {
-      return update(this);
-    }
-    return orElse();
-  }
-}
-
-abstract class DartChangeEvent_Update extends DartChangeEvent {
-  const factory DartChangeEvent_Update(
-      {required final String subscriptionId,
-      required final List<String> rowsJson,
-      required final List<String> oldRowsJson}) = _$DartChangeEvent_UpdateImpl;
-  const DartChangeEvent_Update._() : super._();
-
-  @override
-  String get subscriptionId;
-  List<String> get rowsJson;
-  List<String> get oldRowsJson;
-
-  /// Create a copy of DartChangeEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @override
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  _$$DartChangeEvent_UpdateImplCopyWith<_$DartChangeEvent_UpdateImpl>
-      get copyWith => throw _privateConstructorUsedError;
 }
 
 /// @nodoc
-abstract class _$$DartChangeEvent_DeleteImplCopyWith<$Res>
+abstract mixin class $DartChangeEvent_UpdateCopyWith<$Res>
     implements $DartChangeEventCopyWith<$Res> {
-  factory _$$DartChangeEvent_DeleteImplCopyWith(
-          _$DartChangeEvent_DeleteImpl value,
-          $Res Function(_$DartChangeEvent_DeleteImpl) then) =
-      __$$DartChangeEvent_DeleteImplCopyWithImpl<$Res>;
+  factory $DartChangeEvent_UpdateCopyWith(DartChangeEvent_Update value,
+          $Res Function(DartChangeEvent_Update) _then) =
+      _$DartChangeEvent_UpdateCopyWithImpl;
   @override
   @useResult
-  $Res call({String subscriptionId, List<String> oldRowsJson});
+  $Res call(
+      {String subscriptionId, List<String> rowsJson, List<String> oldRowsJson});
 }
 
 /// @nodoc
-class __$$DartChangeEvent_DeleteImplCopyWithImpl<$Res>
-    extends _$DartChangeEventCopyWithImpl<$Res, _$DartChangeEvent_DeleteImpl>
-    implements _$$DartChangeEvent_DeleteImplCopyWith<$Res> {
-  __$$DartChangeEvent_DeleteImplCopyWithImpl(
-      _$DartChangeEvent_DeleteImpl _value,
-      $Res Function(_$DartChangeEvent_DeleteImpl) _then)
-      : super(_value, _then);
+class _$DartChangeEvent_UpdateCopyWithImpl<$Res>
+    implements $DartChangeEvent_UpdateCopyWith<$Res> {
+  _$DartChangeEvent_UpdateCopyWithImpl(this._self, this._then);
+
+  final DartChangeEvent_Update _self;
+  final $Res Function(DartChangeEvent_Update) _then;
 
   /// Create a copy of DartChangeEvent
   /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
   @override
+  @pragma('vm:prefer-inline')
   $Res call({
     Object? subscriptionId = null,
+    Object? rowsJson = null,
     Object? oldRowsJson = null,
   }) {
-    return _then(_$DartChangeEvent_DeleteImpl(
+    return _then(DartChangeEvent_Update(
       subscriptionId: null == subscriptionId
-          ? _value.subscriptionId
+          ? _self.subscriptionId
           : subscriptionId // ignore: cast_nullable_to_non_nullable
               as String,
+      rowsJson: null == rowsJson
+          ? _self._rowsJson
+          : rowsJson // ignore: cast_nullable_to_non_nullable
+              as List<String>,
       oldRowsJson: null == oldRowsJson
-          ? _value._oldRowsJson
+          ? _self._oldRowsJson
           : oldRowsJson // ignore: cast_nullable_to_non_nullable
               as List<String>,
     ));
@@ -1776,8 +1191,8 @@ class __$$DartChangeEvent_DeleteImplCopyWithImpl<$Res>
 
 /// @nodoc
 
-class _$DartChangeEvent_DeleteImpl extends DartChangeEvent_Delete {
-  const _$DartChangeEvent_DeleteImpl(
+class DartChangeEvent_Delete extends DartChangeEvent {
+  const DartChangeEvent_Delete(
       {required this.subscriptionId, required final List<String> oldRowsJson})
       : _oldRowsJson = oldRowsJson,
         super._();
@@ -1785,23 +1200,26 @@ class _$DartChangeEvent_DeleteImpl extends DartChangeEvent_Delete {
   @override
   final String subscriptionId;
   final List<String> _oldRowsJson;
-  @override
   List<String> get oldRowsJson {
     if (_oldRowsJson is EqualUnmodifiableListView) return _oldRowsJson;
     // ignore: implicit_dynamic_type
     return EqualUnmodifiableListView(_oldRowsJson);
   }
 
+  /// Create a copy of DartChangeEvent
+  /// with the given fields replaced by the non-null parameter values.
   @override
-  String toString() {
-    return 'DartChangeEvent.delete(subscriptionId: $subscriptionId, oldRowsJson: $oldRowsJson)';
-  }
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $DartChangeEvent_DeleteCopyWith<DartChangeEvent_Delete> get copyWith =>
+      _$DartChangeEvent_DeleteCopyWithImpl<DartChangeEvent_Delete>(
+          this, _$identity);
 
   @override
   bool operator ==(Object other) {
     return identical(this, other) ||
         (other.runtimeType == runtimeType &&
-            other is _$DartChangeEvent_DeleteImpl &&
+            other is DartChangeEvent_Delete &&
             (identical(other.subscriptionId, subscriptionId) ||
                 other.subscriptionId == subscriptionId) &&
             const DeepCollectionEquality()
@@ -1812,229 +1230,78 @@ class _$DartChangeEvent_DeleteImpl extends DartChangeEvent_Delete {
   int get hashCode => Object.hash(runtimeType, subscriptionId,
       const DeepCollectionEquality().hash(_oldRowsJson));
 
-  /// Create a copy of DartChangeEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
   @override
-  @pragma('vm:prefer-inline')
-  _$$DartChangeEvent_DeleteImplCopyWith<_$DartChangeEvent_DeleteImpl>
-      get copyWith => __$$DartChangeEvent_DeleteImplCopyWithImpl<
-          _$DartChangeEvent_DeleteImpl>(this, _$identity);
-
-  @override
-  @optionalTypeArgs
-  TResult when<TResult extends Object?>({
-    required TResult Function(
-            String subscriptionId,
-            int totalRows,
-            List<DartSchemaField> schema,
-            int batchNum,
-            bool hasMore,
-            String status)
-        ack,
-    required TResult Function(String subscriptionId, List<String> rowsJson,
-            int batchNum, bool hasMore, String status)
-        initialDataBatch,
-    required TResult Function(String subscriptionId, List<String> rowsJson)
-        insert,
-    required TResult Function(String subscriptionId, List<String> rowsJson,
-            List<String> oldRowsJson)
-        update,
-    required TResult Function(String subscriptionId, List<String> oldRowsJson)
-        delete,
-    required TResult Function(
-            String subscriptionId, String code, String message)
-        error,
-  }) {
-    return delete(subscriptionId, oldRowsJson);
+  String toString() {
+    return 'DartChangeEvent.delete(subscriptionId: $subscriptionId, oldRowsJson: $oldRowsJson)';
   }
-
-  @override
-  @optionalTypeArgs
-  TResult? whenOrNull<TResult extends Object?>({
-    TResult? Function(
-            String subscriptionId,
-            int totalRows,
-            List<DartSchemaField> schema,
-            int batchNum,
-            bool hasMore,
-            String status)?
-        ack,
-    TResult? Function(String subscriptionId, List<String> rowsJson,
-            int batchNum, bool hasMore, String status)?
-        initialDataBatch,
-    TResult? Function(String subscriptionId, List<String> rowsJson)? insert,
-    TResult? Function(String subscriptionId, List<String> rowsJson,
-            List<String> oldRowsJson)?
-        update,
-    TResult? Function(String subscriptionId, List<String> oldRowsJson)? delete,
-    TResult? Function(String subscriptionId, String code, String message)?
-        error,
-  }) {
-    return delete?.call(subscriptionId, oldRowsJson);
-  }
-
-  @override
-  @optionalTypeArgs
-  TResult maybeWhen<TResult extends Object?>({
-    TResult Function(
-            String subscriptionId,
-            int totalRows,
-            List<DartSchemaField> schema,
-            int batchNum,
-            bool hasMore,
-            String status)?
-        ack,
-    TResult Function(String subscriptionId, List<String> rowsJson, int batchNum,
-            bool hasMore, String status)?
-        initialDataBatch,
-    TResult Function(String subscriptionId, List<String> rowsJson)? insert,
-    TResult Function(String subscriptionId, List<String> rowsJson,
-            List<String> oldRowsJson)?
-        update,
-    TResult Function(String subscriptionId, List<String> oldRowsJson)? delete,
-    TResult Function(String subscriptionId, String code, String message)? error,
-    required TResult orElse(),
-  }) {
-    if (delete != null) {
-      return delete(subscriptionId, oldRowsJson);
-    }
-    return orElse();
-  }
-
-  @override
-  @optionalTypeArgs
-  TResult map<TResult extends Object?>({
-    required TResult Function(DartChangeEvent_Ack value) ack,
-    required TResult Function(DartChangeEvent_InitialDataBatch value)
-        initialDataBatch,
-    required TResult Function(DartChangeEvent_Insert value) insert,
-    required TResult Function(DartChangeEvent_Update value) update,
-    required TResult Function(DartChangeEvent_Delete value) delete,
-    required TResult Function(DartChangeEvent_Error value) error,
-  }) {
-    return delete(this);
-  }
-
-  @override
-  @optionalTypeArgs
-  TResult? mapOrNull<TResult extends Object?>({
-    TResult? Function(DartChangeEvent_Ack value)? ack,
-    TResult? Function(DartChangeEvent_InitialDataBatch value)? initialDataBatch,
-    TResult? Function(DartChangeEvent_Insert value)? insert,
-    TResult? Function(DartChangeEvent_Update value)? update,
-    TResult? Function(DartChangeEvent_Delete value)? delete,
-    TResult? Function(DartChangeEvent_Error value)? error,
-  }) {
-    return delete?.call(this);
-  }
-
-  @override
-  @optionalTypeArgs
-  TResult maybeMap<TResult extends Object?>({
-    TResult Function(DartChangeEvent_Ack value)? ack,
-    TResult Function(DartChangeEvent_InitialDataBatch value)? initialDataBatch,
-    TResult Function(DartChangeEvent_Insert value)? insert,
-    TResult Function(DartChangeEvent_Update value)? update,
-    TResult Function(DartChangeEvent_Delete value)? delete,
-    TResult Function(DartChangeEvent_Error value)? error,
-    required TResult orElse(),
-  }) {
-    if (delete != null) {
-      return delete(this);
-    }
-    return orElse();
-  }
-}
-
-abstract class DartChangeEvent_Delete extends DartChangeEvent {
-  const factory DartChangeEvent_Delete(
-      {required final String subscriptionId,
-      required final List<String> oldRowsJson}) = _$DartChangeEvent_DeleteImpl;
-  const DartChangeEvent_Delete._() : super._();
-
-  @override
-  String get subscriptionId;
-  List<String> get oldRowsJson;
-
-  /// Create a copy of DartChangeEvent
-  /// with the given fields replaced by the non-null parameter values.
-  @override
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  _$$DartChangeEvent_DeleteImplCopyWith<_$DartChangeEvent_DeleteImpl>
-      get copyWith => throw _privateConstructorUsedError;
 }
 
 /// @nodoc
-abstract class _$$DartChangeEvent_ErrorImplCopyWith<$Res>
+abstract mixin class $DartChangeEvent_DeleteCopyWith<$Res>
     implements $DartChangeEventCopyWith<$Res> {
-  factory _$$DartChangeEvent_ErrorImplCopyWith(
-          _$DartChangeEvent_ErrorImpl value,
-          $Res Function(_$DartChangeEvent_ErrorImpl) then) =
-      __$$DartChangeEvent_ErrorImplCopyWithImpl<$Res>;
+  factory $DartChangeEvent_DeleteCopyWith(DartChangeEvent_Delete value,
+          $Res Function(DartChangeEvent_Delete) _then) =
+      _$DartChangeEvent_DeleteCopyWithImpl;
   @override
   @useResult
-  $Res call({String subscriptionId, String code, String message});
+  $Res call({String subscriptionId, List<String> oldRowsJson});
 }
 
 /// @nodoc
-class __$$DartChangeEvent_ErrorImplCopyWithImpl<$Res>
-    extends _$DartChangeEventCopyWithImpl<$Res, _$DartChangeEvent_ErrorImpl>
-    implements _$$DartChangeEvent_ErrorImplCopyWith<$Res> {
-  __$$DartChangeEvent_ErrorImplCopyWithImpl(_$DartChangeEvent_ErrorImpl _value,
-      $Res Function(_$DartChangeEvent_ErrorImpl) _then)
-      : super(_value, _then);
+class _$DartChangeEvent_DeleteCopyWithImpl<$Res>
+    implements $DartChangeEvent_DeleteCopyWith<$Res> {
+  _$DartChangeEvent_DeleteCopyWithImpl(this._self, this._then);
+
+  final DartChangeEvent_Delete _self;
+  final $Res Function(DartChangeEvent_Delete) _then;
 
   /// Create a copy of DartChangeEvent
   /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
   @override
+  @pragma('vm:prefer-inline')
   $Res call({
     Object? subscriptionId = null,
-    Object? code = null,
-    Object? message = null,
+    Object? oldRowsJson = null,
   }) {
-    return _then(_$DartChangeEvent_ErrorImpl(
+    return _then(DartChangeEvent_Delete(
       subscriptionId: null == subscriptionId
-          ? _value.subscriptionId
+          ? _self.subscriptionId
           : subscriptionId // ignore: cast_nullable_to_non_nullable
               as String,
-      code: null == code
-          ? _value.code
-          : code // ignore: cast_nullable_to_non_nullable
-              as String,
-      message: null == message
-          ? _value.message
-          : message // ignore: cast_nullable_to_non_nullable
-              as String,
+      oldRowsJson: null == oldRowsJson
+          ? _self._oldRowsJson
+          : oldRowsJson // ignore: cast_nullable_to_non_nullable
+              as List<String>,
     ));
   }
 }
 
 /// @nodoc
 
-class _$DartChangeEvent_ErrorImpl extends DartChangeEvent_Error {
-  const _$DartChangeEvent_ErrorImpl(
+class DartChangeEvent_Error extends DartChangeEvent {
+  const DartChangeEvent_Error(
       {required this.subscriptionId, required this.code, required this.message})
       : super._();
 
   @override
   final String subscriptionId;
-  @override
   final String code;
-  @override
   final String message;
 
+  /// Create a copy of DartChangeEvent
+  /// with the given fields replaced by the non-null parameter values.
   @override
-  String toString() {
-    return 'DartChangeEvent.error(subscriptionId: $subscriptionId, code: $code, message: $message)';
-  }
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $DartChangeEvent_ErrorCopyWith<DartChangeEvent_Error> get copyWith =>
+      _$DartChangeEvent_ErrorCopyWithImpl<DartChangeEvent_Error>(
+          this, _$identity);
 
   @override
   bool operator ==(Object other) {
     return identical(this, other) ||
         (other.runtimeType == runtimeType &&
-            other is _$DartChangeEvent_ErrorImpl &&
+            other is DartChangeEvent_Error &&
             (identical(other.subscriptionId, subscriptionId) ||
                 other.subscriptionId == subscriptionId) &&
             (identical(other.code, code) || other.code == code) &&
@@ -2044,157 +1311,586 @@ class _$DartChangeEvent_ErrorImpl extends DartChangeEvent_Error {
   @override
   int get hashCode => Object.hash(runtimeType, subscriptionId, code, message);
 
+  @override
+  String toString() {
+    return 'DartChangeEvent.error(subscriptionId: $subscriptionId, code: $code, message: $message)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $DartChangeEvent_ErrorCopyWith<$Res>
+    implements $DartChangeEventCopyWith<$Res> {
+  factory $DartChangeEvent_ErrorCopyWith(DartChangeEvent_Error value,
+          $Res Function(DartChangeEvent_Error) _then) =
+      _$DartChangeEvent_ErrorCopyWithImpl;
+  @override
+  @useResult
+  $Res call({String subscriptionId, String code, String message});
+}
+
+/// @nodoc
+class _$DartChangeEvent_ErrorCopyWithImpl<$Res>
+    implements $DartChangeEvent_ErrorCopyWith<$Res> {
+  _$DartChangeEvent_ErrorCopyWithImpl(this._self, this._then);
+
+  final DartChangeEvent_Error _self;
+  final $Res Function(DartChangeEvent_Error) _then;
+
   /// Create a copy of DartChangeEvent
   /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
   @override
   @pragma('vm:prefer-inline')
-  _$$DartChangeEvent_ErrorImplCopyWith<_$DartChangeEvent_ErrorImpl>
-      get copyWith => __$$DartChangeEvent_ErrorImplCopyWithImpl<
-          _$DartChangeEvent_ErrorImpl>(this, _$identity);
-
-  @override
-  @optionalTypeArgs
-  TResult when<TResult extends Object?>({
-    required TResult Function(
-            String subscriptionId,
-            int totalRows,
-            List<DartSchemaField> schema,
-            int batchNum,
-            bool hasMore,
-            String status)
-        ack,
-    required TResult Function(String subscriptionId, List<String> rowsJson,
-            int batchNum, bool hasMore, String status)
-        initialDataBatch,
-    required TResult Function(String subscriptionId, List<String> rowsJson)
-        insert,
-    required TResult Function(String subscriptionId, List<String> rowsJson,
-            List<String> oldRowsJson)
-        update,
-    required TResult Function(String subscriptionId, List<String> oldRowsJson)
-        delete,
-    required TResult Function(
-            String subscriptionId, String code, String message)
-        error,
+  $Res call({
+    Object? subscriptionId = null,
+    Object? code = null,
+    Object? message = null,
   }) {
-    return error(subscriptionId, code, message);
+    return _then(DartChangeEvent_Error(
+      subscriptionId: null == subscriptionId
+          ? _self.subscriptionId
+          : subscriptionId // ignore: cast_nullable_to_non_nullable
+              as String,
+      code: null == code
+          ? _self.code
+          : code // ignore: cast_nullable_to_non_nullable
+              as String,
+      message: null == message
+          ? _self.message
+          : message // ignore: cast_nullable_to_non_nullable
+              as String,
+    ));
+  }
+}
+
+/// @nodoc
+mixin _$DartConnectionEvent {
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType && other is DartConnectionEvent);
   }
 
   @override
-  @optionalTypeArgs
-  TResult? whenOrNull<TResult extends Object?>({
-    TResult? Function(
-            String subscriptionId,
-            int totalRows,
-            List<DartSchemaField> schema,
-            int batchNum,
-            bool hasMore,
-            String status)?
-        ack,
-    TResult? Function(String subscriptionId, List<String> rowsJson,
-            int batchNum, bool hasMore, String status)?
-        initialDataBatch,
-    TResult? Function(String subscriptionId, List<String> rowsJson)? insert,
-    TResult? Function(String subscriptionId, List<String> rowsJson,
-            List<String> oldRowsJson)?
-        update,
-    TResult? Function(String subscriptionId, List<String> oldRowsJson)? delete,
-    TResult? Function(String subscriptionId, String code, String message)?
-        error,
-  }) {
-    return error?.call(subscriptionId, code, message);
-  }
+  int get hashCode => runtimeType.hashCode;
 
   @override
-  @optionalTypeArgs
-  TResult maybeWhen<TResult extends Object?>({
-    TResult Function(
-            String subscriptionId,
-            int totalRows,
-            List<DartSchemaField> schema,
-            int batchNum,
-            bool hasMore,
-            String status)?
-        ack,
-    TResult Function(String subscriptionId, List<String> rowsJson, int batchNum,
-            bool hasMore, String status)?
-        initialDataBatch,
-    TResult Function(String subscriptionId, List<String> rowsJson)? insert,
-    TResult Function(String subscriptionId, List<String> rowsJson,
-            List<String> oldRowsJson)?
-        update,
-    TResult Function(String subscriptionId, List<String> oldRowsJson)? delete,
-    TResult Function(String subscriptionId, String code, String message)? error,
-    required TResult orElse(),
-  }) {
-    if (error != null) {
-      return error(subscriptionId, code, message);
-    }
-    return orElse();
+  String toString() {
+    return 'DartConnectionEvent()';
   }
+}
 
-  @override
-  @optionalTypeArgs
-  TResult map<TResult extends Object?>({
-    required TResult Function(DartChangeEvent_Ack value) ack,
-    required TResult Function(DartChangeEvent_InitialDataBatch value)
-        initialDataBatch,
-    required TResult Function(DartChangeEvent_Insert value) insert,
-    required TResult Function(DartChangeEvent_Update value) update,
-    required TResult Function(DartChangeEvent_Delete value) delete,
-    required TResult Function(DartChangeEvent_Error value) error,
-  }) {
-    return error(this);
-  }
+/// @nodoc
+class $DartConnectionEventCopyWith<$Res> {
+  $DartConnectionEventCopyWith(
+      DartConnectionEvent _, $Res Function(DartConnectionEvent) __);
+}
 
-  @override
-  @optionalTypeArgs
-  TResult? mapOrNull<TResult extends Object?>({
-    TResult? Function(DartChangeEvent_Ack value)? ack,
-    TResult? Function(DartChangeEvent_InitialDataBatch value)? initialDataBatch,
-    TResult? Function(DartChangeEvent_Insert value)? insert,
-    TResult? Function(DartChangeEvent_Update value)? update,
-    TResult? Function(DartChangeEvent_Delete value)? delete,
-    TResult? Function(DartChangeEvent_Error value)? error,
-  }) {
-    return error?.call(this);
-  }
+/// Adds pattern-matching-related methods to [DartConnectionEvent].
+extension DartConnectionEventPatterns on DartConnectionEvent {
+  /// A variant of `map` that fallback to returning `orElse`.
+  ///
+  /// It is equivalent to doing:
+  /// ```dart
+  /// switch (sealedClass) {
+  ///   case final Subclass value:
+  ///     return ...;
+  ///   case _:
+  ///     return orElse();
+  /// }
+  /// ```
 
-  @override
   @optionalTypeArgs
   TResult maybeMap<TResult extends Object?>({
-    TResult Function(DartChangeEvent_Ack value)? ack,
-    TResult Function(DartChangeEvent_InitialDataBatch value)? initialDataBatch,
-    TResult Function(DartChangeEvent_Insert value)? insert,
-    TResult Function(DartChangeEvent_Update value)? update,
-    TResult Function(DartChangeEvent_Delete value)? delete,
-    TResult Function(DartChangeEvent_Error value)? error,
+    TResult Function(DartConnectionEvent_Connect value)? connect,
+    TResult Function(DartConnectionEvent_Disconnect value)? disconnect,
+    TResult Function(DartConnectionEvent_Error value)? error,
+    TResult Function(DartConnectionEvent_Receive value)? receive,
+    TResult Function(DartConnectionEvent_Send value)? send,
     required TResult orElse(),
   }) {
-    if (error != null) {
-      return error(this);
+    final _that = this;
+    switch (_that) {
+      case DartConnectionEvent_Connect() when connect != null:
+        return connect(_that);
+      case DartConnectionEvent_Disconnect() when disconnect != null:
+        return disconnect(_that);
+      case DartConnectionEvent_Error() when error != null:
+        return error(_that);
+      case DartConnectionEvent_Receive() when receive != null:
+        return receive(_that);
+      case DartConnectionEvent_Send() when send != null:
+        return send(_that);
+      case _:
+        return orElse();
     }
-    return orElse();
+  }
+
+  /// A `switch`-like method, using callbacks.
+  ///
+  /// Callbacks receives the raw object, upcasted.
+  /// It is equivalent to doing:
+  /// ```dart
+  /// switch (sealedClass) {
+  ///   case final Subclass value:
+  ///     return ...;
+  ///   case final Subclass2 value:
+  ///     return ...;
+  /// }
+  /// ```
+
+  @optionalTypeArgs
+  TResult map<TResult extends Object?>({
+    required TResult Function(DartConnectionEvent_Connect value) connect,
+    required TResult Function(DartConnectionEvent_Disconnect value) disconnect,
+    required TResult Function(DartConnectionEvent_Error value) error,
+    required TResult Function(DartConnectionEvent_Receive value) receive,
+    required TResult Function(DartConnectionEvent_Send value) send,
+  }) {
+    final _that = this;
+    switch (_that) {
+      case DartConnectionEvent_Connect():
+        return connect(_that);
+      case DartConnectionEvent_Disconnect():
+        return disconnect(_that);
+      case DartConnectionEvent_Error():
+        return error(_that);
+      case DartConnectionEvent_Receive():
+        return receive(_that);
+      case DartConnectionEvent_Send():
+        return send(_that);
+    }
+  }
+
+  /// A variant of `map` that fallback to returning `null`.
+  ///
+  /// It is equivalent to doing:
+  /// ```dart
+  /// switch (sealedClass) {
+  ///   case final Subclass value:
+  ///     return ...;
+  ///   case _:
+  ///     return null;
+  /// }
+  /// ```
+
+  @optionalTypeArgs
+  TResult? mapOrNull<TResult extends Object?>({
+    TResult? Function(DartConnectionEvent_Connect value)? connect,
+    TResult? Function(DartConnectionEvent_Disconnect value)? disconnect,
+    TResult? Function(DartConnectionEvent_Error value)? error,
+    TResult? Function(DartConnectionEvent_Receive value)? receive,
+    TResult? Function(DartConnectionEvent_Send value)? send,
+  }) {
+    final _that = this;
+    switch (_that) {
+      case DartConnectionEvent_Connect() when connect != null:
+        return connect(_that);
+      case DartConnectionEvent_Disconnect() when disconnect != null:
+        return disconnect(_that);
+      case DartConnectionEvent_Error() when error != null:
+        return error(_that);
+      case DartConnectionEvent_Receive() when receive != null:
+        return receive(_that);
+      case DartConnectionEvent_Send() when send != null:
+        return send(_that);
+      case _:
+        return null;
+    }
+  }
+
+  /// A variant of `when` that fallback to an `orElse` callback.
+  ///
+  /// It is equivalent to doing:
+  /// ```dart
+  /// switch (sealedClass) {
+  ///   case Subclass(:final field):
+  ///     return ...;
+  ///   case _:
+  ///     return orElse();
+  /// }
+  /// ```
+
+  @optionalTypeArgs
+  TResult maybeWhen<TResult extends Object?>({
+    TResult Function()? connect,
+    TResult Function(DartDisconnectReason reason)? disconnect,
+    TResult Function(DartConnectionError error)? error,
+    TResult Function(String message)? receive,
+    TResult Function(String message)? send,
+    required TResult orElse(),
+  }) {
+    final _that = this;
+    switch (_that) {
+      case DartConnectionEvent_Connect() when connect != null:
+        return connect();
+      case DartConnectionEvent_Disconnect() when disconnect != null:
+        return disconnect(_that.reason);
+      case DartConnectionEvent_Error() when error != null:
+        return error(_that.error);
+      case DartConnectionEvent_Receive() when receive != null:
+        return receive(_that.message);
+      case DartConnectionEvent_Send() when send != null:
+        return send(_that.message);
+      case _:
+        return orElse();
+    }
+  }
+
+  /// A `switch`-like method, using callbacks.
+  ///
+  /// As opposed to `map`, this offers destructuring.
+  /// It is equivalent to doing:
+  /// ```dart
+  /// switch (sealedClass) {
+  ///   case Subclass(:final field):
+  ///     return ...;
+  ///   case Subclass2(:final field2):
+  ///     return ...;
+  /// }
+  /// ```
+
+  @optionalTypeArgs
+  TResult when<TResult extends Object?>({
+    required TResult Function() connect,
+    required TResult Function(DartDisconnectReason reason) disconnect,
+    required TResult Function(DartConnectionError error) error,
+    required TResult Function(String message) receive,
+    required TResult Function(String message) send,
+  }) {
+    final _that = this;
+    switch (_that) {
+      case DartConnectionEvent_Connect():
+        return connect();
+      case DartConnectionEvent_Disconnect():
+        return disconnect(_that.reason);
+      case DartConnectionEvent_Error():
+        return error(_that.error);
+      case DartConnectionEvent_Receive():
+        return receive(_that.message);
+      case DartConnectionEvent_Send():
+        return send(_that.message);
+    }
+  }
+
+  /// A variant of `when` that fallback to returning `null`
+  ///
+  /// It is equivalent to doing:
+  /// ```dart
+  /// switch (sealedClass) {
+  ///   case Subclass(:final field):
+  ///     return ...;
+  ///   case _:
+  ///     return null;
+  /// }
+  /// ```
+
+  @optionalTypeArgs
+  TResult? whenOrNull<TResult extends Object?>({
+    TResult? Function()? connect,
+    TResult? Function(DartDisconnectReason reason)? disconnect,
+    TResult? Function(DartConnectionError error)? error,
+    TResult? Function(String message)? receive,
+    TResult? Function(String message)? send,
+  }) {
+    final _that = this;
+    switch (_that) {
+      case DartConnectionEvent_Connect() when connect != null:
+        return connect();
+      case DartConnectionEvent_Disconnect() when disconnect != null:
+        return disconnect(_that.reason);
+      case DartConnectionEvent_Error() when error != null:
+        return error(_that.error);
+      case DartConnectionEvent_Receive() when receive != null:
+        return receive(_that.message);
+      case DartConnectionEvent_Send() when send != null:
+        return send(_that.message);
+      case _:
+        return null;
+    }
   }
 }
 
-abstract class DartChangeEvent_Error extends DartChangeEvent {
-  const factory DartChangeEvent_Error(
-      {required final String subscriptionId,
-      required final String code,
-      required final String message}) = _$DartChangeEvent_ErrorImpl;
-  const DartChangeEvent_Error._() : super._();
+/// @nodoc
+
+class DartConnectionEvent_Connect extends DartConnectionEvent {
+  const DartConnectionEvent_Connect() : super._();
 
   @override
-  String get subscriptionId;
-  String get code;
-  String get message;
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is DartConnectionEvent_Connect);
+  }
 
-  /// Create a copy of DartChangeEvent
-  /// with the given fields replaced by the non-null parameter values.
   @override
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  _$$DartChangeEvent_ErrorImplCopyWith<_$DartChangeEvent_ErrorImpl>
-      get copyWith => throw _privateConstructorUsedError;
+  int get hashCode => runtimeType.hashCode;
+
+  @override
+  String toString() {
+    return 'DartConnectionEvent.connect()';
+  }
 }
+
+/// @nodoc
+
+class DartConnectionEvent_Disconnect extends DartConnectionEvent {
+  const DartConnectionEvent_Disconnect({required this.reason}) : super._();
+
+  final DartDisconnectReason reason;
+
+  /// Create a copy of DartConnectionEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $DartConnectionEvent_DisconnectCopyWith<DartConnectionEvent_Disconnect>
+      get copyWith => _$DartConnectionEvent_DisconnectCopyWithImpl<
+          DartConnectionEvent_Disconnect>(this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is DartConnectionEvent_Disconnect &&
+            (identical(other.reason, reason) || other.reason == reason));
+  }
+
+  @override
+  int get hashCode => Object.hash(runtimeType, reason);
+
+  @override
+  String toString() {
+    return 'DartConnectionEvent.disconnect(reason: $reason)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $DartConnectionEvent_DisconnectCopyWith<$Res>
+    implements $DartConnectionEventCopyWith<$Res> {
+  factory $DartConnectionEvent_DisconnectCopyWith(
+          DartConnectionEvent_Disconnect value,
+          $Res Function(DartConnectionEvent_Disconnect) _then) =
+      _$DartConnectionEvent_DisconnectCopyWithImpl;
+  @useResult
+  $Res call({DartDisconnectReason reason});
+}
+
+/// @nodoc
+class _$DartConnectionEvent_DisconnectCopyWithImpl<$Res>
+    implements $DartConnectionEvent_DisconnectCopyWith<$Res> {
+  _$DartConnectionEvent_DisconnectCopyWithImpl(this._self, this._then);
+
+  final DartConnectionEvent_Disconnect _self;
+  final $Res Function(DartConnectionEvent_Disconnect) _then;
+
+  /// Create a copy of DartConnectionEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? reason = null,
+  }) {
+    return _then(DartConnectionEvent_Disconnect(
+      reason: null == reason
+          ? _self.reason
+          : reason // ignore: cast_nullable_to_non_nullable
+              as DartDisconnectReason,
+    ));
+  }
+}
+
+/// @nodoc
+
+class DartConnectionEvent_Error extends DartConnectionEvent {
+  const DartConnectionEvent_Error({required this.error}) : super._();
+
+  final DartConnectionError error;
+
+  /// Create a copy of DartConnectionEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $DartConnectionEvent_ErrorCopyWith<DartConnectionEvent_Error> get copyWith =>
+      _$DartConnectionEvent_ErrorCopyWithImpl<DartConnectionEvent_Error>(
+          this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is DartConnectionEvent_Error &&
+            (identical(other.error, error) || other.error == error));
+  }
+
+  @override
+  int get hashCode => Object.hash(runtimeType, error);
+
+  @override
+  String toString() {
+    return 'DartConnectionEvent.error(error: $error)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $DartConnectionEvent_ErrorCopyWith<$Res>
+    implements $DartConnectionEventCopyWith<$Res> {
+  factory $DartConnectionEvent_ErrorCopyWith(DartConnectionEvent_Error value,
+          $Res Function(DartConnectionEvent_Error) _then) =
+      _$DartConnectionEvent_ErrorCopyWithImpl;
+  @useResult
+  $Res call({DartConnectionError error});
+}
+
+/// @nodoc
+class _$DartConnectionEvent_ErrorCopyWithImpl<$Res>
+    implements $DartConnectionEvent_ErrorCopyWith<$Res> {
+  _$DartConnectionEvent_ErrorCopyWithImpl(this._self, this._then);
+
+  final DartConnectionEvent_Error _self;
+  final $Res Function(DartConnectionEvent_Error) _then;
+
+  /// Create a copy of DartConnectionEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? error = null,
+  }) {
+    return _then(DartConnectionEvent_Error(
+      error: null == error
+          ? _self.error
+          : error // ignore: cast_nullable_to_non_nullable
+              as DartConnectionError,
+    ));
+  }
+}
+
+/// @nodoc
+
+class DartConnectionEvent_Receive extends DartConnectionEvent {
+  const DartConnectionEvent_Receive({required this.message}) : super._();
+
+  final String message;
+
+  /// Create a copy of DartConnectionEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $DartConnectionEvent_ReceiveCopyWith<DartConnectionEvent_Receive>
+      get copyWith => _$DartConnectionEvent_ReceiveCopyWithImpl<
+          DartConnectionEvent_Receive>(this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is DartConnectionEvent_Receive &&
+            (identical(other.message, message) || other.message == message));
+  }
+
+  @override
+  int get hashCode => Object.hash(runtimeType, message);
+
+  @override
+  String toString() {
+    return 'DartConnectionEvent.receive(message: $message)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $DartConnectionEvent_ReceiveCopyWith<$Res>
+    implements $DartConnectionEventCopyWith<$Res> {
+  factory $DartConnectionEvent_ReceiveCopyWith(
+          DartConnectionEvent_Receive value,
+          $Res Function(DartConnectionEvent_Receive) _then) =
+      _$DartConnectionEvent_ReceiveCopyWithImpl;
+  @useResult
+  $Res call({String message});
+}
+
+/// @nodoc
+class _$DartConnectionEvent_ReceiveCopyWithImpl<$Res>
+    implements $DartConnectionEvent_ReceiveCopyWith<$Res> {
+  _$DartConnectionEvent_ReceiveCopyWithImpl(this._self, this._then);
+
+  final DartConnectionEvent_Receive _self;
+  final $Res Function(DartConnectionEvent_Receive) _then;
+
+  /// Create a copy of DartConnectionEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? message = null,
+  }) {
+    return _then(DartConnectionEvent_Receive(
+      message: null == message
+          ? _self.message
+          : message // ignore: cast_nullable_to_non_nullable
+              as String,
+    ));
+  }
+}
+
+/// @nodoc
+
+class DartConnectionEvent_Send extends DartConnectionEvent {
+  const DartConnectionEvent_Send({required this.message}) : super._();
+
+  final String message;
+
+  /// Create a copy of DartConnectionEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $DartConnectionEvent_SendCopyWith<DartConnectionEvent_Send> get copyWith =>
+      _$DartConnectionEvent_SendCopyWithImpl<DartConnectionEvent_Send>(
+          this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is DartConnectionEvent_Send &&
+            (identical(other.message, message) || other.message == message));
+  }
+
+  @override
+  int get hashCode => Object.hash(runtimeType, message);
+
+  @override
+  String toString() {
+    return 'DartConnectionEvent.send(message: $message)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $DartConnectionEvent_SendCopyWith<$Res>
+    implements $DartConnectionEventCopyWith<$Res> {
+  factory $DartConnectionEvent_SendCopyWith(DartConnectionEvent_Send value,
+          $Res Function(DartConnectionEvent_Send) _then) =
+      _$DartConnectionEvent_SendCopyWithImpl;
+  @useResult
+  $Res call({String message});
+}
+
+/// @nodoc
+class _$DartConnectionEvent_SendCopyWithImpl<$Res>
+    implements $DartConnectionEvent_SendCopyWith<$Res> {
+  _$DartConnectionEvent_SendCopyWithImpl(this._self, this._then);
+
+  final DartConnectionEvent_Send _self;
+  final $Res Function(DartConnectionEvent_Send) _then;
+
+  /// Create a copy of DartConnectionEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? message = null,
+  }) {
+    return _then(DartConnectionEvent_Send(
+      message: null == message
+          ? _self.message
+          : message // ignore: cast_nullable_to_non_nullable
+              as String,
+    ));
+  }
+}
+
+// dart format on

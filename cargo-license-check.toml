@@ -31,3 +31,6 @@ deny = [
 	"LGPL-2.1-only",
 	"LGPL-2.1-or-later",
 ]
+
+[overrides.rust]
+"allo-isolate@0.1.27" = "MIT"

@@ -17,6 +17,11 @@ import type {
   ConsumerHandle,
   ConsumerHandler,
   LoginResponse,
+  OnConnectCallback,
+  OnDisconnectCallback,
+  OnErrorCallback,
+  OnReceiveCallback,
+  OnSendCallback,
   QueryResponse,
   ServerMessage,
   SubscriptionCallback,
@@ -96,6 +101,13 @@ export class KalamDBClient {
   /** Track active subscriptions for management */
   private subscriptions: Map<string, SubscriptionInfo> = new Map();
 
+  /** Connection lifecycle event handlers */
+  private _onConnect?: OnConnectCallback;
+  private _onDisconnect?: OnDisconnectCallback;
+  private _onError?: OnErrorCallback;
+  private _onReceive?: OnReceiveCallback;
+  private _onSend?: OnSendCallback;
+
   /**
    * Create a new KalamDB client
    *
@@ -121,6 +133,11 @@ export class KalamDBClient {
     this.wasmUrl = options.wasmUrl;
     this.autoConnect = options.autoConnect ?? true;
     this.pingIntervalMs = options.pingIntervalMs ?? 30_000;
+    this._onConnect = options.onConnect;
+    this._onDisconnect = options.onDisconnect;
+    this._onError = options.onError;
+    this._onReceive = options.onReceive;
+    this._onSend = options.onSend;
   }
 
   /* ---------------------------------------------------------------- */
@@ -170,6 +187,9 @@ export class KalamDBClient {
 
       this.initialized = true;
       console.log('[kalam-link] Initialization complete');
+
+      // Wire connection lifecycle event handlers to the WASM client
+      this.applyEventHandlers();
     } catch (error) {
       console.error('[kalam-link] WASM initialization failed:', error);
       throw new Error(`Failed to initialize WASM client: ${error}`);
@@ -255,6 +275,105 @@ export class KalamDBClient {
   /** Whether the WebSocket connection is active */
   isConnected(): boolean {
     return this.wasmClient?.isConnected() ?? false;
+  }
+
+  /* ---------------------------------------------------------------- */
+  /*  Connection Event Handlers                                       */
+  /* ---------------------------------------------------------------- */
+
+  /**
+   * Register a handler called when the WebSocket connection is established.
+   *
+   * Can also be set via `ClientOptions.onConnect` at construction time.
+   *
+   * @example
+   * ```typescript
+   * client.onConnect(() => console.log('Connected!'));
+   * ```
+   */
+  onConnect(callback: OnConnectCallback): void {
+    this._onConnect = callback;
+    if (this.wasmClient) {
+      this.wasmClient.onConnect(callback);
+    }
+  }
+
+  /**
+   * Register a handler called when the WebSocket connection is closed.
+   *
+   * Can also be set via `ClientOptions.onDisconnect` at construction time.
+   *
+   * @example
+   * ```typescript
+   * client.onDisconnect((reason) => console.log('Disconnected:', reason.message));
+   * ```
+   */
+  onDisconnect(callback: OnDisconnectCallback): void {
+    this._onDisconnect = callback;
+    if (this.wasmClient) {
+      this.wasmClient.onDisconnect(callback as unknown as Function);
+    }
+  }
+
+  /**
+   * Register a handler called when a connection error occurs.
+   *
+   * Can also be set via `ClientOptions.onError` at construction time.
+   *
+   * @example
+   * ```typescript
+   * client.onError((err) => console.error('Error:', err.message));
+   * ```
+   */
+  onError(callback: OnErrorCallback): void {
+    this._onError = callback;
+    if (this.wasmClient) {
+      this.wasmClient.onError(callback as unknown as Function);
+    }
+  }
+
+  /**
+   * Register a debug handler called for every raw message received from the server.
+   *
+   * Can also be set via `ClientOptions.onReceive` at construction time.
+   *
+   * @example
+   * ```typescript
+   * client.onReceive((msg) => console.log('[RECV]', msg));
+   * ```
+   */
+  onReceive(callback: OnReceiveCallback): void {
+    this._onReceive = callback;
+    if (this.wasmClient) {
+      this.wasmClient.onReceive(callback as unknown as Function);
+    }
+  }
+
+  /**
+   * Register a debug handler called for every raw message sent to the server.
+   *
+   * Can also be set via `ClientOptions.onSend` at construction time.
+   *
+   * @example
+   * ```typescript
+   * client.onSend((msg) => console.log('[SEND]', msg));
+   * ```
+   */
+  onSend(callback: OnSendCallback): void {
+    this._onSend = callback;
+    if (this.wasmClient) {
+      this.wasmClient.onSend(callback as unknown as Function);
+    }
+  }
+
+  /** @internal Wire stored event handler callbacks to the WASM client */
+  private applyEventHandlers(): void {
+    if (!this.wasmClient) return;
+    if (this._onConnect) this.wasmClient.onConnect(this._onConnect);
+    if (this._onDisconnect) this.wasmClient.onDisconnect(this._onDisconnect as unknown as Function);
+    if (this._onError) this.wasmClient.onError(this._onError as unknown as Function);
+    if (this._onReceive) this.wasmClient.onReceive(this._onReceive as unknown as Function);
+    if (this._onSend) this.wasmClient.onSend(this._onSend as unknown as Function);
   }
 
   /* ---------------------------------------------------------------- */

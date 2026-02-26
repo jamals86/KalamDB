@@ -26,8 +26,7 @@ pub(crate) async fn reconnect_internal_with_auth(
         ));
     }
 
-    let ws_url = url.replace("http://", "ws://").replace("https://", "wss://");
-    let ws_url = format!("{}/v1/ws", ws_url);
+    let ws_url = super::helpers::ws_url_from_http(url)?;
 
     let ws = WebSocket::new(&ws_url)?;
 

@@ -10,15 +10,24 @@
 //! subscriptions use an **async pull model**: call `dart_subscription_next`
 //! in a loop from Dart, which internally awaits the next event from the
 //! underlying `SubscriptionManager`.
+//!
+//! ## Connection events
+//!
+//! Connection lifecycle events (connect, disconnect, error, receive, send)
+//! also follow the async-pull model. When `enable_connection_events` is
+//! `true` in [`dart_create_client`], events are queued internally and
+//! retrieved via [`dart_next_connection_event`].
 
 use crate::models::{
-    DartAuthProvider, DartChangeEvent, DartHealthCheckResponse, DartLoginResponse,
-    DartQueryResponse, DartServerSetupRequest, DartServerSetupResponse, DartSetupStatusResponse,
+    DartAuthProvider, DartChangeEvent, DartConnectionError, DartConnectionEvent,
+    DartDisconnectReason, DartHealthCheckResponse, DartLoginResponse, DartQueryResponse,
+    DartServerSetupRequest, DartServerSetupResponse, DartSetupStatusResponse,
     DartSubscriptionConfig,
 };
 use flutter_rust_bridge::frb;
+use std::collections::VecDeque;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Notify};
 
 // ---------------------------------------------------------------------------
 // Client wrapper
@@ -29,6 +38,17 @@ use tokio::sync::Mutex;
 /// Create one via [`dart_create_client`] and pass it to query/subscribe helpers.
 pub struct DartKalamClient {
     inner: kalam_link::KalamLinkClient,
+    /// Queue of connection lifecycle events (populated when event handlers are
+    /// enabled). Dart pulls from this via [`dart_next_connection_event`].
+    ///
+    /// Uses `std::sync::Mutex` (not tokio) because the event handler callbacks
+    /// are synchronous closures; tokio Mutex requires `.await` or has borrow
+    /// issues with `try_lock()` inside `#[frb(sync)]` functions.
+    event_queue: Arc<std::sync::Mutex<VecDeque<DartConnectionEvent>>>,
+    /// Notifier so the pull-side can await without busy-looping.
+    event_notify: Arc<Notify>,
+    /// Whether connection event collection is enabled.
+    events_enabled: bool,
 }
 
 /// Create a new KalamDB client.
@@ -37,13 +57,37 @@ pub struct DartKalamClient {
 /// * `auth` — authentication method (basic, JWT, or none).
 /// * `timeout_ms` — optional HTTP request timeout in milliseconds (default 30 000).
 /// * `max_retries` — optional retry count for idempotent queries (default 3).
+/// * `enable_connection_events` — when `true`, connection lifecycle events
+///   (connect, disconnect, error, receive, send) are queued internally and
+///   can be retrieved via [`dart_next_connection_event`].
 #[frb(sync)]
 pub fn dart_create_client(
     base_url: String,
     auth: DartAuthProvider,
     timeout_ms: Option<i64>,
     max_retries: Option<i32>,
+    enable_connection_events: Option<bool>,
 ) -> anyhow::Result<DartKalamClient> {
+    create_client_inner(base_url, auth, timeout_ms, max_retries, enable_connection_events)
+}
+
+/// Internal helper that performs the actual client construction.
+///
+/// Extracted from [`dart_create_client`] so that the `#[frb(sync)]` macro
+/// expansion does not interfere with borrow lifetimes inside the event
+/// handler closures.
+fn create_client_inner(
+    base_url: String,
+    auth: DartAuthProvider,
+    timeout_ms: Option<i64>,
+    max_retries: Option<i32>,
+    enable_connection_events: Option<bool>,
+) -> anyhow::Result<DartKalamClient> {
+    let event_queue: Arc<std::sync::Mutex<VecDeque<DartConnectionEvent>>> =
+        Arc::new(std::sync::Mutex::new(VecDeque::new()));
+    let event_notify = Arc::new(Notify::new());
+    let events_enabled = enable_connection_events.unwrap_or(false);
+
     let mut builder = kalam_link::KalamLinkClient::builder()
         .base_url(base_url)
         .auth(auth.into_native());
@@ -55,8 +99,110 @@ pub fn dart_create_client(
         builder = builder.max_retries(r as u32);
     }
 
+    // Wire connection lifecycle event handlers that push into the queue.
+    if events_enabled {
+        builder = builder.event_handlers(build_event_handlers(
+            event_queue.clone(),
+            event_notify.clone(),
+        ));
+    }
+
     let client = builder.build()?;
-    Ok(DartKalamClient { inner: client })
+    Ok(DartKalamClient {
+        inner: client,
+        event_queue,
+        event_notify,
+        events_enabled,
+    })
+}
+
+/// Build [`EventHandlers`](kalam_link::EventHandlers) that push events into
+/// a shared queue and notify waiters.
+fn build_event_handlers(
+    queue: Arc<std::sync::Mutex<VecDeque<DartConnectionEvent>>>,
+    notify: Arc<Notify>,
+) -> kalam_link::EventHandlers {
+    let mut handlers = kalam_link::EventHandlers::new();
+
+    // on_connect
+    {
+        let q = queue.clone();
+        let n = notify.clone();
+        handlers = handlers.on_connect(move || {
+            if let Ok(mut guard) = q.lock() {
+                guard.push_back(DartConnectionEvent::Connect);
+            }
+            n.notify_one();
+        });
+    }
+
+    // on_disconnect
+    {
+        let q = queue.clone();
+        let n = notify.clone();
+        handlers = handlers.on_disconnect(move |reason| {
+            let event = DartConnectionEvent::Disconnect {
+                reason: DartDisconnectReason {
+                    message: reason.message,
+                    code: reason.code.map(|c| c as i32),
+                },
+            };
+            if let Ok(mut guard) = q.lock() {
+                guard.push_back(event);
+            }
+            n.notify_one();
+        });
+    }
+
+    // on_error
+    {
+        let q = queue.clone();
+        let n = notify.clone();
+        handlers = handlers.on_error(move |error| {
+            let event = DartConnectionEvent::Error {
+                error: DartConnectionError {
+                    message: error.message,
+                    recoverable: error.recoverable,
+                },
+            };
+            if let Ok(mut guard) = q.lock() {
+                guard.push_back(event);
+            }
+            n.notify_one();
+        });
+    }
+
+    // on_receive (debug)
+    {
+        let q = queue.clone();
+        let n = notify.clone();
+        handlers = handlers.on_receive(move |msg: &str| {
+            let event = DartConnectionEvent::Receive {
+                message: msg.to_owned(),
+            };
+            if let Ok(mut guard) = q.lock() {
+                guard.push_back(event);
+            }
+            n.notify_one();
+        });
+    }
+
+    // on_send (debug)
+    {
+        let q = queue;
+        let n = notify;
+        handlers = handlers.on_send(move |msg: &str| {
+            let event = DartConnectionEvent::Send {
+                message: msg.to_owned(),
+            };
+            if let Ok(mut guard) = q.lock() {
+                guard.push_back(event);
+            }
+            n.notify_one();
+        });
+    }
+
+    handlers
 }
 
 // ---------------------------------------------------------------------------
@@ -135,6 +281,55 @@ pub async fn dart_server_setup(
 ) -> anyhow::Result<DartServerSetupResponse> {
     let response = client.inner.server_setup(request.into_native()).await?;
     Ok(DartServerSetupResponse::from(response))
+}
+
+// ---------------------------------------------------------------------------
+// Connection events (async pull model)
+// ---------------------------------------------------------------------------
+
+/// Pull the next connection lifecycle event.
+///
+/// Returns `None` when event collection is disabled or the client is dropped.
+/// Dart should call this in a loop:
+///
+/// ```dart
+/// while (true) {
+///   final event = await dartNextConnectionEvent(client: client);
+///   if (event == null) break;
+///   // handle event ...
+/// }
+/// ```
+pub async fn dart_next_connection_event(
+    client: &DartKalamClient,
+) -> anyhow::Result<Option<DartConnectionEvent>> {
+    if !client.events_enabled {
+        return Ok(None);
+    }
+
+    // Fast path: check queue first
+    {
+        let mut queue = client
+            .event_queue
+            .lock()
+            .map_err(|e| anyhow::anyhow!("event queue lock poisoned: {e}"))?;
+        if let Some(event) = queue.pop_front() {
+            return Ok(Some(event));
+        }
+    }
+
+    // Slow path: wait for notification, then drain one event
+    client.event_notify.notified().await;
+    let mut queue = client
+        .event_queue
+        .lock()
+        .map_err(|e| anyhow::anyhow!("event queue lock poisoned: {e}"))?;
+    Ok(queue.pop_front())
+}
+
+/// Check whether connection event collection is enabled for this client.
+#[frb(sync)]
+pub fn dart_connection_events_enabled(client: &DartKalamClient) -> bool {
+    client.events_enabled
 }
 
 // ---------------------------------------------------------------------------

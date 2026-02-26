@@ -99,11 +99,9 @@
 
 pub mod compression;
 pub mod error;
-pub mod live;
+pub mod event_handlers;
 #[path = "models/mod.rs"]
 pub mod models;
-#[cfg(feature = "tokio-runtime")]
-mod normalize;
 pub mod seq_id;
 pub mod timeouts;
 pub mod timestamp;
@@ -141,7 +139,7 @@ pub use consumer::{
 
 pub use credentials::{CredentialStore, Credentials, MemoryCredentialStore};
 pub use error::{KalamLinkError, Result};
-pub use live::LiveConnection;
+pub use event_handlers::{ConnectionError, DisconnectReason, EventHandlers, MessageDirection};
 pub use models::{
     parse_i64, AckResponse, ChangeEvent, ConnectionOptions, ConsumeMessage, ConsumeRequest,
     ConsumeResponse, ErrorDetail, FieldFlag, FieldFlags, HealthCheckResponse, HttpVersion,
