@@ -44,6 +44,7 @@ futures-util = { workspace = true, default-features = false }
 # Error handling
 anyhow = { workspace = true }
 thiserror = { workspace = true }
+async-trait = { workspace = true }
 
 # Logging
 log = { workspace = true }

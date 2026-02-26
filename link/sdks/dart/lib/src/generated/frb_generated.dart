@@ -69,7 +69,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.11.1';
 
   @override
-  int get rustContentHash => 172191912;
+  int get rustContentHash => 610288464;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -90,7 +90,8 @@ abstract class RustLibApi extends BaseApi {
       required DartAuthProvider auth,
       PlatformInt64? timeoutMs,
       int? maxRetries,
-      bool? enableConnectionEvents});
+      bool? enableConnectionEvents,
+      bool? disableCompression});
 
   Future<DartQueryResponse> crateApiDartExecuteQuery(
       {required DartKalamClient client,
@@ -128,6 +129,9 @@ abstract class RustLibApi extends BaseApi {
 
   Future<DartChangeEvent?> crateApiDartSubscriptionNext(
       {required DartSubscription subscription});
+
+  void crateApiDartUpdateAuth(
+      {required DartKalamClient client, required DartAuthProvider auth});
 
   RustArcIncrementStrongCountFnType
       get rust_arc_increment_strong_count_DartKalamClient;
@@ -214,7 +218,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       required DartAuthProvider auth,
       PlatformInt64? timeoutMs,
       int? maxRetries,
-      bool? enableConnectionEvents}) {
+      bool? enableConnectionEvents,
+      bool? disableCompression}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
@@ -223,6 +228,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_opt_box_autoadd_i_64(timeoutMs, serializer);
         sse_encode_opt_box_autoadd_i_32(maxRetries, serializer);
         sse_encode_opt_box_autoadd_bool(enableConnectionEvents, serializer);
+        sse_encode_opt_box_autoadd_bool(disableCompression, serializer);
         return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 3)!;
       },
       codec: SseCodec(
@@ -231,7 +237,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         decodeErrorData: sse_decode_AnyhowException,
       ),
       constMeta: kCrateApiDartCreateClientConstMeta,
-      argValues: [baseUrl, auth, timeoutMs, maxRetries, enableConnectionEvents],
+      argValues: [
+        baseUrl,
+        auth,
+        timeoutMs,
+        maxRetries,
+        enableConnectionEvents,
+        disableCompression
+      ],
       apiImpl: this,
     ));
   }
@@ -243,7 +256,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           "auth",
           "timeoutMs",
           "maxRetries",
-          "enableConnectionEvents"
+          "enableConnectionEvents",
+          "disableCompression"
         ],
       );
 
@@ -526,6 +540,32 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         argNames: ["subscription"],
       );
 
+  @override
+  void crateApiDartUpdateAuth(
+      {required DartKalamClient client, required DartAuthProvider auth}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartKalamClient(
+            client, serializer);
+        sse_encode_box_autoadd_dart_auth_provider(auth, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 14)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: sse_decode_AnyhowException,
+      ),
+      constMeta: kCrateApiDartUpdateAuthConstMeta,
+      argValues: [client, auth],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiDartUpdateAuthConstMeta => const TaskConstMeta(
+        debugName: "dart_update_auth",
+        argNames: ["client", "auth"],
+      );
+
   RustArcIncrementStrongCountFnType
       get rust_arc_increment_strong_count_DartKalamClient => wire
           .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartKalamClient;
@@ -562,6 +602,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return DartSubscriptionImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
+  DartKalamClient
+      dco_decode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartKalamClient(
+          dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return DartKalamClientImpl.frbInternalDcoDecode(raw as List<dynamic>);
   }
 
   @protected
@@ -1114,6 +1162,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return DartSubscriptionImpl.frbInternalSseDecode(
+        sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
+  }
+
+  @protected
+  DartKalamClient
+      sse_decode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartKalamClient(
+          SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return DartKalamClientImpl.frbInternalSseDecode(
         sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
   }
 
@@ -1756,6 +1813,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_usize(
         (self as DartSubscriptionImpl).frbInternalSseEncode(move: true),
+        serializer);
+  }
+
+  @protected
+  void
+      sse_encode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartKalamClient(
+          DartKalamClient self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+        (self as DartKalamClientImpl).frbInternalSseEncode(move: false),
         serializer);
   }
 

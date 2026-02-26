@@ -11,22 +11,69 @@ use crate::models::{ClientMessage, ConnectionOptions, ServerMessage, Subscriptio
 
 use super::auth::WasmAuthProvider;
 use super::console_log;
-use super::helpers::create_promise;
+use super::helpers::{create_promise, ws_url_from_http_opts};
 use super::state::SubscriptionState;
 
-/// Internal reconnection logic with auth provider support
+/// Resolve a `WasmAuthProvider` from an optional JS async callback.
+///
+/// If `auth_provider_cb` is `Some`, the callback is invoked and the returned
+/// Promise is awaited to produce the auth.  Otherwise `fallback` is returned.
+async fn resolve_auth_for_reconnect(
+    auth_provider_cb: &Option<js_sys::Function>,
+    fallback: WasmAuthProvider,
+) -> Result<WasmAuthProvider, JsValue> {
+    if let Some(cb) = auth_provider_cb {
+        let result = JsFuture::from(js_sys::Promise::resolve(
+            &cb.call0(&JsValue::NULL)
+                .map_err(|e| JsValue::from_str(&format!("authProvider threw: {:?}", e)))?,
+        ))
+        .await?;
+
+        if result.is_null() || result.is_undefined() {
+            return Ok(WasmAuthProvider::None);
+        }
+
+        let jwt_obj = js_sys::Reflect::get(&result, &"jwt".into()).ok();
+        if let Some(jwt) = jwt_obj.filter(|v| !v.is_undefined() && !v.is_null()) {
+            let token = js_sys::Reflect::get(&jwt, &"token".into())
+                .ok()
+                .and_then(|v| v.as_string())
+                .ok_or_else(|| {
+                    JsValue::from_str(
+                        "authProvider result must have shape { jwt: { token: string } }",
+                    )
+                })?;
+            return Ok(WasmAuthProvider::Jwt { token });
+        }
+        Ok(WasmAuthProvider::None)
+    } else {
+        Ok(fallback)
+    }
+}
+
+/// Internal reconnection logic with auth provider support.
+///
+/// `auth_provider_cb` — if `Some`, is invoked asynchronously to obtain a fresh
+/// `WasmAuthProvider` before connecting (supports refresh-token flows).
+/// `disable_compression` — when `true`, appends `?compress=false` to the WS URL.
 pub(crate) async fn reconnect_internal_with_auth(
     url: String,
     auth: WasmAuthProvider,
     ws_ref: Rc<RefCell<Option<WebSocket>>>,
+    auth_provider_cb: Option<js_sys::Function>,
+    disable_compression: bool,
 ) -> Result<(), JsValue> {
-    if matches!(auth, WasmAuthProvider::Basic { .. }) {
+    // Resolve auth (dynamic provider takes precedence).
+    let resolved_auth =
+        resolve_auth_for_reconnect(&auth_provider_cb, auth).await?;
+
+    if matches!(resolved_auth, WasmAuthProvider::Basic { .. }) {
         return Err(JsValue::from_str(
-            "WebSocket authentication requires a JWT token. Use KalamClientWithJwt or login first.",
+            "WebSocket authentication requires a JWT token. Use KalamClient.withJwt, login first, or set an authProvider.",
         ));
     }
 
-    let ws_url = super::helpers::ws_url_from_http(url)?;
+    let ws_url = ws_url_from_http_opts(&url, disable_compression)?;
 
     let ws = WebSocket::new(&ws_url)?;
 
@@ -37,8 +84,8 @@ pub(crate) async fn reconnect_internal_with_auth(
     let (auth_promise, auth_resolve, auth_reject) = create_promise();
 
     // Check if auth is required
-    let requires_auth = !matches!(auth, WasmAuthProvider::None);
-    let auth_message = auth.to_ws_auth_message();
+    let requires_auth = !matches!(resolved_auth, WasmAuthProvider::None);
+    let auth_message = resolved_auth.to_ws_auth_message();
     let ws_clone = ws.clone();
     let auth_resolve_for_anon = auth_resolve.clone();
 

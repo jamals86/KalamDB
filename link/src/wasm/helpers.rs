@@ -8,7 +8,18 @@ use web_sys::Request;
 ///
 /// Appends `/v1/ws` to the converted URL. Performs basic validation to reject
 /// URLs that already use `ws://` or `wss://`.
+///
+/// When `disable_compression` is `true`, `?compress=false` is appended so the
+/// server sends plain-text frames instead of gzip-compressed binary frames.
+/// This is useful during development and debugging.
 pub(crate) fn ws_url_from_http(base_url: &str) -> Result<String, JsValue> {
+    ws_url_from_http_opts(base_url, false)
+}
+
+pub(crate) fn ws_url_from_http_opts(
+    base_url: &str,
+    disable_compression: bool,
+) -> Result<String, JsValue> {
     let ws_url = if base_url.starts_with("https://") {
         base_url.replacen("https://", "wss://", 1)
     } else if base_url.starts_with("http://") {
@@ -20,7 +31,11 @@ pub(crate) fn ws_url_from_http(base_url: &str) -> Result<String, JsValue> {
     };
     // Strip trailing slash before appending path
     let ws_url = ws_url.trim_end_matches('/');
-    Ok(format!("{}/v1/ws", ws_url))
+    if disable_compression {
+        Ok(format!("{}/v1/ws?compress=false", ws_url))
+    } else {
+        Ok(format!("{}/v1/ws", ws_url))
+    }
 }
 
 /// Hash a SQL string to produce a deterministic subscription ID suffix.

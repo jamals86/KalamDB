@@ -1,14 +1,30 @@
 # kalam_link
 
-KalamDB client SDK for Dart and Flutter — queries, live subscriptions, and authentication powered by [flutter_rust_bridge](https://cjycode.com/flutter_rust_bridge/).
+Official Dart and Flutter SDK for [KalamDB](https://kalamdb.org) — private, realtime storage for AI agents.
+
+KalamDB is a SQL-first realtime database. Every user or tenant gets a private namespace. Subscribe to any SQL query live over WebSocket. Publish and consume events via Topics. Store recent data fast and move cold history to object storage.
+
+→ **[kalamdb.org](https://kalamdb.org)** · [Docs](https://kalamdb.org/docs) · [GitHub](https://github.com/jamals86/KalamDB)
 
 ## Features
 
 - **SQL Queries** — execute parameterized SQL with `$1`, `$2` placeholders
-- **Live Subscriptions** — real-time change streams via WebSocket (insert, update, delete events)
+- **Live Subscriptions** — subscribe to any SQL query; receive inserts, updates, and deletes in real-time over WebSocket
+- **Per-tenant isolation** — each user gets a private namespace; no app-side `WHERE user_id = ?` filters needed
+- **Topics & Pub/Sub** — publish events to topics and consume them from any client or agent
 - **Authentication** — HTTP Basic Auth, JWT tokens, or anonymous access
 - **Cross-platform** — iOS, Android, macOS, Windows, Linux, and Web (WASM)
-- **Zero-copy bridge** — native Rust performance via flutter_rust_bridge v2
+
+## Installation
+
+```yaml
+dependencies:
+  kalam_link: ^0.1.0
+```
+
+```bash
+flutter pub add kalam_link
+```
 
 ## Quick Start
 
@@ -63,62 +79,9 @@ final auth = Auth.jwt(loginResult.accessToken);
 final auth = Auth.none();
 ```
 
-## Setup
+## Connection Lifecycle Handlers
 
-### Prerequisites
-
-- Flutter SDK >= 3.10
-- Rust toolchain (stable)
-- `flutter_rust_bridge_codegen` CLI
-
-### Build
-
-```bash
-# Install the FRB codegen tool
-dart pub global activate flutter_rust_bridge
-
-# Generate Dart bindings from Rust
-cd link/kalam-link-dart
-flutter_rust_bridge_codegen generate
-
-# Run your Flutter app
-cd link/sdks/dart
-flutter pub get
-flutter run
-```
-
-### Local scripts
-
-```bash
-# From link/sdks/dart
-./build.sh   # pub get + optional FRB generation + analyze
-./test.sh    # pub get + analyze + flutter test
-
-# Force FRB generation / disable it explicitly
-FRB_GENERATE=always ./build.sh
-FRB_GENERATE=never ./build.sh
-```
-
-### Live server integration tests
-
-```bash
-# Requires a running KalamDB server
-cd link/sdks/dart
-KALAM_INTEGRATION_TEST=1 \
-KALAM_URL=http://localhost:8080 \
-KALAM_USER=admin \
-KALAM_PASS=kalamdb123 \
-flutter test test/live_server_test.dart
-```
-
-Notes:
-- The integration test creates and drops temporary tables.
-- `KALAM_BUILD_DART_BRIDGE=1` (default) auto-builds the Rust bridge if needed.
-
-### Connection lifecycle handlers
-
-`KalamClient.connect` supports optional connection callbacks via
-`ConnectionHandlers`:
+Pass `ConnectionHandlers` to `KalamClient.connect` to hook into connection events:
 
 ```dart
 final client = await KalamClient.connect(
@@ -133,25 +96,6 @@ final client = await KalamClient.connect(
   ),
 );
 ```
-
-Supported lifecycle/debug events:
-- `onConnect`
-- `onDisconnect`
-- `onError`
-- `onReceive`
-- `onSend`
-
-## Architecture
-
-```
-Flutter App
-  └─ kalam_link (Dart package)      ← this package
-      └─ Generated FRB bindings      ← auto-generated
-          └─ kalam-link-dart (Rust)  ← bridge crate
-              └─ kalam-link          ← core client library
-```
-
-The Dart SDK wraps the existing `kalam-link` Rust library through a bridge crate that provides flutter_rust_bridge-annotated functions. The FRB codegen tool generates Dart bindings that handle FFI, async dispatch, and type marshalling automatically.
 
 ## API Reference
 
@@ -183,3 +127,14 @@ The Dart SDK wraps the existing `kalam-link` Rust library through a bridge crate
 ## License
 
 Apache-2.0
+
+## Links
+
+- Website: [kalamdb.org](https://kalamdb.org)
+- Docs: [kalamdb.org/docs](https://kalamdb.org/docs)
+- SDK reference: [kalamdb.org/docs/sdk](https://kalamdb.org/docs/sdk)
+- GitHub: [github.com/jamals86/KalamDB](https://github.com/jamals86/KalamDB)
+
+---
+
+> Native performance on iOS and Android is powered by the excellent [flutter_rust_bridge](https://cjycode.com/flutter_rust_bridge/) project — thank you to its maintainers and contributors.

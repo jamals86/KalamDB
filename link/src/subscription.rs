@@ -75,7 +75,7 @@ const DEFAULT_EVENT_CHANNEL_CAPACITY: usize = 8192;
 /// # Ok(())
 /// # }
 /// ```
-fn resolve_ws_url(base_url: &str, override_url: Option<&str>) -> Result<String> {
+fn resolve_ws_url(base_url: &str, override_url: Option<&str>, disable_compression: bool) -> Result<String> {
     let base = Url::parse(base_url.trim()).map_err(|e| {
         KalamLinkError::ConfigurationError(format!("Invalid base_url '{}': {}", base_url, e))
     })?;
@@ -98,7 +98,11 @@ fn resolve_ws_url(base_url: &str, override_url: Option<&str>) -> Result<String> 
             ));
         }
 
-        return Ok(override_parsed.to_string());
+        let mut result = override_parsed.to_string();
+        if disable_compression {
+            result.push_str("?compress=false");
+        }
+        return Ok(result);
     }
 
     let mut ws_url = base.clone();
@@ -116,9 +120,13 @@ fn resolve_ws_url(base_url: &str, override_url: Option<&str>) -> Result<String> 
     ws_url.set_scheme(ws_scheme).map_err(|_| {
         KalamLinkError::ConfigurationError("Failed to set WebSocket URL scheme".to_string())
     })?;
-    ws_url.set_query(None);
     ws_url.set_fragment(None);
     ws_url.set_path("/v1/ws");
+    if disable_compression {
+        ws_url.set_query(Some("compress=false"));
+    } else {
+        ws_url.set_query(None);
+    }
 
     Ok(ws_url.to_string())
 }
@@ -839,7 +847,7 @@ impl SubscriptionManager {
             ws_url,
         } = config;
 
-        let request_url = resolve_ws_url(base_url, ws_url.as_deref())?;
+        let request_url = resolve_ws_url(base_url, ws_url.as_deref(), connection_options.disable_compression)?;
 
         // Connect to WebSocket with connection timeout
         let mut request = request_url.into_client_request().map_err(|e| {
@@ -1115,15 +1123,15 @@ mod tests {
     #[test]
     fn test_ws_url_conversion() {
         assert_eq!(
-            resolve_ws_url("http://localhost:3000", None).unwrap(),
+            resolve_ws_url("http://localhost:3000", None, false).unwrap(),
             "ws://localhost:3000/v1/ws"
         );
         assert_eq!(
-            resolve_ws_url("https://api.example.com", None).unwrap(),
+            resolve_ws_url("https://api.example.com", None, false).unwrap(),
             "wss://api.example.com/v1/ws"
         );
         assert_eq!(
-            resolve_ws_url("http://localhost:3000", Some("ws://override/ws")).unwrap(),
+            resolve_ws_url("http://localhost:3000", Some("ws://override/ws"), false).unwrap(),
             "ws://override/ws"
         );
     }
@@ -1131,7 +1139,7 @@ mod tests {
     #[test]
     fn test_ws_url_trailing_slash_stripped() {
         assert_eq!(
-            resolve_ws_url("http://localhost:3000/", None).unwrap(),
+            resolve_ws_url("http://localhost:3000/", None, false).unwrap(),
             "ws://localhost:3000/v1/ws"
         );
     }
@@ -1140,11 +1148,12 @@ mod tests {
     fn test_ws_url_rejects_query_and_fragment() {
         assert!(resolve_ws_url(
             "http://localhost:3000",
-            Some("wss://api.example.com/v1/ws?token=secret")
+            Some("wss://api.example.com/v1/ws?token=secret"),
+            false
         )
         .is_err());
         assert!(
-            resolve_ws_url("http://localhost:3000", Some("wss://api.example.com/v1/ws#frag"))
+            resolve_ws_url("http://localhost:3000", Some("wss://api.example.com/v1/ws#frag"), false)
                 .is_err()
         );
     }
@@ -1153,7 +1162,8 @@ mod tests {
     fn test_ws_url_rejects_userinfo() {
         assert!(resolve_ws_url(
             "http://localhost:3000",
-            Some("wss://user:pass@api.example.com/v1/ws")
+            Some("wss://user:pass@api.example.com/v1/ws"),
+            false
         )
         .is_err());
     }
@@ -1161,14 +1171,14 @@ mod tests {
     #[test]
     fn test_ws_url_rejects_https_downgrade() {
         assert!(
-            resolve_ws_url("https://api.example.com", Some("ws://api.example.com/v1/ws")).is_err()
+            resolve_ws_url("https://api.example.com", Some("ws://api.example.com/v1/ws"), false).is_err()
         );
     }
 
     #[test]
     fn test_ws_url_rejects_unsupported_scheme() {
         assert!(
-            resolve_ws_url("http://localhost:3000", Some("ftp://api.example.com/v1/ws")).is_err()
+            resolve_ws_url("http://localhost:3000", Some("ftp://api.example.com/v1/ws"), false).is_err()
         );
     }
 

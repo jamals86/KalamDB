@@ -5,6 +5,7 @@
  * - Basic Auth (username/password)
  * - JWT Token Auth
  * - Anonymous (no auth - for localhost bypass)
+ * - Dynamic provider (async callback for refresh-token flows)
  */
 
 /**
@@ -167,3 +168,29 @@ export const Auth = {
     return { type: 'none' };
   }
 } as const;
+
+/**
+ * Async authentication provider callback.
+ *
+ * Called before each (re-)connection attempt to obtain fresh credentials.
+ * This is the recommended approach for refresh-token flows.
+ *
+ * The returned `AuthCredentials` should be `{ type: 'jwt', token: '...' }` or
+ * `{ type: 'none' }`.  Returning `{ type: 'basic' }` will cause `connect()` to
+ * throw because Basic Auth cannot be used directly for WebSocket authentication.
+ *
+ * @example
+ * ```typescript
+ * const authProvider: AuthProvider = async () => {
+ *   const token = await myApp.getOrRefreshJwt();
+ *   return Auth.jwt(token);
+ * };
+ *
+ * const client = createClient({
+ *   url: 'http://localhost:8080',
+ *   authProvider,
+ * });
+ * ```
+ */
+export type AuthProvider = () => Promise<AuthCredentials>;
+

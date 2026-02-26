@@ -38,7 +38,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.11.1";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 172191912;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 610288464;
 
 // Section: executor
 
@@ -180,6 +180,7 @@ fn wire__crate__api__dart_create_client_impl(
             let api_timeout_ms = <Option<i64>>::sse_decode(&mut deserializer);
             let api_max_retries = <Option<i32>>::sse_decode(&mut deserializer);
             let api_enable_connection_events = <Option<bool>>::sse_decode(&mut deserializer);
+            let api_disable_compression = <Option<bool>>::sse_decode(&mut deserializer);
             deserializer.end();
             transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
                 (move || {
@@ -189,6 +190,7 @@ fn wire__crate__api__dart_create_client_impl(
                         api_timeout_ms,
                         api_max_retries,
                         api_enable_connection_events,
+                        api_disable_compression,
                     )?;
                     Ok(output_ok)
                 })(),
@@ -786,6 +788,57 @@ fn wire__crate__api__dart_subscription_next_impl(
                     .await,
                 )
             }
+        },
+    )
+}
+fn wire__crate__api__dart_update_auth_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "dart_update_auth",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_client = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<DartKalamClient>,
+            >>::sse_decode(&mut deserializer);
+            let api_auth = <crate::models::DartAuthProvider>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                (move || {
+                    let mut api_client_guard = None;
+                    let decode_indices_ =
+                        flutter_rust_bridge::for_generated::lockable_compute_decode_order(vec![
+                            flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                                &api_client,
+                                0,
+                                true,
+                            ),
+                        ]);
+                    for i in decode_indices_ {
+                        match i {
+                            0 => api_client_guard = Some(api_client.lockable_decode_sync_ref_mut()),
+                            _ => unreachable!(),
+                        }
+                    }
+                    let mut api_client_guard = api_client_guard.unwrap();
+                    let output_ok = crate::api::dart_update_auth(&mut *api_client_guard, api_auth)?;
+                    Ok(output_ok)
+                })(),
+            )
         },
     )
 }
@@ -1443,6 +1496,7 @@ fn pde_ffi_dispatcher_sync_impl(
         2 => wire__crate__api__dart_connection_events_enabled_impl(ptr, rust_vec_len, data_len),
         3 => wire__crate__api__dart_create_client_impl(ptr, rust_vec_len, data_len),
         12 => wire__crate__api__dart_subscription_id_impl(ptr, rust_vec_len, data_len),
+        14 => wire__crate__api__dart_update_auth_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }

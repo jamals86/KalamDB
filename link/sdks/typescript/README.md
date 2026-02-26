@@ -1,12 +1,17 @@
 # kalam-link
 
-Official TypeScript/JavaScript SDK for [KalamDB](https://github.com/jamals86/KalamDB).
+Official TypeScript / JavaScript SDK for [KalamDB](https://kalamdb.org) — private, realtime storage for AI agents.
+
+KalamDB is a SQL-first realtime database built in Rust. Every user or tenant gets a private namespace. Subscribe to SQL queries live over WebSocket. Publish and consume events via Topics. Store recent data on local disk (RocksDB) and move cold history to object storage (S3, GCS, Azure, or local FS).
+
+→ **[kalamdb.org](https://kalamdb.org)** · [Docs](https://kalamdb.org/docs) · [GitHub](https://github.com/jamals86/KalamDB)
 
 `kalam-link` provides:
 
 - SQL execution over HTTP
-- realtime query subscriptions over WebSocket
-- topic consumer APIs (`consumer`, `consumeBatch`, `ack`)
+- realtime query subscriptions over WebSocket (`SUBSCRIBE TO` any SQL query)
+- per-tenant namespaces — no app-side `WHERE user_id = ?` filters needed
+- topic consumer APIs (`consumer`, `consumeBatch`, `ack`) for pub/sub event streams
 - auth helpers (`Auth.basic`, `Auth.jwt`, `Auth.none`)
 - FILE upload/download helpers
 
@@ -513,33 +518,18 @@ interface ConsumeRequest {
 }
 ```
 
-## Advanced: Low-Level WASM Entrypoint
-
-```ts
-import init, {
-  KalamClient,
-  WasmTimestampFormatter,
-  parseIso8601,
-  timestampNow,
-  initSync,
-} from 'kalam-link/wasm';
-```
-
-Use this only if you need raw WASM APIs; most applications should use high-level `kalam-link` exports.
-
-## Build From Source
-
-```bash
-cd link/sdks/typescript
-npm install
-npm run build
-```
-
 ## License
 
 Apache-2.0
 
-## Repository
+## Links
 
-- Source: https://github.com/jamals86/KalamDB
-- Issues: https://github.com/jamals86/KalamDB/issues
+- Website: [kalamdb.org](https://kalamdb.org)
+- Docs: [kalamdb.org/docs](https://kalamdb.org/docs)
+- SDK reference: [kalamdb.org/docs/sdk](https://kalamdb.org/docs/sdk)
+- Source: [github.com/jamals86/KalamDB](https://github.com/jamals86/KalamDB)
+- Issues: [github.com/jamals86/KalamDB/issues](https://github.com/jamals86/KalamDB/issues)
+
+---
+
+> Browser and Node.js support is powered by a Rust core compiled to WebAssembly (WASM). See [DEV.md](DEV.md) for build and contribution details.
