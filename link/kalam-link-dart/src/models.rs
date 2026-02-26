@@ -12,6 +12,61 @@ use kalam_link::models::{
 };
 
 // ---------------------------------------------------------------------------
+// Connection lifecycle events (mirrors kalam_link::event_handlers)
+// ---------------------------------------------------------------------------
+
+/// Reason why a WebSocket connection was closed.
+///
+/// Mirrors `kalam_link::DisconnectReason`.
+pub struct DartDisconnectReason {
+    /// Human-readable description of why the connection closed.
+    pub message: String,
+    /// WebSocket close code, if available (e.g. 1000 = normal, 1006 = abnormal).
+    pub code: Option<i32>,
+}
+
+/// Error information from a connection or protocol error.
+///
+/// Mirrors `kalam_link::ConnectionError`.
+pub struct DartConnectionError {
+    /// Human-readable error message.
+    pub message: String,
+    /// Whether this error is recoverable (auto-reconnect may succeed).
+    pub recoverable: bool,
+}
+
+/// A connection lifecycle event pulled via [`dart_next_connection_event`](crate::api::dart_next_connection_event).
+///
+/// Follows the same async-pull model used for subscription events.
+/// On the Dart side, poll in a loop (or wrap in a `Stream`):
+///
+/// ```dart
+/// while (true) {
+///   final event = await dartNextConnectionEvent(client: client);
+///   if (event == null) break; // client destroyed / events disabled
+///   switch (event) {
+///     case DartConnectionEvent_Connect(): print('connected');
+///     case DartConnectionEvent_Disconnect(:final reason): ...
+///     case DartConnectionEvent_Error(:final error): ...
+///     case DartConnectionEvent_Receive(:final message): ...
+///     case DartConnectionEvent_Send(:final message): ...
+///   }
+/// }
+/// ```
+pub enum DartConnectionEvent {
+    /// WebSocket connection established and authenticated.
+    Connect,
+    /// WebSocket connection closed.
+    Disconnect { reason: DartDisconnectReason },
+    /// Connection or protocol error.
+    Error { error: DartConnectionError },
+    /// Raw message received from the server (debug).
+    Receive { message: String },
+    /// Raw message sent to the server (debug).
+    Send { message: String },
+}
+
+// ---------------------------------------------------------------------------
 // Auth
 // ---------------------------------------------------------------------------
 

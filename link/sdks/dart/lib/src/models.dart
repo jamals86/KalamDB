@@ -217,6 +217,108 @@ class SetupStatusResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Connection lifecycle events / handlers
+// ---------------------------------------------------------------------------
+
+/// Reason why a WebSocket connection closed.
+class DisconnectReason {
+  final String message;
+  final int? code;
+
+  const DisconnectReason({required this.message, this.code});
+}
+
+/// Error details from a connection or protocol failure.
+class ConnectionErrorInfo {
+  final String message;
+  final bool recoverable;
+
+  const ConnectionErrorInfo({required this.message, required this.recoverable});
+}
+
+/// A connection lifecycle event emitted by the KalamDB client.
+sealed class ConnectionEvent {
+  const ConnectionEvent._();
+}
+
+/// Fired when WebSocket connection is established and authenticated.
+final class ConnectEvent extends ConnectionEvent {
+  const ConnectEvent() : super._();
+}
+
+/// Fired when WebSocket connection closes.
+final class DisconnectEvent extends ConnectionEvent {
+  final DisconnectReason reason;
+
+  const DisconnectEvent({required this.reason}) : super._();
+}
+
+/// Fired when a connection/protocol error occurs.
+final class ConnectionErrorEvent extends ConnectionEvent {
+  final ConnectionErrorInfo error;
+
+  const ConnectionErrorEvent({required this.error}) : super._();
+}
+
+/// Debug hook for raw inbound messages.
+final class ReceiveEvent extends ConnectionEvent {
+  final String message;
+
+  const ReceiveEvent({required this.message}) : super._();
+}
+
+/// Debug hook for raw outbound messages.
+final class SendEvent extends ConnectionEvent {
+  final String message;
+
+  const SendEvent({required this.message}) : super._();
+}
+
+/// Optional connection lifecycle callbacks.
+class ConnectionHandlers {
+  final void Function()? onConnect;
+  final void Function(DisconnectReason reason)? onDisconnect;
+  final void Function(ConnectionErrorInfo error)? onError;
+  final void Function(String message)? onReceive;
+  final void Function(String message)? onSend;
+  final void Function(ConnectionEvent event)? onEvent;
+
+  const ConnectionHandlers({
+    this.onConnect,
+    this.onDisconnect,
+    this.onError,
+    this.onReceive,
+    this.onSend,
+    this.onEvent,
+  });
+
+  bool get hasAny =>
+      onConnect != null ||
+      onDisconnect != null ||
+      onError != null ||
+      onReceive != null ||
+      onSend != null ||
+      onEvent != null;
+
+  /// Dispatch one event to all matching handlers.
+  void dispatch(ConnectionEvent event) {
+    onEvent?.call(event);
+    switch (event) {
+      case ConnectEvent():
+        onConnect?.call();
+      case DisconnectEvent(:final reason):
+        onDisconnect?.call(reason);
+      case ConnectionErrorEvent(:final error):
+        onError?.call(error);
+      case ReceiveEvent(:final message):
+        onReceive?.call(message);
+      case SendEvent(:final message):
+        onSend?.call(message);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Subscription / Change events
 // ---------------------------------------------------------------------------
 

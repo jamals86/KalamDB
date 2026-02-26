@@ -1,6 +1,5 @@
 //! SQL query execution with HTTP transport.
 
-use crate::normalize::normalize_query_response;
 use crate::{
     auth::AuthProvider,
     error::{KalamLinkError, Result},
@@ -321,16 +320,13 @@ impl QueryExecutor {
         err.is_timeout() || err.is_connect()
     }
 
-    async fn handle_response(response: reqwest::Response, sql: &str) -> Result<QueryResponse> {
+    async fn handle_response(response: reqwest::Response, _sql: &str) -> Result<QueryResponse> {
         let status = response.status();
 
         if status.is_success() {
             let parse_start = Instant::now();
-            let mut query_response: QueryResponse = response.json().await?;
+            let query_response: QueryResponse = response.json().await?;
             let parse_duration_ms = parse_start.elapsed().as_millis();
-
-            // Enforce stable column ordering where applicable
-            normalize_query_response(sql, &mut query_response);
 
             debug!("[LINK_QUERY] Parsed response in {}ms", parse_duration_ms);
             return Ok(query_response);
@@ -355,8 +351,7 @@ impl QueryExecutor {
 
         // For 5xx errors, prefer returning a structured QueryResponse if available,
         // so SQL execution errors can be distinguished from transport errors.
-        if let Ok(mut json_response) = serde_json::from_str::<QueryResponse>(&error_text) {
-            normalize_query_response(sql, &mut json_response);
+        if let Ok(json_response) = serde_json::from_str::<QueryResponse>(&error_text) {
             return Ok(json_response);
         }
 

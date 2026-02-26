@@ -69,7 +69,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.11.1';
 
   @override
-  int get rustContentHash => 941331406;
+  int get rustContentHash => 172191912;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -83,11 +83,14 @@ abstract class RustLibApi extends BaseApi {
   Future<DartSetupStatusResponse> crateApiDartCheckSetupStatus(
       {required DartKalamClient client});
 
+  bool crateApiDartConnectionEventsEnabled({required DartKalamClient client});
+
   DartKalamClient crateApiDartCreateClient(
       {required String baseUrl,
       required DartAuthProvider auth,
       PlatformInt64? timeoutMs,
-      int? maxRetries});
+      int? maxRetries,
+      bool? enableConnectionEvents});
 
   Future<DartQueryResponse> crateApiDartExecuteQuery(
       {required DartKalamClient client,
@@ -102,6 +105,9 @@ abstract class RustLibApi extends BaseApi {
       {required DartKalamClient client,
       required String username,
       required String password});
+
+  Future<DartConnectionEvent?> crateApiDartNextConnectionEvent(
+      {required DartKalamClient client});
 
   Future<DartLoginResponse> crateApiDartRefreshToken(
       {required DartKalamClient client, required String refreshToken});
@@ -178,11 +184,37 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  bool crateApiDartConnectionEventsEnabled({required DartKalamClient client}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartKalamClient(
+            client, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 2)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_bool,
+        decodeErrorData: null,
+      ),
+      constMeta: kCrateApiDartConnectionEventsEnabledConstMeta,
+      argValues: [client],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiDartConnectionEventsEnabledConstMeta =>
+      const TaskConstMeta(
+        debugName: "dart_connection_events_enabled",
+        argNames: ["client"],
+      );
+
+  @override
   DartKalamClient crateApiDartCreateClient(
       {required String baseUrl,
       required DartAuthProvider auth,
       PlatformInt64? timeoutMs,
-      int? maxRetries}) {
+      int? maxRetries,
+      bool? enableConnectionEvents}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
@@ -190,7 +222,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_box_autoadd_dart_auth_provider(auth, serializer);
         sse_encode_opt_box_autoadd_i_64(timeoutMs, serializer);
         sse_encode_opt_box_autoadd_i_32(maxRetries, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 2)!;
+        sse_encode_opt_box_autoadd_bool(enableConnectionEvents, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 3)!;
       },
       codec: SseCodec(
         decodeSuccessData:
@@ -198,14 +231,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         decodeErrorData: sse_decode_AnyhowException,
       ),
       constMeta: kCrateApiDartCreateClientConstMeta,
-      argValues: [baseUrl, auth, timeoutMs, maxRetries],
+      argValues: [baseUrl, auth, timeoutMs, maxRetries, enableConnectionEvents],
       apiImpl: this,
     ));
   }
 
   TaskConstMeta get kCrateApiDartCreateClientConstMeta => const TaskConstMeta(
         debugName: "dart_create_client",
-        argNames: ["baseUrl", "auth", "timeoutMs", "maxRetries"],
+        argNames: [
+          "baseUrl",
+          "auth",
+          "timeoutMs",
+          "maxRetries",
+          "enableConnectionEvents"
+        ],
       );
 
   @override
@@ -223,7 +262,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_opt_String(paramsJson, serializer);
         sse_encode_opt_String(namespace, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 3, port: port_);
+            funcId: 4, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_dart_query_response,
@@ -249,7 +288,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartKalamClient(
             client, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 4, port: port_);
+            funcId: 5, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_dart_health_check_response,
@@ -279,7 +318,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_String(username, serializer);
         sse_encode_String(password, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 5, port: port_);
+            funcId: 6, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_dart_login_response,
@@ -297,6 +336,33 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<DartConnectionEvent?> crateApiDartNextConnectionEvent(
+      {required DartKalamClient client}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartKalamClient(
+            client, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 7, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_opt_box_autoadd_dart_connection_event,
+        decodeErrorData: sse_decode_AnyhowException,
+      ),
+      constMeta: kCrateApiDartNextConnectionEventConstMeta,
+      argValues: [client],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiDartNextConnectionEventConstMeta =>
+      const TaskConstMeta(
+        debugName: "dart_next_connection_event",
+        argNames: ["client"],
+      );
+
+  @override
   Future<DartLoginResponse> crateApiDartRefreshToken(
       {required DartKalamClient client, required String refreshToken}) {
     return handler.executeNormal(NormalTask(
@@ -306,7 +372,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             client, serializer);
         sse_encode_String(refreshToken, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 6, port: port_);
+            funcId: 8, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_dart_login_response,
@@ -334,7 +400,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             client, serializer);
         sse_encode_box_autoadd_dart_server_setup_request(request, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 7, port: port_);
+            funcId: 9, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_dart_server_setup_response,
@@ -364,7 +430,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_String(sql, serializer);
         sse_encode_opt_box_autoadd_dart_subscription_config(config, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 8, port: port_);
+            funcId: 10, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData:
@@ -391,7 +457,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartSubscription(
             subscription, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 9, port: port_);
+            funcId: 11, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -416,7 +482,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartSubscription(
             subscription, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 10)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 12)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_String,
@@ -442,7 +508,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartSubscription(
             subscription, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 11, port: port_);
+            funcId: 13, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_opt_box_autoadd_dart_change_event,
@@ -543,6 +609,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  bool dco_decode_box_autoadd_bool(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as bool;
+  }
+
+  @protected
   DartAuthProvider dco_decode_box_autoadd_dart_auth_provider(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_dart_auth_provider(raw);
@@ -552,6 +624,27 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   DartChangeEvent dco_decode_box_autoadd_dart_change_event(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_dart_change_event(raw);
+  }
+
+  @protected
+  DartConnectionError dco_decode_box_autoadd_dart_connection_error(
+      dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_dart_connection_error(raw);
+  }
+
+  @protected
+  DartConnectionEvent dco_decode_box_autoadd_dart_connection_event(
+      dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_dart_connection_event(raw);
+  }
+
+  @protected
+  DartDisconnectReason dco_decode_box_autoadd_dart_disconnect_reason(
+      dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_dart_disconnect_reason(raw);
   }
 
   @protected
@@ -658,6 +751,57 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       default:
         throw Exception("unreachable");
     }
+  }
+
+  @protected
+  DartConnectionError dco_decode_dart_connection_error(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2)
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    return DartConnectionError(
+      message: dco_decode_String(arr[0]),
+      recoverable: dco_decode_bool(arr[1]),
+    );
+  }
+
+  @protected
+  DartConnectionEvent dco_decode_dart_connection_event(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    switch (raw[0]) {
+      case 0:
+        return DartConnectionEvent_Connect();
+      case 1:
+        return DartConnectionEvent_Disconnect(
+          reason: dco_decode_box_autoadd_dart_disconnect_reason(raw[1]),
+        );
+      case 2:
+        return DartConnectionEvent_Error(
+          error: dco_decode_box_autoadd_dart_connection_error(raw[1]),
+        );
+      case 3:
+        return DartConnectionEvent_Receive(
+          message: dco_decode_String(raw[1]),
+        );
+      case 4:
+        return DartConnectionEvent_Send(
+          message: dco_decode_String(raw[1]),
+        );
+      default:
+        throw Exception("unreachable");
+    }
+  }
+
+  @protected
+  DartDisconnectReason dco_decode_dart_disconnect_reason(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2)
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    return DartDisconnectReason(
+      message: dco_decode_String(arr[0]),
+      code: dco_decode_opt_box_autoadd_i_32(arr[1]),
+    );
   }
 
   @protected
@@ -877,9 +1021,24 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  bool? dco_decode_opt_box_autoadd_bool(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_bool(raw);
+  }
+
+  @protected
   DartChangeEvent? dco_decode_opt_box_autoadd_dart_change_event(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_box_autoadd_dart_change_event(raw);
+  }
+
+  @protected
+  DartConnectionEvent? dco_decode_opt_box_autoadd_dart_connection_event(
+      dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null
+        ? null
+        : dco_decode_box_autoadd_dart_connection_event(raw);
   }
 
   @protected
@@ -1008,6 +1167,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  bool sse_decode_box_autoadd_bool(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_bool(deserializer));
+  }
+
+  @protected
   DartAuthProvider sse_decode_box_autoadd_dart_auth_provider(
       SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -1019,6 +1184,27 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return (sse_decode_dart_change_event(deserializer));
+  }
+
+  @protected
+  DartConnectionError sse_decode_box_autoadd_dart_connection_error(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_dart_connection_error(deserializer));
+  }
+
+  @protected
+  DartConnectionEvent sse_decode_box_autoadd_dart_connection_event(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_dart_connection_event(deserializer));
+  }
+
+  @protected
+  DartDisconnectReason sse_decode_box_autoadd_dart_disconnect_reason(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_dart_disconnect_reason(deserializer));
   }
 
   @protected
@@ -1142,6 +1328,53 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       default:
         throw UnimplementedError('');
     }
+  }
+
+  @protected
+  DartConnectionError sse_decode_dart_connection_error(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_message = sse_decode_String(deserializer);
+    var var_recoverable = sse_decode_bool(deserializer);
+    return DartConnectionError(
+        message: var_message, recoverable: var_recoverable);
+  }
+
+  @protected
+  DartConnectionEvent sse_decode_dart_connection_event(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var tag_ = sse_decode_i_32(deserializer);
+    switch (tag_) {
+      case 0:
+        return DartConnectionEvent_Connect();
+      case 1:
+        var var_reason =
+            sse_decode_box_autoadd_dart_disconnect_reason(deserializer);
+        return DartConnectionEvent_Disconnect(reason: var_reason);
+      case 2:
+        var var_error =
+            sse_decode_box_autoadd_dart_connection_error(deserializer);
+        return DartConnectionEvent_Error(error: var_error);
+      case 3:
+        var var_message = sse_decode_String(deserializer);
+        return DartConnectionEvent_Receive(message: var_message);
+      case 4:
+        var var_message = sse_decode_String(deserializer);
+        return DartConnectionEvent_Send(message: var_message);
+      default:
+        throw UnimplementedError('');
+    }
+  }
+
+  @protected
+  DartDisconnectReason sse_decode_dart_disconnect_reason(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_message = sse_decode_String(deserializer);
+    var var_code = sse_decode_opt_box_autoadd_i_32(deserializer);
+    return DartDisconnectReason(message: var_message, code: var_code);
   }
 
   @protected
@@ -1391,12 +1624,35 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  bool? sse_decode_opt_box_autoadd_bool(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_bool(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
   DartChangeEvent? sse_decode_opt_box_autoadd_dart_change_event(
       SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
     if (sse_decode_bool(deserializer)) {
       return (sse_decode_box_autoadd_dart_change_event(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  DartConnectionEvent? sse_decode_opt_box_autoadd_dart_connection_event(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_dart_connection_event(deserializer));
     } else {
       return null;
     }
@@ -1556,6 +1812,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_box_autoadd_bool(bool self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_bool(self, serializer);
+  }
+
+  @protected
   void sse_encode_box_autoadd_dart_auth_provider(
       DartAuthProvider self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -1567,6 +1829,27 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       DartChangeEvent self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_dart_change_event(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_dart_connection_error(
+      DartConnectionError self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_dart_connection_error(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_dart_connection_event(
+      DartConnectionEvent self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_dart_connection_event(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_dart_disconnect_reason(
+      DartDisconnectReason self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_dart_disconnect_reason(self, serializer);
   }
 
   @protected
@@ -1695,6 +1978,44 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_String(code, serializer);
         sse_encode_String(message, serializer);
     }
+  }
+
+  @protected
+  void sse_encode_dart_connection_error(
+      DartConnectionError self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.message, serializer);
+    sse_encode_bool(self.recoverable, serializer);
+  }
+
+  @protected
+  void sse_encode_dart_connection_event(
+      DartConnectionEvent self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    switch (self) {
+      case DartConnectionEvent_Connect():
+        sse_encode_i_32(0, serializer);
+      case DartConnectionEvent_Disconnect(reason: final reason):
+        sse_encode_i_32(1, serializer);
+        sse_encode_box_autoadd_dart_disconnect_reason(reason, serializer);
+      case DartConnectionEvent_Error(error: final error):
+        sse_encode_i_32(2, serializer);
+        sse_encode_box_autoadd_dart_connection_error(error, serializer);
+      case DartConnectionEvent_Receive(message: final message):
+        sse_encode_i_32(3, serializer);
+        sse_encode_String(message, serializer);
+      case DartConnectionEvent_Send(message: final message):
+        sse_encode_i_32(4, serializer);
+        sse_encode_String(message, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_dart_disconnect_reason(
+      DartDisconnectReason self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.message, serializer);
+    sse_encode_opt_box_autoadd_i_32(self.code, serializer);
   }
 
   @protected
@@ -1883,6 +2204,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_opt_box_autoadd_bool(bool? self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_bool(self, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_opt_box_autoadd_dart_change_event(
       DartChangeEvent? self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -1890,6 +2221,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self != null, serializer);
     if (self != null) {
       sse_encode_box_autoadd_dart_change_event(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_dart_connection_event(
+      DartConnectionEvent? self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_dart_connection_event(self, serializer);
     }
   }
 

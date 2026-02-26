@@ -1294,6 +1294,9 @@ pub(crate) fn compose_provider_username(issuer: &str, subject: &str) -> UserName
 
 193) remove checkSetupStatus/serverSetup from the dart and typescript sdk
 
+194) Add an option to not send messages compressed for better debugging while developing, this can be set from the client side client
+
+
 
 
 

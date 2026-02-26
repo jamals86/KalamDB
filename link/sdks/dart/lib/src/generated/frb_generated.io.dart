@@ -67,10 +67,23 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   bool dco_decode_bool(dynamic raw);
 
   @protected
+  bool dco_decode_box_autoadd_bool(dynamic raw);
+
+  @protected
   DartAuthProvider dco_decode_box_autoadd_dart_auth_provider(dynamic raw);
 
   @protected
   DartChangeEvent dco_decode_box_autoadd_dart_change_event(dynamic raw);
+
+  @protected
+  DartConnectionError dco_decode_box_autoadd_dart_connection_error(dynamic raw);
+
+  @protected
+  DartConnectionEvent dco_decode_box_autoadd_dart_connection_event(dynamic raw);
+
+  @protected
+  DartDisconnectReason dco_decode_box_autoadd_dart_disconnect_reason(
+      dynamic raw);
 
   @protected
   DartErrorDetail dco_decode_box_autoadd_dart_error_detail(dynamic raw);
@@ -97,6 +110,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   DartChangeEvent dco_decode_dart_change_event(dynamic raw);
+
+  @protected
+  DartConnectionError dco_decode_dart_connection_error(dynamic raw);
+
+  @protected
+  DartConnectionEvent dco_decode_dart_connection_event(dynamic raw);
+
+  @protected
+  DartDisconnectReason dco_decode_dart_disconnect_reason(dynamic raw);
 
   @protected
   DartErrorDetail dco_decode_dart_error_detail(dynamic raw);
@@ -159,7 +181,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   String? dco_decode_opt_String(dynamic raw);
 
   @protected
+  bool? dco_decode_opt_box_autoadd_bool(dynamic raw);
+
+  @protected
   DartChangeEvent? dco_decode_opt_box_autoadd_dart_change_event(dynamic raw);
+
+  @protected
+  DartConnectionEvent? dco_decode_opt_box_autoadd_dart_connection_event(
+      dynamic raw);
 
   @protected
   DartErrorDetail? dco_decode_opt_box_autoadd_dart_error_detail(dynamic raw);
@@ -226,11 +255,26 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   bool sse_decode_bool(SseDeserializer deserializer);
 
   @protected
+  bool sse_decode_box_autoadd_bool(SseDeserializer deserializer);
+
+  @protected
   DartAuthProvider sse_decode_box_autoadd_dart_auth_provider(
       SseDeserializer deserializer);
 
   @protected
   DartChangeEvent sse_decode_box_autoadd_dart_change_event(
+      SseDeserializer deserializer);
+
+  @protected
+  DartConnectionError sse_decode_box_autoadd_dart_connection_error(
+      SseDeserializer deserializer);
+
+  @protected
+  DartConnectionEvent sse_decode_box_autoadd_dart_connection_event(
+      SseDeserializer deserializer);
+
+  @protected
+  DartDisconnectReason sse_decode_box_autoadd_dart_disconnect_reason(
       SseDeserializer deserializer);
 
   @protected
@@ -259,6 +303,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   DartChangeEvent sse_decode_dart_change_event(SseDeserializer deserializer);
+
+  @protected
+  DartConnectionError sse_decode_dart_connection_error(
+      SseDeserializer deserializer);
+
+  @protected
+  DartConnectionEvent sse_decode_dart_connection_event(
+      SseDeserializer deserializer);
+
+  @protected
+  DartDisconnectReason sse_decode_dart_disconnect_reason(
+      SseDeserializer deserializer);
 
   @protected
   DartErrorDetail sse_decode_dart_error_detail(SseDeserializer deserializer);
@@ -332,7 +388,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   String? sse_decode_opt_String(SseDeserializer deserializer);
 
   @protected
+  bool? sse_decode_opt_box_autoadd_bool(SseDeserializer deserializer);
+
+  @protected
   DartChangeEvent? sse_decode_opt_box_autoadd_dart_change_event(
+      SseDeserializer deserializer);
+
+  @protected
+  DartConnectionEvent? sse_decode_opt_box_autoadd_dart_connection_event(
       SseDeserializer deserializer);
 
   @protected
@@ -402,12 +465,27 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_bool(bool self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_bool(bool self, SseSerializer serializer);
+
+  @protected
   void sse_encode_box_autoadd_dart_auth_provider(
       DartAuthProvider self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_dart_change_event(
       DartChangeEvent self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_dart_connection_error(
+      DartConnectionError self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_dart_connection_event(
+      DartConnectionEvent self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_dart_disconnect_reason(
+      DartDisconnectReason self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_dart_error_detail(
@@ -438,6 +516,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_dart_change_event(
       DartChangeEvent self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_dart_connection_error(
+      DartConnectionError self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_dart_connection_event(
+      DartConnectionEvent self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_dart_disconnect_reason(
+      DartDisconnectReason self, SseSerializer serializer);
 
   @protected
   void sse_encode_dart_error_detail(
@@ -515,8 +605,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_opt_String(String? self, SseSerializer serializer);
 
   @protected
+  void sse_encode_opt_box_autoadd_bool(bool? self, SseSerializer serializer);
+
+  @protected
   void sse_encode_opt_box_autoadd_dart_change_event(
       DartChangeEvent? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_box_autoadd_dart_connection_event(
+      DartConnectionEvent? self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_box_autoadd_dart_error_detail(

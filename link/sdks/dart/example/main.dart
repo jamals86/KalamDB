@@ -7,6 +7,7 @@
 ///   4. Subscribing to live changes
 ///   5. Logging in and refreshing tokens
 ///   6. Server health check
+// ignore_for_file: avoid_print
 library;
 
 import 'dart:async';
@@ -15,7 +16,8 @@ import 'dart:io';
 import 'package:kalam_link/kalam_link.dart';
 
 Future<void> main() async {
-  final serverUrl = Platform.environment['KALAM_URL'] ?? 'http://localhost:8088';
+  final serverUrl =
+      Platform.environment['KALAM_URL'] ?? 'http://localhost:8080';
   final adminUser = Platform.environment['KALAM_USER'] ?? 'admin';
   final adminPass = Platform.environment['KALAM_PASS'] ?? 'kalamdb123';
   // -------------------------------------------------------------------------
@@ -61,7 +63,8 @@ Future<void> main() async {
   // 6. Run queries (JWT client)
   // -------------------------------------------------------------------------
   // Create a table
-  await client.query('CREATE TABLE IF NOT EXISTS tasks (id INT, title TEXT, done BOOLEAN)');
+  await client.query(
+      'CREATE TABLE IF NOT EXISTS tasks (id INT, title TEXT, done BOOLEAN)');
 
   // Insert rows
   await client.query(

@@ -32,7 +32,8 @@ void main() {
   // -----------------------------------------------------------------------
   group('SchemaField', () {
     test('flag helpers with pk,nn,uq', () {
-      const f = SchemaField(name: 'id', dataType: 'Int', index: 0, flags: 'pk,nn,uq');
+      const f =
+          SchemaField(name: 'id', dataType: 'Int', index: 0, flags: 'pk,nn,uq');
       expect(f.isPrimaryKey, isTrue);
       expect(f.isNonNull, isTrue);
       expect(f.isUnique, isTrue);
@@ -80,7 +81,9 @@ void main() {
           const SchemaField(name: 'id', dataType: 'Int', index: 0),
           const SchemaField(name: 'name', dataType: 'Text', index: 1),
         ],
-        rowsJson: [jsonEncode([42, 'Charlie'])],
+        rowsJson: [
+          jsonEncode([42, 'Charlie'])
+        ],
         rowCount: 1,
       );
       final maps = qr.toMaps();
@@ -113,7 +116,9 @@ void main() {
             columns: [
               const SchemaField(name: 'x', dataType: 'Int', index: 0),
             ],
-            rowsJson: [jsonEncode([7])],
+            rowsJson: [
+              jsonEncode([7])
+            ],
             rowCount: 1,
           ),
         ],
@@ -240,7 +245,9 @@ void main() {
       const ack = AckEvent(
         subscriptionId: 'sub-1',
         totalRows: 100,
-        schema: [SchemaField(name: 'id', dataType: 'Int', index: 0, flags: 'pk')],
+        schema: [
+          SchemaField(name: 'id', dataType: 'Int', index: 0, flags: 'pk')
+        ],
         batchNum: 0,
         hasMore: true,
         status: 'loading',
@@ -272,7 +279,9 @@ void main() {
     test('InsertEvent row convenience getter', () {
       final insert = InsertEvent(
         subscriptionId: 'sub-3',
-        rowsJson: [jsonEncode({'id': 42, 'title': 'Hello'})],
+        rowsJson: [
+          jsonEncode({'id': 42, 'title': 'Hello'})
+        ],
       );
       expect(insert.row['id'], 42);
       expect(insert.row['title'], 'Hello');
@@ -281,8 +290,12 @@ void main() {
     test('UpdateEvent has new and old rows', () {
       final update = UpdateEvent(
         subscriptionId: 'sub-4',
-        rowsJson: [jsonEncode({'id': 1, 'name': 'Bob2'})],
-        oldRowsJson: [jsonEncode({'id': 1, 'name': 'Bob'})],
+        rowsJson: [
+          jsonEncode({'id': 1, 'name': 'Bob2'})
+        ],
+        oldRowsJson: [
+          jsonEncode({'id': 1, 'name': 'Bob'})
+        ],
       );
       expect(update.row['name'], 'Bob2');
       expect(update.oldRow?['name'], 'Bob');
@@ -291,7 +304,9 @@ void main() {
     test('DeleteEvent exposes deleted row', () {
       final del = DeleteEvent(
         subscriptionId: 'sub-5',
-        oldRowsJson: [jsonEncode({'id': 99})],
+        oldRowsJson: [
+          jsonEncode({'id': 99})
+        ],
       );
       expect(del.row['id'], 99);
       expect(del.oldRows.length, 1);
@@ -325,6 +340,81 @@ void main() {
         SubscriptionError() => 'error',
       };
       expect(label, 'ack');
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Connection lifecycle events / handlers
+  // -----------------------------------------------------------------------
+  group('ConnectionHandlers', () {
+    test('hasAny is false when no callbacks are set', () {
+      const handlers = ConnectionHandlers();
+      expect(handlers.hasAny, isFalse);
+    });
+
+    test('hasAny is true when one callback is set', () {
+      final handlers = ConnectionHandlers(onConnect: () {});
+      expect(handlers.hasAny, isTrue);
+    });
+
+    test('dispatch routes each event to matching handler and onEvent', () {
+      var connectCount = 0;
+      DisconnectReason? disconnectReason;
+      ConnectionErrorInfo? errorInfo;
+      String? receivedMessage;
+      String? sentMessage;
+      final seenEvents = <ConnectionEvent>[];
+
+      final handlers = ConnectionHandlers(
+        onConnect: () => connectCount++,
+        onDisconnect: (reason) => disconnectReason = reason,
+        onError: (error) => errorInfo = error,
+        onReceive: (message) => receivedMessage = message,
+        onSend: (message) => sentMessage = message,
+        onEvent: seenEvents.add,
+      );
+
+      handlers.dispatch(const ConnectEvent());
+      handlers.dispatch(
+        const DisconnectEvent(
+          reason: DisconnectReason(message: 'closed', code: 1000),
+        ),
+      );
+      handlers.dispatch(
+        const ConnectionErrorEvent(
+          error: ConnectionErrorInfo(message: 'timeout', recoverable: true),
+        ),
+      );
+      handlers.dispatch(const ReceiveEvent(message: '{"type":"ack"}'));
+      handlers.dispatch(const SendEvent(message: '{"type":"ping"}'));
+
+      expect(connectCount, 1);
+      expect(disconnectReason?.message, 'closed');
+      expect(disconnectReason?.code, 1000);
+      expect(errorInfo?.message, 'timeout');
+      expect(errorInfo?.recoverable, isTrue);
+      expect(receivedMessage, '{"type":"ack"}');
+      expect(sentMessage, '{"type":"ping"}');
+      expect(seenEvents.length, 5);
+      expect(seenEvents[0], isA<ConnectEvent>());
+      expect(seenEvents[1], isA<DisconnectEvent>());
+      expect(seenEvents[2], isA<ConnectionErrorEvent>());
+      expect(seenEvents[3], isA<ReceiveEvent>());
+      expect(seenEvents[4], isA<SendEvent>());
+    });
+
+    test('sealed ConnectionEvent supports exhaustive switch', () {
+      const ConnectionEvent event = SendEvent(message: 'hello');
+
+      final label = switch (event) {
+        ConnectEvent() => 'connect',
+        DisconnectEvent() => 'disconnect',
+        ConnectionErrorEvent() => 'error',
+        ReceiveEvent() => 'receive',
+        SendEvent() => 'send',
+      };
+
+      expect(label, 'send');
     });
   });
 }

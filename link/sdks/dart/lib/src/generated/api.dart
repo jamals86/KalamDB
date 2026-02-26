@@ -7,22 +7,29 @@ import 'frb_generated.dart';
 import 'models.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
+// These functions are ignored because they are not marked as `pub`: `build_event_handlers`, `create_client_inner`
+
 /// Create a new KalamDB client.
 ///
 /// * `base_url` — server URL, e.g. `"https://db.example.com"` or `"http://localhost:3000"`.
 /// * `auth` — authentication method (basic, JWT, or none).
 /// * `timeout_ms` — optional HTTP request timeout in milliseconds (default 30 000).
 /// * `max_retries` — optional retry count for idempotent queries (default 3).
+/// * `enable_connection_events` — when `true`, connection lifecycle events
+///   (connect, disconnect, error, receive, send) are queued internally and
+///   can be retrieved via [`dart_next_connection_event`].
 DartKalamClient dartCreateClient(
         {required String baseUrl,
         required DartAuthProvider auth,
         PlatformInt64? timeoutMs,
-        int? maxRetries}) =>
+        int? maxRetries,
+        bool? enableConnectionEvents}) =>
     RustLib.instance.api.crateApiDartCreateClient(
         baseUrl: baseUrl,
         auth: auth,
         timeoutMs: timeoutMs,
-        maxRetries: maxRetries);
+        maxRetries: maxRetries,
+        enableConnectionEvents: enableConnectionEvents);
 
 /// Execute a SQL query, optionally with parameters and namespace.
 ///
@@ -67,6 +74,26 @@ Future<DartServerSetupResponse> dartServerSetup(
         required DartServerSetupRequest request}) =>
     RustLib.instance.api
         .crateApiDartServerSetup(client: client, request: request);
+
+/// Pull the next connection lifecycle event.
+///
+/// Returns `None` when event collection is disabled or the client is dropped.
+/// Dart should call this in a loop:
+///
+/// ```dart
+/// while (true) {
+///   final event = await dartNextConnectionEvent(client: client);
+///   if (event == null) break;
+///   // handle event ...
+/// }
+/// ```
+Future<DartConnectionEvent?> dartNextConnectionEvent(
+        {required DartKalamClient client}) =>
+    RustLib.instance.api.crateApiDartNextConnectionEvent(client: client);
+
+/// Check whether connection event collection is enabled for this client.
+bool dartConnectionEventsEnabled({required DartKalamClient client}) =>
+    RustLib.instance.api.crateApiDartConnectionEventsEnabled(client: client);
 
 /// Create a live-query subscription.
 ///

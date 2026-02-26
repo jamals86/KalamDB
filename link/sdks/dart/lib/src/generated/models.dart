@@ -81,6 +81,88 @@ sealed class DartChangeEvent with _$DartChangeEvent {
   }) = DartChangeEvent_Error;
 }
 
+/// Error information from a connection or protocol error.
+///
+/// Mirrors `kalam_link::ConnectionError`.
+class DartConnectionError {
+  /// Human-readable error message.
+  final String message;
+
+  /// Whether this error is recoverable (auto-reconnect may succeed).
+  final bool recoverable;
+
+  const DartConnectionError({
+    required this.message,
+    required this.recoverable,
+  });
+
+  @override
+  int get hashCode => message.hashCode ^ recoverable.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is DartConnectionError &&
+          runtimeType == other.runtimeType &&
+          message == other.message &&
+          recoverable == other.recoverable;
+}
+
+@freezed
+sealed class DartConnectionEvent with _$DartConnectionEvent {
+  const DartConnectionEvent._();
+
+  /// WebSocket connection established and authenticated.
+  const factory DartConnectionEvent.connect() = DartConnectionEvent_Connect;
+
+  /// WebSocket connection closed.
+  const factory DartConnectionEvent.disconnect({
+    required DartDisconnectReason reason,
+  }) = DartConnectionEvent_Disconnect;
+
+  /// Connection or protocol error.
+  const factory DartConnectionEvent.error({
+    required DartConnectionError error,
+  }) = DartConnectionEvent_Error;
+
+  /// Raw message received from the server (debug).
+  const factory DartConnectionEvent.receive({
+    required String message,
+  }) = DartConnectionEvent_Receive;
+
+  /// Raw message sent to the server (debug).
+  const factory DartConnectionEvent.send({
+    required String message,
+  }) = DartConnectionEvent_Send;
+}
+
+/// Reason why a WebSocket connection was closed.
+///
+/// Mirrors `kalam_link::DisconnectReason`.
+class DartDisconnectReason {
+  /// Human-readable description of why the connection closed.
+  final String message;
+
+  /// WebSocket close code, if available (e.g. 1000 = normal, 1006 = abnormal).
+  final int? code;
+
+  const DartDisconnectReason({
+    required this.message,
+    this.code,
+  });
+
+  @override
+  int get hashCode => message.hashCode ^ code.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is DartDisconnectReason &&
+          runtimeType == other.runtimeType &&
+          message == other.message &&
+          code == other.code;
+}
+
 class DartErrorDetail {
   final String code;
   final String message;
