@@ -5,6 +5,7 @@
 ///   KALAM_URL       (default: http://localhost:8080)
 ///   KALAM_USER      (default: admin)
 ///   KALAM_PASS      (default: kalamdb123)
+library;
 
 import 'dart:async';
 import 'dart:io';

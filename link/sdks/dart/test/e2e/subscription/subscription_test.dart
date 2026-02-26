@@ -5,6 +5,7 @@
 /// NOTE: `dartSubscriptionClose` in the native bridge may hang waiting for the
 /// server's WebSocket close acknowledgement.  All subscription cancellations
 /// use [_safeCancel] to apply a bounded timeout so tests don't block.
+library;
 
 import 'dart:async';
 

@@ -1,6 +1,7 @@
 /// Query e2e tests — SELECT, INSERT, UPDATE, DELETE, params, errors.
 ///
 /// Mirrors: tests/e2e/query/query.test.mjs (TypeScript)
+library;
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kalam_link/kalam_link.dart';

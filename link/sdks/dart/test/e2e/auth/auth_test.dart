@@ -1,8 +1,7 @@
 /// Auth e2e tests — login, refresh, authProvider, JWT lifecycle.
 ///
 /// Mirrors: tests/e2e/auth/auth.test.mjs (TypeScript)
-
-import 'dart:io';
+library;
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kalam_link/kalam_link.dart';
@@ -111,8 +110,6 @@ void main() {
     test(
       'authProvider callback is used for authentication',
       () async {
-        var providerCalled = false;
-
         final client = await connectWithAuthProvider();
         // connectWithAuthProvider uses authProvider internally.
         // If we get here, the provider was called. But let's verify

@@ -1,6 +1,7 @@
 /// DDL e2e tests — CREATE/DROP NAMESPACE, CREATE/DROP TABLE, schema inspection.
 ///
 /// Mirrors: tests/e2e/ddl/ddl.test.mjs (TypeScript)
+library;
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kalam_link/kalam_link.dart';

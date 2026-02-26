@@ -2,8 +2,7 @@
 /// connection events.
 ///
 /// Mirrors: tests/e2e/lifecycle/lifecycle.test.mjs (TypeScript)
-
-import 'dart:async';
+library;
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kalam_link/kalam_link.dart';

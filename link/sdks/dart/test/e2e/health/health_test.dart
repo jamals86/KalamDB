@@ -1,6 +1,7 @@
 /// Health & setup e2e tests — healthCheck, checkSetupStatus.
 ///
 /// Dart-specific: these endpoints exist in the Dart SDK but not in TypeScript.
+library;
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kalam_link/kalam_link.dart';
