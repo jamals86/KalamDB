@@ -6,6 +6,39 @@ echo "🔨 Building KalamDB Dart SDK..."
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# ---------------------------------------------------------------------------
+# Native libraries (all platforms)
+# ---------------------------------------------------------------------------
+# The Flutter plugin ships pre-built native binaries for every platform:
+#   android/ — .so (arm64-v8a, x86_64, optionally armeabi-v7a + x86)
+#   ios/     — static .a (aarch64, optionally universal with sim target)
+#   macos/   — universal .dylib (aarch64 + x86_64)
+#   linux/   — .so (x86_64)
+#   windows/ — .dll (x86_64)
+#   web/     — .wasm via wasm-pack
+#
+# Run build_native_libs.sh whenever the Rust source changes or when
+# preparing a new pub.dev release:
+#
+#   ./build_native_libs.sh                   # auto-detect platforms for this OS
+#   ./build_native_libs.sh all               # all platforms
+#   ./build_native_libs.sh android ios web   # specific platforms
+#   ./build_native_libs.sh android --all-abis  # all four Android ABIs
+#
+# By default build.sh skips native compilation to avoid requiring cross-compile
+# toolchains.  Set BUILD_NATIVE=1 (or BUILD_ANDROID=1 for back-compat) to
+# trigger it:
+#
+#   BUILD_NATIVE=1 ./build.sh
+#   BUILD_NATIVE=1 BUILD_PLATFORMS="android ios web" ./build.sh
+#
+if [[ "${BUILD_NATIVE:-${BUILD_ANDROID:-0}}" == "1" ]]; then
+  PLATFORM_ARGS="${BUILD_PLATFORMS:-}"
+  echo "🏗️  Building native libraries..."
+  # shellcheck disable=SC2086
+  "$SCRIPT_DIR/build_native_libs.sh" $PLATFORM_ARGS
+fi
+
 echo "📦 Fetching Dart/Flutter dependencies..."
 flutter pub get
 

@@ -1,0 +1,31 @@
+{
+  "name": "kalam-link",
+  "type": "module",
+  "collaborators": [
+    "KalamDB Team"
+  ],
+  "description": "WebAssembly-compatible KalamDB client library",
+  "version": "0.4.0-alpha3",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jamals86/KalamDB"
+  },
+  "files": [
+    "kalam_link_dart_bg.wasm",
+    "kalam_link_dart.js",
+    "kalam_link_dart.d.ts"
+  ],
+  "main": "kalam_link_dart.js",
+  "types": "kalam_link_dart.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ],
+  "keywords": [
+    "kalamdb",
+    "database",
+    "client",
+    "websocket",
+    "wasm"
+  ]
+}

@@ -9,12 +9,17 @@ repository.workspace = true
 description = "Flutter/Dart bridge for kalam-link via flutter_rust_bridge"
 
 [dependencies]
-kalam-link = { path = "..", features = ["tokio-runtime"] }
+kalam-link = { path = ".." }
 flutter_rust_bridge = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, optional = true }
 serde_json = { workspace = true }
 log = { workspace = true }
 anyhow = { workspace = true }
+
+[features]
+default = ["native"]
+native = ["kalam-link/tokio-runtime", "tokio"]
+wasm = ["kalam-link/wasm"]
 
 [lib]
 crate-type = ["cdylib", "staticlib", "rlib"]

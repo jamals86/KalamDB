@@ -1,0 +1,5 @@
+# Xcode build files
+build/
+.symlinks/
+DerivedData/
+Pods/

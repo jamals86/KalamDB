@@ -53,10 +53,14 @@ Rust changes.
 From `link/sdks/dart`:
 
 ```bash
-./build.sh          # flutter pub get + optional FRB generation + dart analyze
-./test.sh           # flutter pub get + dart analyze + flutter test
-./publish.sh        # validate + publish to pub.dev (requires clean git state)
-./publish.sh --dry-run   # validate only, no upload
+./build.sh                                # flutter pub get + optional FRB generation + dart analyze
+./build_native_libs.sh                    # auto-detect platforms for this OS + build
+./build_native_libs.sh all                # build ALL platforms
+./build_native_libs.sh android ios web    # specific platforms
+./build_native_libs.sh android --all-abis # all four Android ABIs
+./test.sh                                 # flutter pub get + dart analyze + flutter test
+./publish.sh                              # validate platform artefacts + publish to pub.dev
+./publish.sh --dry-run                    # validate only, no upload
 ```
 
 Control FRB regeneration:
@@ -64,6 +68,66 @@ Control FRB regeneration:
 ```bash
 FRB_GENERATE=always ./build.sh   # always regenerate
 FRB_GENERATE=never  ./build.sh   # skip regeneration
+```
+
+Force native library rebuild in one step:
+
+```bash
+BUILD_NATIVE=1 ./build.sh                              # auto-detect platforms
+BUILD_NATIVE=1 BUILD_PLATFORMS="android ios" ./build.sh # specific platforms
+```
+
+## Platform Support
+
+KalamDB's Flutter plugin ships **pre-built native libraries** for every supported platform
+so consuming apps do not need Rust or cross-compilation toolchains.
+
+### Supported platforms
+
+| Platform | Artefact | Location |
+|----------|----------|----------|
+| Android arm64-v8a | `.so` (shared) | `android/src/main/jniLibs/arm64-v8a/` |
+| Android x86_64 | `.so` (shared) | `android/src/main/jniLibs/x86_64/` |
+| iOS (aarch64) | `.a` (static) | `ios/Frameworks/` |
+| macOS (universal) | `.dylib` (shared) | `macos/Libs/` |
+| Linux x86_64 | `.so` (shared) | `linux/lib/` |
+| Windows x86_64 | `.dll` (shared) | `windows/lib/` |
+| Web (WASM) | `.wasm` | `web/pkg/` |
+
+### Why the native files need to be committed
+
+The root `.gitignore` ignores `*.so`, `*.dylib`, and `*.wasm` build artefacts. Each platform
+directory has its own `.gitignore` override (e.g. `!*.so`) to re-include the pre-built
+libraries. **Always commit the native files** before publishing a new version.
+
+### Building native libraries
+
+Prerequisites vary by platform:
+
+| Platform | Prerequisites |
+|----------|--------------|
+| Android | Rust stable, `cargo-ndk`, Android NDK r25c+ |
+| iOS | Rust stable, Xcode, `rustup target add aarch64-apple-ios aarch64-apple-ios-sim` |
+| macOS | Rust stable, Xcode, `rustup target add aarch64-apple-darwin x86_64-apple-darwin` |
+| Linux | Rust stable, `rustup target add x86_64-unknown-linux-gnu` |
+| Windows | Rust stable, `rustup target add x86_64-pc-windows-gnu`, MinGW toolchain |
+| Web | Rust stable, `wasm-pack`, `rustup target add wasm32-unknown-unknown` |
+
+```bash
+# From link/sdks/dart
+
+# Auto-detect and build for current OS platforms
+./build_native_libs.sh
+
+# Build for specific platforms
+./build_native_libs.sh android ios macos web
+
+# Build everything (requires all cross-compile toolchains)
+./build_native_libs.sh all
+
+# Commit and prepare for publish
+git add android/ ios/ macos/ linux/ windows/ web/
+git commit -m "chore(dart): rebuild native libs for all platforms"
 ```
 
 ## Running Tests
@@ -104,8 +168,9 @@ to [pub.dev](https://pub.dev/packages/kalam_link).
 Before a new release:
 1. Bump `version` in `pubspec.yaml`
 2. Add an entry to `CHANGELOG.md`
-3. Commit + tag (`git tag dart-v0.x.y`)
-4. Run `./publish.sh`
+3. Rebuild native libs: `./build_native_libs.sh all` (commit all artefacts)
+4. Commit + tag (`git tag dart-v0.x.y`)
+5. Run `./publish.sh` (validates all platform artefacts exist before uploading)
 
 ## Crate Layout
 

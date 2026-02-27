@@ -1,0 +1,4 @@
+# CMake intermediate build files generated during 'flutter build apk'
+.cxx/
+# Gradle cache
+.gradle/

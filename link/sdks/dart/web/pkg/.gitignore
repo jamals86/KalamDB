@@ -1,0 +1,4 @@
+# wasm-pack generates a catch-all `*` here — override it so the
+# pre-built WASM/JS artefacts are tracked and published to pub.dev.
+!*.wasm
+!*.js

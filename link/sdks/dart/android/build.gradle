@@ -27,12 +27,20 @@ android {
     ndkVersion = android.ndkVersion
 
     defaultConfig {
-        minSdk = 24
+        minSdk = 28
     }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    // Link the pre-built Rust .so libraries declared in CMakeLists.txt so that
+    // Flutter's ffiPlugin machinery recognises the native library.
+    externalNativeBuild {
+        cmake {
+            path "CMakeLists.txt"
+        }
     }
 
     sourceSets {

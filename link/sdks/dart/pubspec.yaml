@@ -19,6 +19,8 @@ flutter:
     platforms:
       android:
         ffiPlugin: true
+      ios:
+        ffiPlugin: true
 
 dev_dependencies:
   flutter_test:
