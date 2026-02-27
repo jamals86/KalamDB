@@ -103,9 +103,3 @@ ui/package-lock.json
 /target_cli_smoke_run
 /link/sdks/dart/build
 /link/sdks/dart/.dart_tool
-/link/sdks/dart/android/src/main/jniLibs
-/link/sdks/dart/web/pkg
-/link/sdks/dart/web/pkg
-/link/sdks/dart/macos/Libs
-/link/sdks/dart/web/pkg
-link/sdks/dart/ios/Frameworks/libkalam_link_dart.a
