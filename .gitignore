@@ -108,3 +108,4 @@ ui/package-lock.json
 /link/sdks/dart/web/pkg
 /link/sdks/dart/macos/Libs
 /link/sdks/dart/web/pkg
+link/sdks/dart/ios/Frameworks/libkalam_link_dart.a
