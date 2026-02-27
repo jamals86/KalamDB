@@ -51,15 +51,16 @@ shared_tables_template = "{namespace}/{tableName}"
 user_tables_template = "{namespace}/{tableName}/{userId}"
 
 [storage.rocksdb]
-# Write buffer size per column family in bytes (default: 2MB)
+# Write buffer size per column family in bytes (default: 512KB)
 # Lower values reduce memory with many column families
 # Formula: memory ~= write_buffer_size × max_write_buffers × num_column_families
-# MEMORY OPTIMIZATION: Reduced for idle server (was 4MB)
-write_buffer_size = 2097152
+# MEMORY OPTIMIZATION: Reduced from 2MB to 512KB (saves ~100MB+ with many CFs)
+write_buffer_size = 524288
 
 # Maximum number of write buffers (default: 2)
 # Allows writes to continue while buffers are being flushed
-max_write_buffers = 6
+# MEMORY OPTIMIZATION: Reduced from 6 to 2 (saves ~4x memory per CF)
+max_write_buffers = 2
 
 # Block cache size for reads in bytes (default: 4MB)
 # Shared LRU cache across all column families

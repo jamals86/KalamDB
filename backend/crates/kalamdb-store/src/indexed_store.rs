@@ -288,6 +288,38 @@ where
         self.indexes.get(idx)
     }
 
+    /// Drops all partitions owned by this store: index partitions first (best-effort),
+    /// then the main partition (hard error on failure, "not found" is silently OK).
+    ///
+    /// Use this in DROP TABLE cleanup so every CF that belongs to the store is removed
+    /// in one call, derived directly from the store's own partition list rather than
+    /// re-constructing names by hand.
+    pub fn drop_all_partitions(&self) -> kalamdb_commons::storage::Result<()> {
+        // Index partitions: best-effort (missing == already clean)
+        for partition in &self.index_partitions {
+            if let Err(e) = self.backend.drop_partition(partition) {
+                if !e.to_string().to_lowercase().contains("not found") {
+                    log::warn!(
+                        "[IndexedEntityStore] Failed to drop index partition '{}': {}",
+                        partition.name(),
+                        e
+                    );
+                }
+            }
+        }
+        // Main partition: propagate errors except "not found" (already clean)
+        match self.backend.drop_partition(&self.main_partition) {
+            Ok(()) => Ok(()),
+            Err(e) if e.to_string().to_lowercase().contains("not found") => {
+                log::warn!(
+                    "[IndexedEntityStore] Partition '{}' not found during drop (already clean)",
+                    self.main_partition.name()
+                );
+                Ok(())
+            },
+            Err(e) => Err(e),
+        }
+    }
     /// Finds the best index for a given filter.
     ///
     /// Returns `Some((index_idx, prefix))` if an index can satisfy the filter.

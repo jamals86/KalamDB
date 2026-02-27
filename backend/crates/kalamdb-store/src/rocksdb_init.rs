@@ -123,6 +123,19 @@ impl RocksDbInit {
         Ok(db)
     }
 
+    /// Open and return both the DB and the list of column family names.
+    ///
+    /// This is useful for detecting orphaned column families at startup.
+    pub fn open_with_cf_names(&self) -> Result<(Arc<DB>, Vec<String>)> {
+        let db = self.open()?;
+        // Re-list CFs from disk to get the authoritative list
+        let path = std::path::Path::new(&self.db_path);
+        let mut db_opts = Options::default();
+        db_opts.create_if_missing(false);
+        let cf_names = DB::list_cf(&db_opts, path).unwrap_or_else(|_| vec!["default".to_string()]);
+        Ok((db, cf_names))
+    }
+
     /// Close database handle (drop Arc)
     pub fn close(_db: Arc<DB>) {}
 }
@@ -134,7 +147,12 @@ fn block_cache_size_mb(bytes: usize) -> u64 {
 fn apply_cf_settings(cf_opts: &mut Options, settings: &RocksDbSettings) {
     cf_opts.set_write_buffer_size(settings.write_buffer_size);
     cf_opts.set_max_write_buffer_number(settings.max_write_buffers);
-    cf_opts.optimize_for_point_lookup(block_cache_size_mb(settings.block_cache_size));
+    // NOTE: We intentionally do NOT call optimize_for_point_lookup() per-CF.
+    // That function switches the memtable to a hash-based representation which
+    // has significantly higher fixed memory overhead per column family (~2-4x).
+    // With 50-100+ CFs this wastes tens of MB. The DB-level call already sets
+    // the read-path optimizations (bloom filter, block cache) via
+    // set_block_based_table_factory() which is applied per-CF separately.
 }
 
 pub(crate) fn create_block_options_with_cache(cache: &Cache) -> BlockBasedOptions {

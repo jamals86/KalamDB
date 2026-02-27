@@ -94,10 +94,11 @@ pub async fn bootstrap(
     std::fs::create_dir_all(&db_path)?;
 
     let db_init = RocksDbInit::new(db_path.to_str().unwrap(), config.storage.rocksdb.clone());
-    let db = db_init.open()?;
+    let (db, cf_names) = db_init.open_with_cf_names()?;
     info!(
-        "RocksDB initialized at {} ({:.2}ms)",
+        "RocksDB initialized at {} with {} column families ({:.2}ms)",
         db_path.display(),
+        cf_names.len(),
         phase_start.elapsed().as_secs_f64() * 1000.0
     );
 
@@ -110,6 +111,8 @@ pub async fn bootstrap(
         config.storage.rocksdb.disable_wal,
         config.storage.rocksdb.clone(),
     ));
+    // Track known CF names for list_partitions() and orphan cleanup
+    backend.set_known_cf_names(cf_names);
     if !config.storage.rocksdb.sync_writes {
         debug!("RocksDB async writes enabled (sync_writes=false) for high throughput");
     }
@@ -383,10 +386,11 @@ pub async fn bootstrap_isolated(
     std::fs::create_dir_all(&db_path)?;
 
     let db_init = RocksDbInit::new(db_path.to_str().unwrap(), config.storage.rocksdb.clone());
-    let db = db_init.open()?;
+    let (db, cf_names) = db_init.open_with_cf_names()?;
     debug!(
-        "RocksDB initialized at {} ({:.2}ms)",
+        "RocksDB initialized at {} with {} CFs ({:.2}ms)",
         db_path.display(),
+        cf_names.len(),
         phase_start.elapsed().as_secs_f64() * 1000.0
     );
 
@@ -396,6 +400,7 @@ pub async fn bootstrap_isolated(
         config.storage.rocksdb.disable_wal,
         config.storage.rocksdb.clone(),
     ));
+    backend.set_known_cf_names(cf_names);
 
     // Node ID: use cluster.node_id (u64) if cluster mode, otherwise default to 1 for standalone
     let node_id = if let Some(cluster) = &config.cluster {
@@ -982,6 +987,8 @@ async fn create_default_system_user(
 // /// Check for security issues with remote access configuration
 // ///
 // /// Informs users about password requirements for remote access
+
+
 // async fn check_remote_access_security(
 //     config: &ServerConfig,
 //     users_provider: Arc<kalamdb_system::UsersTableProvider>,

@@ -57,15 +57,15 @@ connect_timeout_secs = 10
 
 
 [storage.rocksdb]
-# Write buffer size per column family in bytes (default: 2MB)
-# MEMORY OPTIMIZATION: Reduced from 64MB for lower idle memory footprint
+# Write buffer size per column family in bytes (default: 512KB)
+# MEMORY OPTIMIZATION: Reduced from 2MB for lower idle memory footprint
 # Formula: memory ≈ write_buffer_size × max_write_buffers × num_column_families
 # Lower values reduce memory with many column families
-write_buffer_size = 2097152
+# Example: 50 CFs × 512KB × 2 buffers = 50MB vs 50 CFs × 2MB × 2 = 200MB
+write_buffer_size = 524288
 
 # Maximum number of write buffers (default: 2)
 # Allows writes to continue while buffers are being flushed
-# MEMORY OPTIMIZATION: Reduced from 3 to 2
 max_write_buffers = 2
 
 # Block cache size for reads in bytes (default: 4MB)

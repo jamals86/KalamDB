@@ -48,10 +48,10 @@ shared_tables_template = "{namespace}/{tableName}"
 user_tables_template = "{namespace}/{tableName}/{userId}"
 
 [storage.rocksdb]
-# Write buffer size per column family in bytes (default: 2MB)
+# Write buffer size per column family in bytes (default: 512KB)
 # Lower values reduce memory with many column families
 # Formula: memory ~= write_buffer_size × max_write_buffers × num_column_families
-write_buffer_size = 2097152
+write_buffer_size = 524288
 
 # Maximum number of write buffers (default: 2)
 # Allows writes to continue while buffers are being flushed

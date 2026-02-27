@@ -275,9 +275,9 @@ impl LiveQueryManager {
         let projections = QueryParser::extract_projections(&request.sql)
             .map_err(|e| KalamDbError::InvalidSql(format!("Failed to parse projections: {}", e)))?;
 
-        if let Some(ref cols) = projections {
-            log::info!("Subscription projections: {:?}", cols);
-        }
+        // if let Some(ref cols) = projections {
+        //     log::info!("Subscription projections: {:?}", cols);
+        // }
 
         // Register the subscription
         let live_id = self

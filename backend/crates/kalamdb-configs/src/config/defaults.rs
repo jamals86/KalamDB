@@ -268,7 +268,10 @@ pub fn default_enable_connection_protection() -> bool {
 }
 
 pub fn default_rate_limit_cache_max_entries() -> u64 {
-    100_000 // Maximum 100k cached rate limit entries
+    10_000 // Maximum 10k cached rate limit entries
+           // MEMORY OPTIMIZATION: reduced from 100k. Each moka cache has internal
+           // overhead proportional to max_capacity. 5 caches × 100k entries was
+           // over-provisioned for most deployments. 10k handles typical load.
 }
 
 pub fn default_rate_limit_cache_ttl_seconds() -> u64 {
@@ -368,7 +371,9 @@ pub fn default_websocket_heartbeat_interval() -> Option<u64> {
 
 // RocksDB defaults (MEMORY OPTIMIZED)
 pub fn default_rocksdb_write_buffer_size() -> usize {
-    2 * 1024 * 1024 // 2MB (reduced from 64MB for lower memory footprint)
+    512 * 1024 // 512KB (reduced from 2MB for lower memory footprint with many CFs)
+             // With 50+ column families, write buffers dominate memory usage:
+             // 512KB × 2 buffers × 50 CFs = 50MB vs 2MB × 2 × 50 = 200MB
 }
 
 pub fn default_rocksdb_max_write_buffers() -> i32 {

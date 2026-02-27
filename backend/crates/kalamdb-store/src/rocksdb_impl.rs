@@ -36,6 +36,8 @@ pub struct RocksDBBackend {
     write_opts: WriteOptions,
     settings: RocksDbSettings,
     block_cache: Cache,
+    /// Tracked column family names for partition enumeration
+    known_cf_names: std::sync::RwLock<Vec<String>>,
 }
 
 impl RocksDBBackend {
@@ -48,12 +50,18 @@ impl RocksDBBackend {
         let mut write_opts = WriteOptions::default();
         write_opts.set_sync(sync_writes);
         write_opts.disable_wal(disable_wal);
-        let block_cache = Cache::new_lru_cache(settings.block_cache_size);
+        // MEMORY OPTIMIZATION: Create a single shared block cache for dynamic CFs.
+        // Previously a second 4MB LRU was created here on top of the one in RocksDbInit::open().
+        // The two caches are independent memory regions. We keep this one small (1MB)
+        // since it only serves CFs created at runtime (user tables, indexes).
+        // The primary cache from RocksDbInit::open() handles all CFs opened at startup.
+        let block_cache = Cache::new_lru_cache(std::cmp::min(settings.block_cache_size, 1024 * 1024));
         Self {
             db,
             write_opts,
             settings,
             block_cache,
+            known_cf_names: std::sync::RwLock::new(Vec::new()),
         }
     }
 
@@ -81,6 +89,14 @@ impl RocksDBBackend {
         settings: RocksDbSettings,
     ) -> Self {
         Self::new_internal(db, sync_writes, disable_wal, settings)
+    }
+
+    /// Set the known column family names (typically from RocksDbInit::open_with_cf_names).
+    ///
+    /// This enables `list_partitions()` to work correctly and is also used by
+    /// `cleanup_orphaned_partitions()` to identify CFs not belonging to any table.
+    pub fn set_known_cf_names(&self, names: Vec<String>) {
+        *self.known_cf_names.write().unwrap() = names;
     }
 
     /// Returns a reference to the underlying database.
@@ -243,15 +259,24 @@ impl StorageBackend for RocksDBBackend {
         let mut opts = Options::default();
         opts.set_write_buffer_size(self.settings.write_buffer_size);
         opts.set_max_write_buffer_number(self.settings.max_write_buffers);
-        opts.optimize_for_point_lookup(std::cmp::max(
-            1,
-            (self.settings.block_cache_size / (1024 * 1024)) as u64,
-        ));
+        // MEMORY OPTIMIZATION: Do NOT call optimize_for_point_lookup() per-CF.
+        // It switches the memtable to a hash-based representation which has
+        // significantly higher fixed memory overhead per column family.
+        // Block-based table options (bloom filter, cache) are set via the factory below.
         opts.set_block_based_table_factory(&crate::rocksdb_init::create_block_options_with_cache(
             &self.block_cache,
         ));
         match self.db.create_cf(partition.name(), &opts) {
-            Ok(()) => Ok(()),
+            Ok(()) => {
+                // Track the new CF name
+                if let Ok(mut names) = self.known_cf_names.write() {
+                    let name = partition.name().to_string();
+                    if !names.contains(&name) {
+                        names.push(name);
+                    }
+                }
+                Ok(())
+            },
             Err(e) => {
                 let msg = e.to_string();
                 // Handle benign race: another thread created the CF between exists-check and create
@@ -266,21 +291,12 @@ impl StorageBackend for RocksDBBackend {
     }
 
     fn list_partitions(&self) -> Result<Vec<Partition>> {
-        // RocksDB doesn't have a direct cf_names() method on Arc<DB>
-        // We need to iterate through CFs differently
-        let mut partitions = Vec::new();
-
-        // Try to get all column family handles
-        // The default CF always exists, so we skip it
-        for name in ["default"].iter() {
-            if self.db.cf_handle(name).is_some() && *name != "default" {
-                partitions.push(Partition::new(*name));
-            }
-        }
-
-        // This is a limitation - we can't easily enumerate all CFs from Arc<DB>
-        // In practice, the application should track CF names separately
-        // For now, return empty list (excluding default)
+        let names = self.known_cf_names.read().unwrap();
+        let partitions = names
+            .iter()
+            .filter(|name| *name != "default")
+            .map(|name| Partition::new(name.as_str()))
+            .collect();
         Ok(partitions)
     }
 
@@ -293,6 +309,11 @@ impl StorageBackend for RocksDBBackend {
         self.db
             .drop_cf(partition.name())
             .map_err(|e| StorageError::IoError(e.to_string()))?;
+
+        // Remove from tracked names
+        if let Ok(mut names) = self.known_cf_names.write() {
+            names.retain(|n| n != partition.name());
+        }
 
         Ok(())
     }

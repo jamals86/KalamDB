@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Bumped package version.
 - Updated README (documented Alpha status, expanded docs/links).
+- Removed broken Flutter plugin platform declaration from `pubspec.yaml`.
+  The package did not include platform folders (`android/`, `ios/`, etc.),
+  which caused Flutter plugin loader failures in consuming apps.
 
 ## [0.1.1] - 2026-02-26
 
