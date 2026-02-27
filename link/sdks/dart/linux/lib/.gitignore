@@ -1,0 +1,2 @@
+# Override the root *.so gitignore rule so pre-built Linux .so files are tracked.
+!*.so

@@ -64,11 +64,15 @@ impl std::fmt::Debug for SchemaRegistry {
 
 impl SchemaRegistry {
     /// Create a new schema cache with specified maximum size
-    pub fn new(_max_size: usize) -> Self {
+    pub fn new(max_size: usize) -> Self {
+        // Use capacity hints to avoid over-allocation.
+        // DashMap pre-allocates segments based on capacity hint.
+        // A small hint (16-64) is enough for startup; DashMap grows dynamically.
+        let initial_capacity = std::cmp::min(max_size, 64);
         Self {
             app_context: OnceLock::new(),
-            table_cache: DashMap::new(),
-            version_cache: DashMap::new(),
+            table_cache: DashMap::with_capacity(initial_capacity),
+            version_cache: DashMap::with_capacity(initial_capacity),
             base_session_context: OnceLock::new(),
         }
     }

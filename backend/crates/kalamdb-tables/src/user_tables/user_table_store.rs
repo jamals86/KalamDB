@@ -105,11 +105,7 @@ pub fn new_indexed_user_table_store(
 ) -> UserTableIndexedStore {
     let name =
         partition_name(kalamdb_commons::constants::ColumnFamilyNames::USER_TABLE_PREFIX, table_id);
-    ensure_partition(&backend, name.clone());
-
     let pk_index = create_user_table_pk_index(table_id, pk_field_name);
-    let index_partition_name = format!("user_{}_pk_idx", table_id);
-    ensure_partition(&backend, index_partition_name);
     new_indexed_store_with_pk(backend, name, vec![pk_index])
 }
 

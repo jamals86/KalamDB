@@ -1,0 +1,5 @@
+# Override root **/pkg/ rule so the wasm-pack output directory is tracked,
+# and override root **/*.wasm so the pre-built artefacts are committed.
+!pkg/
+!*.wasm
+!*.js

@@ -91,7 +91,8 @@ abstract class RustLibApi extends BaseApi {
       PlatformInt64? timeoutMs,
       int? maxRetries,
       bool? enableConnectionEvents,
-      bool? disableCompression});
+      bool? disableCompression,
+      PlatformInt64? keepaliveIntervalMs});
 
   Future<DartQueryResponse> crateApiDartExecuteQuery(
       {required DartKalamClient client,
@@ -219,7 +220,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       PlatformInt64? timeoutMs,
       int? maxRetries,
       bool? enableConnectionEvents,
-      bool? disableCompression}) {
+      bool? disableCompression,
+      PlatformInt64? keepaliveIntervalMs}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
@@ -229,6 +231,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_opt_box_autoadd_i_32(maxRetries, serializer);
         sse_encode_opt_box_autoadd_bool(enableConnectionEvents, serializer);
         sse_encode_opt_box_autoadd_bool(disableCompression, serializer);
+        sse_encode_opt_box_autoadd_i_64(keepaliveIntervalMs, serializer);
         return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 3)!;
       },
       codec: SseCodec(
@@ -243,7 +246,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         timeoutMs,
         maxRetries,
         enableConnectionEvents,
-        disableCompression
+        disableCompression,
+        keepaliveIntervalMs
       ],
       apiImpl: this,
     ));
@@ -257,7 +261,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           "timeoutMs",
           "maxRetries",
           "enableConnectionEvents",
-          "disableCompression"
+          "disableCompression",
+          "keepaliveIntervalMs"
         ],
       );
 

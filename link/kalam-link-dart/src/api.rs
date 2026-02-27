@@ -63,6 +63,8 @@ pub struct DartKalamClient {
 /// * `disable_compression` — when `true`, the WebSocket URL includes
 ///   `?compress=false` so the server sends plain-text JSON frames instead of
 ///   gzip-compressed binary frames. Useful during development.
+/// * `keepalive_interval_ms` — optional WebSocket keep-alive ping interval
+///   in milliseconds (default 10 000). Set to 0 to disable keep-alive pings.
 #[frb(sync)]
 pub fn dart_create_client(
     base_url: String,
@@ -71,6 +73,7 @@ pub fn dart_create_client(
     max_retries: Option<i32>,
     enable_connection_events: Option<bool>,
     disable_compression: Option<bool>,
+    keepalive_interval_ms: Option<i64>,
 ) -> anyhow::Result<DartKalamClient> {
     create_client_inner(
         base_url,
@@ -79,6 +82,7 @@ pub fn dart_create_client(
         max_retries,
         enable_connection_events,
         disable_compression,
+        keepalive_interval_ms,
     )
 }
 
@@ -94,6 +98,7 @@ fn create_client_inner(
     max_retries: Option<i32>,
     enable_connection_events: Option<bool>,
     disable_compression: Option<bool>,
+    keepalive_interval_ms: Option<i64>,
 ) -> anyhow::Result<DartKalamClient> {
     let event_queue: Arc<std::sync::Mutex<VecDeque<DartConnectionEvent>>> =
         Arc::new(std::sync::Mutex::new(VecDeque::new()));
@@ -114,6 +119,11 @@ fn create_client_inner(
         builder = builder.connection_options(
             kalam_link::ConnectionOptions::default().with_disable_compression(true),
         );
+    }
+    if let Some(ms) = keepalive_interval_ms {
+        let mut timeouts = kalam_link::KalamLinkTimeouts::default();
+        timeouts.keepalive_interval = std::time::Duration::from_millis(ms as u64);
+        builder = builder.timeouts(timeouts);
     }
 
     // Wire connection lifecycle event handlers that push into the queue.

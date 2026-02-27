@@ -1,0 +1,2 @@
+# Override root .gitignore — allow bundled Windows DLLs
+!*.dll

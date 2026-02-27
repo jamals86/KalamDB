@@ -1,0 +1,7 @@
+# Override the root *.so gitignore rule so that pre-built Android native
+# libraries are committed to git and published to pub.dev.
+#
+# The root .gitignore excludes all *.so files to avoid accidentally committing
+# Rust build artifacts.  This directory intentionally contains pre-built
+# .so files that must be shipped with the package.
+!*.so

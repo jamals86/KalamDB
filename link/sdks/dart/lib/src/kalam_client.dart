@@ -61,6 +61,8 @@ class KalamClient {
   ///   Defaults to `false`.
   /// * [timeout] — HTTP request timeout. Defaults to 30 seconds.
   /// * [maxRetries] — retry count for idempotent (SELECT) queries. Defaults to 3.
+  /// * [keepaliveInterval] — WebSocket keep-alive ping interval.
+  ///   Defaults to 10 seconds. Set to [Duration.zero] to disable.
   static Future<KalamClient> connect({
     required String url,
     Auth auth = const NoAuth(),
@@ -69,6 +71,7 @@ class KalamClient {
     Duration timeout = const Duration(seconds: 30),
     int maxRetries = 3,
     ConnectionHandlers? connectionHandlers,
+    Duration? keepaliveInterval,
   }) async {
     // Resolve initial auth from provider if set.
     final effectiveAuth = authProvider != null ? await authProvider() : auth;
@@ -80,6 +83,7 @@ class KalamClient {
       maxRetries: maxRetries,
       enableConnectionEvents: connectionHandlers?.hasAny ?? false,
       disableCompression: disableCompression,
+      keepaliveIntervalMs: keepaliveInterval?.inMilliseconds,
     );
     final client =
         KalamClient._(handle, connectionHandlers, authProvider: authProvider);

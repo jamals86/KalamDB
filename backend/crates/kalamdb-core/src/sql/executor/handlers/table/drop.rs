@@ -41,89 +41,34 @@ pub async fn cleanup_table_data_internal(
 
     let rows_deleted = match table_type {
         TableType::User => {
-            // Fast path: drop the entire RocksDB partition for this user table
-            // Partition format mirrors new_user_table_store():
-            //   user_{namespace}:{tableName}
-            use kalamdb_commons::constants::ColumnFamilyNames;
-            use kalamdb_store::storage_trait::Partition as StorePartition;
+            use kalamdb_tables::new_indexed_user_table_store;
 
-            let partition_name = format!(
-                "{}{}",
-                ColumnFamilyNames::USER_TABLE_PREFIX,
-                table_id // TableId Display: "namespace:table"
-            );
+            new_indexed_user_table_store(_app_context.storage_backend(), table_id, "_pk")
+                .drop_all_partitions()
+                .map_err(|e| {
+                    KalamDbError::Other(format!(
+                        "Failed to drop user table partitions for {}: {}",
+                        table_id, e
+                    ))
+                })?;
 
-            let backend = _app_context.storage_backend();
-            let partition = StorePartition::new(partition_name.clone());
-
-            match backend.drop_partition(&partition) {
-                Ok(_) => {
-                    log::debug!(
-                        "[CleanupHelper] Dropped partition '{}' for user table {:?}",
-                        partition_name,
-                        table_id
-                    );
-                    0usize // Unknown exact row count after drop
-                },
-                Err(e) => {
-                    // If partition not found, treat as already clean
-                    let msg = e.to_string();
-                    if msg.to_lowercase().contains("not found") {
-                        log::warn!(
-                            "[CleanupHelper] Partition '{}' not found during cleanup (already clean)",
-                            partition_name
-                        );
-                        0usize
-                    } else {
-                        return Err(KalamDbError::Other(format!(
-                            "Failed to drop partition '{}' for table {}: {}",
-                            partition_name, table_id, e
-                        )));
-                    }
-                },
-            }
+            log::debug!("[CleanupHelper] Dropped all partitions for user table {:?}", table_id);
+            0usize
         },
         TableType::Shared => {
-            // Drop the entire RocksDB partition for this shared table
-            // Partition format mirrors new_shared_table_store():
-            //   shared_{namespace}:{tableName}
-            use kalamdb_commons::constants::ColumnFamilyNames;
-            use kalamdb_store::storage_trait::Partition as StorePartition;
+            use kalamdb_tables::new_indexed_shared_table_store;
 
-            let partition_name = format!(
-                "{}{}",
-                ColumnFamilyNames::SHARED_TABLE_PREFIX,
-                table_id // TableId Display: "namespace:table"
-            );
+            new_indexed_shared_table_store(_app_context.storage_backend(), table_id, "_pk")
+                .drop_all_partitions()
+                .map_err(|e| {
+                    KalamDbError::Other(format!(
+                        "Failed to drop shared table partitions for {}: {}",
+                        table_id, e
+                    ))
+                })?;
 
-            let backend = _app_context.storage_backend();
-            let partition = StorePartition::new(partition_name.clone());
-
-            match backend.drop_partition(&partition) {
-                Ok(_) => {
-                    log::debug!(
-                        "[CleanupHelper] Dropped partition '{}' for shared table {:?}",
-                        partition_name,
-                        table_id
-                    );
-                    0usize
-                },
-                Err(e) => {
-                    let msg = e.to_string();
-                    if msg.to_lowercase().contains("not found") {
-                        log::warn!(
-                            "[CleanupHelper] Partition '{}' not found during cleanup (already clean)",
-                            partition_name
-                        );
-                        0usize
-                    } else {
-                        return Err(KalamDbError::Other(format!(
-                            "Failed to drop partition '{}' for table {}: {}",
-                            partition_name, table_id, e
-                        )));
-                    }
-                },
-            }
+            log::debug!("[CleanupHelper] Dropped all partitions for shared table {:?}", table_id);
+            0usize
         },
         TableType::Stream => {
             // Stream tables are in-memory by design. However, if a persistent

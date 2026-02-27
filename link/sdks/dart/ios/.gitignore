@@ -1,0 +1,7 @@
+# Xcode build files
+build/
+.symlinks/
+DerivedData/
+*.xcworkspace
+*.xcodeproj
+Pods/
