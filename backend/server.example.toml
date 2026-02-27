@@ -380,11 +380,70 @@ allow_remote_setup = false
 # Add your OAuth provider domains here
 # Example for Google OAuth: "https://accounts.google.com"
 # Example for GitHub OAuth: "https://github.com"
-# Multiple issuers (comma-separated): "https://accounts.google.com,https://github.com,https://kalamdb.io"
+# Example for Firebase Auth: "https://securetoken.google.com/YOUR_PROJECT_ID"
+# Multiple issuers (comma-separated): "https://accounts.google.com,https://securetoken.google.com/my-app"
 jwt_trusted_issuers = ""
 
 # Auto-create local OAuth users from trusted provider subject/issuer when not found (default: false)
 auto_create_users_from_provider = false
+
+# ============================================================================
+# OAuth / OIDC Provider Configuration
+# ============================================================================
+# Each provider section adds its issuer to the trusted-issuers list and
+# registers the audience (client_id) for token validation.
+# You still need to add the provider issuer to [authentication].jwt_trusted_issuers above.
+
+# [oauth]
+# # Enable OAuth / OIDC authentication globally (default: false)
+# enabled = true
+# # Auto-provision a KalamDB user on first successful login (default: false)
+# auto_provision = true
+# # Default role assigned to auto-provisioned users (default: "user")
+# default_role = "user"
+
+# ── Google / Google Workspace ──────────────────────────────────────────────
+# [oauth.providers.google]
+# enabled = true
+# issuer = "https://accounts.google.com"
+# jwks_uri = "https://www.googleapis.com/oauth2/v3/certs"
+# client_id = "your-google-client-id.apps.googleusercontent.com"
+
+# ── GitHub OAuth ───────────────────────────────────────────────────────────
+# [oauth.providers.github]
+# enabled = true
+# issuer = "https://token.actions.githubusercontent.com"
+# jwks_uri = "https://token.actions.githubusercontent.com/.well-known/jwks"
+# client_id = "your-github-oauth-app-client-id"
+
+# ── Microsoft Azure AD / Entra ID ─────────────────────────────────────────
+# [oauth.providers.azure]
+# enabled = true
+# issuer = "https://login.microsoftonline.com/YOUR_TENANT_ID/v2.0"
+# jwks_uri = "https://login.microsoftonline.com/YOUR_TENANT_ID/discovery/v2.0/keys"
+# client_id = "your-azure-client-id"
+# tenant = "your-azure-tenant-id"
+
+# ── Firebase Authentication ────────────────────────────────────────────────
+# Firebase issues RS256-signed ID tokens with issuer:
+#   https://securetoken.google.com/{PROJECT_ID}
+# JWKS endpoint (static, no discovery needed):
+#   https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com
+#
+# Steps:
+#   1. Set enabled = true and fill in your Firebase project ID.
+#   2. Add the issuer to [authentication].jwt_trusted_issuers.
+#   3. Optionally enable auto_provision so first-time Firebase users get a
+#      KalamDB account created automatically.
+#   4. On the client, obtain a Firebase ID token and pass it as:
+#        Authorization: Bearer <firebase-id-token>
+#
+# [oauth.providers.firebase]
+# enabled = true
+# issuer = "https://securetoken.google.com/YOUR_PROJECT_ID"
+# jwks_uri = "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com"
+# # client_id must match the Firebase project ID (aud claim in the token)
+# client_id = "YOUR_PROJECT_ID"
 
 [shutdown]
 # Timeout settings for graceful shutdown

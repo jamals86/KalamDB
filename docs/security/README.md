@@ -25,6 +25,12 @@ This directory contains end-user security guidance for running KalamDB safely in
    - Ongoing operations checklist
    - Incident response starter checklist
 
+5. **[Firebase Authentication Guide](./firebase-auth.md)**
+   - End-to-end setup for Firebase Auth as an OIDC provider
+   - `server.toml` configuration reference
+   - Client examples for Web, Flutter/Dart, Rust, and cURL
+   - User provisioning, role assignment, and troubleshooting
+
 ## Recommended reading order
 
 1. Backend Hardening Guide

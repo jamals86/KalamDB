@@ -21,20 +21,24 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 /// * `disable_compression` — when `true`, the WebSocket URL includes
 ///   `?compress=false` so the server sends plain-text JSON frames instead of
 ///   gzip-compressed binary frames. Useful during development.
+/// * `keepalive_interval_ms` — optional WebSocket keep-alive ping interval
+///   in milliseconds (default 10 000). Set to 0 to disable keep-alive pings.
 DartKalamClient dartCreateClient(
         {required String baseUrl,
         required DartAuthProvider auth,
         PlatformInt64? timeoutMs,
         int? maxRetries,
         bool? enableConnectionEvents,
-        bool? disableCompression}) =>
+        bool? disableCompression,
+        PlatformInt64? keepaliveIntervalMs}) =>
     RustLib.instance.api.crateApiDartCreateClient(
         baseUrl: baseUrl,
         auth: auth,
         timeoutMs: timeoutMs,
         maxRetries: maxRetries,
         enableConnectionEvents: enableConnectionEvents,
-        disableCompression: disableCompression);
+        disableCompression: disableCompression,
+        keepaliveIntervalMs: keepaliveIntervalMs);
 
 /// Update the authentication credentials on a live client.
 ///

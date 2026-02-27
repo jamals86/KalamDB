@@ -62,7 +62,7 @@ pub struct KalamLinkTimeouts {
 
     /// Keep-alive ping interval for WebSocket connections.
     /// Set to 0 to disable keep-alive pings.
-    /// Default: 30 seconds
+    /// Default: 10 seconds
     pub keepalive_interval: Duration,
 }
 
@@ -76,7 +76,7 @@ impl Default for KalamLinkTimeouts {
             auth_timeout: Duration::from_secs(5),
             initial_data_timeout: Duration::from_secs(30),
             idle_timeout: Duration::ZERO, // Disabled by default
-            keepalive_interval: Duration::from_secs(30),
+            keepalive_interval: Duration::from_secs(10),
         }
     }
 }

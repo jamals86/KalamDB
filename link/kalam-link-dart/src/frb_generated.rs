@@ -181,6 +181,7 @@ fn wire__crate__api__dart_create_client_impl(
             let api_max_retries = <Option<i32>>::sse_decode(&mut deserializer);
             let api_enable_connection_events = <Option<bool>>::sse_decode(&mut deserializer);
             let api_disable_compression = <Option<bool>>::sse_decode(&mut deserializer);
+            let api_keepalive_interval_ms = <Option<i64>>::sse_decode(&mut deserializer);
             deserializer.end();
             transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
                 (move || {
@@ -191,6 +192,7 @@ fn wire__crate__api__dart_create_client_impl(
                         api_max_retries,
                         api_enable_connection_events,
                         api_disable_compression,
+                        api_keepalive_interval_ms,
                     )?;
                     Ok(output_ok)
                 })(),

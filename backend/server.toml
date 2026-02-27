@@ -370,10 +370,21 @@ jwt_secret = "kalamdb-local-dev-2026-02-23-strong-jwt-secret-32plus"
 # Example for Google OAuth: ["https://accounts.google.com"]
 # Example for GitHub OAuth: ["https://github.com"]
 # Multiple issuers: ["https://accounts.google.com", "https://github.com", "https://kalamdb.io"]
-jwt_trusted_issuers = "http://localhost:8081/realms/kalamdb"
+jwt_trusted_issuers = "http://localhost:8081/realms/kalamdb,https://securetoken.google.com/masky-bb320"
 
 # Auto-create local OAuth users from trusted provider subject/issuer when not found (default: false)
 auto_create_users_from_provider = true
+
+[oauth]
+enabled = true
+auto_provision = true
+default_role = "user"
+
+[oauth.providers.firebase]
+enabled = true
+issuer = "https://securetoken.google.com/masky-bb320"
+jwks_uri = "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com"
+client_id = "masky-bb320"
 
 [shutdown]
 # Timeout settings for graceful shutdown

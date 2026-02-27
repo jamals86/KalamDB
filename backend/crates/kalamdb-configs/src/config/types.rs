@@ -816,6 +816,9 @@ pub struct OAuthProvidersSettings {
     pub github: OAuthProviderConfig,
     #[serde(default)]
     pub azure: OAuthProviderConfig,
+    /// Firebase Authentication (backed by Google Identity Platform / securetoken.google.com)
+    #[serde(default)]
+    pub firebase: OAuthProviderConfig,
 }
 
 /// Individual OAuth provider configuration
