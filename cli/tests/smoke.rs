@@ -59,8 +59,12 @@ mod smoke_test_subscription_advanced;
 mod smoke_test_subscription_close;
 #[path = "smoke/subscription/smoke_test_subscription_delete.rs"]
 mod smoke_test_subscription_delete;
+#[path = "smoke/subscription/smoke_test_subscription_listing.rs"]
+mod smoke_test_subscription_listing;
 #[path = "smoke/subscription/smoke_test_user_table_subscription.rs"]
 mod smoke_test_user_table_subscription;
+#[path = "smoke/subscription/smoke_test_subscription_reconnect_resume.rs"]
+mod smoke_test_subscription_reconnect_resume;
 #[path = "smoke/subscription/smoke_test_shared_table_subscription.rs"]
 mod smoke_test_shared_table_subscription;
 

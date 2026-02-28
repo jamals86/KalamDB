@@ -1202,6 +1202,35 @@ impl KalamClient {
         Ok(())
     }
 
+    /// Return a JSON array describing all active subscriptions.
+    ///
+    /// Each element contains `id`, `query`, `lastSeqId`, `lastEventTimeMs`,
+    /// `createdAtMs`, and `closed`.  The WASM layer surfaces its own
+    /// reconnection state, so `lastSeqId` reflects the latest seq received.
+    ///
+    /// # Example (JavaScript)
+    /// ```js
+    /// const subs = client.getSubscriptions();
+    /// // subs = [{ id: "sub-abc", query: "SELECT ...", lastSeqId: "123", ... }]
+    /// ```
+    #[wasm_bindgen(js_name = getSubscriptions)]
+    pub fn get_subscriptions(&self) -> JsValue {
+        let state = self.subscription_state.borrow();
+        let list: Vec<serde_json::Value> = state
+            .iter()
+            .map(|(id, entry)| {
+                serde_json::json!({
+                    "id": id,
+                    "query": entry.sql,
+                    "lastSeqId": entry.last_seq_id.map(|s| s.as_i64().to_string()),
+                    "closed": false,
+                })
+            })
+            .collect();
+        // serde_wasm_bindgen is available via tsify; fall back to JsValue::from_str
+        JsValue::from_str(&serde_json::to_string(&list).unwrap_or_else(|_| "[]".to_string()))
+    }
+
     /// Login with current Basic Auth credentials and switch to JWT authentication
     ///
     /// Sends a POST request to `/v1/api/auth/login` with the stored username/password

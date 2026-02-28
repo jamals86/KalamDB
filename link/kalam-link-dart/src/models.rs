@@ -468,6 +468,9 @@ pub struct DartSubscriptionConfig {
     pub id: Option<String>,
     pub batch_size: Option<i32>,
     pub last_rows: Option<i32>,
+    /// Resume from a specific sequence ID.
+    /// When set, the server only sends changes after this seq_id.
+    pub from_seq_id: Option<i64>,
 }
 
 impl DartSubscriptionConfig {
@@ -478,7 +481,7 @@ impl DartSubscriptionConfig {
             options: Some(kalam_link::SubscriptionOptions {
                 batch_size: self.batch_size.map(|v| v as usize),
                 last_rows: self.last_rows.map(|v| v as u32),
-                from_seq_id: None,
+                from_seq_id: self.from_seq_id.map(kalam_link::SeqId::new),
             }),
             ws_url: None,
         }
@@ -492,4 +495,35 @@ fn uuid_v4() -> String {
         .unwrap_or_default()
         .as_nanos();
     format!("dart-sub-{}", ts)
+}
+
+/// Read-only snapshot of an active subscription's metadata.
+///
+/// Returned by [`dart_list_subscriptions`].
+pub struct DartSubscriptionInfo {
+    /// Subscription ID assigned when subscribing.
+    pub id: String,
+    /// The SQL query this subscription is tracking.
+    pub query: String,
+    /// Last received sequence ID (for resume on reconnect), as i64.
+    pub last_seq_id: Option<i64>,
+    /// Timestamp (millis since epoch) of the last received event.
+    pub last_event_time_ms: Option<i64>,
+    /// Timestamp (millis since epoch) when the subscription was created.
+    pub created_at_ms: i64,
+    /// Whether the subscription has been closed.
+    pub closed: bool,
+}
+
+impl From<kalam_link::models::SubscriptionInfo> for DartSubscriptionInfo {
+    fn from(info: kalam_link::models::SubscriptionInfo) -> Self {
+        Self {
+            id: info.id,
+            query: info.query,
+            last_seq_id: info.last_seq_id.map(|s| s.as_i64()),
+            last_event_time_ms: info.last_event_time_ms.map(|v| v as i64),
+            created_at_ms: info.created_at_ms as i64,
+            closed: info.closed,
+        }
+    }
 }

@@ -19,6 +19,7 @@ export const kalamclient_disconnect: (a: number) => any;
 export const kalamclient_getAuthType: (a: number) => [number, number];
 export const kalamclient_getLastSeqId: (a: number, b: number, c: number) => [number, number];
 export const kalamclient_getReconnectAttempts: (a: number) => number;
+export const kalamclient_getSubscriptions: (a: number) => any;
 export const kalamclient_insert: (a: number, b: number, c: number, d: number, e: number) => any;
 export const kalamclient_isConnected: (a: number) => number;
 export const kalamclient_isReconnecting: (a: number) => number;

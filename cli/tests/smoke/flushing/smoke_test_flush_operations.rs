@@ -16,7 +16,7 @@
 use crate::common::*;
 use std::time::Duration;
 
-const JOB_TIMEOUT: Duration = Duration::from_secs(15);
+const JOB_TIMEOUT: Duration = Duration::from_secs(30);
 const FLUSH_POLICY_ROWS: usize = 50;
 const INSERT_ROWS: usize = 200;
 

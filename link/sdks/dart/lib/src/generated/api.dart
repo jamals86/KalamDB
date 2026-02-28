@@ -112,9 +112,57 @@ Future<DartConnectionEvent?> dartNextConnectionEvent(
         {required DartKalamClient client}) =>
     RustLib.instance.api.crateApiDartNextConnectionEvent(client: client);
 
+/// Signal the event pump to stop.
+///
+/// Call this before awaiting the pump future in `dispose()` so that
+/// [`dart_next_connection_event`] returns `None` immediately instead
+/// of blocking forever when the event queue is empty.
+void dartSignalDispose({required DartKalamClient client}) =>
+    RustLib.instance.api.crateApiDartSignalDispose(client: client);
+
 /// Check whether connection event collection is enabled for this client.
 bool dartConnectionEventsEnabled({required DartKalamClient client}) =>
     RustLib.instance.api.crateApiDartConnectionEventsEnabled(client: client);
+
+/// Establish a shared WebSocket connection.
+///
+/// After this call, subsequent [`dart_subscribe`] calls will multiplex
+/// over a single WebSocket instead of opening one per subscription.
+/// The connection handles auto-reconnection and re-subscription.
+///
+/// Calling this when already connected is a no-op.
+Future<void> dartConnect({required DartKalamClient client}) =>
+    RustLib.instance.api.crateApiDartConnect(client: client);
+
+/// Disconnect the shared WebSocket connection.
+///
+/// All active subscriptions will be unsubscribed and the background
+/// task shut down.  New subscriptions will fall back to per-subscription
+/// connections until [`dart_connect`] is called again.
+Future<void> dartDisconnect({required DartKalamClient client}) =>
+    RustLib.instance.api.crateApiDartDisconnect(client: client);
+
+/// Check whether a shared connection is currently open and authenticated.
+Future<bool> dartIsConnected({required DartKalamClient client}) =>
+    RustLib.instance.api.crateApiDartIsConnected(client: client);
+
+/// Cancel a subscription by ID on the shared connection.
+///
+/// This sends an explicit unsubscribe command that:
+/// 1. Removes the subscription from the client-side map
+/// 2. Sends an unsubscribe message to the server
+/// 3. Drops the event channel, causing any blocking
+///    [`dart_subscription_next`] call to return `None`
+///
+/// Unlike [`dart_subscription_close`], this does **not** require the
+/// `DartSubscription` mutex, so it can be called safely even while
+/// [`dart_subscription_next`] is blocked.  Use this from Dart's
+/// `StreamController.onCancel` to immediately release server-side
+/// resources.
+Future<void> dartCancelSubscription(
+        {required DartKalamClient client, required String subscriptionId}) =>
+    RustLib.instance.api.crateApiDartCancelSubscription(
+        client: client, subscriptionId: subscriptionId);
 
 /// Create a live-query subscription.
 ///
@@ -148,6 +196,14 @@ Future<void> dartSubscriptionClose({required DartSubscription subscription}) =>
 /// Get the server-assigned subscription ID.
 String dartSubscriptionId({required DartSubscription subscription}) =>
     RustLib.instance.api.crateApiDartSubscriptionId(subscription: subscription);
+
+/// List all active subscriptions on the shared connection.
+///
+/// Returns a snapshot of each subscription's metadata including the
+/// subscription ID, SQL query, last received sequence ID, and timestamps.
+Future<List<DartSubscriptionInfo>> dartListSubscriptions(
+        {required DartKalamClient client}) =>
+    RustLib.instance.api.crateApiDartListSubscriptions(client: client);
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<DartKalamClient>>
 abstract class DartKalamClient implements RustOpaqueInterface {}

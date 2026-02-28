@@ -249,6 +249,24 @@ export class KalamClient {
         return ret >>> 0;
     }
     /**
+     * Return a JSON array describing all active subscriptions.
+     *
+     * Each element contains `id`, `query`, `lastSeqId`, `lastEventTimeMs`,
+     * `createdAtMs`, and `closed`.  The WASM layer surfaces its own
+     * reconnection state, so `lastSeqId` reflects the latest seq received.
+     *
+     * # Example (JavaScript)
+     * ```js
+     * const subs = client.getSubscriptions();
+     * // subs = [{ id: "sub-abc", query: "SELECT ...", lastSeqId: "123", ... }]
+     * ```
+     * @returns {any}
+     */
+    getSubscriptions() {
+        const ret = wasm.kalamclient_getSubscriptions(this.__wbg_ptr);
+        return ret;
+    }
+    /**
      * Insert data into a table (T048, T063G)
      *
      * # Arguments

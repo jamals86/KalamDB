@@ -508,16 +508,25 @@ class DartSubscriptionConfig {
   final int? batchSize;
   final int? lastRows;
 
+  /// Resume from a specific sequence ID.
+  /// When set, the server only sends changes after this seq_id.
+  final PlatformInt64? fromSeqId;
+
   const DartSubscriptionConfig({
     required this.sql,
     this.id,
     this.batchSize,
     this.lastRows,
+    this.fromSeqId,
   });
 
   @override
   int get hashCode =>
-      sql.hashCode ^ id.hashCode ^ batchSize.hashCode ^ lastRows.hashCode;
+      sql.hashCode ^
+      id.hashCode ^
+      batchSize.hashCode ^
+      lastRows.hashCode ^
+      fromSeqId.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -527,5 +536,59 @@ class DartSubscriptionConfig {
           sql == other.sql &&
           id == other.id &&
           batchSize == other.batchSize &&
-          lastRows == other.lastRows;
+          lastRows == other.lastRows &&
+          fromSeqId == other.fromSeqId;
+}
+
+/// Read-only snapshot of an active subscription's metadata.
+///
+/// Returned by [`dart_list_subscriptions`].
+class DartSubscriptionInfo {
+  /// Subscription ID assigned when subscribing.
+  final String id;
+
+  /// The SQL query this subscription is tracking.
+  final String query;
+
+  /// Last received sequence ID (for resume on reconnect), as i64.
+  final PlatformInt64? lastSeqId;
+
+  /// Timestamp (millis since epoch) of the last received event.
+  final PlatformInt64? lastEventTimeMs;
+
+  /// Timestamp (millis since epoch) when the subscription was created.
+  final PlatformInt64 createdAtMs;
+
+  /// Whether the subscription has been closed.
+  final bool closed;
+
+  const DartSubscriptionInfo({
+    required this.id,
+    required this.query,
+    this.lastSeqId,
+    this.lastEventTimeMs,
+    required this.createdAtMs,
+    required this.closed,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^
+      query.hashCode ^
+      lastSeqId.hashCode ^
+      lastEventTimeMs.hashCode ^
+      createdAtMs.hashCode ^
+      closed.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is DartSubscriptionInfo &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          query == other.query &&
+          lastSeqId == other.lastSeqId &&
+          lastEventTimeMs == other.lastEventTimeMs &&
+          createdAtMs == other.createdAtMs &&
+          closed == other.closed;
 }

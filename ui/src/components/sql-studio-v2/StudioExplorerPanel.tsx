@@ -27,7 +27,6 @@ import type { SavedQuery } from "./types";
 interface StudioExplorerPanelProps {
   schema: StudioNamespace[];
   filter: string;
-  favoriteQueries: string[];
   savedQueries: SavedQuery[];
   favoritesExpanded: boolean;
   expandedNamespaces: Record<string, boolean>;
@@ -46,7 +45,7 @@ function columnIcon(isPrimaryKey: boolean) {
   if (isPrimaryKey) {
     return <KeyRound className="h-3 w-3 text-amber-500" />;
   }
-  return <Type className="h-3 w-3 text-slate-500" />;
+  return <Type className="h-3 w-3 text-muted-foreground" />;
 }
 
 function tableTypeMeta(tableType: string): { icon: ReactNode; tooltip: string } {
@@ -78,7 +77,6 @@ function tableTypeMeta(tableType: string): { icon: ReactNode; tooltip: string } 
 const StudioExplorerPanelComponent = ({
   schema,
   filter,
-  favoriteQueries,
   savedQueries,
   favoritesExpanded,
   expandedNamespaces,
@@ -119,17 +117,17 @@ const StudioExplorerPanelComponent = ({
 
   return (
     <TooltipProvider delayDuration={250}>
-      <div className="flex h-full min-h-0 flex-col overflow-hidden border-r border-[#1b2a40] bg-[#131f31] text-slate-300">
-        <div className="border-b border-[#1b2a40] px-3 py-3">
-          <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Explorer</p>
+      <div className="flex h-full min-h-0 flex-col overflow-hidden border-r border-border bg-muted/30 text-muted-foreground">
+        <div className="border-b border-border px-3 py-3">
+          <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Explorer</p>
           <Tooltip>
             <TooltipTrigger asChild>
               <div className="relative">
-                <Search className="pointer-events-none absolute left-2 top-2.5 h-3.5 w-3.5 text-slate-500" />
+                <Search className="pointer-events-none absolute left-2 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
                 <Input
                   value={filter}
                   onChange={(event) => onFilterChange(event.target.value)}
-                  className="h-8 border-[#1f334d] bg-[#0d1726] pl-7 text-xs text-slate-200 placeholder:text-slate-500"
+                  className="h-8 border-border bg-background pl-7 text-xs text-foreground placeholder:text-muted-foreground"
                   placeholder="Search tables..."
                 />
               </div>
@@ -144,7 +142,7 @@ const StudioExplorerPanelComponent = ({
               <button
                 type="button"
                 onClick={onToggleFavorites}
-                className="mb-1 flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500 hover:bg-[#12263f]"
+                className="mb-1 flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground hover:bg-accent"
               >
                 {favoritesExpanded ? (
                   <ChevronDown className="h-3 w-3" />
@@ -156,34 +154,9 @@ const StudioExplorerPanelComponent = ({
               {favoritesExpanded && (
                 <div className="space-y-2">
                   <div>
-                    <p className="px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.15em] text-slate-500">
-                      Quick Favorites
-                    </p>
-                    <div className="space-y-0.5">
-                      {favoriteQueries.map((item) => (
-                        <Tooltip key={item}>
-                          <TooltipTrigger asChild>
-                            <button
-                              type="button"
-                              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm text-slate-300 transition-colors hover:bg-[#0f2744] hover:text-sky-300"
-                            >
-                              <Star className="h-3.5 w-3.5 text-amber-500" />
-                              <span className="truncate">{item}</span>
-                            </button>
-                          </TooltipTrigger>
-                          <TooltipContent>{item}</TooltipContent>
-                        </Tooltip>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div>
-                    <p className="px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.15em] text-slate-500">
-                      Saved Queries
-                    </p>
                     <div className="space-y-0.5">
                       {savedQueries.length === 0 && (
-                        <p className="px-2 py-1 text-xs text-slate-500">No saved queries yet.</p>
+                        <p className="px-2 py-1 text-xs text-muted-foreground">No saved queries yet.</p>
                       )}
                       {savedQueries.map((savedQuery) => (
                         <Tooltip key={savedQuery.id}>
@@ -191,9 +164,9 @@ const StudioExplorerPanelComponent = ({
                             <button
                               type="button"
                               onClick={() => onOpenSavedQuery(savedQuery.id)}
-                              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm text-slate-300 transition-colors hover:bg-[#0f2744] hover:text-sky-300"
+                              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-sky-300"
                             >
-                              <Star className="h-3.5 w-3.5 text-sky-400" />
+                              <Star className="h-3.5 w-3.5 text-primary" />
                               <span className="truncate">{savedQuery.title}</span>
                               {savedQuery.isLive && <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />}
                             </button>
@@ -219,7 +192,7 @@ const StudioExplorerPanelComponent = ({
                         <button
                           type="button"
                           onClick={() => onToggleNamespace(namespace.name)}
-                          className="flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-[11px] text-slate-500 hover:bg-[#12263f]"
+                          className="flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-[11px] text-muted-foreground hover:bg-accent"
                         >
                           {namespaceOpen ? (
                             <ChevronDown className="h-3 w-3" />
@@ -234,7 +207,7 @@ const StudioExplorerPanelComponent = ({
                     </Tooltip>
 
                     {namespaceOpen && (
-                      <div className="space-y-0.5 border-l border-[#243851] pl-3">
+                      <div className="space-y-0.5 border-l border-border pl-3">
                         {namespace.tables.map((table) => {
                           const tableKey = `${table.namespace}.${table.name}`;
                           const tableOpen = expandedTables[tableKey] ?? tableKey === selectedTableKey;
@@ -247,8 +220,8 @@ const StudioExplorerPanelComponent = ({
                                 className={cn(
                                   "group flex items-center justify-between rounded px-2 py-1.5 transition-colors",
                                   isSelected
-                                    ? "bg-[#0f2744] text-sky-300"
-                                    : "text-slate-400 hover:bg-[#12263f] hover:text-slate-200",
+                                    ? "bg-accent text-sky-300"
+                                    : "text-muted-foreground hover:bg-accent hover:text-foreground",
                                 )}
                                 onContextMenu={(event) => {
                                   event.preventDefault();
@@ -260,7 +233,7 @@ const StudioExplorerPanelComponent = ({
                                 <button
                                   type="button"
                                   onClick={() => onToggleTable(tableKey)}
-                                  className="mr-1 text-slate-500 hover:text-slate-300"
+                                  className="mr-1 text-muted-foreground hover:text-muted-foreground"
                                 >
                                   {tableOpen ? (
                                     <ChevronDown className="h-3 w-3" />
@@ -286,11 +259,11 @@ const StudioExplorerPanelComponent = ({
                               </div>
 
                               {tableOpen && (
-                                <div className="space-y-0.5 border-l border-[#22354d] pl-4">
+                                <div className="space-y-0.5 border-l border-border pl-4">
                                   {table.columns.map((column) => (
                                     <Tooltip key={`${tableKey}.${column.name}`}>
                                       <TooltipTrigger asChild>
-                                        <div className="flex items-center gap-2 px-2 py-0.5 text-xs text-slate-500">
+                                        <div className="flex items-center gap-2 px-2 py-0.5 text-xs text-muted-foreground">
                                           {columnIcon(column.isPrimaryKey)}
                                           <span className="truncate">{column.name}</span>
                                           <span className="ml-auto truncate font-mono text-[10px] lowercase">{column.dataType}</span>
@@ -315,10 +288,10 @@ const StudioExplorerPanelComponent = ({
           </div>
         </ScrollArea>
 
-        <div className="border-t border-[#1b2a40] bg-[#0f1b2b] px-3 py-2">
+        <div className="border-t border-border bg-background px-3 py-2">
           <Tooltip>
             <TooltipTrigger asChild>
-              <div className="flex items-center gap-2 text-xs text-slate-400">
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 <span className="h-2 w-2 rounded-full bg-emerald-500" />
                 <span>Connected</span>
                 <span className="ml-auto">14ms</span>

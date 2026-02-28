@@ -69,7 +69,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.11.1';
 
   @override
-  int get rustContentHash => 610288464;
+  int get rustContentHash => -1268676782;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -80,8 +80,13 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
 }
 
 abstract class RustLibApi extends BaseApi {
+  Future<void> crateApiDartCancelSubscription(
+      {required DartKalamClient client, required String subscriptionId});
+
   Future<DartSetupStatusResponse> crateApiDartCheckSetupStatus(
       {required DartKalamClient client});
+
+  Future<void> crateApiDartConnect({required DartKalamClient client});
 
   bool crateApiDartConnectionEventsEnabled({required DartKalamClient client});
 
@@ -94,6 +99,8 @@ abstract class RustLibApi extends BaseApi {
       bool? disableCompression,
       PlatformInt64? keepaliveIntervalMs});
 
+  Future<void> crateApiDartDisconnect({required DartKalamClient client});
+
   Future<DartQueryResponse> crateApiDartExecuteQuery(
       {required DartKalamClient client,
       required String sql,
@@ -101,6 +108,11 @@ abstract class RustLibApi extends BaseApi {
       String? namespace});
 
   Future<DartHealthCheckResponse> crateApiDartHealthCheck(
+      {required DartKalamClient client});
+
+  Future<bool> crateApiDartIsConnected({required DartKalamClient client});
+
+  Future<List<DartSubscriptionInfo>> crateApiDartListSubscriptions(
       {required DartKalamClient client});
 
   Future<DartLoginResponse> crateApiDartLogin(
@@ -117,6 +129,8 @@ abstract class RustLibApi extends BaseApi {
   Future<DartServerSetupResponse> crateApiDartServerSetup(
       {required DartKalamClient client,
       required DartServerSetupRequest request});
+
+  void crateApiDartSignalDispose({required DartKalamClient client});
 
   Future<DartSubscription> crateApiDartSubscribe(
       {required DartKalamClient client,
@@ -162,6 +176,34 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   });
 
   @override
+  Future<void> crateApiDartCancelSubscription(
+      {required DartKalamClient client, required String subscriptionId}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartKalamClient(
+            client, serializer);
+        sse_encode_String(subscriptionId, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 1, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: sse_decode_AnyhowException,
+      ),
+      constMeta: kCrateApiDartCancelSubscriptionConstMeta,
+      argValues: [client, subscriptionId],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiDartCancelSubscriptionConstMeta =>
+      const TaskConstMeta(
+        debugName: "dart_cancel_subscription",
+        argNames: ["client", "subscriptionId"],
+      );
+
+  @override
   Future<DartSetupStatusResponse> crateApiDartCheckSetupStatus(
       {required DartKalamClient client}) {
     return handler.executeNormal(NormalTask(
@@ -170,7 +212,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartKalamClient(
             client, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 1, port: port_);
+            funcId: 2, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_dart_setup_status_response,
@@ -189,13 +231,38 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<void> crateApiDartConnect({required DartKalamClient client}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartKalamClient(
+            client, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 3, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: sse_decode_AnyhowException,
+      ),
+      constMeta: kCrateApiDartConnectConstMeta,
+      argValues: [client],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiDartConnectConstMeta => const TaskConstMeta(
+        debugName: "dart_connect",
+        argNames: ["client"],
+      );
+
+  @override
   bool crateApiDartConnectionEventsEnabled({required DartKalamClient client}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartKalamClient(
             client, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 2)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 4)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_bool,
@@ -232,7 +299,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_opt_box_autoadd_bool(enableConnectionEvents, serializer);
         sse_encode_opt_box_autoadd_bool(disableCompression, serializer);
         sse_encode_opt_box_autoadd_i_64(keepaliveIntervalMs, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 3)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 5)!;
       },
       codec: SseCodec(
         decodeSuccessData:
@@ -267,6 +334,31 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<void> crateApiDartDisconnect({required DartKalamClient client}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartKalamClient(
+            client, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 6, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: sse_decode_AnyhowException,
+      ),
+      constMeta: kCrateApiDartDisconnectConstMeta,
+      argValues: [client],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiDartDisconnectConstMeta => const TaskConstMeta(
+        debugName: "dart_disconnect",
+        argNames: ["client"],
+      );
+
+  @override
   Future<DartQueryResponse> crateApiDartExecuteQuery(
       {required DartKalamClient client,
       required String sql,
@@ -281,7 +373,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_opt_String(paramsJson, serializer);
         sse_encode_opt_String(namespace, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 4, port: port_);
+            funcId: 7, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_dart_query_response,
@@ -307,7 +399,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartKalamClient(
             client, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 5, port: port_);
+            funcId: 8, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_dart_health_check_response,
@@ -325,6 +417,58 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<bool> crateApiDartIsConnected({required DartKalamClient client}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartKalamClient(
+            client, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 9, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_bool,
+        decodeErrorData: sse_decode_AnyhowException,
+      ),
+      constMeta: kCrateApiDartIsConnectedConstMeta,
+      argValues: [client],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiDartIsConnectedConstMeta => const TaskConstMeta(
+        debugName: "dart_is_connected",
+        argNames: ["client"],
+      );
+
+  @override
+  Future<List<DartSubscriptionInfo>> crateApiDartListSubscriptions(
+      {required DartKalamClient client}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartKalamClient(
+            client, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 10, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_list_dart_subscription_info,
+        decodeErrorData: sse_decode_AnyhowException,
+      ),
+      constMeta: kCrateApiDartListSubscriptionsConstMeta,
+      argValues: [client],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiDartListSubscriptionsConstMeta =>
+      const TaskConstMeta(
+        debugName: "dart_list_subscriptions",
+        argNames: ["client"],
+      );
+
+  @override
   Future<DartLoginResponse> crateApiDartLogin(
       {required DartKalamClient client,
       required String username,
@@ -337,7 +481,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_String(username, serializer);
         sse_encode_String(password, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 6, port: port_);
+            funcId: 11, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_dart_login_response,
@@ -363,7 +507,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartKalamClient(
             client, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 7, port: port_);
+            funcId: 12, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_opt_box_autoadd_dart_connection_event,
@@ -391,7 +535,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             client, serializer);
         sse_encode_String(refreshToken, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 8, port: port_);
+            funcId: 13, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_dart_login_response,
@@ -419,7 +563,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             client, serializer);
         sse_encode_box_autoadd_dart_server_setup_request(request, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 9, port: port_);
+            funcId: 14, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_dart_server_setup_response,
@@ -437,6 +581,30 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  void crateApiDartSignalDispose({required DartKalamClient client}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartKalamClient(
+            client, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 15)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: null,
+      ),
+      constMeta: kCrateApiDartSignalDisposeConstMeta,
+      argValues: [client],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiDartSignalDisposeConstMeta => const TaskConstMeta(
+        debugName: "dart_signal_dispose",
+        argNames: ["client"],
+      );
+
+  @override
   Future<DartSubscription> crateApiDartSubscribe(
       {required DartKalamClient client,
       required String sql,
@@ -449,7 +617,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_String(sql, serializer);
         sse_encode_opt_box_autoadd_dart_subscription_config(config, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 10, port: port_);
+            funcId: 16, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData:
@@ -476,7 +644,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartSubscription(
             subscription, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 11, port: port_);
+            funcId: 17, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -501,7 +669,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartSubscription(
             subscription, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 12)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 18)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_String,
@@ -527,7 +695,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartSubscription(
             subscription, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 13, port: port_);
+            funcId: 19, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_opt_box_autoadd_dart_change_event,
@@ -554,7 +722,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartKalamClient(
             client, serializer);
         sse_encode_box_autoadd_dart_auth_provider(auth, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 14)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 20)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -1015,13 +1183,30 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   DartSubscriptionConfig dco_decode_dart_subscription_config(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 4)
-      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+    if (arr.length != 5)
+      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
     return DartSubscriptionConfig(
       sql: dco_decode_String(arr[0]),
       id: dco_decode_opt_String(arr[1]),
       batchSize: dco_decode_opt_box_autoadd_i_32(arr[2]),
       lastRows: dco_decode_opt_box_autoadd_i_32(arr[3]),
+      fromSeqId: dco_decode_opt_box_autoadd_i_64(arr[4]),
+    );
+  }
+
+  @protected
+  DartSubscriptionInfo dco_decode_dart_subscription_info(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 6)
+      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
+    return DartSubscriptionInfo(
+      id: dco_decode_String(arr[0]),
+      query: dco_decode_String(arr[1]),
+      lastSeqId: dco_decode_opt_box_autoadd_i_64(arr[2]),
+      lastEventTimeMs: dco_decode_opt_box_autoadd_i_64(arr[3]),
+      createdAtMs: dco_decode_i_64(arr[4]),
+      closed: dco_decode_bool(arr[5]),
     );
   }
 
@@ -1059,6 +1244,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   List<DartSchemaField> dco_decode_list_dart_schema_field(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return (raw as List<dynamic>).map(dco_decode_dart_schema_field).toList();
+  }
+
+  @protected
+  List<DartSubscriptionInfo> dco_decode_list_dart_subscription_info(
+      dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>)
+        .map(dco_decode_dart_subscription_info)
+        .toList();
   }
 
   @protected
@@ -1604,11 +1798,32 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_id = sse_decode_opt_String(deserializer);
     var var_batchSize = sse_decode_opt_box_autoadd_i_32(deserializer);
     var var_lastRows = sse_decode_opt_box_autoadd_i_32(deserializer);
+    var var_fromSeqId = sse_decode_opt_box_autoadd_i_64(deserializer);
     return DartSubscriptionConfig(
         sql: var_sql,
         id: var_id,
         batchSize: var_batchSize,
-        lastRows: var_lastRows);
+        lastRows: var_lastRows,
+        fromSeqId: var_fromSeqId);
+  }
+
+  @protected
+  DartSubscriptionInfo sse_decode_dart_subscription_info(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_id = sse_decode_String(deserializer);
+    var var_query = sse_decode_String(deserializer);
+    var var_lastSeqId = sse_decode_opt_box_autoadd_i_64(deserializer);
+    var var_lastEventTimeMs = sse_decode_opt_box_autoadd_i_64(deserializer);
+    var var_createdAtMs = sse_decode_i_64(deserializer);
+    var var_closed = sse_decode_bool(deserializer);
+    return DartSubscriptionInfo(
+        id: var_id,
+        query: var_query,
+        lastSeqId: var_lastSeqId,
+        lastEventTimeMs: var_lastEventTimeMs,
+        createdAtMs: var_createdAtMs,
+        closed: var_closed);
   }
 
   @protected
@@ -1663,6 +1878,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var ans_ = <DartSchemaField>[];
     for (var idx_ = 0; idx_ < len_; ++idx_) {
       ans_.add(sse_decode_dart_schema_field(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<DartSubscriptionInfo> sse_decode_list_dart_subscription_info(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <DartSubscriptionInfo>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_dart_subscription_info(deserializer));
     }
     return ans_;
   }
@@ -2208,6 +2436,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_opt_String(self.id, serializer);
     sse_encode_opt_box_autoadd_i_32(self.batchSize, serializer);
     sse_encode_opt_box_autoadd_i_32(self.lastRows, serializer);
+    sse_encode_opt_box_autoadd_i_64(self.fromSeqId, serializer);
+  }
+
+  @protected
+  void sse_encode_dart_subscription_info(
+      DartSubscriptionInfo self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.id, serializer);
+    sse_encode_String(self.query, serializer);
+    sse_encode_opt_box_autoadd_i_64(self.lastSeqId, serializer);
+    sse_encode_opt_box_autoadd_i_64(self.lastEventTimeMs, serializer);
+    sse_encode_i_64(self.createdAtMs, serializer);
+    sse_encode_bool(self.closed, serializer);
   }
 
   @protected
@@ -2254,6 +2495,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_i_32(self.length, serializer);
     for (final item in self) {
       sse_encode_dart_schema_field(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_dart_subscription_info(
+      List<DartSubscriptionInfo> self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_dart_subscription_info(item, serializer);
     }
   }
 

@@ -10,12 +10,15 @@ import init, { KalamClient as WasmClient } from '../.wasm-out/kalam_link.js';
 
 import type { AuthCredentials, AuthProvider } from './auth.js';
 import { buildAuthHeader } from './auth.js';
+import { resolveAuthProviderWithRetry } from './helpers/auth_provider_retry.js';
 
 import type {
   ClientOptions,
   ConsumeContext,
   ConsumerHandle,
   ConsumerHandler,
+  LogEntry,
+  LogListener,
   LoginResponse,
   OnConnectCallback,
   OnDisconnectCallback,
@@ -31,6 +34,8 @@ import type {
   UploadProgress,
   Username,
 } from './types.js';
+
+import { LogLevel } from './types.js';
 
 import type {
   AckResponse,
@@ -95,10 +100,18 @@ export class KalamDBClient {
   private url: string;
   private auth: AuthCredentials;
   private _authProvider?: AuthProvider;
+  private authProviderMaxAttempts: number;
+  private authProviderInitialBackoffMs: number;
+  private authProviderMaxBackoffMs: number;
   private disableCompression: boolean;
   private wasmUrl?: string | BufferSource;
   private autoConnect: boolean;
   private pingIntervalMs: number;
+
+  /** Current minimum log level. */
+  private _logLevel: LogLevel;
+  /** Optional log listener for redirecting SDK logs. */
+  private _logListener?: LogListener;
 
   /** Track active subscriptions for management */
   private subscriptions: Map<string, SubscriptionInfo> = new Map();
@@ -135,15 +148,79 @@ export class KalamDBClient {
     this.url = options.url;
     this.auth = options.auth ?? { type: 'none' };
     this._authProvider = options.authProvider;
+    this.authProviderMaxAttempts = options.authProviderMaxAttempts ?? 3;
+    this.authProviderInitialBackoffMs = options.authProviderInitialBackoffMs ?? 250;
+    this.authProviderMaxBackoffMs = options.authProviderMaxBackoffMs ?? 2000;
     this.disableCompression = options.disableCompression ?? false;
     this.wasmUrl = options.wasmUrl;
     this.autoConnect = options.autoConnect ?? true;
     this.pingIntervalMs = options.pingIntervalMs ?? 30_000;
+    this._logLevel = options.logLevel ?? LogLevel.Warn;
+    this._logListener = options.logListener;
     this._onConnect = options.onConnect;
     this._onDisconnect = options.onDisconnect;
     this._onError = options.onError;
     this._onReceive = options.onReceive;
     this._onSend = options.onSend;
+  }
+
+  /* ---------------------------------------------------------------- */
+  /*  Logging                                                         */
+  /* ---------------------------------------------------------------- */
+
+  /**
+   * Set the minimum log level at runtime.
+   *
+   * @example
+   * ```typescript
+   * client.setLogLevel(LogLevel.Debug);
+   * ```
+   */
+  setLogLevel(level: LogLevel): void {
+    this._logLevel = level;
+  }
+
+  /**
+   * Set a log listener to redirect SDK logs.
+   *
+   * @example
+   * ```typescript
+   * client.setLogListener((entry) => myLogger.log(entry.message));
+   * ```
+   */
+  setLogListener(listener: LogListener | undefined): void {
+    this._logListener = listener;
+  }
+
+  /** @internal Emit a log entry if at or above the configured level. */
+  private log(level: LogLevel, tag: string, message: string): void {
+    if (level < this._logLevel) return;
+    const entry: LogEntry = {
+      level,
+      tag,
+      message,
+      timestamp: new Date().toISOString(),
+    };
+    if (this._logListener) {
+      this._logListener(entry);
+      return;
+    }
+    const prefix = `[kalam-link] [${LogLevel[level]?.toUpperCase() ?? level}] [${tag}]`;
+    switch (level) {
+      case LogLevel.Error:
+        console.error(prefix, message);
+        break;
+      case LogLevel.Warn:
+        console.warn(prefix, message);
+        break;
+      case LogLevel.Debug:
+      case LogLevel.Verbose:
+        // console.debug may be swallowed in some environments
+        console.log(prefix, message);
+        break;
+      default:
+        console.log(prefix, message);
+    }
   }
 
   /* ---------------------------------------------------------------- */
@@ -168,38 +245,54 @@ export class KalamDBClient {
 
     try {
       await this.ensureNodeRuntimeCompat();
-      console.log('[kalam-link] Starting WASM initialization...');
+      this.log(LogLevel.Debug, 'init', 'Starting WASM initialization...');
 
       if (this.wasmUrl) {
         const kind = typeof this.wasmUrl === 'string' ? 'URL' : 'buffer';
-        console.log(`[kalam-link] Loading WASM from explicit ${kind}`);
+        this.log(LogLevel.Debug, 'init', `Loading WASM from explicit ${kind}`);
         await init({ module_or_path: this.wasmUrl });
       } else {
-        console.log('[kalam-link] Loading WASM from default path');
+        this.log(LogLevel.Debug, 'init', 'Loading WASM from default path');
         await init();
       }
 
       switch (this.auth.type) {
         case 'basic':
           this.wasmClient = new WasmClient(this.url, this.auth.username, this.auth.password);
+          this.log(LogLevel.Debug, 'init', 'Created WASM client with basic auth');
           break;
         case 'jwt':
           this.wasmClient = WasmClient.withJwt(this.url, this.auth.token);
+          this.log(LogLevel.Debug, 'init', 'Created WASM client with JWT auth');
           break;
         case 'none':
           this.wasmClient = WasmClient.anonymous(this.url);
+          this.log(LogLevel.Debug, 'init', 'Created WASM client with anonymous auth');
           break;
       }
 
       // Wire authProvider if configured — takes precedence over static auth
       if (this._authProvider) {
+        this.log(LogLevel.Debug, 'init', 'Wiring async auth provider');
         const provider = this._authProvider;
+        const logFn = this.log.bind(this);
         this.wasmClient.setAuthProvider(async () => {
-          const creds = await provider();
+          logFn(LogLevel.Debug, 'auth', 'Auth provider invoked for credentials...');
+          const creds = await resolveAuthProviderWithRetry(provider, {
+            maxAttempts: this.authProviderMaxAttempts,
+            initialBackoffMs: this.authProviderInitialBackoffMs,
+            maxBackoffMs: this.authProviderMaxBackoffMs,
+          });
+          logFn(LogLevel.Debug, 'auth', `Auth provider resolved: type=${creds.type}`);
           if (creds.type === 'jwt') {
             return { jwt: { token: creds.token } };
           }
-          return null;
+          if (creds.type === 'none') {
+            return null;
+          }
+          throw new Error(
+            'authProvider must return Auth.jwt(...) or Auth.none(); basic credentials are not valid for WebSocket auth',
+          );
         });
       }
 
@@ -209,12 +302,12 @@ export class KalamDBClient {
       }
 
       this.initialized = true;
-      console.log('[kalam-link] Initialization complete');
+      this.log(LogLevel.Info, 'init', 'WASM initialization complete');
 
       // Wire connection lifecycle event handlers to the WASM client
       this.applyEventHandlers();
     } catch (error) {
-      console.error('[kalam-link] WASM initialization failed:', error);
+      this.log(LogLevel.Error, 'init', `WASM initialization failed: ${error}`);
       throw new Error(`Failed to initialize WASM client: ${error}`);
     }
   }
@@ -235,21 +328,26 @@ export class KalamDBClient {
 
     this.connecting = (async () => {
       try {
+        this.log(LogLevel.Info, 'connection', `Connecting to ${this.url}...`);
         await this.initialize();
         if (!this.wasmClient) throw new Error('WASM client not initialized');
 
         // Auto-login: exchange Basic credentials for JWT before WebSocket connect.
         // Skipped when an authProvider is set (it handles credentials itself).
         if (this.auth.type === 'basic' && !this._authProvider) {
+          this.log(LogLevel.Debug, 'auth', 'Auto-login: exchanging basic creds for JWT...');
           await this.login();
+          this.log(LogLevel.Debug, 'auth', 'Auto-login successful');
         }
 
         // Forward ping interval to the WASM client before connecting
         if (this.pingIntervalMs !== 30_000) {
+          this.log(LogLevel.Debug, 'connection', `Setting ping interval to ${this.pingIntervalMs}ms`);
           this.wasmClient.setPingInterval(this.pingIntervalMs);
         }
 
         await this.wasmClient.connect();
+        this.log(LogLevel.Info, 'connection', `Connected to ${this.url} successfully`);
       } finally {
         this.connecting = null;
       }
@@ -260,10 +358,12 @@ export class KalamDBClient {
 
   /** Disconnect and clean up all subscriptions */
   async disconnect(): Promise<void> {
+    this.log(LogLevel.Info, 'connection', 'Disconnecting...');
     if (this.wasmClient) {
       await this.wasmClient.disconnect();
     }
     this.subscriptions.clear();
+    this.log(LogLevel.Debug, 'connection', 'Disconnected and subscriptions cleared');
   }
 
   /**
@@ -393,6 +493,7 @@ export class KalamDBClient {
   /** @internal Wire stored event handler callbacks to the WASM client */
   private applyEventHandlers(): void {
     if (!this.wasmClient) return;
+    this.log(LogLevel.Debug, 'events', 'Wiring connection event handlers to WASM client');
     if (this._onConnect) this.wasmClient.onConnect(this._onConnect);
     if (this._onDisconnect) this.wasmClient.onDisconnect(this._onDisconnect as unknown as Function);
     if (this._onError) this.wasmClient.onError(this._onError as unknown as Function);
@@ -711,6 +812,7 @@ export class KalamDBClient {
       throw new Error('login() requires Basic auth credentials. Use Auth.basic(username, password)');
     }
 
+    this.log(LogLevel.Debug, 'auth', 'Logging in with basic credentials...');
     await this.initialize();
     if (!this.wasmClient) throw new Error('WASM client not initialized');
 
@@ -719,6 +821,7 @@ export class KalamDBClient {
 
     // Update TypeScript client's auth state to match
     this.auth = { type: 'jwt', token: response.access_token };
+    this.log(LogLevel.Info, 'auth', 'Login successful, switched to JWT auth');
 
     return response;
   }
@@ -733,6 +836,7 @@ export class KalamDBClient {
    * @returns The full LoginResponse with new tokens
    */
   async refreshToken(refreshToken: string): Promise<LoginResponse> {
+    this.log(LogLevel.Debug, 'auth', 'Refreshing access token...');
     await this.initialize();
     if (!this.wasmClient) throw new Error('WASM client not initialized');
 
@@ -740,6 +844,7 @@ export class KalamDBClient {
 
     // Update TypeScript client's auth state with new access token
     this.auth = { type: 'jwt', token: response.access_token };
+    this.log(LogLevel.Info, 'auth', 'Access token refreshed successfully');
 
     return response;
   }
@@ -786,19 +891,23 @@ export class KalamDBClient {
     callback: SubscriptionCallback,
     options?: SubscriptionOptions,
   ): Promise<Unsubscribe> {
+    this.log(LogLevel.Debug, 'subscription', `Subscribing to: ${sql.substring(0, 120)}`);
     if (this.autoConnect && !this.isConnected()) {
+      this.log(LogLevel.Debug, 'subscription', 'Auto-connecting before subscribe...');
       await this.connect();
     } else {
       await this.initialize();
     }
     if (!this.wasmClient) throw new Error('WASM client not initialized');
 
+    const logFn = this.log.bind(this);
     const wrappedCallback = (eventJson: string) => {
       try {
         const event = JSON.parse(eventJson) as ServerMessage;
+        logFn(LogLevel.Verbose, 'subscription', `Event: type=${event.type}`);
         callback(event);
       } catch (error) {
-        console.error('Failed to parse subscription event:', error);
+        logFn(LogLevel.Error, 'subscription', `Failed to parse subscription event: ${error}`);
       }
     };
 
@@ -808,11 +917,14 @@ export class KalamDBClient {
       optionsJson,
       wrappedCallback as unknown as Function,
     );
+    this.log(LogLevel.Info, 'subscription', `Subscribed: id=${subscriptionId}`);
 
     this.subscriptions.set(subscriptionId, {
       id: subscriptionId,
       tableName: sql,
       createdAt: new Date(),
+      lastSeqId: undefined,
+      closed: false,
     });
 
     return async () => {
@@ -822,9 +934,11 @@ export class KalamDBClient {
 
   /** Unsubscribe by subscription ID */
   async unsubscribe(subscriptionId: string): Promise<void> {
+    this.log(LogLevel.Debug, 'subscription', `Unsubscribing: id=${subscriptionId}`);
     if (!this.wasmClient) throw new Error('WASM client not initialized');
     await this.wasmClient.unsubscribe(subscriptionId);
     this.subscriptions.delete(subscriptionId);
+    this.log(LogLevel.Info, 'subscription', `Unsubscribed: id=${subscriptionId}`);
   }
 
   /** Number of active subscriptions */
@@ -832,8 +946,25 @@ export class KalamDBClient {
     return this.subscriptions.size;
   }
 
-  /** Info about all active subscriptions */
+  /** Info about all active subscriptions, enriched with WASM-side seq tracking */
   getSubscriptions(): SubscriptionInfo[] {
+    // Merge WASM-side state (lastSeqId) into local tracking
+    if (this.wasmClient) {
+      try {
+        const raw = this.wasmClient.getSubscriptions();
+        const wasmSubs: Array<{ id: string; query: string; lastSeqId?: string }> =
+          typeof raw === 'string' ? JSON.parse(raw) : [];
+        const wasmMap = new Map(wasmSubs.map((s) => [s.id, s]));
+        for (const [id, info] of this.subscriptions) {
+          const ws = wasmMap.get(id);
+          if (ws) {
+            info.lastSeqId = ws.lastSeqId;
+          }
+        }
+      } catch {
+        // best-effort merge
+      }
+    }
     return Array.from(this.subscriptions.values());
   }
 

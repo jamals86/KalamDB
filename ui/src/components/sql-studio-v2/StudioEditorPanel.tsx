@@ -252,8 +252,8 @@ export function StudioEditorPanel({
   };
 
   return (
-    <div className="flex h-full flex-col bg-white dark:bg-[#101922]">
-      <div className="flex items-center justify-between border-b border-slate-200 px-4 py-2 dark:border-[#1e293b]">
+    <div className="flex h-full flex-col bg-background">
+      <div className="flex items-center justify-between border-b border-border px-4 py-2">
         <div className="min-w-0">
           {isEditingTitle ? (
             <input
@@ -269,16 +269,16 @@ export function StudioEditorPanel({
                 }
               }}
               autoFocus
-              className="h-7 w-full max-w-[320px] rounded border border-slate-300 bg-white px-2 text-base font-semibold text-slate-900 outline-none ring-2 ring-sky-400 dark:border-[#334155] dark:bg-[#0f172a] dark:text-slate-100"
+              className="h-7 w-full max-w-[320px] rounded border border-border bg-background px-2 text-base font-semibold text-foreground outline-none ring-2 ring-ring"
             />
           ) : (
             <div className="flex items-center gap-1.5">
-              <p className="truncate text-base font-semibold text-slate-800 dark:text-slate-100">{tabTitle}</p>
+              <p className="truncate text-base font-semibold text-foreground">{tabTitle}</p>
               <Button
                 type="button"
                 variant="ghost"
                 size="icon"
-                className="h-6 w-6 shrink-0 text-slate-500 hover:text-slate-200"
+                className="h-6 w-6 shrink-0 text-muted-foreground hover:text-foreground"
                 onClick={() => setIsEditingTitle(true)}
                 title="Rename query"
               >
@@ -286,19 +286,19 @@ export function StudioEditorPanel({
               </Button>
             </div>
           )}
-          <p className="text-xs text-slate-500 dark:text-slate-400">Draft</p>
+          <p className="text-xs text-muted-foreground">Draft</p>
         </div>
         <div className="flex items-center gap-2">
           <div className="hidden items-center gap-2 lg:flex">
-            <div className="flex items-center gap-2 border-r border-slate-200 pr-3 dark:border-[#334155]">
+            <div className="flex items-center gap-2 border-r border-border pr-3">
               <Switch
                 checked={isLive}
                 onCheckedChange={onToggleLive}
                 disabled={liveStatus === "connecting"}
               />
-              <span className="text-xs text-slate-500 dark:text-slate-400">Live query</span>
+              <span className="text-xs text-muted-foreground">Live query</span>
             </div>
-            <span className="text-xs text-slate-500 dark:text-slate-400">{lastSavedLabel}</span>
+            <span className="text-xs text-muted-foreground">{lastSavedLabel}</span>
           </div>
           <Button
             variant="secondary"
@@ -311,7 +311,7 @@ export function StudioEditorPanel({
           </Button>
           <Button
             size="sm"
-            className="shrink-0 bg-[#137fec] text-white hover:bg-[#0f6cbd]"
+            className="shrink-0 bg-primary text-foreground hover:bg-primary"
             onClick={onRun}
             disabled={isRunning || !sql.trim() || liveStatus === "connecting"}
           >

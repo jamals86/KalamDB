@@ -29,6 +29,7 @@ pub mod schema_field;
 pub mod server_message;
 pub mod setup_models;
 pub mod subscription_config;
+pub mod subscription_info;
 pub mod subscription_options;
 pub mod subscription_request;
 pub mod upload_progress;
@@ -67,6 +68,7 @@ pub use setup_models::{
     ServerSetupRequest, ServerSetupResponse, SetupStatusResponse, SetupUserInfo,
 };
 pub use subscription_config::SubscriptionConfig;
+pub use subscription_info::SubscriptionInfo;
 pub use subscription_options::SubscriptionOptions;
 pub use subscription_request::SubscriptionRequest;
 pub use upload_progress::UploadProgress;

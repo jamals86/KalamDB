@@ -513,8 +513,8 @@ export function StudioResultsGrid({
   const showTableEditorBars = hasTabularResults && resultView === "results";
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-white dark:bg-[#101922]">
-      <div className="flex h-11 items-end justify-between gap-3 border-b border-slate-200 px-3 dark:border-[#1e293b]">
+    <div className="flex h-full min-h-0 flex-col bg-background">
+      <div className="flex h-11 items-end justify-between gap-3 border-b border-border px-3">
         <Tabs
           value={resultView}
           onValueChange={(value) => onResultViewChange(value as SqlStudioResultView)}
@@ -523,7 +523,7 @@ export function StudioResultsGrid({
           <TabsList className="h-full gap-5 rounded-none bg-transparent p-0">
             <TabsTrigger
               value="results"
-              className="relative h-full rounded-none border-b-2 border-transparent px-0 pt-0 text-xs font-medium text-slate-500 shadow-none data-[state=active]:border-sky-500 data-[state=active]:bg-transparent data-[state=active]:text-slate-900 dark:text-slate-400 dark:data-[state=active]:bg-transparent dark:data-[state=active]:text-slate-100"
+              className="relative h-full rounded-none border-b-2 border-transparent px-0 pt-0 text-xs font-medium text-muted-foreground shadow-none data-[state=active]:border-sky-500 data-[state=active]:bg-transparent data-[state=active]:text-foreground =active]:bg-transparent =active]:text-foreground"
             >
               <span>Results</span>
               {hasUnseenResults && (
@@ -532,7 +532,7 @@ export function StudioResultsGrid({
             </TabsTrigger>
             <TabsTrigger
               value="log"
-              className="relative h-full rounded-none border-b-2 border-transparent px-0 pt-0 text-xs font-medium text-slate-500 shadow-none data-[state=active]:border-sky-500 data-[state=active]:bg-transparent data-[state=active]:text-slate-900 dark:text-slate-400 dark:data-[state=active]:bg-transparent dark:data-[state=active]:text-slate-100"
+              className="relative h-full rounded-none border-b-2 border-transparent px-0 pt-0 text-xs font-medium text-muted-foreground shadow-none data-[state=active]:border-sky-500 data-[state=active]:bg-transparent data-[state=active]:text-foreground =active]:bg-transparent =active]:text-foreground"
             >
               <span>Log ({logCount})</span>
               {hasUnseenLogs && (
@@ -542,22 +542,22 @@ export function StudioResultsGrid({
           </TabsList>
         </Tabs>
         {isSuccess && (
-          <div className="ml-auto flex h-full min-w-0 flex-nowrap items-center gap-2 overflow-x-auto whitespace-nowrap text-[11px] text-slate-500 dark:text-slate-400">
+          <div className="ml-auto flex h-full min-w-0 flex-nowrap items-center gap-2 overflow-x-auto whitespace-nowrap text-[11px] text-muted-foreground">
             <span>{result.rowCount.toLocaleString()} rows</span>
             <span>took {Math.round(result.tookMs)} ms</span>
             <span>as user: {currentUsername}</span>
             {result.rowCount > MAX_RENDERED_ROWS && (
-              <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] text-amber-700 dark:text-amber-300">
+              <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] text-amber-700">
                 showing first {MAX_RENDERED_ROWS.toLocaleString()}
               </span>
             )}
             {resultView === "results" && selectedRows.size > 0 && (
-              <span className="rounded bg-sky-500/20 px-1.5 py-0.5 text-[10px] text-sky-700 dark:text-sky-300">
+              <span className="rounded bg-sky-500/20 px-1.5 py-0.5 text-[10px] text-sky-700">
                 {selectedRows.size} selected
               </span>
             )}
             {resultView === "results" && sortState && (
-              <span className="rounded bg-slate-200 px-1.5 py-0.5 text-[10px] text-slate-700 dark:bg-slate-700 dark:text-slate-200">
+              <span className="rounded bg-border px-1.5 py-0.5 text-[10px] text-foreground">
                 {sortState.columnName} ({sortState.direction})
               </span>
             )}
@@ -605,15 +605,15 @@ export function StudioResultsGrid({
       )}
 
       {!isRunning && result?.status === "success" && resultView === "results" && !hasTabularResults && (
-        <div className="flex flex-1 items-center justify-center px-4 text-sm text-slate-500 dark:text-slate-400">
+        <div className="flex flex-1 items-center justify-center px-4 text-sm text-muted-foreground">
           No tabular result set for this execution. Open the Log tab to inspect statement output.
         </div>
       )}
 
       {!isRunning && showTableEditorBars && (
         <>
-          <div className="flex h-10 items-center justify-between border-b border-slate-200 bg-amber-50/70 px-3 dark:border-[#1e293b] dark:bg-amber-950/20">
-            <div className="truncate text-xs text-amber-700 dark:text-amber-300">
+          <div className="flex h-10 items-center justify-between border-b border-border bg-amber-50/70 px-3 /20">
+            <div className="truncate text-xs text-amber-700">
               {changeCount === 0
                 ? "No pending table changes"
                 : `${changeCount} change${changeCount === 1 ? "" : "s"} • ${editCount} edit${editCount === 1 ? "" : "s"} • ${deleteCount} delete${deleteCount === 1 ? "" : "s"}`}
@@ -624,7 +624,7 @@ export function StudioResultsGrid({
                 variant="ghost"
                 onClick={discardAll}
                 disabled={changeCount === 0}
-                className="h-7 gap-1.5 text-amber-700 hover:bg-amber-100 hover:text-amber-900 dark:text-amber-300 dark:hover:bg-amber-900/40 dark:hover:text-amber-200"
+                className="h-7 gap-1.5 text-amber-700 hover:bg-amber-100 hover:text-amber-900 :bg-amber-900/40 :text-amber-200"
               >
                 Discard
               </Button>
@@ -644,10 +644,10 @@ export function StudioResultsGrid({
               <table className="min-w-max border-collapse">
               <thead className="sticky top-0 z-10">
                 <tr>
-                  <th className="w-10 border-r border-slate-200 bg-slate-50 px-2 py-2 text-left dark:border-[#1e293b] dark:bg-[#151e29]">
+                  <th className="w-10 border-r border-border bg-background px-2 py-2 text-left">
                     {isLiveMode ? (
                       <div className="flex items-center justify-center">
-                        <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-400">
+                        <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                           Change
                         </span>
                       </div>
@@ -667,7 +667,7 @@ export function StudioResultsGrid({
                               return next;
                             });
                           }}
-                          className="h-3.5 w-3.5 rounded border-slate-500 bg-transparent disabled:opacity-40"
+                          className="h-3.5 w-3.5 rounded border-border bg-transparent disabled:opacity-40"
                         />
                       </div>
                     )}
@@ -677,7 +677,7 @@ export function StudioResultsGrid({
                     return (
                       <th
                         key={field.name}
-                        className="border-r border-slate-200 bg-slate-50 px-2 py-2 text-left dark:border-[#1e293b] dark:bg-[#151e29]"
+                        className="border-r border-border bg-background px-2 py-2 text-left"
                       >
                         <button
                           type="button"
@@ -697,14 +697,14 @@ export function StudioResultsGrid({
                                 </span>
                               )}
                             </span>
-                            <span className="block text-[10px] font-normal uppercase text-slate-500 dark:text-slate-400">
+                            <span className="block text-[10px] font-normal uppercase text-muted-foreground">
                               {field.dataType}
                             </span>
                           </span>
                           {isSorted && (
                             sortState?.direction === "asc"
-                              ? <ArrowUp className="mt-0.5 h-3 w-3 text-sky-400" />
-                              : <ArrowDown className="mt-0.5 h-3 w-3 text-sky-400" />
+                              ? <ArrowUp className="mt-0.5 h-3 w-3 text-primary" />
+                              : <ArrowDown className="mt-0.5 h-3 w-3 text-primary" />
                           )}
                         </button>
                       </th>
@@ -747,7 +747,7 @@ export function StudioResultsGrid({
                     <tr
                       key={rowIndex}
                       className={cn(
-                        "border-b border-slate-200 transition-colors duration-500 dark:border-[#1e293b]",
+                        "border-b border-border transition-colors duration-500 ",
                         rowSelected && "bg-sky-500/10",
                         rowStatus === "edited" && "bg-amber-500/5",
                         rowStatus === "deleted" && "bg-red-500/10 opacity-60",
@@ -757,7 +757,7 @@ export function StudioResultsGrid({
                         isLiveUpdate && "bg-amber-500/5",
                       )}
                     >
-                      <td className="border-r border-slate-200 px-2 py-1 dark:border-[#1e293b]">
+                      <td className="border-r border-border px-2 py-1">
                         {isLiveMode ? (
                           <div className="flex flex-col items-center justify-center gap-0.5 min-w-[60px]">
                             {liveChangeType && (
@@ -765,16 +765,16 @@ export function StudioResultsGrid({
                                 <span
                                   className={cn(
                                     "rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide",
-                                    liveChangeType === "initial" && "bg-slate-500/20 text-slate-700 dark:text-slate-300",
-                                    liveChangeType === "insert" && "bg-sky-500/20 text-sky-700 dark:text-sky-300",
-                                    liveChangeType === "update" && "bg-amber-500/20 text-amber-700 dark:text-amber-300",
-                                    liveChangeType === "delete" && "bg-red-500/20 text-red-700 dark:text-red-300",
+                                    liveChangeType === "initial" && "bg-background0/20 text-foreground ",
+                                    liveChangeType === "insert" && "bg-sky-500/20 text-sky-700 ",
+                                    liveChangeType === "update" && "bg-amber-500/20 text-amber-700 ",
+                                    liveChangeType === "delete" && "bg-red-500/20 text-red-700 ",
                                   )}
                                 >
                                   {liveChangeType}
                                 </span>
                                 {liveChangedAt && (
-                                  <span className="text-[9px] text-slate-500 dark:text-slate-400">
+                                  <span className="text-[9px] text-muted-foreground">
                                     {new Date(liveChangedAt).toLocaleTimeString()}
                                   </span>
                                 )}
@@ -797,7 +797,7 @@ export function StudioResultsGrid({
                                   return next;
                                 });
                               }}
-                              className="h-3.5 w-3.5 rounded border-slate-500 bg-transparent disabled:opacity-40"
+                              className="h-3.5 w-3.5 rounded border-border bg-transparent disabled:opacity-40"
                             />
                           </div>
                         )}
@@ -809,7 +809,7 @@ export function StudioResultsGrid({
                         const cellKey = `${rowIndex}:${field.name}`;
 
                         return (
-                          <td key={`${rowIndex}-${field.name}`} className="border-r border-slate-200 px-1 py-1 dark:border-[#1e293b]">
+                          <td key={`${rowIndex}-${field.name}`} className="border-r border-border px-1 py-1">
                             <div
                               data-row-index={rowIndex}
                               data-column-name={field.name}
@@ -840,9 +840,9 @@ export function StudioResultsGrid({
                               }}
                               className={cn(
                                 "min-h-6 px-1 py-0.5 font-mono text-xs outline-none transition-colors duration-500",
-                                value === null && "italic text-slate-500",
+                                value === null && "italic text-muted-foreground",
                                 cellEdited && "bg-amber-500/20",
-                                selectedCellKey === cellKey && "ring-1 ring-sky-400",
+                                selectedCellKey === cellKey && "ring-1 ring-ring",
                                 // Highlight changed cells during live updates
                                 isLiveUpdate && liveChangedCols?.has(field.name) && "bg-amber-400/25 ring-1 ring-amber-400/40",
                               )}
@@ -867,7 +867,7 @@ export function StudioResultsGrid({
             <ScrollBar orientation="horizontal" />
           </ScrollArea>
 
-          <div className="flex items-center justify-between border-t border-slate-200 bg-[#151e29] px-3 py-2 text-xs text-slate-400 dark:border-[#1e293b]">
+          <div className="flex items-center justify-between border-t border-border bg-background px-3 py-2 text-xs text-muted-foreground">
             <div className="flex items-center gap-1">
               <Button
                 size="icon"
@@ -951,7 +951,7 @@ export function StudioResultsGrid({
               {cellViewer.canEdit ? (
                 <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
                   {/* Null toggle */}
-                  <label className="flex shrink-0 cursor-pointer items-center gap-2 text-sm text-slate-300">
+                  <label className="flex shrink-0 cursor-pointer items-center gap-2 text-sm text-muted-foreground">
                     <input
                       type="checkbox"
                       checked={cellViewer.isNull}
@@ -963,19 +963,19 @@ export function StudioResultsGrid({
                           editedValue: checked ? "" : prev.editedValue,
                         }));
                       }}
-                      className="h-4 w-4 rounded border-slate-500 bg-transparent"
+                      className="h-4 w-4 rounded border-border bg-transparent"
                     />
-                    Set to <span className="font-mono italic text-slate-400">NULL</span>
+                    Set to <span className="font-mono italic text-muted-foreground">NULL</span>
                   </label>
 
                   {/* Editor textarea or NULL placeholder */}
                   {cellViewer.isNull ? (
-                    <div className="flex min-h-[120px] flex-1 items-center justify-center rounded-md border border-slate-700 bg-black font-mono text-sm italic text-slate-500">
+                    <div className="flex min-h-[120px] flex-1 items-center justify-center rounded-md border border-border bg-black font-mono text-sm italic text-muted-foreground">
                       NULL
                     </div>
                   ) : (
                     <textarea
-                      className="min-h-[120px] flex-1 resize-none rounded-md border border-slate-700 bg-black p-3 font-mono text-xs leading-5 text-slate-200 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
+                      className="min-h-[120px] flex-1 resize-none rounded-md border border-border bg-black p-3 font-mono text-xs leading-5 text-foreground outline-none focus:border-sky-500 focus:ring-1 focus:ring-ring"
                       value={typeof cellViewer.editedValue === "string" ? cellViewer.editedValue : stringifyCellValue(cellViewer.editedValue)}
                       onChange={(e) => {
                         setCellViewer((prev) => ({ ...prev, editedValue: e.target.value }));
@@ -994,7 +994,7 @@ export function StudioResultsGrid({
                 </div>
               )}
 
-              <DialogFooter className="shrink-0 border-t border-slate-700 pt-3">
+              <DialogFooter className="shrink-0 border-t border-border pt-3">
                 <Button
                   variant="ghost"
                   onClick={() => setCellViewer((prev) => ({ ...prev, open: false }))}

@@ -27,6 +27,7 @@
 //! }
 //! ```
 
+use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use crate::jobs::executors::{JobContext, JobDecision, JobExecutor, JobParams};
@@ -34,6 +35,7 @@ use crate::manifest::flush::{SharedTableFlushJob, TableFlush, UserTableFlushJob}
 use async_trait::async_trait;
 use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::TableId;
+use kalamdb_store::EntityStore;
 use kalamdb_system::JobType;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -312,6 +314,65 @@ impl JobExecutor for FlushExecutor {
 
     fn name(&self) -> &'static str {
         "FlushExecutor"
+    }
+
+    /// Pre-validate: skip flush job creation when the table has no data in RocksDB.
+    ///
+    /// This avoids creating unnecessary jobs (and the associated Raft overhead) for
+    /// tables that have already been flushed or that have no buffered writes.
+    async fn pre_validate(
+        &self,
+        app_ctx: &Arc<AppContext>,
+        params: &Self::Params,
+    ) -> Result<bool, KalamDbError> {
+        let schema_registry = app_ctx.schema_registry();
+
+        // If the table no longer exists, skip
+        let table_def = match schema_registry.get_table_if_exists(&params.table_id)? {
+            Some(def) => def,
+            None => return Ok(false),
+        };
+
+        // Only check for User and Shared tables
+        match table_def.table_type {
+            TableType::User => {
+                if let Some(provider_arc) = schema_registry.get_provider(&params.table_id) {
+                    if let Some(provider) = provider_arc
+                        .as_any()
+                        .downcast_ref::<crate::providers::UserTableProvider>()
+                    {
+                        let store = provider.store();
+                        let partition = store.partition();
+                        let has_data = store
+                            .backend()
+                            .scan(&partition, None, None, Some(1))
+                            .map(|mut iter| iter.next().is_some())
+                            .unwrap_or(true); // on error, assume data exists
+                        return Ok(has_data);
+                    }
+                }
+                Ok(false)
+            },
+            TableType::Shared => {
+                if let Some(provider_arc) = schema_registry.get_provider(&params.table_id) {
+                    if let Some(provider) = provider_arc
+                        .as_any()
+                        .downcast_ref::<crate::providers::SharedTableProvider>()
+                    {
+                        let store = provider.store();
+                        let partition = store.partition();
+                        let has_data = store
+                            .backend()
+                            .scan(&partition, None, None, Some(1))
+                            .map(|mut iter| iter.next().is_some())
+                            .unwrap_or(true);
+                        return Ok(has_data);
+                    }
+                }
+                Ok(false)
+            },
+            _ => Ok(true),
+        }
     }
 
     /// Legacy single-phase execute - delegates to do_flush for backward compatibility

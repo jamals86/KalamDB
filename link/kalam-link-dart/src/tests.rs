@@ -477,10 +477,12 @@ mod tests {
             id: None,
             batch_size: None,
             last_rows: None,
+            from_seq_id: None,
         };
         let native = cfg.into_native();
         assert_eq!(native.sql, "SELECT * FROM t");
         assert!(native.id.starts_with("dart-sub-"));
+        assert!(native.options.as_ref().unwrap().from_seq_id.is_none());
     }
 
     #[test]
@@ -490,6 +492,7 @@ mod tests {
             id: Some("my-sub-1".into()),
             batch_size: Some(500),
             last_rows: Some(10),
+            from_seq_id: Some(42),
         };
         let native = cfg.into_native();
         assert_eq!(native.id, "my-sub-1");
@@ -497,6 +500,69 @@ mod tests {
         let opts = native.options.unwrap();
         assert_eq!(opts.batch_size.unwrap(), 500);
         assert_eq!(opts.last_rows.unwrap(), 10);
+        assert_eq!(opts.from_seq_id.unwrap().as_i64(), 42);
+    }
+
+    #[test]
+    fn subscription_config_with_from_seq_id_only() {
+        let cfg = DartSubscriptionConfig {
+            sql: "SELECT * FROM events".into(),
+            id: None,
+            batch_size: None,
+            last_rows: None,
+            from_seq_id: Some(12345),
+        };
+        let native = cfg.into_native();
+        assert_eq!(native.sql, "SELECT * FROM events");
+        let opts = native.options.unwrap();
+        assert!(opts.batch_size.is_none());
+        assert!(opts.last_rows.is_none());
+        assert_eq!(opts.from_seq_id.unwrap().as_i64(), 12345);
+    }
+
+    // -----------------------------------------------------------------------
+    // DartSubscriptionInfo conversion
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn subscription_info_from_native() {
+        use kalam_link::models::SubscriptionInfo;
+        use kalam_link::SeqId;
+
+        let native = SubscriptionInfo {
+            id: "sub-42".to_string(),
+            query: "SELECT * FROM users".to_string(),
+            last_seq_id: Some(SeqId::new(999)),
+            last_event_time_ms: Some(1700000000000),
+            created_at_ms: 1700000000000,
+            closed: false,
+        };
+        let dart: DartSubscriptionInfo = native.into();
+        assert_eq!(dart.id, "sub-42");
+        assert_eq!(dart.query, "SELECT * FROM users");
+        assert_eq!(dart.last_seq_id, Some(999));
+        assert_eq!(dart.last_event_time_ms, Some(1700000000000));
+        assert_eq!(dart.created_at_ms, 1700000000000);
+        assert!(!dart.closed);
+    }
+
+    #[test]
+    fn subscription_info_from_native_none_fields() {
+        use kalam_link::models::SubscriptionInfo;
+
+        let native = SubscriptionInfo {
+            id: "sub-0".to_string(),
+            query: "SELECT 1".to_string(),
+            last_seq_id: None,
+            last_event_time_ms: None,
+            created_at_ms: 1700000000000,
+            closed: true,
+        };
+        let dart: DartSubscriptionInfo = native.into();
+        assert_eq!(dart.id, "sub-0");
+        assert!(dart.last_seq_id.is_none());
+        assert!(dart.last_event_time_ms.is_none());
+        assert!(dart.closed);
     }
 
     // -----------------------------------------------------------------------
