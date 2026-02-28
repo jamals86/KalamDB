@@ -77,7 +77,6 @@ export type {
   JsonValue,
   KalamDataType,
   LogEntry,
-  LogLevel,
   LogListener,
   LoginResponse,
   LoginUserInfo,

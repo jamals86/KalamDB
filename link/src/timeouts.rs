@@ -64,6 +64,13 @@ pub struct KalamLinkTimeouts {
     /// Set to 0 to disable keep-alive pings.
     /// Default: 10 seconds
     pub keepalive_interval: Duration,
+
+    /// Maximum time to wait for a Pong response after sending a keepalive Ping.
+    /// If no Pong (or any other frame) arrives within this window, the
+    /// connection is considered dead and will be torn down / reconnected.
+    /// Set to 0 to disable pong timeout checking.
+    /// Default: 5 seconds
+    pub pong_timeout: Duration,
 }
 
 impl Default for KalamLinkTimeouts {
@@ -77,6 +84,7 @@ impl Default for KalamLinkTimeouts {
             initial_data_timeout: Duration::from_secs(30),
             idle_timeout: Duration::ZERO, // Disabled by default
             keepalive_interval: Duration::from_secs(10),
+            pong_timeout: Duration::from_secs(5),
         }
     }
 }
@@ -100,6 +108,7 @@ impl KalamLinkTimeouts {
             initial_data_timeout: Duration::from_secs(10),
             idle_timeout: Duration::ZERO,
             keepalive_interval: Duration::from_secs(15),
+            pong_timeout: Duration::from_secs(5),
         }
     }
 
@@ -116,6 +125,7 @@ impl KalamLinkTimeouts {
             initial_data_timeout: Duration::from_secs(120),
             idle_timeout: Duration::ZERO,
             keepalive_interval: Duration::from_secs(30),
+            pong_timeout: Duration::from_secs(10),
         }
     }
 
@@ -133,6 +143,7 @@ impl KalamLinkTimeouts {
             initial_data_timeout: Duration::from_secs(subscription_timeout_secs),
             idle_timeout: Duration::from_secs(subscription_timeout_secs),
             keepalive_interval: Duration::from_secs(5),
+            pong_timeout: Duration::from_secs(3),
         }
     }
 
@@ -247,6 +258,19 @@ impl KalamLinkTimeoutsBuilder {
     /// Set to 0 to disable keepalive pings.
     pub fn keepalive_interval_secs(self, secs: u64) -> Self {
         self.keepalive_interval(Duration::from_secs(secs))
+    }
+
+    /// Set the pong timeout (max wait for Pong after sending a Ping).
+    /// Set to 0 to disable pong timeout checking.
+    pub fn pong_timeout(mut self, timeout: Duration) -> Self {
+        self.timeouts.pong_timeout = timeout;
+        self
+    }
+
+    /// Set the pong timeout in seconds.
+    /// Set to 0 to disable pong timeout checking.
+    pub fn pong_timeout_secs(self, secs: u64) -> Self {
+        self.pong_timeout(Duration::from_secs(secs))
     }
 
     /// Build the timeout configuration.

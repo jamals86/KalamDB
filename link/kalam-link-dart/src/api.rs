@@ -357,31 +357,41 @@ pub async fn dart_next_connection_event(
         return Ok(None);
     }
 
-    // Fast path: check queue first
-    {
-        let mut queue = client
-            .event_queue
-            .lock()
-            .map_err(|e| anyhow::anyhow!("event queue lock poisoned: {e}"))?;
-        if let Some(event) = queue.pop_front() {
-            return Ok(Some(event));
+    loop {
+        // Fast path: check queue first
+        {
+            let mut queue = client
+                .event_queue
+                .lock()
+                .map_err(|e| anyhow::anyhow!("event queue lock poisoned: {e}"))?;
+            if let Some(event) = queue.pop_front() {
+                return Ok(Some(event));
+            }
         }
+
+        // Slow path: wait for notification, then drain one event
+        client.event_notify.notified().await;
+
+        // Re-check disposed after wake-up — dart_signal_dispose may have
+        // notified us to unblock.
+        if client.disposed.load(Ordering::Relaxed) {
+            return Ok(None);
+        }
+
+        // Re-check queue; if empty (spurious wake / permit consumed with no
+        // matching push), loop back to wait again rather than returning None
+        // (which would stop the Dart event pump).
+        {
+            let mut queue = client
+                .event_queue
+                .lock()
+                .map_err(|e| anyhow::anyhow!("event queue lock poisoned: {e}"))?;
+            if let Some(event) = queue.pop_front() {
+                return Ok(Some(event));
+            }
+        }
+        // Queue was empty after wake-up (spurious permit) — loop back
     }
-
-    // Slow path: wait for notification, then drain one event
-    client.event_notify.notified().await;
-
-    // Re-check disposed after wake-up — dart_signal_dispose may have
-    // notified us to unblock.
-    if client.disposed.load(Ordering::Relaxed) {
-        return Ok(None);
-    }
-
-    let mut queue = client
-        .event_queue
-        .lock()
-        .map_err(|e| anyhow::anyhow!("event queue lock poisoned: {e}"))?;
-    Ok(queue.pop_front())
 }
 
 /// Signal the event pump to stop.
@@ -443,6 +453,27 @@ pub async fn dart_disconnect(client: &DartKalamClient) -> anyhow::Result<()> {
 /// Check whether a shared connection is currently open and authenticated.
 pub async fn dart_is_connected(client: &DartKalamClient) -> anyhow::Result<bool> {
     Ok(client.inner.is_connected().await)
+}
+
+/// Cancel a subscription by ID on the shared connection.
+///
+/// This sends an explicit unsubscribe command that:
+/// 1. Removes the subscription from the client-side map
+/// 2. Sends an unsubscribe message to the server
+/// 3. Drops the event channel, causing any blocking
+///    [`dart_subscription_next`] call to return `None`
+///
+/// Unlike [`dart_subscription_close`], this does **not** require the
+/// `DartSubscription` mutex, so it can be called safely even while
+/// [`dart_subscription_next`] is blocked.  Use this from Dart's
+/// `StreamController.onCancel` to immediately release server-side
+/// resources.
+pub async fn dart_cancel_subscription(
+    client: &DartKalamClient,
+    subscription_id: String,
+) -> anyhow::Result<()> {
+    client.inner.cancel_subscription(&subscription_id).await?;
+    Ok(())
 }
 
 /// Create a live-query subscription.

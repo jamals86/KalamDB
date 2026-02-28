@@ -18,8 +18,10 @@
 use crate::common::*;
 use std::time::Duration;
 
-/// Timeout for an export job (flush-all + copy Parquet + zip can be slow).
-const EXPORT_JOB_TIMEOUT: Duration = Duration::from_secs(600);
+/// Timeout for an export job (flush user's data + copy Parquet + zip).
+/// With the optimized executor that only flushes tables with user data,
+/// this should complete in well under 60 seconds.
+const EXPORT_JOB_TIMEOUT: Duration = Duration::from_secs(120);
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 
@@ -112,7 +114,7 @@ fn get_token_sync(
 /// This test works even on an external server since it verifies job completion
 /// via `system.jobs`; the zip-file presence check is skipped for external servers
 /// (we cannot inspect the server's filesystem).
-#[ntest::timeout(720_000)]
+#[ntest::timeout(240_000)]
 #[test]
 fn smoke_export_user_data_job_completes() {
     if !require_server_running() {
@@ -187,7 +189,7 @@ fn smoke_export_user_data_job_completes() {
 }
 
 /// SHOW EXPORT returns the completed job status and a non-empty download URL.
-#[ntest::timeout(720_000)]
+#[ntest::timeout(240_000)]
 #[test]
 fn smoke_show_export_returns_completed_status_and_download_url() {
     if !require_server_running() {
@@ -306,7 +308,7 @@ fn smoke_show_export_returns_completed_status_and_download_url() {
 
 /// Downloading the export ZIP via HTTP returns 200 OK, content-type:
 /// application/zip, and a body that starts with the ZIP magic bytes (PK\x03\x04).
-#[ntest::timeout(720_000)]
+#[ntest::timeout(240_000)]
 #[test]
 fn smoke_export_download_zip_is_valid() {
     if !require_server_running() {
@@ -428,7 +430,7 @@ fn smoke_export_download_zip_is_valid() {
 }
 
 /// User B cannot download User A's export (403 Forbidden).
-#[ntest::timeout(720_000)]
+#[ntest::timeout(240_000)]
 #[test]
 fn smoke_export_download_forbidden_for_other_user() {
     if !require_server_running() {

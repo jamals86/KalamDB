@@ -351,6 +351,12 @@ class KalamClient {
     late StreamController<ChangeEvent> controller;
     var closed = false;
 
+    // The subscription ID of the currently active subscription.
+    // Used by onCancel to cancel via the shared connection without
+    // needing the DartSubscription Mutex (which would deadlock if
+    // dartSubscriptionNext is blocked on it).
+    String? activeSubId;
+
     /// Create and run one subscription lifetime (connect → pull → close).
     /// Returns normally when the subscription ends (server close, ping
     /// failure, etc.).  The caller decides whether to reconnect.
@@ -378,6 +384,7 @@ class KalamClient {
                 )
               : null,
         );
+        activeSubId = bridge.dartSubscriptionId(subscription: sub);
 
         while (!closed && !_isDisposed) {
           final event = await bridge.dartSubscriptionNext(subscription: sub);
@@ -385,6 +392,7 @@ class KalamClient {
           controller.add(_fromBridgeChangeEvent(event));
         }
       } finally {
+        activeSubId = null;
         if (sub != null) {
           try {
             await bridge.dartSubscriptionClose(subscription: sub);
@@ -433,8 +441,22 @@ class KalamClient {
 
     controller = StreamController<ChangeEvent>(
       onListen: () => reconnectLoop(),
-      onCancel: () {
+      onCancel: () async {
         closed = true;
+        // Cancel the subscription via the shared connection (bypasses the
+        // DartSubscription Mutex that dartSubscriptionNext may be holding).
+        // This drops the event channel sender, unblocking dartSubscriptionNext
+        // which returns None, allowing runSubscription to reach its finally
+        // block and call dartSubscriptionClose for full cleanup.
+        final subId = activeSubId;
+        if (subId != null) {
+          try {
+            await bridge.dartCancelSubscription(
+              client: _handle,
+              subscriptionId: subId,
+            );
+          } catch (_) {}
+        }
       },
     );
 
@@ -761,8 +783,7 @@ class KalamClient {
         'Connection error (recoverable=${error.recoverable}): ${error.message}',
       ReceiveEvent(:final message) =>
         'Receive: ${_summarizeWireMessage(message)}',
-      SendEvent(:final message) =>
-        'Send: ${_summarizeWireMessage(message)}',
+      SendEvent(:final message) => 'Send: ${_summarizeWireMessage(message)}',
     };
   }
 

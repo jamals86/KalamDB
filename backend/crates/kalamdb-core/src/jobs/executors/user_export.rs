@@ -18,12 +18,15 @@
 use crate::error::KalamDbError;
 use crate::jobs::executors::flush::FlushParams;
 use crate::jobs::executors::{JobContext, JobDecision, JobExecutor, JobParams};
+use crate::providers::UserTableProvider;
 use async_trait::async_trait;
+use kalamdb_commons::ids::UserTableRowId;
 use kalamdb_commons::models::UserId;
 use kalamdb_commons::schemas::{TableOptions, TableType};
 use kalamdb_commons::{JobId, TableId};
-use kalamdb_system::JobType;
+use kalamdb_store::EntityStore;
 use kalamdb_system::JobStatus;
+use kalamdb_system::JobType;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -34,9 +37,9 @@ use zip::write::SimpleFileOptions;
 use zip::ZipWriter;
 
 /// Maximum time to wait for all flush jobs to complete.
-const FLUSH_WAIT_TIMEOUT: Duration = Duration::from_secs(30 * 60); // 30 min
+const FLUSH_WAIT_TIMEOUT: Duration = Duration::from_secs(5 * 60); // 5 min
 /// Poll interval while waiting for flush jobs.
-const FLUSH_POLL_INTERVAL: Duration = Duration::from_secs(3);
+const FLUSH_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
 /// Typed parameters for user data export operations
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -136,7 +139,44 @@ impl JobExecutor for UserExportExecutor {
                     continue;
                 },
             };
+
+            // ── Quick check: does this table have any RocksDB data for this user? ──
+            // If not, skip the flush job entirely. The Parquet files (if any) will
+            // still be copied in Phase 4.
+            let has_rocksdb_data = {
+                let provider_opt = schema_registry.get_provider(&table_id);
+                if let Some(provider_arc) = provider_opt {
+                    if let Some(provider) = provider_arc
+                        .as_any()
+                        .downcast_ref::<UserTableProvider>()
+                    {
+                        let store = provider.store();
+                        // Scan with the user-specific prefix to check only this user's data
+                        let user_prefix = UserTableRowId::user_prefix(&user_id);
+                        let partition = store.partition();
+                        store
+                            .backend()
+                            .scan(&partition, Some(&user_prefix), None, Some(1))
+                            .map(|mut iter| iter.next().is_some())
+                            .unwrap_or(true) // on error, assume data exists
+                    } else {
+                        true // can't determine, assume there's data
+                    }
+                } else {
+                    false // no provider, skip flush
+                }
+            };
+
             tables_with_storage.push((table_def.clone(), storage_id));
+
+            // Skip flush if no RocksDB data for this user
+            if !has_rocksdb_data {
+                ctx.log_debug(&format!(
+                    "Table {} has no RocksDB data for user {}, skipping flush",
+                    table_label, user_id
+                ));
+                continue;
+            }
 
             let flush_params = FlushParams {
                 table_id: table_id.clone(),

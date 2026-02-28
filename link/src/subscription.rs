@@ -47,6 +47,10 @@ const MAX_WS_TEXT_MESSAGE_BYTES: usize = 64 << 20; // 64 MiB
 const MAX_WS_BINARY_MESSAGE_BYTES: usize = 16 << 20; // 16 MiB
 const MAX_WS_DECOMPRESSED_MESSAGE_BYTES: usize = 64 << 20; // 64 MiB
 
+/// A duration far enough in the future (~100 years) to act as "never" for
+/// deadline calculations without overflowing `Instant::now() + dur`.
+const FAR_FUTURE: Duration = Duration::from_secs(100 * 365 * 24 * 3600);
+
 /// Default capacity for the internal event channel between the background
 /// reader task and the consumer. When full, the reader applies back-pressure
 /// by pausing WebSocket reads.
@@ -684,19 +688,28 @@ async fn ws_reader_loop(
     close_rx: oneshot::Receiver<()>,
     subscription_id: String,
     keepalive_interval: Option<Duration>,
+    pong_timeout: Duration,
     event_handlers: EventHandlers,
 ) {
     // NOTE: emit_connect is called by SubscriptionManager::new() before this
     // task is spawned, so we only handle disconnect / error / receive here.
     tokio::pin!(close_rx);
 
-    let keepalive_dur = keepalive_interval.unwrap_or(Duration::MAX);
+    let keepalive_dur = keepalive_interval.unwrap_or(FAR_FUTURE);
     let has_keepalive = keepalive_interval.is_some();
     let mut idle_deadline = TokioInstant::now() + keepalive_dur;
+
+    // Pong timeout tracking
+    let has_pong_timeout = has_keepalive && !pong_timeout.is_zero();
+    let mut awaiting_pong = false;
+    let mut pong_deadline = TokioInstant::now() + FAR_FUTURE;
 
     loop {
         let idle_sleep = tokio::time::sleep_until(idle_deadline);
         tokio::pin!(idle_sleep);
+
+        let pong_sleep = tokio::time::sleep_until(pong_deadline);
+        tokio::pin!(pong_sleep);
 
         let frame = tokio::select! {
             biased;
@@ -710,8 +723,31 @@ async fn ws_reader_loop(
                 return;
             }
 
-            // Second priority: keepalive idle timer.
-            _ = &mut idle_sleep, if has_keepalive => {
+            // Pong timeout: no frame arrived since we sent our Ping.
+            _ = &mut pong_sleep, if has_pong_timeout && awaiting_pong => {
+                log::warn!(
+                    "[kalam-link] [{}] Pong timeout ({:?}) — no response to keepalive ping, treating connection as dead",
+                    subscription_id, pong_timeout,
+                );
+                let _ = event_tx
+                    .send(Err(KalamLinkError::WebSocketError(format!(
+                        "Pong timeout ({:?}) — server unresponsive", pong_timeout
+                    ))))
+                    .await;
+                event_handlers.emit_disconnect(
+                    DisconnectReason::new(format!(
+                        "Pong timeout ({:?}) — server unresponsive", pong_timeout
+                    )),
+                );
+                return;
+            }
+
+            // Keepalive idle timer (only fires when we are NOT already awaiting a pong).
+            _ = &mut idle_sleep, if has_keepalive && !awaiting_pong => {
+                log::debug!(
+                    "[kalam-link] [{}] Keepalive: sending Ping (interval={:?})",
+                    subscription_id, keepalive_dur,
+                );
                 if let Err(e) = ws_stream.send(Message::Ping(Bytes::new())).await {
                     let _ = event_tx
                         .send(Err(KalamLinkError::WebSocketError(format!(
@@ -724,13 +760,31 @@ async fn ws_reader_loop(
                     return;
                 }
                 event_handlers.emit_send("[ping]");
+                // Arm the pong timeout.
+                if has_pong_timeout {
+                    awaiting_pong = true;
+                    pong_deadline = TokioInstant::now() + pong_timeout;
+                    log::debug!(
+                        "[kalam-link] [{}] Keepalive: awaiting Pong within {:?}",
+                        subscription_id, pong_timeout,
+                    );
+                }
                 idle_deadline = TokioInstant::now() + keepalive_dur;
                 continue;
             }
 
             // Normal path: read the next WebSocket frame.
             msg = ws_stream.next() => {
+                // Any frame received proves the connection is alive.
                 idle_deadline = TokioInstant::now() + keepalive_dur;
+                if awaiting_pong {
+                    log::debug!(
+                        "[kalam-link] [{}] Keepalive: frame received, clearing pong timeout",
+                        subscription_id,
+                    );
+                    awaiting_pong = false;
+                    pong_deadline = TokioInstant::now() + FAR_FUTURE;
+                }
                 msg
             }
         };
@@ -788,7 +842,10 @@ async fn ws_reader_loop(
                 // tokio-tungstenite auto-responds, but be explicit for clarity.
                 let _ = ws_stream.send(Message::Pong(payload)).await;
             },
-            Some(Ok(Message::Pong(_))) | Some(Ok(Message::Frame(_))) => {},
+            Some(Ok(Message::Pong(_))) => {
+                log::debug!("[kalam-link] [{}] Keepalive: received Pong", subscription_id);
+            },
+            Some(Ok(Message::Frame(_))) => {},
             Some(Err(e)) => {
                 let msg = e.to_string();
                 event_handlers.emit_error(ConnectionError::new(&msg, false));
@@ -821,7 +878,13 @@ pub struct SubscriptionManager {
     /// Only used for per-subscription connections (legacy mode).
     _reader_handle: Option<JoinHandle<()>>,
     /// When using a shared connection, this sender lets us unsubscribe.
-    shared_unsubscribe_tx: Option<mpsc::Sender<String>>,
+    /// The channel carries `(subscription_id, generation)`.
+    shared_unsubscribe_tx: Option<mpsc::Sender<(String, u64)>>,
+    /// Generation tag assigned by the shared `connection_task` when this
+    /// subscription was registered.  Sent along with unsubscribe requests
+    /// so the connection task can ignore stale closes from superseded
+    /// managers that held the same subscription ID.
+    generation: u64,
     /// Local event buffer for yielding batched events from a single WS message.
     event_queue: VecDeque<ChangeEvent>,
     /// Changes received while initial data is still loading.
@@ -951,6 +1014,7 @@ impl SubscriptionManager {
             close_rx,
             subscription_id.clone(),
             keepalive_interval,
+            timeouts.pong_timeout,
             event_handlers.clone(),
         ));
 
@@ -960,6 +1024,7 @@ impl SubscriptionManager {
             close_tx: Some(close_tx),
             _reader_handle: Some(reader_handle),
             shared_unsubscribe_tx: None,
+            generation: 0,
             event_queue: VecDeque::new(),
             buffered_changes: Vec::new(),
             is_loading: true,
@@ -978,7 +1043,8 @@ impl SubscriptionManager {
     pub(crate) fn from_shared(
         subscription_id: String,
         event_rx: mpsc::Receiver<Result<ChangeEvent>>,
-        unsubscribe_tx: mpsc::Sender<String>,
+        unsubscribe_tx: mpsc::Sender<(String, u64)>,
+        generation: u64,
         timeouts: &KalamLinkTimeouts,
     ) -> Self {
         Self {
@@ -987,6 +1053,7 @@ impl SubscriptionManager {
             close_tx: None,
             _reader_handle: None,
             shared_unsubscribe_tx: Some(unsubscribe_tx),
+            generation,
             event_queue: VecDeque::new(),
             buffered_changes: Vec::new(),
             is_loading: true,
@@ -1096,7 +1163,7 @@ impl SubscriptionManager {
 
         // Shared connection path: tell the connection task to unsubscribe us.
         if let Some(tx) = self.shared_unsubscribe_tx.take() {
-            let _ = tx.send(self.subscription_id.clone()).await;
+            let _ = tx.send((self.subscription_id.clone(), self.generation)).await;
         }
 
         // Per-subscription path: signal the background reader task.
@@ -1118,7 +1185,8 @@ impl Drop for SubscriptionManager {
         // Shared connection path: fire-and-forget unsubscribe.
         if let Some(tx) = self.shared_unsubscribe_tx.take() {
             let id = self.subscription_id.clone();
-            let _ = tx.try_send(id);
+            let gen = self.generation;
+            let _ = tx.try_send((id, gen));
         }
 
         // Per-subscription path: signal the background reader task.
@@ -1152,6 +1220,7 @@ mod tests {
             close_tx: Some(close_tx),
             _reader_handle: Some(handle),
             shared_unsubscribe_tx: None,
+            generation: 0,
             event_queue: VecDeque::new(),
             buffered_changes: Vec::new(),
             is_loading: false,

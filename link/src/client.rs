@@ -219,12 +219,13 @@ impl KalamLinkClient {
             let conn_guard = self.connection.lock().await;
             if let Some(ref conn) = *conn_guard {
                 let options = config.options.unwrap_or_default();
-                let event_rx = conn.subscribe(config.id.clone(), config.sql, options).await?;
+                let (event_rx, generation) = conn.subscribe(config.id.clone(), config.sql, options).await?;
                 let unsub_tx = conn.unsubscribe_tx();
                 return Ok(SubscriptionManager::from_shared(
                     config.id,
                     event_rx,
                     unsub_tx,
+                    generation,
                     &self.timeouts,
                 ));
             }
@@ -283,6 +284,25 @@ impl KalamLinkClient {
         if let Some(conn) = conn {
             conn.disconnect().await;
         }
+    }
+
+    /// Cancel / unsubscribe a subscription by ID on the shared connection.
+    ///
+    /// This sends an explicit `Unsubscribe` command (generation=None) to
+    /// the connection task, which removes the entry from the local map,
+    /// sends an unsubscribe message to the server, and **drops** the event
+    /// channel sender — causing any in-flight `SubscriptionManager::next()`
+    /// call to return `None`.
+    ///
+    /// Use this when you need to cancel a subscription without holding the
+    /// `SubscriptionManager` mutex (e.g., from a Dart `onCancel` callback
+    /// while `dartSubscriptionNext` is blocked on the same mutex).
+    pub async fn cancel_subscription(&self, id: &str) -> Result<()> {
+        let guard = self.connection.lock().await;
+        if let Some(ref conn) = *guard {
+            conn.unsubscribe(id).await?;
+        }
+        Ok(())
     }
 
     /// Whether a shared connection is currently established and connected.

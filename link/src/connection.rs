@@ -48,6 +48,10 @@ const DEFAULT_EVENT_CHANNEL_CAPACITY: usize = 8192;
 /// Maximum text message size (64 MiB).
 const MAX_WS_TEXT_MESSAGE_BYTES: usize = 64 << 20;
 
+/// Maximum sleep duration that won't overflow `Instant + Duration`.
+/// ~100 years is far enough into the future to be effectively "never".
+const FAR_FUTURE: Duration = Duration::from_secs(100 * 365 * 24 * 3600);
+
 /// Current time in millis since Unix epoch.
 fn now_ms() -> u64 {
     SystemTime::now()
@@ -80,10 +84,18 @@ enum ConnCmd {
         sql: String,
         options: SubscriptionOptions,
         event_tx: mpsc::Sender<Result<ChangeEvent>>,
-        result_tx: oneshot::Sender<Result<()>>,
+        result_tx: oneshot::Sender<Result<u64>>,
     },
     /// Remove a subscription.
-    Unsubscribe { id: String },
+    ///
+    /// When `generation` is `Some`, the entry is only removed if its
+    /// generation matches.  This prevents a stale close from a
+    /// superseded `SubscriptionManager` from killing a re-subscribed
+    /// entry that reused the same subscription ID.
+    Unsubscribe {
+        id: String,
+        generation: Option<u64>,
+    },
     /// List all active subscriptions.
     ListSubscriptions {
         result_tx: oneshot::Sender<Vec<SubscriptionInfo>>,
@@ -100,6 +112,10 @@ struct SubEntry {
     options: SubscriptionOptions,
     event_tx: mpsc::Sender<Result<ChangeEvent>>,
     last_seq_id: Option<SeqId>,
+    /// Monotonic generation counter assigned when this entry was created.
+    /// Used to ignore stale `Unsubscribe` commands from superseded
+    /// `SubscriptionManager` instances that held the same subscription ID.
+    generation: u64,
     /// Millis since Unix epoch when this subscription was created.
     created_at_ms: u64,
     /// Millis since Unix epoch of the last routed event.
@@ -117,7 +133,9 @@ pub(crate) struct SharedConnection {
     cmd_tx: mpsc::Sender<ConnCmd>,
     /// Sender that [`SubscriptionManager`] instances use to unsubscribe
     /// from within `close()` / `Drop` (fire-and-forget, no async needed).
-    unsub_tx: mpsc::Sender<String>,
+    /// The tuple is `(subscription_id, generation)` so the connection task
+    /// can ignore stale unsubscribes from superseded managers.
+    unsub_tx: mpsc::Sender<(String, u64)>,
     /// Whether the WebSocket is currently open and authenticated.
     connected: Arc<AtomicBool>,
     /// Reconnection attempt counter (resets on success).
@@ -191,13 +209,15 @@ impl SharedConnection {
 
         // Create a bridge task that forwards subscription-ID-based unsubscribe
         // requests (used by SubscriptionManager close/Drop) into ConnCmd
-        // commands for the connection task.
-        let (unsub_tx, mut unsub_rx) = mpsc::channel::<String>(256);
+        // commands for the connection task.  The channel carries
+        // `(subscription_id, generation)` so the connection task can
+        // distinguish stale unsubscribes from superseded managers.
+        let (unsub_tx, mut unsub_rx) = mpsc::channel::<(String, u64)>(256);
         let cmd_tx_bridge = cmd_tx.clone();
         let unsub_bridge = tokio::spawn(async move {
-            while let Some(id) = unsub_rx.recv().await {
+            while let Some((id, generation)) = unsub_rx.recv().await {
                 let _ = cmd_tx_bridge
-                    .send(ConnCmd::Unsubscribe { id })
+                    .send(ConnCmd::Unsubscribe { id, generation: Some(generation) })
                     .await;
             }
         });
@@ -216,12 +236,19 @@ impl SharedConnection {
     ///
     /// Returns the event receiver.  The background task sends subscribe
     /// messages over the WebSocket and routes incoming events.
+    /// Add a new subscription to the shared connection.
+    ///
+    /// Returns `(event_receiver, generation)`.  The generation counter
+    /// must be stored in the [`SubscriptionManager`] so that its
+    /// `close()` / `Drop` can tag unsubscribe requests — preventing a
+    /// stale manager from accidentally removing a re-subscribed entry
+    /// that reused the same subscription ID.
     pub async fn subscribe(
         &self,
         id: String,
         sql: String,
         options: SubscriptionOptions,
-    ) -> Result<mpsc::Receiver<Result<ChangeEvent>>> {
+    ) -> Result<(mpsc::Receiver<Result<ChangeEvent>>, u64)> {
         let (event_tx, event_rx) = mpsc::channel(DEFAULT_EVENT_CHANNEL_CAPACITY);
         let (result_tx, result_rx) = oneshot::channel();
 
@@ -238,11 +265,11 @@ impl SharedConnection {
                 KalamLinkError::WebSocketError("Connection task is not running".to_string())
             })?;
 
-        result_rx.await.map_err(|_| {
+        let generation = result_rx.await.map_err(|_| {
             KalamLinkError::WebSocketError("Connection task died before confirming subscribe".to_string())
         })??;
 
-        Ok(event_rx)
+        Ok((event_rx, generation))
     }
 
     /// Remove a subscription from the shared connection.
@@ -250,6 +277,7 @@ impl SharedConnection {
         self.cmd_tx
             .send(ConnCmd::Unsubscribe {
                 id: id.to_string(),
+                generation: None,
             })
             .await
             .map_err(|_| {
@@ -284,8 +312,9 @@ impl SharedConnection {
     /// Clone the unsubscribe sender for use by [`SubscriptionManager::from_shared`].
     ///
     /// SubscriptionManagers use this channel in `close()` / `Drop` to send
-    /// their subscription ID; the bridge task forwards it as a `ConnCmd::Unsubscribe`.
-    pub(crate) fn unsubscribe_tx(&self) -> mpsc::Sender<String> {
+    /// their `(subscription_id, generation)` pair; the bridge task forwards
+    /// it as a `ConnCmd::Unsubscribe` with the generation tag.
+    pub(crate) fn unsubscribe_tx(&self) -> mpsc::Sender<(String, u64)> {
         self.unsub_tx.clone()
     }
 }
@@ -535,15 +564,28 @@ async fn connection_task(
     let mut subs: HashMap<String, SubEntry> = HashMap::new();
     let mut ws_stream: Option<WebSocketStream> = None;
     let mut shutdown_requested = false;
+    // Monotonically increasing counter used to tag each `SubEntry`.
+    // When a subscription is re-registered with the same ID (e.g. after
+    // a force-reconnect), the old `SubscriptionManager` may still fire
+    // an unsubscribe on close/Drop.  By comparing generations we ignore
+    // stale unsubscribes that target an older incarnation of the entry.
+    let mut next_generation: u64 = 1;
 
     // Keepalive configuration
     let keepalive_dur = if timeouts.keepalive_interval.is_zero() {
-        Duration::MAX
+        FAR_FUTURE
     } else {
         jitter_keepalive_interval(timeouts.keepalive_interval, "shared-conn")
     };
     let has_keepalive = !timeouts.keepalive_interval.is_zero();
     let mut idle_deadline = TokioInstant::now() + keepalive_dur;
+
+    // Pong timeout: after sending a Ping, we must receive *some* frame
+    // (typically a Pong) within this window or we consider the connection dead.
+    let pong_timeout_dur = timeouts.pong_timeout;
+    let has_pong_timeout = has_keepalive && !pong_timeout_dur.is_zero();
+    let mut awaiting_pong = false;
+    let mut pong_deadline = TokioInstant::now() + FAR_FUTURE; // inactive until first Ping
 
     // Try initial connection (non-fatal if it fails — we'll connect on first subscribe)
     match establish_ws(
@@ -591,34 +633,88 @@ async fn connection_task(
         }
 
         if let Some(ref mut ws) = ws_stream {
-            // We have an active connection — multiplex between WS reads, commands, and keepalive
+            // We have an active connection — multiplex between WS reads, commands, keepalive, and pong timeout
             let idle_sleep = tokio::time::sleep_until(idle_deadline);
             tokio::pin!(idle_sleep);
 
+            let pong_sleep = tokio::time::sleep_until(pong_deadline);
+            tokio::pin!(pong_sleep);
+
             tokio::select! {
                 biased;
+
+                // Pong timeout: no frame arrived since we sent our Ping.
+                _ = &mut pong_sleep, if has_pong_timeout && awaiting_pong => {
+                    log::warn!(
+                        "[kalam-link] Pong timeout ({:?}) — no response to keepalive ping, treating connection as dead",
+                        pong_timeout_dur,
+                    );
+                    event_handlers.emit_disconnect(
+                        DisconnectReason::new(format!(
+                            "Pong timeout ({:?}) — server unresponsive",
+                            pong_timeout_dur,
+                        )),
+                    );
+                    connected.store(false, Ordering::SeqCst);
+                    awaiting_pong = false;
+                    ws_stream = None;
+                    // Fall through to reconnection
+                    continue;
+                }
 
                 // Commands from the public API
                 cmd = cmd_rx.recv() => {
                     match cmd {
                         Some(ConnCmd::Subscribe { id, sql, options, event_tx, result_tx }) => {
+                            // If replacing an existing subscription with the same ID,
+                            // unsubscribe the old one on the server first to prevent
+                            // zombie subscriptions from accumulating.
+                            if subs.contains_key(&id) {
+                                log::debug!(
+                                    "[kalam-link] Replacing existing subscription '{}' — unsubscribing old one first",
+                                    id,
+                                );
+                                let _ = send_unsubscribe(ws, &id).await;
+                                subs.remove(&id);
+                            }
                             // Send subscribe message over the shared WebSocket
                             let result = send_subscribe(ws, &id, &sql, options.clone()).await;
+                            let gen = next_generation;
                             if result.is_ok() {
+                                next_generation += 1;
                                 subs.insert(id.clone(), SubEntry {
                                     sql,
                                     options,
                                     event_tx,
                                     last_seq_id: None,
+                                    generation: gen,
                                     created_at_ms: now_ms(),
                                     last_event_time_ms: None,
                                 });
                             }
-                            let _ = result_tx.send(result);
+                            let _ = result_tx.send(result.map(|()| gen));
                         },
-                        Some(ConnCmd::Unsubscribe { id }) => {
-                            subs.remove(&id);
-                            let _ = send_unsubscribe(ws, &id).await;
+                        Some(ConnCmd::Unsubscribe { id, generation }) => {
+                            // When a generation tag is present, only remove
+                            // the entry if its generation matches.  This
+                            // prevents a stale SubscriptionManager (from
+                            // before a re-subscribe with the same ID) from
+                            // accidentally unsubscribing the new one.
+                            let should_remove = match generation {
+                                Some(gen) => subs.get(&id).map_or(false, |e| e.generation == gen),
+                                None => true, // Explicit unsubscribe (no generation) always removes
+                            };
+                            if should_remove {
+                                subs.remove(&id);
+                                let _ = send_unsubscribe(ws, &id).await;
+                            } else {
+                                log::debug!(
+                                    "[kalam-link] Ignoring stale unsubscribe for '{}' (gen={:?}, current={:?})",
+                                    id,
+                                    generation,
+                                    subs.get(&id).map(|e| e.generation),
+                                );
+                            }
                         },
                         Some(ConnCmd::ListSubscriptions { result_tx }) => {
                             let _ = result_tx.send(snapshot_subscriptions(&subs));
@@ -636,24 +732,44 @@ async fn connection_task(
                 }
 
                 // Keepalive ping
-                _ = &mut idle_sleep, if has_keepalive => {
+                _ = &mut idle_sleep, if has_keepalive && !awaiting_pong => {
+                    log::debug!(
+                        "[kalam-link] Keepalive: sending Ping (interval={:?})",
+                        keepalive_dur,
+                    );
                     if let Err(e) = ws.send(Message::Ping(Bytes::new())).await {
                         log::warn!("Failed to send keepalive ping: {}", e);
                         event_handlers.emit_disconnect(
                             DisconnectReason::new(format!("Keepalive ping failed: {}", e)),
                         );
                         connected.store(false, Ordering::SeqCst);
+                        awaiting_pong = false;
                         ws_stream = None;
                         // Fall through to reconnection
                         continue;
                     }
                     event_handlers.emit_send("[ping]");
+                    // Arm the pong timeout — any frame arriving resets it.
+                    if has_pong_timeout {
+                        awaiting_pong = true;
+                        pong_deadline = TokioInstant::now() + pong_timeout_dur;
+                        log::debug!(
+                            "[kalam-link] Keepalive: awaiting Pong within {:?}",
+                            pong_timeout_dur,
+                        );
+                    }
                     idle_deadline = TokioInstant::now() + keepalive_dur;
                 }
 
                 // WebSocket messages
                 frame = ws.next() => {
+                    // Any frame received proves the connection is alive.
                     idle_deadline = TokioInstant::now() + keepalive_dur;
+                    if awaiting_pong {
+                        log::debug!("[kalam-link] Keepalive: frame received, clearing pong timeout");
+                        awaiting_pong = false;
+                        pong_deadline = TokioInstant::now() + FAR_FUTURE;
+                    }
 
                     match frame {
                         Some(Ok(Message::Text(text))) => {
@@ -706,7 +822,10 @@ async fn connection_task(
                         Some(Ok(Message::Ping(payload))) => {
                             let _ = ws.send(Message::Pong(payload)).await;
                         },
-                        Some(Ok(Message::Pong(_))) | Some(Ok(Message::Frame(_))) => {},
+                        Some(Ok(Message::Pong(_))) => {
+                            log::debug!("[kalam-link] Keepalive: received Pong");
+                        },
+                        Some(Ok(Message::Frame(_))) => {},
                         Some(Err(e)) => {
                             let msg = e.to_string();
                             event_handlers.emit_error(ConnectionError::new(&msg, true));
@@ -739,8 +858,14 @@ async fn connection_task(
                             "Not connected and auto-reconnect is disabled".to_string(),
                         )));
                     },
-                    Some(ConnCmd::Unsubscribe { id }) => {
-                        subs.remove(&id);
+                    Some(ConnCmd::Unsubscribe { id, generation }) => {
+                        let should_remove = match generation {
+                            Some(gen) => subs.get(&id).map_or(false, |e| e.generation == gen),
+                            None => true,
+                        };
+                        if should_remove {
+                            subs.remove(&id);
+                        }
                     },
                     Some(ConnCmd::ListSubscriptions { result_tx }) => {
                         let _ = result_tx.send(snapshot_subscriptions(&subs));
@@ -776,7 +901,7 @@ async fn connection_task(
                                     "Max reconnection attempts reached".to_string(),
                                 )));
                             },
-                            Some(ConnCmd::Unsubscribe { id }) => { subs.remove(&id); },
+                            Some(ConnCmd::Unsubscribe { id, .. }) => { subs.remove(&id); },
                             Some(ConnCmd::ListSubscriptions { result_tx }) => {
                                 let _ = result_tx.send(snapshot_subscriptions(&subs));
                             },
@@ -808,22 +933,41 @@ async fn connection_task(
                     cmd = cmd_rx.recv() => {
                         match cmd {
                             Some(ConnCmd::Subscribe { id, sql, options, event_tx, result_tx }) => {
+                                // If replacing an existing subscription with the same
+                                // ID, remove the old entry so we don't accumulate stale
+                                // server-side subscriptions after reconnect.
+                                if subs.contains_key(&id) {
+                                    log::debug!(
+                                        "[kalam-link] Replacing queued subscription '{}' during reconnect",
+                                        id,
+                                    );
+                                    subs.remove(&id);
+                                }
                                 // Queue the subscription — we'll send it after reconnecting
+                                let gen = next_generation;
+                                next_generation += 1;
                                 subs.insert(id, SubEntry {
                                     sql,
                                     options,
                                     event_tx,
                                     last_seq_id: None,
+                                    generation: gen,
                                     created_at_ms: now_ms(),
                                     last_event_time_ms: None,
                                 });
                                 // Don't confirm yet — will confirm after reconnect via
                                 // re-subscribe. For now, ack success so the caller gets
                                 // the event_rx and can start waiting.
-                                let _ = result_tx.send(Ok(()));
+                                let _ = result_tx.send(Ok(gen));
                             },
-                            Some(ConnCmd::Unsubscribe { id }) => {
-                                subs.remove(&id);
+                            Some(ConnCmd::Unsubscribe { id, generation }) => {
+                                let should_remove = match generation {
+                                    Some(gen) => subs.get(&id).map_or(false, |e| e.generation == gen),
+                                    None => true,
+                                };
+                                if should_remove {
+                                    subs.remove(&id);
+                                }
                             },
                             Some(ConnCmd::ListSubscriptions { result_tx }) => {
                                 let _ = result_tx.send(snapshot_subscriptions(&subs));
@@ -866,6 +1010,8 @@ async fn connection_task(
 
                     ws_stream = Some(stream);
                     idle_deadline = TokioInstant::now() + keepalive_dur;
+                    awaiting_pong = false;
+                    pong_deadline = TokioInstant::now() + FAR_FUTURE;
                 },
                 Err(e) => {
                     log::warn!("Reconnection attempt {} failed: {}", attempt + 1, e);

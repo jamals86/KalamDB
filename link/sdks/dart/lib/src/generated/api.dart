@@ -146,6 +146,24 @@ Future<void> dartDisconnect({required DartKalamClient client}) =>
 Future<bool> dartIsConnected({required DartKalamClient client}) =>
     RustLib.instance.api.crateApiDartIsConnected(client: client);
 
+/// Cancel a subscription by ID on the shared connection.
+///
+/// This sends an explicit unsubscribe command that:
+/// 1. Removes the subscription from the client-side map
+/// 2. Sends an unsubscribe message to the server
+/// 3. Drops the event channel, causing any blocking
+///    [`dart_subscription_next`] call to return `None`
+///
+/// Unlike [`dart_subscription_close`], this does **not** require the
+/// `DartSubscription` mutex, so it can be called safely even while
+/// [`dart_subscription_next`] is blocked.  Use this from Dart's
+/// `StreamController.onCancel` to immediately release server-side
+/// resources.
+Future<void> dartCancelSubscription(
+        {required DartKalamClient client, required String subscriptionId}) =>
+    RustLib.instance.api.crateApiDartCancelSubscription(
+        client: client, subscriptionId: subscriptionId);
+
 /// Create a live-query subscription.
 ///
 /// * `sql` — the SELECT query to subscribe to.
