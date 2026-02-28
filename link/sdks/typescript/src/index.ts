@@ -50,6 +50,7 @@ export type {
 // Types & enums
 export {
   ChangeType,
+  LogLevel,
   MessageType,
   Username,
 } from './types.js';
@@ -75,6 +76,9 @@ export type {
   HttpVersion,
   JsonValue,
   KalamDataType,
+  LogEntry,
+  LogLevel,
+  LogListener,
   LoginResponse,
   LoginUserInfo,
   OnConnectCallback,

@@ -24,4 +24,5 @@ library;
 
 export 'src/auth.dart';
 export 'src/kalam_client.dart';
+export 'src/logger.dart';
 export 'src/models.dart';

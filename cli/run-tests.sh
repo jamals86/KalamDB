@@ -2,7 +2,7 @@
 # Helper script to run CLI tests with custom server URL and authentication
 #
 # Usage:
-#   ./run-tests.sh                                    # Use defaults
+#   ./run-tests.sh                                    # Run all workspace tests + CLI e2e (default)
 #   ./run-tests.sh --url http://localhost:3000        # Custom URL
 #   ./run-tests.sh --password mypass                  # Custom password
 #   ./run-tests.sh --url http://localhost:3000 --password mypass --test smoke
@@ -13,6 +13,9 @@
 #   ./run-tests.sh --test "smoke_test_core" --nocapture # Run specific test with output
 
 set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Default values
 SERVER_URL="${KALAMDB_SERVER_URL:-http://127.0.0.1:8080}"
@@ -55,11 +58,14 @@ done
 if [ "$SHOW_HELP" = true ]; then
     echo "Usage: $0 [OPTIONS]"
     echo ""
+    echo "Default: runs all workspace tests via cargo nextest, with CLI e2e tests enabled"
+    echo "         using feature: kalam-cli/e2e-tests"
+    echo ""
     echo "Options:"
     echo "  -u, --url <URL>          Server URL (default: http://127.0.0.1:8080)"
     echo "  -p, --password <PASS>    Root password (default: empty)"
     echo "  -t, --test <FILTER>      Test filter (e.g., 'smoke', 'smoke_test_core')"
-    echo "  --nocapture              Show test output"
+    echo "  --nocapture              Pass through test stdout/stderr (--no-capture)"
     echo "  -h, --help               Show this help message"
     echo ""
     echo "Examples:"
@@ -71,11 +77,12 @@ fi
 
 # Display configuration
 echo "================================================"
-echo "Running KalamDB CLI Tests"
+echo "Running KalamDB Tests (cargo nextest)"
 echo "================================================"
 echo "Server URL:      $SERVER_URL"
 echo "Root Password:   $([ -z "$ROOT_PASSWORD" ] && echo '(empty)' || echo '***')"
 echo "Test Filter:     $([ -z "$TEST_FILTER" ] && echo '(all tests)' || echo "$TEST_FILTER")"
+echo "Mode:            workspace + CLI e2e feature"
 echo "================================================"
 echo ""
 
@@ -83,25 +90,40 @@ echo ""
 export KALAMDB_SERVER_URL="$SERVER_URL"
 export KALAMDB_ROOT_PASSWORD="$ROOT_PASSWORD"
 
-# Build test command
-TEST_CMD="cargo test"
+# Ensure nextest is available
+if ! cargo nextest --version >/dev/null 2>&1; then
+    echo "Error: cargo-nextest is not installed."
+    echo "Install it with: cargo install cargo-nextest"
+    exit 1
+fi
+
+# Build nextest command
+# Default behavior: run all workspace tests and include CLI e2e tests.
+TEST_CMD=(
+    cargo nextest run
+    --workspace
+    --all-targets
+    --features "kalam-cli/e2e-tests"
+)
 
 if [ -n "$TEST_FILTER" ]; then
-    # Check if it's a smoke test
     if [[ "$TEST_FILTER" == smoke* ]]; then
-        TEST_CMD="$TEST_CMD --test smoke $TEST_FILTER"
+        TEST_CMD+=(--test smoke)
+        if [[ "$TEST_FILTER" != "smoke" ]]; then
+            TEST_CMD+=("$TEST_FILTER")
+        fi
     else
-        TEST_CMD="$TEST_CMD $TEST_FILTER"
+        TEST_CMD+=("$TEST_FILTER")
     fi
 fi
 
 if [ -n "$NOCAPTURE" ]; then
-    TEST_CMD="$TEST_CMD -- $NOCAPTURE"
-elif [ -n "$TEST_FILTER" ]; then
-    TEST_CMD="$TEST_CMD --"
+    TEST_CMD+=(--no-capture)
 fi
 
-# Run tests
-echo "Executing: $TEST_CMD"
+# Run tests from workspace root
+cd "$REPO_ROOT"
+
+echo "Executing: ${TEST_CMD[*]}"
 echo ""
-eval "$TEST_CMD"
+"${TEST_CMD[@]}"

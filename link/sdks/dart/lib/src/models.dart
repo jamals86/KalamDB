@@ -449,3 +449,43 @@ final class SubscriptionError extends ChangeEvent {
   @override
   String toString() => 'SubscriptionError($code): $message';
 }
+
+// ---------------------------------------------------------------------------
+// Subscription info (listing)
+// ---------------------------------------------------------------------------
+
+/// Read-only snapshot of an active subscription's metadata.
+///
+/// Returned by [KalamClient.getSubscriptions].
+class SubscriptionInfo {
+  /// Subscription ID assigned when subscribing.
+  final String id;
+
+  /// The SQL query this subscription is tracking.
+  final String query;
+
+  /// Last received sequence ID (for resume on reconnect), if any.
+  final BigInt? lastSeqId;
+
+  /// Timestamp (millis since epoch) of the last received event.
+  final int? lastEventTimeMs;
+
+  /// Timestamp (millis since epoch) when the subscription was created.
+  final int createdAtMs;
+
+  /// Whether the subscription has been closed.
+  final bool closed;
+
+  const SubscriptionInfo({
+    required this.id,
+    required this.query,
+    this.lastSeqId,
+    this.lastEventTimeMs,
+    required this.createdAtMs,
+    required this.closed,
+  });
+
+  @override
+  String toString() =>
+      'SubscriptionInfo(id: $id, query: $query, closed: $closed)';
+}

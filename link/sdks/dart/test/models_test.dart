@@ -417,4 +417,51 @@ void main() {
       expect(label, 'send');
     });
   });
+
+  // -----------------------------------------------------------------------
+  // SubscriptionInfo
+  // -----------------------------------------------------------------------
+  group('SubscriptionInfo', () {
+    test('all fields populated', () {
+      final info = SubscriptionInfo(
+        id: 'sub-1',
+        query: 'SELECT * FROM users',
+        lastSeqId: BigInt.from(42),
+        lastEventTimeMs: 1700000000000,
+        createdAtMs: 1700000000000,
+        closed: false,
+      );
+      expect(info.id, 'sub-1');
+      expect(info.query, 'SELECT * FROM users');
+      expect(info.lastSeqId, BigInt.from(42));
+      expect(info.lastEventTimeMs, 1700000000000);
+      expect(info.createdAtMs, 1700000000000);
+      expect(info.closed, isFalse);
+    });
+
+    test('optional fields default to null', () {
+      const info = SubscriptionInfo(
+        id: 'sub-2',
+        query: 'SELECT 1',
+        createdAtMs: 1700000000000,
+        closed: true,
+      );
+      expect(info.lastSeqId, isNull);
+      expect(info.lastEventTimeMs, isNull);
+      expect(info.closed, isTrue);
+    });
+
+    test('toString includes key fields', () {
+      const info = SubscriptionInfo(
+        id: 'sub-3',
+        query: 'SELECT * FROM t',
+        createdAtMs: 1700000000000,
+        closed: false,
+      );
+      final str = info.toString();
+      expect(str, contains('sub-3'));
+      expect(str, contains('SELECT * FROM t'));
+      expect(str, contains('closed: false'));
+    });
+  });
 }

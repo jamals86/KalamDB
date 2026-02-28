@@ -40,7 +40,7 @@ use tokio_tungstenite::{
     },
 };
 
-type WebSocketStream =
+pub(crate) type WebSocketStream =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<TcpStream>>;
 
 const MAX_WS_TEXT_MESSAGE_BYTES: usize = 64 << 20; // 64 MiB
@@ -75,7 +75,7 @@ const DEFAULT_EVENT_CHANNEL_CAPACITY: usize = 8192;
 /// # Ok(())
 /// # }
 /// ```
-fn resolve_ws_url(base_url: &str, override_url: Option<&str>, disable_compression: bool) -> Result<String> {
+pub(crate) fn resolve_ws_url(base_url: &str, override_url: Option<&str>, disable_compression: bool) -> Result<String> {
     let base = Url::parse(base_url.trim()).map_err(|e| {
         KalamLinkError::ConfigurationError(format!("Invalid base_url '{}': {}", base_url, e))
     })?;
@@ -194,7 +194,7 @@ fn parse_local_bind_addresses(addresses: &[String]) -> std::result::Result<Vec<I
     Ok(parsed)
 }
 
-async fn connect_with_optional_local_bind(
+pub(crate) async fn connect_with_optional_local_bind(
     request: tokio_tungstenite::tungstenite::http::Request<()>,
     local_bind_addresses: &[String],
     subscription_id: &str,
@@ -287,7 +287,7 @@ async fn connect_with_optional_local_bind(
     })))
 }
 
-fn apply_ws_auth_headers(
+pub(crate) fn apply_ws_auth_headers(
     request: &mut tokio_tungstenite::tungstenite::http::Request<()>,
     auth: &AuthProvider,
 ) -> Result<()> {
@@ -317,7 +317,7 @@ fn apply_ws_auth_headers(
 ///
 /// The WebSocket protocol requires an explicit Authenticate message after connection.
 /// This function sends the authentication credentials and waits for the server's response.
-async fn send_auth_and_wait(
+pub(crate) async fn send_auth_and_wait(
     ws_stream: &mut WebSocketStream,
     auth: &AuthProvider,
     auth_timeout: Duration,
@@ -420,7 +420,7 @@ async fn send_auth_and_wait(
     }
 }
 
-async fn send_subscription_request(
+pub(crate) async fn send_subscription_request(
     ws_stream: &mut WebSocketStream,
     subscription_id: &str,
     sql: &str,
@@ -446,7 +446,7 @@ async fn send_subscription_request(
         .map_err(|e| KalamLinkError::WebSocketError(format!("Failed to subscribe: {}", e)))
 }
 
-fn parse_message(text: &str) -> Result<Option<ChangeEvent>> {
+pub(crate) fn parse_message(text: &str) -> Result<Option<ChangeEvent>> {
     // Parse as ServerMessage (typed)
     match serde_json::from_str::<ServerMessage>(text) {
         Ok(msg) => {
@@ -546,7 +546,7 @@ fn parse_message(text: &str) -> Result<Option<ChangeEvent>> {
 ///
 /// Uses deterministic jitter derived from subscription_id so reconnecting a
 /// subscription preserves its phase and avoids thundering-herd effects.
-fn jitter_keepalive_interval(base: Duration, subscription_id: &str) -> Duration {
+pub(crate) fn jitter_keepalive_interval(base: Duration, subscription_id: &str) -> Duration {
     if base.is_zero() {
         return base;
     }
@@ -575,7 +575,7 @@ fn jitter_keepalive_interval(base: Duration, subscription_id: &str) -> Duration 
 // ── Standalone helpers used by the background reader task ───────────────────
 
 /// Decode a binary (gzip-compressed) WebSocket payload into a UTF-8 string.
-fn decode_ws_payload(data: &[u8]) -> Result<String> {
+pub(crate) fn decode_ws_payload(data: &[u8]) -> Result<String> {
     if data.len() > MAX_WS_BINARY_MESSAGE_BYTES {
         return Err(KalamLinkError::WebSocketError(format!(
             "Binary WebSocket message too large ({} bytes > {} bytes)",
@@ -600,7 +600,7 @@ fn decode_ws_payload(data: &[u8]) -> Result<String> {
 }
 
 /// Send a `NextBatch` request through the WebSocket stream.
-async fn send_next_batch_request(
+pub(crate) async fn send_next_batch_request(
     ws_stream: &mut WebSocketStream,
     subscription_id: &str,
     last_seq_id: Option<crate::seq_id::SeqId>,
@@ -814,10 +814,14 @@ pub struct SubscriptionManager {
     event_rx: mpsc::Receiver<Result<ChangeEvent>>,
     /// Signal the background task to initiate graceful shutdown.
     /// `None` after `close()` has been called (or consumed by `Drop`).
+    /// Only used for per-subscription connections (legacy mode).
     close_tx: Option<oneshot::Sender<()>>,
     /// Handle to the background reader task — kept to prevent detached-task
     /// warnings and to allow future `.await` on shutdown.
-    _reader_handle: JoinHandle<()>,
+    /// Only used for per-subscription connections (legacy mode).
+    _reader_handle: Option<JoinHandle<()>>,
+    /// When using a shared connection, this sender lets us unsubscribe.
+    shared_unsubscribe_tx: Option<mpsc::Sender<String>>,
     /// Local event buffer for yielding batched events from a single WS message.
     event_queue: VecDeque<ChangeEvent>,
     /// Changes received while initial data is still loading.
@@ -954,13 +958,41 @@ impl SubscriptionManager {
             subscription_id,
             event_rx,
             close_tx: Some(close_tx),
-            _reader_handle: reader_handle,
+            _reader_handle: Some(reader_handle),
+            shared_unsubscribe_tx: None,
             event_queue: VecDeque::new(),
             buffered_changes: Vec::new(),
             is_loading: true,
             timeouts: timeouts.clone(),
             closed: false,
         })
+    }
+
+    /// Create a `SubscriptionManager` that receives events from a
+    /// [`SharedConnection`](crate::connection::SharedConnection) rather than
+    /// owning its own WebSocket.
+    ///
+    /// The returned handle is a lightweight consumer: it reads events from
+    /// `event_rx` and, on close/drop, sends its subscription ID through
+    /// `unsubscribe_tx` so the shared connection can unregister it.
+    pub(crate) fn from_shared(
+        subscription_id: String,
+        event_rx: mpsc::Receiver<Result<ChangeEvent>>,
+        unsubscribe_tx: mpsc::Sender<String>,
+        timeouts: &KalamLinkTimeouts,
+    ) -> Self {
+        Self {
+            subscription_id,
+            event_rx,
+            close_tx: None,
+            _reader_handle: None,
+            shared_unsubscribe_tx: Some(unsubscribe_tx),
+            event_queue: VecDeque::new(),
+            buffered_changes: Vec::new(),
+            is_loading: true,
+            timeouts: timeouts.clone(),
+            closed: false,
+        }
     }
 
     fn flush_buffered_changes(&mut self) {
@@ -1050,16 +1082,24 @@ impl SubscriptionManager {
 
     /// Close the subscription gracefully.
     ///
-    /// Signals the background reader task to send an Unsubscribe message and
-    /// close the WebSocket connection.  Safe to call multiple times —
-    /// subsequent calls are no-ops.
+    /// If using a per-subscription WebSocket (legacy mode), signals the
+    /// background reader task to send an Unsubscribe message and close the
+    /// WebSocket connection.  If using a shared connection, sends the
+    /// subscription ID to the connection task for unsubscription.
+    ///
+    /// Safe to call multiple times — subsequent calls are no-ops.
     pub async fn close(&mut self) -> Result<()> {
         if self.closed {
             return Ok(());
         }
         self.closed = true;
 
-        // Signal the background reader task to initiate graceful shutdown.
+        // Shared connection path: tell the connection task to unsubscribe us.
+        if let Some(tx) = self.shared_unsubscribe_tx.take() {
+            let _ = tx.send(self.subscription_id.clone()).await;
+        }
+
+        // Per-subscription path: signal the background reader task.
         if let Some(tx) = self.close_tx.take() {
             let _ = tx.send(());
         }
@@ -1075,12 +1115,13 @@ impl SubscriptionManager {
 
 impl Drop for SubscriptionManager {
     fn drop(&mut self) {
-        // Send the close signal so the background reader task can attempt a
-        // graceful Unsubscribe + Close.  If close() was already called,
-        // `close_tx` is `None` and this is a no-op.
-        //
-        // Even without the signal, the reader task will eventually notice that
-        // the `event_rx` (Receiver) side was dropped and shut itself down.
+        // Shared connection path: fire-and-forget unsubscribe.
+        if let Some(tx) = self.shared_unsubscribe_tx.take() {
+            let id = self.subscription_id.clone();
+            let _ = tx.try_send(id);
+        }
+
+        // Per-subscription path: signal the background reader task.
         if let Some(tx) = self.close_tx.take() {
             let _ = tx.send(());
         }
@@ -1109,7 +1150,8 @@ mod tests {
             subscription_id: "unit-test-id".to_string(),
             event_rx: rx,
             close_tx: Some(close_tx),
-            _reader_handle: handle,
+            _reader_handle: Some(handle),
+            shared_unsubscribe_tx: None,
             event_queue: VecDeque::new(),
             buffered_changes: Vec::new(),
             is_loading: false,

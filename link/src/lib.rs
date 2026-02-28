@@ -115,6 +115,8 @@ pub mod auth;
 #[cfg(feature = "tokio-runtime")]
 pub mod client;
 #[cfg(feature = "tokio-runtime")]
+pub(crate) mod connection;
+#[cfg(feature = "tokio-runtime")]
 pub mod consumer;
 #[cfg(feature = "tokio-runtime")]
 pub mod query;
@@ -145,7 +147,7 @@ pub use models::{
     ConsumeResponse, ErrorDetail, FieldFlag, FieldFlags, HealthCheckResponse, HttpVersion,
     KalamDataType, LoginRequest, LoginResponse, LoginUserInfo, QueryRequest, QueryResponse,
     QueryResult, SchemaField, ServerSetupRequest, ServerSetupResponse, SetupStatusResponse,
-    SetupUserInfo, SubscriptionConfig, SubscriptionOptions, UploadProgress,
+    SetupUserInfo, SubscriptionConfig, SubscriptionInfo, SubscriptionOptions, UploadProgress,
 };
 pub use seq_id::SeqId;
 pub use timeouts::{KalamLinkTimeouts, KalamLinkTimeoutsBuilder};

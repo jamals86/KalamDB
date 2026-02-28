@@ -665,6 +665,20 @@ export class KalamClient {
      */
     getReconnectAttempts(): number;
     /**
+     * Return a JSON array describing all active subscriptions.
+     *
+     * Each element contains `id`, `query`, `lastSeqId`, `lastEventTimeMs`,
+     * `createdAtMs`, and `closed`.  The WASM layer surfaces its own
+     * reconnection state, so `lastSeqId` reflects the latest seq received.
+     *
+     * # Example (JavaScript)
+     * ```js
+     * const subs = client.getSubscriptions();
+     * // subs = [{ id: "sub-abc", query: "SELECT ...", lastSeqId: "123", ... }]
+     * ```
+     */
+    getSubscriptions(): any;
+    /**
      * Insert data into a table (T048, T063G)
      *
      * # Arguments
@@ -1092,6 +1106,7 @@ export interface InitOutput {
     readonly kalamclient_getAuthType: (a: number) => [number, number];
     readonly kalamclient_getLastSeqId: (a: number, b: number, c: number) => [number, number];
     readonly kalamclient_getReconnectAttempts: (a: number) => number;
+    readonly kalamclient_getSubscriptions: (a: number) => any;
     readonly kalamclient_insert: (a: number, b: number, c: number, d: number, e: number) => any;
     readonly kalamclient_isConnected: (a: number) => number;
     readonly kalamclient_isReconnecting: (a: number) => number;

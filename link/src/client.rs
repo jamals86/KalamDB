@@ -5,6 +5,7 @@
 
 use crate::{
     auth::{AuthProvider, ResolvedAuth},
+    connection::SharedConnection,
     consumer::ConsumerBuilder,
     error::{KalamLinkError, Result},
     event_handlers::EventHandlers,
@@ -16,7 +17,7 @@ use crate::{
     timeouts::KalamLinkTimeouts,
 };
 use std::{
-    sync::Arc,
+    sync::{Arc, RwLock},
     time::{Duration, Instant},
 };
 use tokio::sync::Mutex;
@@ -54,6 +55,11 @@ pub struct KalamLinkClient {
     timeouts: KalamLinkTimeouts,
     connection_options: ConnectionOptions,
     event_handlers: EventHandlers,
+    /// Shared authentication source readable by the background connection task.
+    /// Updated by `set_auth()`.
+    shared_resolved_auth: Arc<RwLock<ResolvedAuth>>,
+    /// Shared WebSocket connection — `None` until `connect()` is called.
+    connection: Arc<Mutex<Option<Arc<SharedConnection>>>>,
 }
 
 impl KalamLinkClient {
@@ -186,8 +192,11 @@ impl KalamLinkClient {
     }
 
     /// Subscribe to real-time changes
+    ///
+    /// If a shared connection has been established via [`connect()`](Self::connect),
+    /// the subscription is multiplexed over it.  Otherwise falls back to a
+    /// per-subscription WebSocket (legacy behaviour).
     pub async fn subscribe(&self, query: &str) -> Result<SubscriptionManager> {
-        // Generate a unique subscription ID using timestamp + random component
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -198,12 +207,30 @@ impl KalamLinkClient {
     }
 
     /// Subscribe with advanced configuration (pre-generated ID, options, ws_url override)
+    ///
+    /// Uses the shared connection when available, otherwise falls back to a
+    /// per-subscription WebSocket.
     pub async fn subscribe_with_config(
         &self,
         config: SubscriptionConfig,
     ) -> Result<SubscriptionManager> {
-        // Resolve fresh credentials — essential when using a DynamicAuthProvider
-        // so that expired tokens are refreshed before the WebSocket connects.
+        // ── Shared connection path ───────────────────────────────────────
+        {
+            let conn_guard = self.connection.lock().await;
+            if let Some(ref conn) = *conn_guard {
+                let options = config.options.unwrap_or_default();
+                let event_rx = conn.subscribe(config.id.clone(), config.sql, options).await?;
+                let unsub_tx = conn.unsubscribe_tx();
+                return Ok(SubscriptionManager::from_shared(
+                    config.id,
+                    event_rx,
+                    unsub_tx,
+                    &self.timeouts,
+                ));
+            }
+        }
+
+        // ── Legacy per-subscription path ─────────────────────────────────
         let auth = self.resolved_auth.resolve().await?;
         SubscriptionManager::new(
             &self.base_url,
@@ -214,6 +241,81 @@ impl KalamLinkClient {
             &self.event_handlers,
         )
         .await
+    }
+
+    /// Establish a shared WebSocket connection.
+    ///
+    /// After calling this, all subsequent [`subscribe()`](Self::subscribe)
+    /// calls will multiplex over the single connection.  The connection
+    /// handles auto-reconnection and re-subscription automatically.
+    ///
+    /// Calling `connect()` when already connected is a no-op.
+    pub async fn connect(&self) -> Result<()> {
+        let mut conn_guard = self.connection.lock().await;
+        if conn_guard.is_some() {
+            return Ok(());
+        }
+
+        let conn = SharedConnection::connect(
+            self.base_url.clone(),
+            self.shared_resolved_auth.clone(),
+            self.timeouts.clone(),
+            self.connection_options.clone(),
+            self.event_handlers.clone(),
+        )
+        .await?;
+
+        *conn_guard = Some(Arc::new(conn));
+        Ok(())
+    }
+
+    /// Disconnect the shared WebSocket connection.
+    ///
+    /// All active subscriptions will be unsubscribed and the background
+    /// task will be shut down.  After this, new `subscribe()` calls will
+    /// fall back to per-subscription connections until `connect()` is
+    /// called again.
+    pub async fn disconnect(&self) {
+        let conn = {
+            let mut guard = self.connection.lock().await;
+            guard.take()
+        };
+        if let Some(conn) = conn {
+            conn.disconnect().await;
+        }
+    }
+
+    /// Whether a shared connection is currently established and connected.
+    pub async fn is_connected(&self) -> bool {
+        let guard = self.connection.lock().await;
+        guard.as_ref().map_or(false, |c| c.is_connected())
+    }
+
+    /// List all active subscriptions on the shared connection.
+    ///
+    /// Returns a snapshot of each subscription's metadata including its ID,
+    /// SQL query, last received sequence ID, and last event timestamp.
+    ///
+    /// Returns an empty vec when no shared connection is active (i.e.
+    /// `connect()` has not been called).
+    ///
+    /// # Example
+    /// ```rust,no_run
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let client = kalam_link::KalamLinkClient::builder().base_url("http://localhost:3000").build()?;
+    /// let subs = client.subscriptions().await;
+    /// for s in &subs {
+    ///     println!("sub {} — query: {}, last_seq: {:?}", s.id, s.query, s.last_seq_id);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn subscriptions(&self) -> Vec<crate::models::SubscriptionInfo> {
+        let guard = self.connection.lock().await;
+        match guard.as_ref() {
+            Some(conn) => conn.list_subscriptions().await,
+            None => Vec::new(),
+        }
     }
 
     /// Get the current event handlers
@@ -259,7 +361,11 @@ impl KalamLinkClient {
     /// [`DynamicAuthProvider`]: crate::auth::DynamicAuthProvider
     pub fn set_auth(&mut self, auth: AuthProvider) {
         self.auth = auth.clone();
-        self.resolved_auth = ResolvedAuth::Static(auth);
+        let resolved = ResolvedAuth::Static(auth);
+        self.resolved_auth = resolved.clone();
+        // Update the shared source so the background connection task picks up
+        // fresh credentials on its next reconnect cycle.
+        *self.shared_resolved_auth.write().unwrap() = resolved;
     }
 
     /// Resolve fresh credentials from the auth source.
@@ -877,13 +983,15 @@ impl KalamLinkClientBuilder {
         Ok(KalamLinkClient {
             base_url,
             http_client,
-            resolved_auth: self.resolved_auth,
+            resolved_auth: self.resolved_auth.clone(),
             auth: static_auth,
             query_executor,
             health_cache: Arc::new(Mutex::new(HealthCheckCache::default())),
             timeouts: self.timeouts,
             connection_options: self.connection_options,
             event_handlers: self.event_handlers,
+            shared_resolved_auth: Arc::new(RwLock::new(self.resolved_auth)),
+            connection: Arc::new(Mutex::new(None)),
         })
     }
 }

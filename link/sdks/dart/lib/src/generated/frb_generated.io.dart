@@ -162,6 +162,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   DartSubscriptionConfig dco_decode_dart_subscription_config(dynamic raw);
 
   @protected
+  DartSubscriptionInfo dco_decode_dart_subscription_info(dynamic raw);
+
+  @protected
   double dco_decode_f_64(dynamic raw);
 
   @protected
@@ -178,6 +181,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<DartSchemaField> dco_decode_list_dart_schema_field(dynamic raw);
+
+  @protected
+  List<DartSubscriptionInfo> dco_decode_list_dart_subscription_info(
+      dynamic raw);
 
   @protected
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw);
@@ -372,6 +379,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  DartSubscriptionInfo sse_decode_dart_subscription_info(
+      SseDeserializer deserializer);
+
+  @protected
   double sse_decode_f_64(SseDeserializer deserializer);
 
   @protected
@@ -389,6 +400,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<DartSchemaField> sse_decode_list_dart_schema_field(
+      SseDeserializer deserializer);
+
+  @protected
+  List<DartSubscriptionInfo> sse_decode_list_dart_subscription_info(
       SseDeserializer deserializer);
 
   @protected
@@ -593,6 +608,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       DartSubscriptionConfig self, SseSerializer serializer);
 
   @protected
+  void sse_encode_dart_subscription_info(
+      DartSubscriptionInfo self, SseSerializer serializer);
+
+  @protected
   void sse_encode_f_64(double self, SseSerializer serializer);
 
   @protected
@@ -611,6 +630,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_list_dart_schema_field(
       List<DartSchemaField> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_dart_subscription_info(
+      List<DartSubscriptionInfo> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_prim_u_8_strict(

@@ -71,6 +71,45 @@ export enum ChangeType {
   Delete = 'delete',
 }
 
+/**
+ * Log severity levels, ordered from most verbose to least.
+ */
+export enum LogLevel {
+  /** Fine-grained messages useful only when diagnosing SDK internals. */
+  Verbose = 0,
+  /** Developer-oriented messages for debugging connectivity issues. */
+  Debug = 1,
+  /** Noteworthy lifecycle events (connect, disconnect, auth refresh). */
+  Info = 2,
+  /** Potential problems that do not prevent normal operation. */
+  Warn = 3,
+  /** Failures that require attention (auth errors, connection loss). */
+  Error = 4,
+  /** Logging disabled — no messages are emitted. */
+  None = 5,
+}
+
+/**
+ * A single log entry emitted by the SDK.
+ */
+export interface LogEntry {
+  /** Severity level. */
+  level: LogLevel;
+  /** Human-readable log message. */
+  message: string;
+  /** The SDK component that produced this message (e.g. `'connection'`). */
+  tag: string;
+  /** ISO-8601 timestamp when the log was created. */
+  timestamp: string;
+}
+
+/**
+ * Callback invoked for every log entry at or above the configured log level.
+ *
+ * @param entry - The log entry
+ */
+export type LogListener = (entry: LogEntry) => void;
+
 /* ================================================================== */
 /*  Client-only types (TypeScript SDK specific, no Rust equivalent)   */
 /* ================================================================== */
@@ -174,6 +213,10 @@ export interface SubscriptionInfo {
   tableName: string;
   /** Timestamp when subscription was created */
   createdAt: Date;
+  /** Last received sequence ID (for resume on reconnect), if any */
+  lastSeqId?: string;
+  /** Whether this subscription has been closed */
+  closed: boolean;
 }
 
 /* ================================================================== */
@@ -316,6 +359,25 @@ export interface ClientOptions {
    */
   authProvider?: import('./auth.js').AuthProvider;
   /**
+   * Maximum attempts used when resolving `authProvider` credentials on
+   * transient failures (timeouts/network hiccups).
+   *
+   * Defaults to `3`.
+   */
+  authProviderMaxAttempts?: number;
+  /**
+   * Backoff before the first `authProvider` retry, in milliseconds.
+   *
+   * Defaults to `250`.
+   */
+  authProviderInitialBackoffMs?: number;
+  /**
+   * Maximum backoff cap for `authProvider` retries, in milliseconds.
+   *
+   * Defaults to `2000`.
+   */
+  authProviderMaxBackoffMs?: number;
+  /**
    * Disable server-side gzip compression for WebSocket messages.
    *
    * When `true`, the client passes `?compress=false` in the WebSocket URL and
@@ -424,6 +486,36 @@ export interface ClientOptions {
    * ```
    */
   onSend?: OnSendCallback;
+
+  /**
+   * Minimum log level for SDK diagnostic messages.
+   *
+   * Defaults to `LogLevel.Warn`. Set to `LogLevel.Debug` to see
+   * connection lifecycle, keepalive pings, auth refreshes, etc.
+   *
+   * @example
+   * ```typescript
+   * createClient({ url, auth, logLevel: LogLevel.Debug });
+   * ```
+   */
+  logLevel?: LogLevel;
+
+  /**
+   * Optional callback invoked for every log entry at or above `logLevel`.
+   *
+   * When not set, messages are logged via `console.log` / `console.warn`
+   * / `console.error` depending on severity.
+   *
+   * @example
+   * ```typescript
+   * createClient({
+   *   url, auth,
+   *   logLevel: LogLevel.Debug,
+   *   logListener: (entry) => myLogger.log(entry.level, entry.message),
+   * });
+   * ```
+   */
+  logListener?: LogListener;
 }
 
 /* ================================================================== */

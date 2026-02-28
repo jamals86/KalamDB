@@ -26,6 +26,7 @@ use crate::models::{
 };
 use flutter_rust_bridge::frb;
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::{Mutex, Notify};
 
@@ -47,6 +48,9 @@ pub struct DartKalamClient {
     event_queue: Arc<std::sync::Mutex<VecDeque<DartConnectionEvent>>>,
     /// Notifier so the pull-side can await without busy-looping.
     event_notify: Arc<Notify>,
+    /// Set to `true` when [`dart_signal_dispose`] is called, causing
+    /// [`dart_next_connection_event`] to return `None` immediately.
+    disposed: Arc<AtomicBool>,
     /// Whether connection event collection is enabled.
     events_enabled: bool,
 }
@@ -139,6 +143,7 @@ fn create_client_inner(
         inner: client,
         event_queue,
         event_notify,
+        disposed: Arc::new(AtomicBool::new(false)),
         events_enabled,
     })
 }
@@ -348,7 +353,7 @@ pub async fn dart_server_setup(
 pub async fn dart_next_connection_event(
     client: &DartKalamClient,
 ) -> anyhow::Result<Option<DartConnectionEvent>> {
-    if !client.events_enabled {
+    if !client.events_enabled || client.disposed.load(Ordering::Relaxed) {
         return Ok(None);
     }
 
@@ -365,11 +370,29 @@ pub async fn dart_next_connection_event(
 
     // Slow path: wait for notification, then drain one event
     client.event_notify.notified().await;
+
+    // Re-check disposed after wake-up — dart_signal_dispose may have
+    // notified us to unblock.
+    if client.disposed.load(Ordering::Relaxed) {
+        return Ok(None);
+    }
+
     let mut queue = client
         .event_queue
         .lock()
         .map_err(|e| anyhow::anyhow!("event queue lock poisoned: {e}"))?;
     Ok(queue.pop_front())
+}
+
+/// Signal the event pump to stop.
+///
+/// Call this before awaiting the pump future in `dispose()` so that
+/// [`dart_next_connection_event`] returns `None` immediately instead
+/// of blocking forever when the event queue is empty.
+#[frb(sync)]
+pub fn dart_signal_dispose(client: &DartKalamClient) {
+    client.disposed.store(true, Ordering::Relaxed);
+    client.event_notify.notify_one();
 }
 
 /// Check whether connection event collection is enabled for this client.
@@ -389,6 +412,37 @@ pub fn dart_connection_events_enabled(client: &DartKalamClient) -> bool {
 pub struct DartSubscription {
     inner: Arc<Mutex<kalam_link::SubscriptionManager>>,
     sub_id: String,
+}
+
+// ---------------------------------------------------------------------------
+// Shared connection lifecycle
+// ---------------------------------------------------------------------------
+
+/// Establish a shared WebSocket connection.
+///
+/// After this call, subsequent [`dart_subscribe`] calls will multiplex
+/// over a single WebSocket instead of opening one per subscription.
+/// The connection handles auto-reconnection and re-subscription.
+///
+/// Calling this when already connected is a no-op.
+pub async fn dart_connect(client: &DartKalamClient) -> anyhow::Result<()> {
+    client.inner.connect().await?;
+    Ok(())
+}
+
+/// Disconnect the shared WebSocket connection.
+///
+/// All active subscriptions will be unsubscribed and the background
+/// task shut down.  New subscriptions will fall back to per-subscription
+/// connections until [`dart_connect`] is called again.
+pub async fn dart_disconnect(client: &DartKalamClient) -> anyhow::Result<()> {
+    client.inner.disconnect().await;
+    Ok(())
+}
+
+/// Check whether a shared connection is currently open and authenticated.
+pub async fn dart_is_connected(client: &DartKalamClient) -> anyhow::Result<bool> {
+    Ok(client.inner.is_connected().await)
 }
 
 /// Create a live-query subscription.
@@ -445,4 +499,15 @@ pub async fn dart_subscription_close(subscription: &DartSubscription) -> anyhow:
 #[frb(sync)]
 pub fn dart_subscription_id(subscription: &DartSubscription) -> String {
     subscription.sub_id.clone()
+}
+
+/// List all active subscriptions on the shared connection.
+///
+/// Returns a snapshot of each subscription's metadata including the
+/// subscription ID, SQL query, last received sequence ID, and timestamps.
+pub async fn dart_list_subscriptions(
+    client: &DartKalamClient,
+) -> anyhow::Result<Vec<crate::models::DartSubscriptionInfo>> {
+    let infos = client.inner.subscriptions().await;
+    Ok(infos.into_iter().map(Into::into).collect())
 }
