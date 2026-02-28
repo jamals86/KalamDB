@@ -68,12 +68,6 @@ impl AuthProvider {
     ///
     /// Encodes username:password as base64 for Authorization: Basic header
     /// following RFC 7617.
-    ///
-    /// # Example
-    /// ```
-    /// use kalam_link::AuthProvider;
-    /// let auth = AuthProvider::basic_auth("alice".to_string(), "secret123".to_string());
-    /// ```
     pub fn basic_auth(username: String, password: String) -> Self {
         Self::BasicAuth(username, password)
     }
@@ -81,13 +75,6 @@ impl AuthProvider {
     /// Create system user authentication (convenience for CLI and internal tools)
     ///
     /// Uses the default system username "root" with provided password.
-    /// This is a convenience method for CLI tools and internal processes.
-    ///
-    /// # Example
-    /// ```
-    /// use kalam_link::AuthProvider;
-    /// let auth = AuthProvider::system_user_auth("generated_password_123".to_string());
-    /// ```
     pub fn system_user_auth(password: String) -> Self {
         Self::BasicAuth("root".to_string(), password)
     }
@@ -114,19 +101,12 @@ impl AuthProvider {
     ) -> Result<reqwest::RequestBuilder> {
         match self {
             Self::BasicAuth(username, password) => {
-                // Encode username:password as base64 (RFC 7617)
                 let credentials = format!("{}:{}", username, password);
                 let encoded = general_purpose::STANDARD.encode(credentials.as_bytes());
                 Ok(request.header("Authorization", format!("Basic {}", encoded)))
             },
-            Self::JwtToken(token) => {
-                // Authorization: Bearer <token>
-                Ok(request.bearer_auth(token))
-            },
-            Self::None => {
-                // No authentication headers
-                Ok(request)
-            },
+            Self::JwtToken(token) => Ok(request.bearer_auth(token)),
+            Self::None => Ok(request),
         }
     }
 
@@ -142,51 +122,14 @@ impl AuthProvider {
 ///
 /// Implement this trait to supply credentials lazily from any source:
 /// OAuth token refresh, secure storage, interactive login, etc.
-///
-/// The client calls [`DynamicAuthProvider::get_auth`] once per connection
-/// attempt and uses the returned [`AuthProvider`] for that session.  Implement
-/// token caching and refresh logic inside `get_auth`.
-///
-/// ## Token refresh pattern
-///
-/// ```rust,no_run
-/// use kalam_link::{AuthProvider, DynamicAuthProvider, Result};
-/// use std::sync::Arc;
-/// use tokio::sync::Mutex;
-///
-/// struct RefreshingAuth {
-///     access_token: Mutex<String>,
-///     refresh_token: String,
-///     base_url: String,
-/// }
-///
-/// #[async_trait::async_trait]
-/// impl DynamicAuthProvider for RefreshingAuth {
-///     async fn get_auth(&self) -> Result<AuthProvider> {
-///         // Build a temporary no-auth client just for the refresh call
-///         let client = kalam_link::KalamLinkClient::builder()
-///             .base_url(&self.base_url)
-///             .build()?;
-///         let resp = client.refresh_access_token(&self.refresh_token).await?;
-///         *self.access_token.lock().await = resp.access_token.clone();
-///         Ok(AuthProvider::jwt_token(resp.access_token))
-///     }
-/// }
-/// ```
 #[async_trait::async_trait]
 pub trait DynamicAuthProvider: Send + Sync + 'static {
     /// Return the current (or freshly refreshed) credentials.
-    ///
-    /// Called on every WebSocket connect/reconnect.  May perform I/O
-    /// (token refresh, keychain lookup, etc.).  Errors abort the connection.
     async fn get_auth(&self) -> Result<AuthProvider>;
 }
 
 /// A boxed, reference-counted [`DynamicAuthProvider`].
 pub type ArcDynAuthProvider = Arc<dyn DynamicAuthProvider>;
-
-// Blanket impl so an `async fn` wrapped in a struct works automatically.
-// Users can also pass `Arc::new(|..| async { ... })` via a newtype if needed.
 
 /// Resolves the effective [`AuthProvider`] for a connection.
 ///
@@ -267,14 +210,10 @@ mod tests {
     fn test_basic_auth_encoding() {
         let auth = AuthProvider::basic_auth("alice".to_string(), "secret123".to_string());
 
-        // Create a dummy request to test header application
         let client = reqwest::Client::new();
         let request = client.get("http://localhost:8080");
         let result = auth.apply_to_request(request);
-
         assert!(result.is_ok());
-        // Note: reqwest::RequestBuilder doesn't expose headers for inspection,
-        // so we can only verify it doesn't error
     }
 
     #[test]
@@ -292,13 +231,10 @@ mod tests {
 
     #[test]
     fn test_basic_auth_base64_format() {
-        // Manually verify the base64 encoding format
         let username = "alice";
         let password = "secret123";
         let credentials = format!("{}:{}", username, password);
         let encoded = general_purpose::STANDARD.encode(credentials.as_bytes());
-
-        // Expected: "YWxpY2U6c2VjcmV0MTIz" (base64 of "alice:secret123")
         assert_eq!(encoded, "YWxpY2U6c2VjcmV0MTIz");
     }
 }

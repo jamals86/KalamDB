@@ -30,7 +30,7 @@ flutter pub add kalam_link
 
 ## Initialization
 
-**`KalamClient.init()` must be called once at app startup** before any other SDK call. It initializes the underlying Rust runtime.
+**`KalamClient.init()` must be called once at app startup** before any other SDK call. It initializes the underlying Rust runtime (loads the native FFI library).
 
 ```dart
 void main() async {
@@ -39,6 +39,8 @@ void main() async {
   runApp(MyApp());
 }
 ```
+
+> **Important:** Only `init()` should be awaited before `runApp()`. Do **not** call `KalamClient.connect()` before `runApp()` — it performs network I/O (WebSocket handshake) and will freeze your app's UI until the connection is established. See [Flutter Integration](#flutter-integration) below for the recommended pattern.
 
 ## Connecting
 
@@ -280,6 +282,171 @@ Always dispose the client when done to release resources:
 
 ```dart
 await client.dispose();
+```
+
+## Flutter Integration
+
+The SDK performs two async operations during startup:
+
+1. **`KalamClient.init()`** — loads the native Rust library (~1–2 s on slower Android devices)
+2. **`KalamClient.connect()`** — opens a WebSocket to the server (network-dependent, can take seconds)
+
+If you `await` both before `runApp()`, your app will show a blank screen until the network handshake completes. The correct pattern is:
+
+### Recommended: lazy service with deferred connection
+
+Only `init()` goes before `runApp()`. The connection is established lazily when the user is authenticated and your sync service starts — never during app boot.
+
+```dart
+// main.dart
+void main() async {
+  runZonedGuarded(() async {
+    WidgetsFlutterBinding.ensureInitialized();
+
+    // Load native lib — fast, OK to await before rendering
+    try {
+      await KalamClient.init();
+    } catch (_) {}
+
+    runApp(const ProviderScope(child: MyApp()));
+  }, (error, stack) {
+    // zone error handling...
+  });
+}
+```
+
+Create a service that lazily creates the client **only when needed** (e.g. after login):
+
+```dart
+class SyncService {
+  Future<KalamClient>? _clientFuture;
+  StreamSubscription<ChangeEvent>? _messagesSubscription;
+
+  bool _shouldBeConnected = false;
+  bool _isDisposed = false;
+
+  /// Lazily creates and returns the shared [KalamClient].
+  Future<KalamClient> _getClient() => _clientFuture ??= _initClient();
+
+  Future<KalamClient> _initClient() async {
+    // Guard: init() is idempotent, safe to call again
+    try { await KalamClient.init(); } catch (_) {}
+
+    return KalamClient.connect(
+      url: AppConfig.kalamDbUrl,
+      authProvider: _resolveAuth,
+      connectionHandlers: ConnectionHandlers(
+        onConnect: () => print('connected'),
+        onDisconnect: (reason) => print('disconnected: ${reason.message}'),
+        onError: (error) => print('error: ${error.message}'),
+      ),
+      keepaliveInterval: const Duration(seconds: 5),
+      maxRetries: 1,
+    );
+  }
+
+  Future<Auth> _resolveAuth() async {
+    // Fetch a fresh token from your auth system
+    final token = await myAuthService.getOrRefreshToken();
+    if (token == null) return const NoAuth();
+    return Auth.jwt(token);
+  }
+
+  /// Call after user login to start syncing.
+  Future<void> start() async {
+    if (_isDisposed || _shouldBeConnected) return;
+    _shouldBeConnected = true;
+
+    final client = await _getClient();
+    _messagesSubscription ??= client
+        .subscribe('SELECT * FROM messages', fromSeqId: lastSeenSeqId)
+        .listen(
+          _handleEvent,
+          onError: (e, st) => print('subscription error: $e'),
+          cancelOnError: false,
+        );
+  }
+
+  /// Call on logout or app teardown.
+  Future<void> stop() async {
+    _shouldBeConnected = false;
+    await _messagesSubscription?.cancel();
+    _messagesSubscription = null;
+  }
+
+  Future<void> dispose() async {
+    _isDisposed = true;
+    await stop();
+    if (_clientFuture != null) {
+      final client = await _clientFuture!;
+      await client.dispose();
+    }
+  }
+
+  void _handleEvent(ChangeEvent event) {
+    switch (event) {
+      case AckEvent(:final totalRows):
+        print('Subscribed — $totalRows initial rows');
+      case InitialDataBatch(:final rows, :final hasMore):
+        print('Batch: ${rows.length} rows, more=$hasMore');
+      case InsertEvent(:final row):
+        print('New: $row');
+      case UpdateEvent(:final row, :final oldRow):
+        print('Updated: $oldRow → $row');
+      case DeleteEvent(:final row):
+        print('Deleted: $row');
+      case SubscriptionError(:final code, :final message):
+        print('Error [$code]: $message');
+    }
+  }
+}
+```
+
+### With InheritedWidget / Provider
+
+For state management patterns, expose the client via a provider:
+
+```dart
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await KalamClient.init();
+  runApp(const MyApp());
+}
+
+// Using `provider` package or similar:
+class KalamService extends ChangeNotifier {
+  KalamClient? _client;
+  bool get isReady => _client != null;
+  KalamClient get client => _client!;
+
+  Future<void> connect(String url, AuthProvider authProvider) async {
+    _client = await KalamClient.connect(
+      url: url,
+      authProvider: authProvider,
+    );
+    notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _client?.dispose();
+    super.dispose();
+  }
+}
+```
+
+### Anti-pattern: blocking `main()`
+
+**Do not** do this — it freezes the UI on the splash/blank screen:
+
+```dart
+// BAD — app is frozen until WebSocket connects
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await KalamClient.init();
+  final client = await KalamClient.connect(url: '...');  // blocks rendering!
+  runApp(MyApp(client: client));
+}
 ```
 
 ## Full API Reference

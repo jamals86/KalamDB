@@ -1,4 +1,4 @@
-//! SQL query execution with HTTP transport.
+//! SQL query execution via HTTP.
 
 use crate::{
     auth::AuthProvider,
@@ -82,9 +82,6 @@ impl QueryExecutor {
     }
 
     fn is_retry_safe_sql(sql: &str) -> bool {
-        // Very conservative: only retry simple, read-only statements.
-        // Avoid retrying DDL/DML (CREATE/INSERT/UPDATE/DELETE/...) because
-        // a request might succeed server-side but time out client-side.
         matches!(
             Self::first_keyword(sql).as_deref(),
             Some("SELECT" | "SHOW" | "DESCRIBE" | "EXPLAIN")
@@ -139,7 +136,7 @@ impl QueryExecutor {
         None
     }
 
-    /// Execute a SQL query with optional parameters and namespace
+    /// Execute a SQL query with optional parameters and namespace.
     pub async fn execute(
         &self,
         sql: &str,
@@ -147,7 +144,8 @@ impl QueryExecutor {
         params: Option<Vec<serde_json::Value>>,
         namespace_id: Option<String>,
     ) -> Result<QueryResponse> {
-        self.execute_with_progress(sql, files, params, namespace_id, None).await
+        self.execute_with_progress(sql, files, params, namespace_id, None)
+            .await
     }
 
     /// Execute a SQL query with optional parameters and namespace, with upload progress callback.
@@ -233,12 +231,10 @@ impl QueryExecutor {
             namespace_id,
         };
 
-        // Send request with retry logic
         let mut retries: u32 = 0;
         let max_retries = self.max_retries;
         let retry_safe_sql = Self::is_retry_safe_sql(sql);
 
-        // Log query start
         let sql_preview = if sql.len() > 80 {
             format!("{}...", &sql[..80])
         } else {
@@ -253,10 +249,7 @@ impl QueryExecutor {
         let overall_start = Instant::now();
 
         loop {
-            // Build request fresh on each attempt (can't clone request builders with bodies)
             let mut req_builder = self.http_client.post(&self.sql_url).json(&request);
-
-            // Apply authentication
             req_builder = self.auth.apply_to_request(req_builder)?;
 
             let attempt_start = Instant::now();
@@ -327,16 +320,15 @@ impl QueryExecutor {
             let parse_start = Instant::now();
             let query_response: QueryResponse = response.json().await?;
             let parse_duration_ms = parse_start.elapsed().as_millis();
-
             debug!("[LINK_QUERY] Parsed response in {}ms", parse_duration_ms);
             return Ok(query_response);
         }
 
-        let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+        let error_text = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "Unknown error".to_string());
 
-        // SECURITY: Authentication/Authorization errors (4xx) must return an error,
-        // not Ok with error status. This prevents CLI from exiting with success code
-        // when auth fails, which could mask security issues in scripts/automation.
         if status.is_client_error() {
             let status_code = status.as_u16();
             warn!(
@@ -349,13 +341,14 @@ impl QueryExecutor {
             });
         }
 
-        // For 5xx errors, prefer returning a structured QueryResponse if available,
-        // so SQL execution errors can be distinguished from transport errors.
         if let Ok(json_response) = serde_json::from_str::<QueryResponse>(&error_text) {
             return Ok(json_response);
         }
 
-        warn!("[LINK_HTTP] Server error: status={} message=\"{}\"", status, error_text);
+        warn!(
+            "[LINK_HTTP] Server error: status={} message=\"{}\"",
+            status, error_text
+        );
 
         Err(KalamLinkError::ServerError {
             status_code: status.as_u16(),
@@ -389,7 +382,11 @@ mod tests {
             frame.unwrap();
         }
 
-        let progress = last_progress.lock().unwrap().clone().expect("no progress reported");
+        let progress = last_progress
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("no progress reported");
         assert_eq!(progress.file_index, 2);
         assert_eq!(progress.total_files, 3);
         assert_eq!(progress.file_name, "example.txt");

@@ -33,7 +33,7 @@ export function StudioExecutionLog({ logs, status }: StudioExecutionLogProps) {
 
   if (logs.length === 0) {
     return (
-      <div className="flex h-full items-center justify-center px-4 text-sm text-slate-500 dark:text-slate-400">
+      <div className="flex h-full items-center justify-center px-4 text-sm text-muted-foreground">
         No execution logs yet.
       </div>
     );
@@ -43,7 +43,7 @@ export function StudioExecutionLog({ logs, status }: StudioExecutionLogProps) {
     <>
     <ScrollArea className="min-h-0 flex-1">
       <div className="min-w-max p-2">
-        <div className="mb-1.5 grid min-w-[820px] grid-cols-[24px_88px_1fr_96px] items-center gap-2 px-2 py-1 text-[11px] uppercase tracking-wide text-slate-400 dark:text-slate-500">
+        <div className="mb-1.5 grid min-w-[820px] grid-cols-[24px_88px_1fr_96px] items-center gap-2 px-2 py-1 text-[11px] uppercase tracking-wide text-muted-foreground">
           <span />
           <span>Time</span>
           <span>Message</span>
@@ -53,7 +53,7 @@ export function StudioExecutionLog({ logs, status }: StudioExecutionLogProps) {
           <div
             key={entry.id}
             className={cn(
-              "mb-1.5 grid min-w-[820px] grid-cols-[24px_88px_1fr_96px] items-start gap-2 rounded border border-[#1f334d] bg-[#0f1a2a] px-2 py-1.5 text-xs text-slate-200",
+              "mb-1.5 grid min-w-[820px] grid-cols-[24px_88px_1fr_96px] items-start gap-2 rounded border border-border bg-background px-2 py-1.5 text-xs text-foreground",
               entry.level === "error" && "border-red-500/40 bg-red-950/20",
             )}
           >
@@ -61,13 +61,13 @@ export function StudioExecutionLog({ logs, status }: StudioExecutionLogProps) {
               {entry.level === "error" ? (
                 <AlertCircle className="h-3.5 w-3.5 text-red-400" />
               ) : (
-                <CheckCircle2 className={cn("h-3.5 w-3.5", status === "success" ? "text-emerald-400" : "text-slate-400")} />
+                <CheckCircle2 className={cn("h-3.5 w-3.5", status === "success" ? "text-emerald-400" : "text-muted-foreground")} />
               )}
             </span>
-            <span className="font-mono text-[11px] text-slate-400">{formatLogTime(entry.createdAt)}</span>
+            <span className="font-mono text-[11px] text-muted-foreground">{formatLogTime(entry.createdAt)}</span>
             <div className="min-w-0 space-y-1">
-              <div className="font-mono text-[12px] leading-5 text-slate-100">{entry.message}</div>
-              <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-400">
+              <div className="font-mono text-[12px] leading-5 text-foreground">{entry.message}</div>
+              <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
                 <span>#{index + 1}</span>
                 {typeof entry.rowCount === "number" && <span>{entry.rowCount} rows</span>}
                 {entry.asUser && <span>as {entry.asUser}</span>}
@@ -78,7 +78,7 @@ export function StudioExecutionLog({ logs, status }: StudioExecutionLogProps) {
               <Button
                 variant="outline"
                 size="sm"
-                className="h-7 gap-1.5 border-slate-600 bg-transparent text-slate-200 hover:bg-slate-800"
+                className="h-7 gap-1.5 border-border bg-transparent text-foreground hover:bg-muted"
                 disabled={entry.response === undefined}
                 onClick={() => {
                   if (entry.response === undefined) {

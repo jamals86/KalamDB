@@ -15,9 +15,9 @@ export function StudioInspectorPanel({
   history,
 }: StudioInspectorPanelProps) {
   return (
-    <div className="flex h-full flex-col border-l border-slate-200 bg-[#f8fafc] dark:border-[#1e293b] dark:bg-[#151e29]">
+    <div className="flex h-full flex-col border-l border-border bg-background">
       <Tabs defaultValue="details" className="flex h-full flex-col">
-        <div className="border-b border-slate-200 px-2 py-2 dark:border-[#1e293b]">
+        <div className="border-b border-border px-2 py-2">
           <TabsList className="grid h-8 w-full grid-cols-2 bg-transparent">
             <TabsTrigger value="details">Details</TabsTrigger>
             <TabsTrigger value="history">History</TabsTrigger>
@@ -35,8 +35,8 @@ export function StudioInspectorPanel({
             {selectedTable && (
               <div className="space-y-3">
                 <div>
-                  <p className="text-xs uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">Table Information</p>
-                  <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+                  <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Table Information</p>
+                  <p className="text-sm font-semibold text-foreground">
                     {selectedTable.namespace}.{selectedTable.name}
                   </p>
                   <Badge variant="secondary" className="mt-1 text-[10px] uppercase">
@@ -45,14 +45,14 @@ export function StudioInspectorPanel({
                 </div>
 
                 <div className="space-y-2">
-                  <p className="text-xs uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">Table Schema</p>
+                  <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Table Schema</p>
                   {selectedTable.columns.map((column) => (
-                    <div key={column.name} className="rounded-md border border-slate-200 bg-white p-2 dark:border-[#1e293b] dark:bg-[#0d141c]">
+                    <div key={column.name} className="rounded-md border border-border bg-background p-2">
                       <div className="flex items-center justify-between gap-2">
-                        <span className="truncate text-sm font-medium text-slate-800 dark:text-slate-200">{column.name}</span>
-                        <span className="text-[10px] uppercase text-slate-500 dark:text-slate-400">{column.dataType}</span>
+                        <span className="truncate text-sm font-medium text-foreground">{column.name}</span>
+                        <span className="text-[10px] uppercase text-muted-foreground">{column.dataType}</span>
                       </div>
-                      <div className="mt-1 flex items-center gap-2 text-[10px] text-slate-500 dark:text-slate-400">
+                      <div className="mt-1 flex items-center gap-2 text-[10px] text-muted-foreground">
                         {column.isPrimaryKey && <span>Primary Key</span>}
                         <span>{column.isNullable ? "Nullable" : "Not Null"}</span>
                       </div>
@@ -60,10 +60,10 @@ export function StudioInspectorPanel({
                   ))}
                 </div>
 
-                <div className="space-y-1.5 rounded-md border border-slate-200 bg-white p-3 text-xs dark:border-[#1e293b] dark:bg-[#0d141c]">
-                  <p className="uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">Options + Version</p>
-                  <p className="text-slate-600 dark:text-slate-300">Current version: v1</p>
-                  <p className="text-slate-600 dark:text-slate-300">Read only in this phase</p>
+                <div className="space-y-1.5 rounded-md border border-border bg-background p-3 text-xs">
+                  <p className="uppercase tracking-[0.16em] text-muted-foreground">Options + Version</p>
+                  <p className="text-muted-foreground">Current version: v1</p>
+                  <p className="text-muted-foreground">Read only in this phase</p>
                 </div>
               </div>
             )}
@@ -78,7 +78,7 @@ export function StudioInspectorPanel({
               )}
 
               {history.map((entry) => (
-                <div key={entry.id} className="rounded-md border border-slate-200 bg-white p-2 dark:border-[#1e293b] dark:bg-[#0d141c]">
+                <div key={entry.id} className="rounded-md border border-border bg-background p-2">
                   <div className="flex items-center justify-between gap-2">
                     <p className="truncate text-xs font-semibold">{entry.tabTitle}</p>
                     <Badge variant={entry.status === "success" ? "secondary" : "outline"}>
@@ -104,14 +104,14 @@ export function StudioInspectorPanel({
         </TabsContent>
       </Tabs>
 
-      <div className="space-y-2 border-t border-slate-200 bg-white px-3 py-3 text-xs dark:border-[#1e293b] dark:bg-[#0d141c]">
-        <span className="inline-flex items-center gap-1 text-slate-500 dark:text-slate-400">
+      <div className="space-y-2 border-t border-border bg-background px-3 py-3 text-xs">
+        <span className="inline-flex items-center gap-1 text-muted-foreground">
           <Columns3 className="h-3 w-3" />
           1 pending edit
         </span>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" className="h-7 flex-1 text-xs">Discard</Button>
-          <Button size="sm" className="h-7 flex-1 bg-[#137fec] text-xs text-white hover:bg-[#0f6cbd]">Commit</Button>
+          <Button size="sm" className="h-7 flex-1 bg-primary text-xs text-foreground hover:bg-primary">Commit</Button>
         </div>
       </div>
     </div>

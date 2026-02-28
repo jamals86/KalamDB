@@ -1,0 +1,33 @@
+//! WebSocket connection management.
+//!
+//! This module contains:
+//! - [`websocket`]: Low-level WebSocket helpers (URL resolution, auth headers,
+//!   message parsing, keepalive jitter, local bind addresses, decompression)
+//! - [`shared`]: Shared multiplexed WebSocket connection with auto-reconnect
+
+pub mod shared;
+pub mod websocket;
+
+// Re-export the shared connection type for crate-internal use.
+pub(crate) use shared::SharedConnection;
+pub(crate) use websocket::{
+    apply_ws_auth_headers, connect_with_optional_local_bind, decode_ws_payload,
+    jitter_keepalive_interval, parse_message, resolve_ws_url, send_auth_and_wait,
+    send_next_batch_request, send_subscription_request, WebSocketStream,
+};
+
+/// Default capacity for subscription event channels.
+pub(crate) const DEFAULT_EVENT_CHANNEL_CAPACITY: usize = 8192;
+
+/// Maximum text message size (64 MiB).
+pub(crate) const MAX_WS_TEXT_MESSAGE_BYTES: usize = 64 << 20;
+
+/// Maximum binary message size before decompression (16 MiB).
+pub(crate) const MAX_WS_BINARY_MESSAGE_BYTES: usize = 16 << 20;
+
+/// Maximum decompressed message size (64 MiB).
+pub(crate) const MAX_WS_DECOMPRESSED_MESSAGE_BYTES: usize = 64 << 20;
+
+/// A duration far enough in the future (~100 years) to act as "never" for
+/// deadline calculations without overflowing `Instant::now() + dur`.
+pub(crate) const FAR_FUTURE: std::time::Duration = std::time::Duration::from_secs(100 * 365 * 24 * 3600);

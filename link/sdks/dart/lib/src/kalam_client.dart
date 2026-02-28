@@ -42,11 +42,16 @@ class KalamClient {
   /// Initialize the Rust runtime. Call once at app startup before any
   /// [KalamClient.connect] calls.
   ///
+  /// This loads the native FFI library and is safe to `await` before
+  /// `runApp()`. However, do **not** also `await` [connect] before
+  /// `runApp()` — that performs network I/O and will freeze your UI.
+  ///
   /// ```dart
   /// void main() async {
   ///   WidgetsFlutterBinding.ensureInitialized();
-  ///   await KalamClient.init();
-  ///   runApp(MyApp());
+  ///   await KalamClient.init();   // OK — fast FFI load
+  ///   runApp(MyApp());            // render immediately
+  ///   // call connect() inside your widget/provider after the first frame
   /// }
   /// ```
   static Future<void> init() => RustLib.init();
@@ -69,6 +74,25 @@ class KalamClient {
   }
 
   /// Connect to a KalamDB server.
+  ///
+  /// This method establishes a WebSocket connection to the server, which
+  /// involves network I/O. **Do not `await` this before `runApp()`** in a
+  /// Flutter app — it will block rendering. Instead, call it from
+  /// `initState()` or a provider and show a loading indicator until ready.
+  ///
+  /// ```dart
+  /// // In a StatefulWidget:
+  /// @override
+  /// void initState() {
+  ///   super.initState();
+  ///   _initClient();
+  /// }
+  ///
+  /// Future<void> _initClient() async {
+  ///   final client = await KalamClient.connect(url: '...');
+  ///   if (mounted) setState(() => _client = client);
+  /// }
+  /// ```
   ///
   /// * [url] — server URL, e.g. `"https://db.example.com"`.
   /// * [auth] — **Deprecated.** Use [authProvider] instead. Static credentials

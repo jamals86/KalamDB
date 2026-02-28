@@ -81,11 +81,6 @@ import {
 } from "@/features/sql-studio/utils/workspaceHelpers";
 import { ExplorerTableContextMenu } from "@/features/sql-studio/components/ExplorerTableContextMenu";
 
-const FAVORITE_QUERIES = [
-  "Top active users (24h)",
-  "Jobs failed in last hour",
-  "Namespace growth trend",
-];
 
 function normalizeLiveRows(rows: unknown[]): Record<string, unknown>[] {
   return rows.map((row) => {
@@ -729,14 +724,14 @@ export default function SqlStudio() {
 
   if (!activeTab) {
     return (
-      <div className="flex h-full items-center justify-center bg-[#101922] text-sm text-slate-400">
+      <div className="flex h-full items-center justify-center bg-background text-sm text-muted-foreground">
         Loading SQL workspace...
       </div>
     );
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-[#101922] text-slate-200">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-background text-foreground">
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1">
           <ResizablePanel
@@ -756,7 +751,6 @@ export default function SqlStudio() {
             <StudioExplorerPanel
               schema={schema}
               filter={schemaFilter}
-              favoriteQueries={FAVORITE_QUERIES}
               savedQueries={savedQueries}
               favoritesExpanded={favoritesExpanded}
               expandedNamespaces={expandedNamespaces}
@@ -781,12 +775,12 @@ export default function SqlStudio() {
           <ResizableHandle withHandle />
 
           <ResizablePanel defaultSize={horizontalLayout[1]} minSize="40%" className="min-h-0">
-            <div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-white dark:bg-[#101922]">
+            <div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-background">
               <div className="absolute right-2 top-1.5 z-20">
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-8 w-8 text-slate-500 hover:text-slate-200"
+                  className="h-8 w-8 text-muted-foreground hover:text-foreground"
                   onClick={toggleInspector}
                   title={isInspectorCollapsed ? "Expand details panel" : "Collapse details panel"}
                 >
@@ -864,7 +858,7 @@ export default function SqlStudio() {
         </ResizablePanelGroup>
 
         {!isInspectorCollapsed && (
-          <div className="min-h-0 w-[320px] min-w-[240px] max-w-[420px] border-l border-[#1b2a40]">
+          <div className="min-h-0 w-[320px] min-w-[240px] max-w-[420px] border-l border-border">
             <StudioInspectorPanel selectedTable={selectedTable} history={history} />
           </div>
         )}
