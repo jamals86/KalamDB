@@ -1014,7 +1014,8 @@ jobs:
           set -euo pipefail
           mkdir -p test-data/rocksdb test-data/storage test-data/logs
           ./kalamdb-server > server.log 2>&1 &
-          echo "SERVER_PID=$!" >> "$GITHUB_ENV"
+          SERVER_PID=$!
+          echo "SERVER_PID=$SERVER_PID" >> "$GITHUB_ENV"
           for i in {1..60}; do
             if curl -sf http://localhost:8080/health > /dev/null 2>&1; then
               echo "✅ Server is ready (${i}s)"
@@ -1394,7 +1395,8 @@ jobs:
           sed -i 's|jwt_secret = ".*"|jwt_secret = "sdk-test-secret-key-minimum-32-characters-long"|g' server.toml
           mkdir -p test-data/rocksdb test-data/storage test-data/logs
           ./kalamdb-server > ts-sdk-server.log 2>&1 &
-          echo "SERVER_PID=$!" >> "$GITHUB_ENV"
+          SERVER_PID=$!
+          echo "SERVER_PID=$SERVER_PID" >> "$GITHUB_ENV"
           for i in {1..60}; do
             curl -sf http://localhost:8080/health > /dev/null 2>&1 && echo "✅ Server ready (${i}s)" && exit 0
             kill -0 "$SERVER_PID" 2>/dev/null || { echo "❌ Server died"; cat ts-sdk-server.log; exit 1; }
@@ -1478,7 +1480,8 @@ jobs:
           sed -i 's|jwt_secret = ".*"|jwt_secret = "sdk-test-secret-key-minimum-32-characters-long"|g' server.toml
           mkdir -p test-data/rocksdb test-data/storage test-data/logs
           ./kalamdb-server > dart-sdk-server.log 2>&1 &
-          echo "SERVER_PID=$!" >> "$GITHUB_ENV"
+          SERVER_PID=$!
+          echo "SERVER_PID=$SERVER_PID" >> "$GITHUB_ENV"
           for i in {1..60}; do
             curl -sf http://localhost:8080/health > /dev/null 2>&1 && echo "✅ Server ready (${i}s)" && exit 0
             kill -0 "$SERVER_PID" 2>/dev/null || { echo "❌ Server died"; cat dart-sdk-server.log; exit 1; }
