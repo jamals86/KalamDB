@@ -146,6 +146,7 @@ CREATE TABLE chat.messages (
   thread_id TEXT NOT NULL,
   role TEXT NOT NULL,
   content TEXT NOT NULL,
+  attachment FILE,
   created_at TIMESTAMP DEFAULT NOW()
 ) WITH (TYPE = 'USER');
 ```
@@ -167,7 +168,7 @@ CREATE TABLE chat.messages (
 
 ## Docs and Links
 
-- Docs: `docs/`
+- Docs: <https://kalamdb.org/docs>
 - Quick start: `docs/getting-started/quick-start.md`
 - TypeScript SDK: `link/sdks/typescript/`
 - Docker deployment: `docker/run/`
