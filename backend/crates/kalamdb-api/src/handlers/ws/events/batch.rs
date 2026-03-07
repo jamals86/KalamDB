@@ -26,6 +26,7 @@ pub async fn handle_next_batch(
     last_seq_id: Option<SeqId>,
     session: &mut Session,
     live_query_manager: &Arc<LiveQueryManager>,
+    compression_enabled: bool,
 ) -> Result<(), String> {
     // Increment batch number and get the new value
     // This is done BEFORE fetching to get the correct batch_num for this request
@@ -71,6 +72,7 @@ pub async fn handle_next_batch(
                             subscription_id,
                             WsErrorCode::ConversionError,
                             &format!("Failed to convert row data: {}", e),
+                            compression_enabled,
                         )
                         .await
                         .map_err(|_| "Failed to send error message".to_string());
@@ -83,7 +85,7 @@ pub async fn handle_next_batch(
                 rows_json,
                 batch_control,
             );
-            let _ = send_json(session, &msg, true).await;
+            let _ = send_json(session, &msg, compression_enabled).await;
 
             if !result.has_more {
                 let flushed = connection_state.read().complete_initial_load(subscription_id);
@@ -98,7 +100,7 @@ pub async fn handle_next_batch(
         },
         Err(e) => {
             let _ =
-                send_error(session, subscription_id, WsErrorCode::BatchFetchFailed, &e.to_string())
+                send_error(session, subscription_id, WsErrorCode::BatchFetchFailed, &e.to_string(), compression_enabled)
                     .await;
             Ok(())
         },

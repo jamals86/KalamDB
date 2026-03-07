@@ -7,11 +7,7 @@ use kalam_link::models::ChangeEvent;
 
 /// Attempt to subscribe to a query as a given user and wait for ACK or error.
 /// Returns Ok(()) if subscription was accepted, Err(msg) if it was denied or failed.
-fn try_subscribe_as_user(
-    username: &str,
-    password: &str,
-    query: &str,
-) -> Result<(), String> {
+fn try_subscribe_as_user(username: &str, password: &str, query: &str) -> Result<(), String> {
     let base_url = leader_url().unwrap_or_else(|| {
         get_available_server_urls()
             .first()
@@ -245,7 +241,8 @@ fn smoke_shared_table_subscription_private_denied() {
             || err_msg.contains("privilege")
             || err_msg.contains("denied")
             || err_msg.contains("access")
-            || err_msg.contains("unauthorized"),        "Expected permission-related error message, but got: {}",
+            || err_msg.contains("unauthorized"),
+        "Expected permission-related error message, but got: {}",
         err_msg
     );
 

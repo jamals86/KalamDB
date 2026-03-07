@@ -222,6 +222,66 @@ void main() {
     );
 
     // ─────────────────────────────────────────────────────────────────
+    // Invalid subscription surfaces an error instead of hanging silently
+    // ─────────────────────────────────────────────────────────────────
+    test(
+      'invalid subscription emits a startup error',
+      () async {
+        final stream = client.subscribe(
+          'SELECT * FROM nonexistent.dart_missing_subscription_table',
+        );
+
+        await expectLater(
+          stream.drain<void>(),
+          throwsA(
+            isA<Object>().having(
+              (error) => error.toString().toLowerCase(),
+              'message',
+              allOf(
+                contains('subscription failed'),
+                anyOf(contains('not found'), contains('does not exist')),
+              ),
+            ),
+          ),
+        );
+      },
+      timeout: const Timeout(Duration(seconds: 30)),
+    );
+
+    test(
+      'liveQueryRowsWithSql emits materialized row snapshots',
+      () async {
+        final snapshots = <List<Map<String, KalamCellValue>>>[];
+        final stream = client.liveQueryRowsWithSql<Map<String, KalamCellValue>>(
+          'SELECT id, body FROM $tbl ORDER BY id ASC',
+          limit: 2,
+        );
+        final sub = stream.listen(snapshots.add);
+
+        await sleep(const Duration(seconds: 2));
+
+        final writer = await connectJwtClient();
+        try {
+          await writer.query(
+            "INSERT INTO $tbl (id, body) VALUES (700, 'first')",
+          );
+
+          await Future<void>.delayed(const Duration(seconds: 2));
+
+          expect(snapshots, isNotEmpty);
+          final latest = snapshots.last;
+          expect(latest.length, 1);
+          expect(latest.first['id']?.asInt(), 700);
+          expect(latest.first['body']?.asString(), 'first');
+        } finally {
+          await _safeCancel(sub);
+          await writer.dispose();
+        }
+      },
+      timeout: const Timeout(Duration(seconds: 60)),
+    );
+
+    // ─────────────────────────────────────────────────────────────────
     // Cancel subscription stops receiving events
     // ─────────────────────────────────────────────────────────────────
     test(

@@ -189,9 +189,11 @@ async fn try_fast_insert_from_insert(
     if returning_seq {
         // INSERT ... RETURNING _seq: return the generated sequence IDs as rows
         let seq_values = kalam_provider.insert_rows_returning(user_id, rows).await?;
-        let schema = Arc::new(arrow::datatypes::Schema::new(vec![
-            arrow::datatypes::Field::new("_seq", arrow::datatypes::DataType::Int64, false),
-        ]));
+        let schema = Arc::new(arrow::datatypes::Schema::new(vec![arrow::datatypes::Field::new(
+            "_seq",
+            arrow::datatypes::DataType::Int64,
+            false,
+        )]));
         let seq_array: arrow::array::Int64Array = seq_values
             .iter()
             .map(|v| match v {
@@ -199,11 +201,10 @@ async fn try_fast_insert_from_insert(
                 _ => None,
             })
             .collect();
-        let batch = arrow::array::RecordBatch::try_new(
-            schema.clone(),
-            vec![Arc::new(seq_array)],
-        )
-        .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to create RETURNING batch: {}", e)))?;
+        let batch = arrow::array::RecordBatch::try_new(schema.clone(), vec![Arc::new(seq_array)])
+            .map_err(|e| {
+            KalamDbError::InvalidOperation(format!("Failed to create RETURNING batch: {}", e))
+        })?;
         let row_count = batch.num_rows();
         Ok(Some(ExecutionResult::Rows {
             batches: vec![batch],

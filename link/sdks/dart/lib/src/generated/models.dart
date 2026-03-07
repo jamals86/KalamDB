@@ -221,6 +221,40 @@ class DartHealthCheckResponse {
           buildDate == other.buildDate;
 }
 
+/// Configuration for Rust-side live row materialization.
+class DartLiveRowsConfig {
+  final int? limit;
+
+  const DartLiveRowsConfig({
+    this.limit,
+  });
+
+  @override
+  int get hashCode => limit.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is DartLiveRowsConfig &&
+          runtimeType == other.runtimeType &&
+          limit == other.limit;
+}
+
+@freezed
+sealed class DartLiveRowsEvent with _$DartLiveRowsEvent {
+  const DartLiveRowsEvent._();
+
+  const factory DartLiveRowsEvent.rows({
+    required String subscriptionId,
+    required List<String> rowsJson,
+  }) = DartLiveRowsEvent_Rows;
+  const factory DartLiveRowsEvent.error({
+    required String subscriptionId,
+    required String code,
+    required String message,
+  }) = DartLiveRowsEvent_Error;
+}
+
 class DartLoginResponse {
   final String accessToken;
   final String? refreshToken;

@@ -147,6 +147,47 @@ export type TypedSubscriptionCallback<T extends Record<string, unknown>> = (
 ) => void;
 
 /**
+ * Subscription error event shape.
+ */
+export type SubscriptionErrorEvent = Extract<
+  import('../wasm/kalam_link.js').ServerMessage,
+  { type: 'error' }
+>;
+
+/**
+ * Callback that receives the fully materialized row set for a live query.
+ */
+export type LiveRowsCallback<T> = (rows: T[]) => void;
+
+/**
+ * Options for SDK-managed live query row materialization.
+ */
+export interface LiveRowsOptions<T> {
+  /**
+   * Map each incoming `RowData` into an application-level shape.
+   * Defaults to the raw `RowData` object.
+   */
+  mapRow?: (row: import('./cell_value.js').RowData) => T;
+  /**
+   * Resolve a stable key for upsert/delete handling.
+   * Defaults to `row.id` when available.
+   */
+  getKey?: (row: T) => string | null | undefined;
+  /**
+   * Maximum number of rows to keep in memory.
+   */
+  limit?: number;
+  /**
+   * Subscription-level options passed through to the server.
+   */
+  subscriptionOptions?: import('../wasm/kalam_link.js').SubscriptionOptions;
+  /**
+   * Optional error callback for post-start subscription failures.
+   */
+  onError?: (event: SubscriptionErrorEvent) => void;
+}
+
+/**
  * Function to unsubscribe from a subscription (Firebase/Supabase style)
  */
 export type Unsubscribe = () => Promise<void>;

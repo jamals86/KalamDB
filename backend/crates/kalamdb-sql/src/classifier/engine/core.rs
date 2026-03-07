@@ -308,12 +308,10 @@ impl SqlStatement {
                 })
             },
             // Show user export status / download link
-            ["SHOW", "EXPORT", ..] => {
-                Self::wrap(sql, || {
-                    crate::ddl::export_commands::ShowExportStatement::parse(sql)
-                        .map(SqlStatementKind::ShowExport)
-                })
-            },
+            ["SHOW", "EXPORT", ..] => Self::wrap(sql, || {
+                crate::ddl::export_commands::ShowExportStatement::parse(sql)
+                    .map(SqlStatementKind::ShowExport)
+            }),
 
             // Job management - require admin
             ["KILL", "JOB", ..] => {
@@ -556,12 +554,10 @@ impl SqlStatement {
             },
 
             // Export user data - any authenticated user can export their own data
-            ["EXPORT", "USER", "DATA", ..] => {
-                Self::wrap(sql, || {
-                    crate::ddl::export_commands::ExportUserDataStatement::parse(sql)
-                        .map(SqlStatementKind::ExportUserData)
-                })
-            },
+            ["EXPORT", "USER", "DATA", ..] => Self::wrap(sql, || {
+                crate::ddl::export_commands::ExportUserDataStatement::parse(sql)
+                    .map(SqlStatementKind::ExportUserData)
+            }),
 
             // User management - require admin (except ALTER USER for self)
             ["CREATE", "USER", ..] => {

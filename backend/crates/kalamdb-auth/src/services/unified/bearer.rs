@@ -142,8 +142,8 @@ pub(super) async fn authenticate_bearer(
         } else {
             user.role
         };
-
-        tracing::debug!(username = %user.username, role = ?role, "Bearer authentication succeeded");
+        
+        tracing::trace!(username = %user.username, role = ?role, "Bearer authentication succeeded");
 
         Ok(AuthenticatedUser::new(
             user.user_id.clone(),

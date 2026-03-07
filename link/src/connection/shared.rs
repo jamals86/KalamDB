@@ -15,14 +15,14 @@ use crate::{
     connection::{
         apply_ws_auth_headers, connect_with_optional_local_bind, decode_ws_payload,
         jitter_keepalive_interval, parse_message, resolve_ws_url, send_auth_and_wait,
-        send_next_batch_request, WebSocketStream,
-        DEFAULT_EVENT_CHANNEL_CAPACITY, FAR_FUTURE, MAX_WS_TEXT_MESSAGE_BYTES,
+        send_next_batch_request, WebSocketStream, DEFAULT_EVENT_CHANNEL_CAPACITY, FAR_FUTURE,
+        MAX_WS_TEXT_MESSAGE_BYTES,
     },
     error::{KalamLinkError, Result},
     event_handlers::{ConnectionError, DisconnectReason, EventHandlers},
     models::{
-        ChangeEvent, ClientMessage, ConnectionOptions, SubscriptionInfo,
-        SubscriptionOptions, SubscriptionRequest,
+        ChangeEvent, ClientMessage, ConnectionOptions, SubscriptionInfo, SubscriptionOptions,
+        SubscriptionRequest,
     },
     seq_id::SeqId,
     seq_tracking,
@@ -46,10 +46,7 @@ use tokio_tungstenite::tungstenite::{client::IntoClientRequest, protocol::Messag
 /// Current time in millis since Unix epoch.
 #[inline]
 fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
+    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64
 }
 
 /// Build a `Vec<SubscriptionInfo>` snapshot from the internal subs map.
@@ -64,6 +61,15 @@ fn snapshot_subscriptions(subs: &HashMap<String, SubEntry>) -> Vec<SubscriptionI
             closed: false,
         })
         .collect()
+}
+
+fn subscription_start_ready(event: &ChangeEvent) -> bool {
+    matches!(
+        event,
+        ChangeEvent::Ack { batch_control, .. }
+            | ChangeEvent::InitialDataBatch { batch_control, .. }
+                if batch_control.status == crate::models::BatchStatus::Ready
+    )
 }
 
 // ── Commands ────────────────────────────────────────────────────────────────
@@ -97,6 +103,7 @@ struct SubEntry {
     generation: u64,
     created_at_ms: u64,
     last_event_time_ms: Option<u64>,
+    pending_result_tx: Option<oneshot::Sender<Result<u64>>>,
 }
 
 // ── SharedConnection (public handle) ────────────────────────────────────────
@@ -221,15 +228,20 @@ impl SharedConnection {
 
     pub async fn disconnect(&self) {
         let _ = self.cmd_tx.send(ConnCmd::Shutdown).await;
+
+        // Explicit disconnect/connect cycles should wait until the background
+        // task marks the shared socket as down before allowing a new connect.
+        for _ in 0..50 {
+            if !self.connected.load(Ordering::Relaxed) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
     }
 
     pub async fn list_subscriptions(&self) -> Vec<SubscriptionInfo> {
         let (result_tx, result_rx) = oneshot::channel();
-        if self.cmd_tx
-            .send(ConnCmd::ListSubscriptions { result_tx })
-            .await
-            .is_err()
-        {
+        if self.cmd_tx.send(ConnCmd::ListSubscriptions { result_tx }).await.is_err() {
             return Vec::new();
         }
         result_rx.await.unwrap_or_default()
@@ -265,14 +277,9 @@ async fn establish_ws(
 
     let request_url = resolve_ws_url(base_url, None, connection_options.disable_compression)?;
 
-    let mut request = request_url
-        .into_client_request()
-        .map_err(|e| {
-            KalamLinkError::WebSocketError(format!(
-                "Failed to build WebSocket request: {}",
-                e
-            ))
-        })?;
+    let mut request = request_url.into_client_request().map_err(|e| {
+        KalamLinkError::WebSocketError(format!("Failed to build WebSocket request: {}", e))
+    })?;
 
     apply_ws_auth_headers(&mut request, &auth)?;
 
@@ -372,9 +379,7 @@ async fn send_unsubscribe(ws: &mut WebSocketStream, id: &str) -> Result<()> {
     })?;
     ws.send(Message::Text(payload.into()))
         .await
-        .map_err(|e| {
-            KalamLinkError::WebSocketError(format!("Failed to send unsubscribe: {}", e))
-        })
+        .map_err(|e| KalamLinkError::WebSocketError(format!("Failed to send unsubscribe: {}", e)))
 }
 
 async fn route_event(
@@ -420,29 +425,52 @@ async fn route_event(
             if let Some(entry) = subs.get_mut(&sub_id) {
                 seq_tracking::track_rows(&mut entry.last_seq_id, rows);
             }
-        }
+        },
         ChangeEvent::Delete { ref old_rows, .. } => {
             if let Some(entry) = subs.get_mut(&sub_id) {
                 seq_tracking::track_rows(&mut entry.last_seq_id, old_rows);
             }
-        }
-        _ => {}
+        },
+        _ => {},
     }
 
     let matched_key = if subs.contains_key(&sub_id) {
         Some(sub_id.clone())
     } else {
-        subs.keys()
-            .find(|cid| sub_id.ends_with(cid.as_str()))
-            .cloned()
+        subs.keys().find(|cid| sub_id.ends_with(cid.as_str())).cloned()
     };
 
     if let Some(key) = matched_key {
+        let mut remove_after_send = false;
+
         if let Some(entry) = subs.get_mut(&key) {
             entry.last_event_time_ms = Some(now_ms());
-            if entry.event_tx.send(Ok(event)).await.is_err() {
+
+            match &event {
+                _ if subscription_start_ready(&event) => {
+                    if let Some(result_tx) = entry.pending_result_tx.take() {
+                        let _ = result_tx.send(Ok(entry.generation));
+                    }
+                },
+                ChangeEvent::Error { code, message, .. } => {
+                    if let Some(result_tx) = entry.pending_result_tx.take() {
+                        let _ = result_tx.send(Err(KalamLinkError::WebSocketError(format!(
+                            "Subscription failed ({}): {}",
+                            code, message
+                        ))));
+                        remove_after_send = true;
+                    }
+                },
+                _ => {},
+            }
+
+            if !remove_after_send && entry.event_tx.send(Ok(event)).await.is_err() {
                 log::debug!("Subscription {} receiver dropped", sub_id);
             }
+        }
+
+        if remove_after_send {
+            subs.remove(&key);
         }
     } else {
         log::debug!("No subscription found for id: {}", sub_id);
@@ -510,14 +538,8 @@ async fn connection_task(
     let mut awaiting_pong = false;
     let mut pong_deadline = TokioInstant::now() + FAR_FUTURE;
 
-    match establish_ws(
-        &base_url,
-        &resolved_auth,
-        &timeouts,
-        &connection_options,
-        &event_handlers,
-    )
-    .await
+    match establish_ws(&base_url, &resolved_auth, &timeouts, &connection_options, &event_handlers)
+        .await
     {
         Ok((stream, _auth)) => {
             ws_stream = Some(stream);
@@ -529,10 +551,7 @@ async fn connection_task(
             }
         },
         Err(e) => {
-            log::warn!(
-                "Initial connection failed (will connect on first subscribe): {}",
-                e
-            );
+            log::warn!("Initial connection failed (will connect on first subscribe): {}", e);
             if let Some(tx) = ready_tx {
                 let _ = tx.send(Err(e));
             }
@@ -588,7 +607,11 @@ async fn connection_task(
                                     id,
                                 );
                                 let _ = send_unsubscribe(ws, &id).await;
-                                subs.remove(&id);
+                                if let Some(mut old_entry) = subs.remove(&id) {
+                                    if let Some(old_tx) = old_entry.pending_result_tx.take() {
+                                        let _ = old_tx.send(Err(KalamLinkError::Cancelled));
+                                    }
+                                }
                             }
                             let result = send_subscribe(ws, &id, &sql, options.clone()).await;
                             let gen = next_generation;
@@ -602,9 +625,11 @@ async fn connection_task(
                                     generation: gen,
                                     created_at_ms: now_ms(),
                                     last_event_time_ms: None,
+                                    pending_result_tx: Some(result_tx),
                                 });
+                            } else {
+                                let _ = result_tx.send(result.map(|()| gen));
                             }
-                            let _ = result_tx.send(result.map(|()| gen));
                         },
                         Some(ConnCmd::Unsubscribe { id, generation }) => {
                             let should_remove = match generation {
@@ -612,7 +637,11 @@ async fn connection_task(
                                 None => true,
                             };
                             if should_remove {
-                                subs.remove(&id);
+                                if let Some(mut entry) = subs.remove(&id) {
+                                    if let Some(result_tx) = entry.pending_result_tx.take() {
+                                        let _ = result_tx.send(Err(KalamLinkError::Cancelled));
+                                    }
+                                }
                                 let _ = send_unsubscribe(ws, &id).await;
                             } else {
                                 log::debug!(
@@ -767,7 +796,12 @@ async fn connection_task(
                         false,
                     ));
                     let err_msg = "Max reconnection attempts reached".to_string();
-                    for (_id, entry) in subs.drain() {
+                    for (_id, mut entry) in subs.drain() {
+                        if let Some(result_tx) = entry.pending_result_tx.take() {
+                            let _ = result_tx.send(Err(KalamLinkError::WebSocketError(
+                                err_msg.clone(),
+                            )));
+                        }
                         let _ = entry
                             .event_tx
                             .try_send(Err(KalamLinkError::WebSocketError(err_msg.clone())));
@@ -798,11 +832,7 @@ async fn connection_task(
                 connection_options.max_reconnect_delay_ms,
             );
 
-            log::info!(
-                "Attempting reconnection in {}ms (attempt {})",
-                delay,
-                attempt + 1
-            );
+            log::info!("Attempting reconnection in {}ms (attempt {})", delay, attempt + 1);
 
             let sleep_fut = tokio::time::sleep(Duration::from_millis(delay));
             tokio::pin!(sleep_fut);
@@ -815,7 +845,11 @@ async fn connection_task(
                         match cmd {
                             Some(ConnCmd::Subscribe { id, sql, options, event_tx, result_tx }) => {
                                 if subs.contains_key(&id) {
-                                    subs.remove(&id);
+                                    if let Some(mut old_entry) = subs.remove(&id) {
+                                        if let Some(old_tx) = old_entry.pending_result_tx.take() {
+                                            let _ = old_tx.send(Err(KalamLinkError::Cancelled));
+                                        }
+                                    }
                                 }
                                 let gen = next_generation;
                                 next_generation += 1;
@@ -825,15 +859,21 @@ async fn connection_task(
                                     generation: gen,
                                     created_at_ms: now_ms(),
                                     last_event_time_ms: None,
+                                    pending_result_tx: Some(result_tx),
                                 });
-                                let _ = result_tx.send(Ok(gen));
                             },
                             Some(ConnCmd::Unsubscribe { id, generation }) => {
                                 let should_remove = match generation {
                                     Some(gen) => subs.get(&id).map_or(false, |e| e.generation == gen),
                                     None => true,
                                 };
-                                if should_remove { subs.remove(&id); }
+                                if should_remove {
+                                    if let Some(mut entry) = subs.remove(&id) {
+                                        if let Some(result_tx) = entry.pending_result_tx.take() {
+                                            let _ = result_tx.send(Err(KalamLinkError::Cancelled));
+                                        }
+                                    }
+                                }
                             },
                             Some(ConnCmd::ListSubscriptions { result_tx }) => {
                                 let _ = result_tx.send(snapshot_subscriptions(&subs));

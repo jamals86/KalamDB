@@ -288,9 +288,7 @@ impl KalamCellValue {
     /// Returns `None` if any element cannot be parsed as a number.
     pub fn as_embedding(&self) -> Option<Vec<f32>> {
         self.0.as_array().and_then(|arr| {
-            arr.iter()
-                .map(|v| v.as_f64().map(|f| f as f32))
-                .collect::<Option<Vec<_>>>()
+            arr.iter().map(|v| v.as_f64().map(|f| f as f32)).collect::<Option<Vec<_>>>()
         })
     }
 

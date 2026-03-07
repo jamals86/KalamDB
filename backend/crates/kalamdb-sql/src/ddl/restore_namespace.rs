@@ -127,8 +127,7 @@ mod tests {
 
     #[test]
     fn test_parse_restore_database_path_traversal_blocked() {
-        let result =
-            RestoreDatabaseStatement::parse("RESTORE DATABASE FROM '../../../etc/passwd'");
+        let result = RestoreDatabaseStatement::parse("RESTORE DATABASE FROM '../../../etc/passwd'");
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("path traversal"));
     }

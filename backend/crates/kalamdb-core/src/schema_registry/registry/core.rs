@@ -84,7 +84,10 @@ impl SchemaRegistry {
             app_context: OnceLock::new(),
             table_cache: DashMap::with_capacity(initial_capacity),
             version_cache: DashMap::with_capacity(std::cmp::min(VERSION_CACHE_MAX_ENTRIES, 64)),
-            version_cache_access: DashMap::with_capacity(std::cmp::min(VERSION_CACHE_MAX_ENTRIES, 64)),
+            version_cache_access: DashMap::with_capacity(std::cmp::min(
+                VERSION_CACHE_MAX_ENTRIES,
+                64,
+            )),
             version_cache_counter: AtomicU64::new(0),
             base_session_context: OnceLock::new(),
         }
@@ -667,6 +670,7 @@ impl SchemaRegistry {
                     &table_id,
                     StreamTableStoreConfig {
                         base_dir,
+                        max_rows_per_user: 256, // Default per-user retention limit
                         shard_router: ShardRouter::default_config(),
                         ttl_seconds: Some(ttl_seconds),
                     },

@@ -1,10 +1,10 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::models::KalamCellValue;
 use super::error_detail::ErrorDetail;
 use super::query_result::QueryResult;
 use super::response_status::ResponseStatus;
+use crate::models::KalamCellValue;
 
 /// Contains query results, execution metadata, and optional error information.
 /// Matches the server's SqlResponse structure.

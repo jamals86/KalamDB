@@ -27,6 +27,7 @@ const MAX_SCAN_LIMIT: usize = 100000;
 #[derive(Debug, Clone)]
 pub struct StreamTableStoreConfig {
     pub base_dir: PathBuf,
+    pub max_rows_per_user: usize,
     pub shard_router: ShardRouter,
     pub ttl_seconds: Option<u64>,
 }
@@ -44,9 +45,12 @@ impl StreamTableStore {
     pub fn new(
         table_id: TableId,
         partition: impl Into<Partition>,
-        _config: StreamTableStoreConfig,
+        config: StreamTableStoreConfig,
     ) -> Self {
-        let log_store = Arc::new(MemoryStreamLogStore::with_table_id(table_id.clone()));
+        let log_store = Arc::new(MemoryStreamLogStore::with_table_id_and_limit(
+            table_id.clone(),
+            config.max_rows_per_user,
+        ));
 
         Self {
             table_id,
@@ -316,6 +320,7 @@ mod tests {
         let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("test_stream"));
         let config = StreamTableStoreConfig {
             base_dir: _base_dir.join("streams").join("test_ns").join("test_stream"),
+            max_rows_per_user: MemoryStreamLogStore::DEFAULT_MAX_ROWS_PER_USER,
             shard_router: ShardRouter::default_config(),
             ttl_seconds: Some(3600),
         };

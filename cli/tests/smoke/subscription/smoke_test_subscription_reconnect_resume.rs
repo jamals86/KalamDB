@@ -73,13 +73,13 @@ where
                 if predicate(&events) {
                     break;
                 }
-            }
+            },
             Ok(Some(Err(e))) => {
                 eprintln!("[collect_until] subscription error: {}", e);
                 break;
-            }
-            Ok(None) => break,       // stream ended
-            Err(_) => break,          // timeout
+            },
+            Ok(None) => break, // stream ended
+            Err(_) => break,   // timeout
         }
     }
     events
@@ -93,7 +93,7 @@ fn contains_value(events: &[ChangeEvent], needle: &str) -> bool {
 /// Extract the `last_seq_id` from an Ack or InitialDataBatch event.
 fn seq_id_from_event(event: &ChangeEvent) -> Option<SeqId> {
     match event {
-        ChangeEvent::Ack { batch_control, .. }            => batch_control.last_seq_id,
+        ChangeEvent::Ack { batch_control, .. } => batch_control.last_seq_id,
         ChangeEvent::InitialDataBatch { batch_control, .. } => batch_control.last_seq_id,
         _ => None,
     }
@@ -111,7 +111,7 @@ fn smoke_subscription_reconnect_basic_resume() {
         return;
     }
 
-    let ns  = generate_unique_namespace("sub_recon_basic");
+    let ns = generate_unique_namespace("sub_recon_basic");
     let tbl = generate_unique_table("resume");
     let full = format!("{}.{}", ns, tbl);
 
@@ -132,7 +132,7 @@ fn smoke_subscription_reconnect_basic_resume() {
         let client = reconnect_client().expect("build client");
         client.connect().await.expect("shared connection");
 
-        let query  = format!("SELECT id, payload FROM {}", full);
+        let query = format!("SELECT id, payload FROM {}", full);
         let sub_id = format!("recon_basic_{}", ns);
 
         let mut sub = client
@@ -149,17 +149,18 @@ fn smoke_subscription_reconnect_basic_resume() {
         // Insert before disconnect.
         let pre_val = format!("pre_{}", ns);
         execute_sql_as_root_via_client(&format!(
-            "INSERT INTO {} (id, payload) VALUES (1, '{}')", full, pre_val
+            "INSERT INTO {} (id, payload) VALUES (1, '{}')",
+            full, pre_val
         ))
         .expect("insert pre-disconnect row");
 
-        let pre_events = collect_until(&mut sub, Duration::from_secs(10), |evs| {
-            contains_value(evs, &pre_val)
-        })
-        .await;
+        let pre_events =
+            collect_until(&mut sub, Duration::from_secs(10), |evs| contains_value(evs, &pre_val))
+                .await;
         assert!(
             contains_value(&pre_events, &pre_val),
-            "pre-disconnect event should arrive; got {:?}", pre_events
+            "pre-disconnect event should arrive; got {:?}",
+            pre_events
         );
 
         // Disconnect.
@@ -170,11 +171,13 @@ fn smoke_subscription_reconnect_basic_resume() {
         let gap1 = format!("gap1_{}", ns);
         let gap2 = format!("gap2_{}", ns);
         execute_sql_as_root_via_client(&format!(
-            "INSERT INTO {} (id, payload) VALUES (2, '{}')", full, gap1
+            "INSERT INTO {} (id, payload) VALUES (2, '{}')",
+            full, gap1
         ))
         .expect("insert gap row 1");
         execute_sql_as_root_via_client(&format!(
-            "INSERT INTO {} (id, payload) VALUES (3, '{}')", full, gap2
+            "INSERT INTO {} (id, payload) VALUES (3, '{}')",
+            full, gap2
         ))
         .expect("insert gap row 2");
 
@@ -195,27 +198,30 @@ fn smoke_subscription_reconnect_basic_resume() {
         .await;
         assert!(
             contains_value(&snap_events, &gap1),
-            "gap row 1 should be in post-reconnect snapshot; got {:?}", snap_events
+            "gap row 1 should be in post-reconnect snapshot; got {:?}",
+            snap_events
         );
         assert!(
             contains_value(&snap_events, &gap2),
-            "gap row 2 should be in post-reconnect snapshot; got {:?}", snap_events
+            "gap row 2 should be in post-reconnect snapshot; got {:?}",
+            snap_events
         );
 
         // Verify live delivery still works after reconnect.
         let post_val = format!("post_{}", ns);
         execute_sql_as_root_via_client(&format!(
-            "INSERT INTO {} (id, payload) VALUES (4, '{}')", full, post_val
+            "INSERT INTO {} (id, payload) VALUES (4, '{}')",
+            full, post_val
         ))
         .expect("insert post-reconnect row");
 
-        let post_events = collect_until(&mut sub2, Duration::from_secs(10), |evs| {
-            contains_value(evs, &post_val)
-        })
-        .await;
+        let post_events =
+            collect_until(&mut sub2, Duration::from_secs(10), |evs| contains_value(evs, &post_val))
+                .await;
         assert!(
             contains_value(&post_events, &post_val),
-            "post-reconnect Insert should arrive as live event; got {:?}", post_events
+            "post-reconnect Insert should arrive as live event; got {:?}",
+            post_events
         );
 
         let _ = sub2.close().await;
@@ -242,7 +248,7 @@ fn smoke_subscription_resume_from_seq_id() {
         return;
     }
 
-    let ns  = generate_unique_namespace("sub_recon_seq");
+    let ns = generate_unique_namespace("sub_recon_seq");
     let tbl = generate_unique_table("seqresume");
     let full = format!("{}.{}", ns, tbl);
 
@@ -263,7 +269,7 @@ fn smoke_subscription_resume_from_seq_id() {
         let client = reconnect_client().expect("build client");
         client.connect().await.expect("shared connection");
 
-        let query  = format!("SELECT id, payload FROM {}", full);
+        let query = format!("SELECT id, payload FROM {}", full);
         let sub_id = format!("recon_seq_{}", ns);
 
         let mut sub = client
@@ -278,7 +284,8 @@ fn smoke_subscription_resume_from_seq_id() {
         .await;
         assert!(
             ack_events.iter().any(|e| matches!(e, ChangeEvent::Ack { .. })),
-            "should receive subscription ACK; got {:?}", ack_events
+            "should receive subscription ACK; got {:?}",
+            ack_events
         );
 
         let ack_seq = ack_events
@@ -289,25 +296,23 @@ fn smoke_subscription_resume_from_seq_id() {
         // Insert a pre-disconnect row and capture its seq_id from the Insert event.
         let pre_val = format!("pre_{}", ns);
         execute_sql_as_root_via_client(&format!(
-            "INSERT INTO {} (id, payload) VALUES (1, '{}')", full, pre_val
+            "INSERT INTO {} (id, payload) VALUES (1, '{}')",
+            full, pre_val
         ))
         .expect("insert pre-disconnect row");
 
-        let change_events = collect_until(&mut sub, Duration::from_secs(10), |evs| {
-            contains_value(evs, &pre_val)
-        })
-        .await;
+        let change_events =
+            collect_until(&mut sub, Duration::from_secs(10), |evs| contains_value(evs, &pre_val))
+                .await;
         assert!(
             contains_value(&change_events, &pre_val),
-            "pre-disconnect Insert should arrive; got {:?}", change_events
+            "pre-disconnect Insert should arrive; got {:?}",
+            change_events
         );
 
         // Use the most recent seq_id we observed (Insert event seq beats Ack seq).
-        let last_seq: Option<SeqId> = change_events
-            .iter()
-            .rev()
-            .find_map(|e| seq_id_from_event(e))
-            .or(ack_seq);
+        let last_seq: Option<SeqId> =
+            change_events.iter().rev().find_map(|e| seq_id_from_event(e)).or(ack_seq);
 
         // Disconnect.
         client.disconnect().await;
@@ -317,11 +322,13 @@ fn smoke_subscription_resume_from_seq_id() {
         let gap1 = format!("gap1_{}", ns);
         let gap2 = format!("gap2_{}", ns);
         execute_sql_as_root_via_client(&format!(
-            "INSERT INTO {} (id, payload) VALUES (2, '{}')", full, gap1
+            "INSERT INTO {} (id, payload) VALUES (2, '{}')",
+            full, gap1
         ))
         .expect("insert gap row 1");
         execute_sql_as_root_via_client(&format!(
-            "INSERT INTO {} (id, payload) VALUES (3, '{}')", full, gap2
+            "INSERT INTO {} (id, payload) VALUES (3, '{}')",
+            full, gap2
         ))
         .expect("insert gap row 2");
 
@@ -341,10 +348,8 @@ fn smoke_subscription_resume_from_seq_id() {
         let mut cfg2 = SubscriptionConfig::new(&sub_id2, &query);
         cfg2.options = Some(options);
 
-        let mut sub2 = client
-            .subscribe_with_config(cfg2)
-            .await
-            .expect("re-subscribe with from_seq_id");
+        let mut sub2 =
+            client.subscribe_with_config(cfg2).await.expect("re-subscribe with from_seq_id");
 
         // Gap rows must arrive (as catch-up initial data or change events).
         let resume_events = collect_until(&mut sub2, Duration::from_secs(15), |evs| {
@@ -353,11 +358,13 @@ fn smoke_subscription_resume_from_seq_id() {
         .await;
         assert!(
             contains_value(&resume_events, &gap1),
-            "gap row 1 should arrive after resume; got {:?}", resume_events
+            "gap row 1 should arrive after resume; got {:?}",
+            resume_events
         );
         assert!(
             contains_value(&resume_events, &gap2),
-            "gap row 2 should arrive after resume; got {:?}", resume_events
+            "gap row 2 should arrive after resume; got {:?}",
+            resume_events
         );
 
         // When from_seq_id was set, the pre-disconnect row must NOT appear as
@@ -372,9 +379,8 @@ fn smoke_subscription_resume_from_seq_id() {
                 .filter(|e| matches!(e, ChangeEvent::Insert { .. }))
                 .collect();
 
-            let pre_replayed = post_ack_inserts
-                .iter()
-                .any(|e| format!("{:?}", e).contains(&pre_val));
+            let pre_replayed =
+                post_ack_inserts.iter().any(|e| format!("{:?}", e).contains(&pre_val));
             assert!(
                 !pre_replayed,
                 "pre-disconnect row must not be replayed as Insert after from_seq_id resume; \
@@ -386,17 +392,18 @@ fn smoke_subscription_resume_from_seq_id() {
         // Insert after reconnect and verify live delivery.
         let post_val = format!("post_{}", ns);
         execute_sql_as_root_via_client(&format!(
-            "INSERT INTO {} (id, payload) VALUES (4, '{}')", full, post_val
+            "INSERT INTO {} (id, payload) VALUES (4, '{}')",
+            full, post_val
         ))
         .expect("insert post-reconnect row");
 
-        let post_events = collect_until(&mut sub2, Duration::from_secs(10), |evs| {
-            contains_value(evs, &post_val)
-        })
-        .await;
+        let post_events =
+            collect_until(&mut sub2, Duration::from_secs(10), |evs| contains_value(evs, &post_val))
+                .await;
         assert!(
             contains_value(&post_events, &post_val),
-            "post-reconnect Insert should arrive as live event; got {:?}", post_events
+            "post-reconnect Insert should arrive as live event; got {:?}",
+            post_events
         );
 
         let _ = sub2.close().await;

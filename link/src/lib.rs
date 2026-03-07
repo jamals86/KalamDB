@@ -128,7 +128,7 @@ pub mod wasm;
 
 // Re-export main types for convenience
 #[cfg(feature = "tokio-runtime")]
-pub use auth::{AuthProvider, ArcDynAuthProvider, DynamicAuthProvider, ResolvedAuth};
+pub use auth::{ArcDynAuthProvider, AuthProvider, DynamicAuthProvider, ResolvedAuth};
 #[cfg(feature = "tokio-runtime")]
 pub use client::KalamLinkClient;
 #[cfg(feature = "tokio-runtime")]
@@ -160,6 +160,9 @@ pub use query::QueryExecutor;
 pub use query::UploadProgressCallback;
 #[cfg(feature = "tokio-runtime")]
 pub use subscription::SubscriptionManager;
+pub use subscription::{LiveRowsConfig, LiveRowsEvent, LiveRowsMaterializer};
+#[cfg(feature = "tokio-runtime")]
+pub use subscription::LiveRowsSubscription;
 
 /// Library version
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

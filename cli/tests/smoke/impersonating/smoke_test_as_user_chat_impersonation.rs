@@ -175,54 +175,54 @@ impl ChatFixture {
             "DROP TABLE IF EXISTS {}",
             self.conversations_table
         ));
-            let _ =
-                execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", self.namespace));
+        let _ =
+            execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", self.namespace));
+    }
+}
+
+fn create_user_with_retry(username: &str, password: &str, role: &str) {
+    let sql = format!("CREATE USER {} WITH PASSWORD '{}' ROLE '{}'", username, password, role);
+    let mut last_error = None;
+    for attempt in 0..3 {
+        match execute_sql_as_root_via_client(&sql) {
+            Ok(_) => return,
+            Err(err) => {
+                let msg = err.to_string();
+                if msg.contains("Already exists") {
+                    let alter_sql = format!("ALTER USER {} SET PASSWORD '{}'", username, password);
+                    let _ = execute_sql_as_root_via_client(&alter_sql);
+                    return;
+                }
+                if msg.contains("Serialization error") || msg.contains("UnexpectedEnd") {
+                    last_error = Some(msg);
+                    thread::sleep(Duration::from_millis(200 * (attempt + 1) as u64));
+                    continue;
+                }
+                panic!("Failed to create user {}: {}", username, msg);
+            },
         }
     }
+    panic!(
+        "Failed to create user {} after retries: {}",
+        username,
+        last_error.unwrap_or_else(|| "unknown error".to_string())
+    );
+}
 
-    fn create_user_with_retry(username: &str, password: &str, role: &str) {
-        let sql = format!("CREATE USER {} WITH PASSWORD '{}' ROLE '{}'", username, password, role);
-        let mut last_error = None;
-        for attempt in 0..3 {
-            match execute_sql_as_root_via_client(&sql) {
-                Ok(_) => return,
-                Err(err) => {
-                    let msg = err.to_string();
-                    if msg.contains("Already exists") {
-                        let alter_sql = format!("ALTER USER {} SET PASSWORD '{}'", username, password);
-                        let _ = execute_sql_as_root_via_client(&alter_sql);
-                        return;
-                    }
-                    if msg.contains("Serialization error") || msg.contains("UnexpectedEnd") {
-                        last_error = Some(msg);
-                        thread::sleep(Duration::from_millis(200 * (attempt + 1) as u64));
-                        continue;
-                    }
-                    panic!("Failed to create user {}: {}", username, msg);
-                },
-            }
-        }
-        panic!(
-            "Failed to create user {} after retries: {}",
-            username,
-            last_error.unwrap_or_else(|| "unknown error".to_string())
-        );
+fn get_user_id_for_username(username: &str) -> Option<String> {
+    let query = format!("SELECT user_id FROM system.users WHERE username = '{}'", username);
+    let result = execute_sql_as_root_via_client_json(&query).ok()?;
+
+    let json: serde_json::Value = serde_json::from_str(&result).ok()?;
+    let rows = get_rows_as_hashmaps(&json)?;
+
+    if let Some(row) = rows.first() {
+        let user_id_value = row.get("user_id").map(extract_typed_value)?;
+        return user_id_value.as_str().map(|value| value.to_string());
     }
 
-    fn get_user_id_for_username(username: &str) -> Option<String> {
-        let query = format!("SELECT user_id FROM system.users WHERE username = '{}'", username);
-        let result = execute_sql_as_root_via_client_json(&query).ok()?;
-
-        let json: serde_json::Value = serde_json::from_str(&result).ok()?;
-        let rows = get_rows_as_hashmaps(&json)?;
-
-        if let Some(row) = rows.first() {
-            let user_id_value = row.get("user_id").map(extract_typed_value)?;
-            return user_id_value.as_str().map(|value| value.to_string());
-        }
-
-        None
-    }
+    None
+}
 
 fn setup_chat_fixture(suffix: &str) -> ChatFixture {
     let namespace = generate_unique_namespace(&format!("smoke_imp_chat_{}", suffix));
@@ -262,8 +262,7 @@ fn setup_chat_fixture(suffix: &str) -> ChatFixture {
 
     let regular_user_id =
         get_user_id_for_username(&regular_user).expect("Failed to get regular user_id");
-    let other_user_id =
-        get_user_id_for_username(&other_user).expect("Failed to get other user_id");
+    let other_user_id = get_user_id_for_username(&other_user).expect("Failed to get other user_id");
 
     ChatFixture {
         namespace,
@@ -342,7 +341,8 @@ fn run_base_chat_flow_with_impersonation(fixture: &ChatFixture) -> BaseFlow {
     )
     .expect("Service should insert second typing event AS USER");
 
-    let typing_event = typing_listener.wait_for_any_event(&["thinking", "typing"], Duration::from_secs(12));
+    let typing_event =
+        typing_listener.wait_for_any_event(&["thinking", "typing"], Duration::from_secs(12));
     if let Err(error) = typing_event {
         let message = error.to_string();
         if message.contains("channel closed") || message.contains("SUBSCRIPTION_FAILED") {
@@ -356,15 +356,13 @@ fn run_base_chat_flow_with_impersonation(fixture: &ChatFixture) -> BaseFlow {
             )
             .expect("Fallback SELECT on typing table should succeed");
             assert!(
-                fallback.to_lowercase().contains("thinking") || fallback.to_lowercase().contains("typing"),
+                fallback.to_lowercase().contains("thinking")
+                    || fallback.to_lowercase().contains("typing"),
                 "Fallback typing rows should include thinking/typing states; got: {}",
                 fallback
             );
         } else {
-            panic!(
-                "Regular user should receive stream event during processing: {}",
-                message
-            );
+            panic!("Regular user should receive stream event during processing: {}", message);
         }
     }
     typing_listener.stop().expect("Failed to stop typing listener");

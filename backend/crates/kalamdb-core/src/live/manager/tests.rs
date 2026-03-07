@@ -63,6 +63,7 @@ async fn create_test_manager() -> (Arc<ConnectionsManager>, LiveQueryManager, Te
                 .join("streams")
                 .join(test_namespace.as_str())
                 .join(test_table.as_str()),
+            max_rows_per_user: 256, // Default per-user retention limit
             shard_router: ShardRouter::default_config(),
             ttl_seconds: Some(60),
         },

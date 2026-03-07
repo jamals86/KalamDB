@@ -55,7 +55,8 @@ impl RocksDBBackend {
         // The two caches are independent memory regions. We keep this one small (1MB)
         // since it only serves CFs created at runtime (user tables, indexes).
         // The primary cache from RocksDbInit::open() handles all CFs opened at startup.
-        let block_cache = Cache::new_lru_cache(std::cmp::min(settings.block_cache_size, 1024 * 1024));
+        let block_cache =
+            Cache::new_lru_cache(std::cmp::min(settings.block_cache_size, 1024 * 1024));
         Self {
             db,
             write_opts,
@@ -354,10 +355,7 @@ impl StorageBackend for RocksDBBackend {
             ))
         })?;
         let mut engine = BackupEngine::open(&opts, &env).map_err(|e| {
-            crate::storage_trait::StorageError::Other(format!(
-                "Failed to open BackupEngine: {}",
-                e
-            ))
+            crate::storage_trait::StorageError::Other(format!("Failed to open BackupEngine: {}", e))
         })?;
         // flush_before_backup=true ensures memtable data is included
         engine.create_new_backup_flush(&*self.db, true).map_err(|e| {
@@ -386,10 +384,7 @@ impl StorageBackend for RocksDBBackend {
             ))
         })?;
         let mut engine = BackupEngine::open(&opts, &env).map_err(|e| {
-            crate::storage_trait::StorageError::Other(format!(
-                "Failed to open BackupEngine: {}",
-                e
-            ))
+            crate::storage_trait::StorageError::Other(format!("Failed to open BackupEngine: {}", e))
         })?;
         let restore_opts = RestoreOptions::default();
 

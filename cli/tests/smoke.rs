@@ -51,6 +51,8 @@ mod smoke_test_as_user_chat_impersonation;
 mod smoke_test_as_user_impersonation;
 
 // Subscription tests
+#[path = "smoke/subscription/smoke_test_shared_table_subscription.rs"]
+mod smoke_test_shared_table_subscription;
 #[path = "smoke/subscription/smoke_test_stream_subscription.rs"]
 mod smoke_test_stream_subscription;
 #[path = "smoke/subscription/smoke_test_subscription_advanced.rs"]
@@ -59,16 +61,16 @@ mod smoke_test_subscription_advanced;
 mod smoke_test_subscription_close;
 #[path = "smoke/subscription/smoke_test_subscription_delete.rs"]
 mod smoke_test_subscription_delete;
-#[path = "smoke/subscription/smoke_test_subscription_listing.rs"]
-mod smoke_test_subscription_listing;
-#[path = "smoke/subscription/smoke_test_user_table_subscription.rs"]
-mod smoke_test_user_table_subscription;
-#[path = "smoke/subscription/smoke_test_subscription_reconnect_resume.rs"]
-mod smoke_test_subscription_reconnect_resume;
-#[path = "smoke/subscription/smoke_test_shared_table_subscription.rs"]
-mod smoke_test_shared_table_subscription;
 #[path = "smoke/subscription/smoke_test_subscription_delta_updates.rs"]
 mod smoke_test_subscription_delta_updates;
+#[path = "smoke/subscription/smoke_test_subscription_listing.rs"]
+mod smoke_test_subscription_listing;
+#[path = "smoke/subscription/smoke_test_subscription_multi_reconnect.rs"]
+mod smoke_test_subscription_multi_reconnect;
+#[path = "smoke/subscription/smoke_test_subscription_reconnect_resume.rs"]
+mod smoke_test_subscription_reconnect_resume;
+#[path = "smoke/subscription/smoke_test_user_table_subscription.rs"]
+mod smoke_test_user_table_subscription;
 
 // Topic tests
 #[path = "smoke/topics/smoke_test_topic_consumption.rs"]
@@ -127,10 +129,10 @@ mod smoke_test_dml_extended;
 mod smoke_test_dml_watermark_optimization;
 #[path = "smoke/dml/smoke_test_dml_wide_columns.rs"]
 mod smoke_test_dml_wide_columns;
-#[path = "smoke/dml/smoke_test_insert_throughput.rs"]
-mod smoke_test_insert_throughput;
 #[path = "smoke/dml/smoke_test_insert_returning.rs"]
 mod smoke_test_insert_returning;
+#[path = "smoke/dml/smoke_test_insert_throughput.rs"]
+mod smoke_test_insert_throughput;
 
 // Leader-only reads tests (Spec 021)
 #[path = "smoke/leader_only_reads.rs"]

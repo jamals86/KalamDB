@@ -53,14 +53,10 @@ pub struct UserExportParams {
 impl JobParams for UserExportParams {
     fn validate(&self) -> Result<(), KalamDbError> {
         if self.user_id.is_empty() {
-            return Err(KalamDbError::InvalidOperation(
-                "user_id cannot be empty".to_string(),
-            ));
+            return Err(KalamDbError::InvalidOperation("user_id cannot be empty".to_string()));
         }
         if self.export_id.is_empty() {
-            return Err(KalamDbError::InvalidOperation(
-                "export_id cannot be empty".to_string(),
-            ));
+            return Err(KalamDbError::InvalidOperation("export_id cannot be empty".to_string()));
         }
         Ok(())
     }
@@ -103,10 +99,8 @@ impl JobExecutor for UserExportExecutor {
         // ── Phase 1: Discover all user tables ───────────────────────────────
         let schema_registry = ctx.app_ctx.schema_registry();
         let all_tables = schema_registry.scan_all_table_definitions()?;
-        let user_tables: Vec<_> = all_tables
-            .into_iter()
-            .filter(|t| t.table_type == TableType::User)
-            .collect();
+        let user_tables: Vec<_> =
+            all_tables.into_iter().filter(|t| t.table_type == TableType::User).collect();
 
         ctx.log_info(&format!("Found {} user tables to flush and export", user_tables.len()));
 
@@ -124,7 +118,8 @@ impl JobExecutor for UserExportExecutor {
         let mut tables_with_storage: Vec<_> = Vec::new();
 
         for table_def in &user_tables {
-            let table_id = TableId::new(table_def.namespace_id.clone(), table_def.table_name.clone());
+            let table_id =
+                TableId::new(table_def.namespace_id.clone(), table_def.table_name.clone());
             let table_label =
                 format!("{}.{}", table_def.namespace_id.as_str(), table_def.table_name.as_str());
 
@@ -146,9 +141,8 @@ impl JobExecutor for UserExportExecutor {
             let has_rocksdb_data = {
                 let provider_opt = schema_registry.get_provider(&table_id);
                 if let Some(provider_arc) = provider_opt {
-                    if let Some(provider) = provider_arc
-                        .as_any()
-                        .downcast_ref::<UserTableProvider>()
+                    if let Some(provider) =
+                        provider_arc.as_any().downcast_ref::<UserTableProvider>()
                     {
                         let store = provider.store();
                         // Scan with the user-specific prefix to check only this user's data
@@ -183,8 +177,7 @@ impl JobExecutor for UserExportExecutor {
                 table_type: TableType::User,
                 flush_threshold: None,
             };
-            let flush_key =
-                format!("export-flush:{}:{}", params.user_id, table_id);
+            let flush_key = format!("export-flush:{}:{}", params.user_id, table_id);
 
             match job_manager
                 .create_job_typed(JobType::Flush, flush_params, Some(flush_key), None)
@@ -204,7 +197,9 @@ impl JobExecutor for UserExportExecutor {
                         table_label
                     ));
                 },
-                Err(KalamDbError::Other(ref msg)) if msg.contains("pre-validation returned false") => {
+                Err(KalamDbError::Other(ref msg))
+                    if msg.contains("pre-validation returned false") =>
+                {
                     // Nothing to flush (table is already fully on disk).
                     ctx.log_debug(&format!(
                         "Table {} has nothing to flush, proceeding to copy",
@@ -223,10 +218,7 @@ impl JobExecutor for UserExportExecutor {
 
         // ── Phase 3: Wait for all flush jobs to reach terminal state ─────────
         if !flush_jobs.is_empty() {
-            ctx.log_info(&format!(
-                "Waiting for {} flush jobs to complete…",
-                flush_jobs.len()
-            ));
+            ctx.log_info(&format!("Waiting for {} flush jobs to complete…", flush_jobs.len()));
 
             let deadline = tokio::time::Instant::now() + FLUSH_WAIT_TIMEOUT;
             let mut pending: HashMap<JobId, String> = flush_jobs.clone();
@@ -271,10 +263,7 @@ impl JobExecutor for UserExportExecutor {
                             ));
                         },
                         Err(e) => {
-                            ctx.log_warn(&format!(
-                                "Error polling flush job {}: {}",
-                                job_id, e
-                            ));
+                            ctx.log_warn(&format!("Error polling flush job {}: {}", job_id, e));
                             still_pending.insert(job_id.clone(), label.clone());
                         },
                     }
@@ -301,12 +290,10 @@ impl JobExecutor for UserExportExecutor {
         let mut total_bytes: usize = 0;
 
         for (table_def, storage_id) in &tables_with_storage {
-            let table_label = format!(
-                "{}.{}",
-                table_def.namespace_id.as_str(),
-                table_def.table_name.as_str()
-            );
-            let table_id = TableId::new(table_def.namespace_id.clone(), table_def.table_name.clone());
+            let table_label =
+                format!("{}.{}", table_def.namespace_id.as_str(), table_def.table_name.as_str());
+            let table_id =
+                TableId::new(table_def.namespace_id.clone(), table_def.table_name.clone());
 
             let storage_cached = match storage_registry.get_cached(storage_id) {
                 Ok(Some(sc)) => sc,

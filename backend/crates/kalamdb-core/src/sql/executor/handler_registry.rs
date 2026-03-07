@@ -23,12 +23,12 @@ use tracing::Instrument;
 
 // Import all typed handlers
 use crate::sql::executor::handlers::backup::{BackupDatabaseHandler, RestoreDatabaseHandler};
-use crate::sql::executor::handlers::export::{ExportUserDataHandler, ShowExportHandler};
 use crate::sql::executor::handlers::cluster::{
     ClusterClearHandler, ClusterListHandler, ClusterPurgeHandler, ClusterSnapshotHandler,
     ClusterStepdownHandler, ClusterTransferLeaderHandler, ClusterTriggerElectionHandler,
 };
 use crate::sql::executor::handlers::compact::{CompactAllTablesHandler, CompactTableHandler};
+use crate::sql::executor::handlers::export::{ExportUserDataHandler, ShowExportHandler};
 use crate::sql::executor::handlers::flush::{FlushAllTablesHandler, FlushTableHandler};
 use crate::sql::executor::handlers::jobs::{KillJobHandler, KillLiveQueryHandler};
 use crate::sql::executor::handlers::namespace::{

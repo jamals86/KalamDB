@@ -28,8 +28,7 @@ use std::time::Duration;
 fn slow_client(
     receive_secs: u64,
     initial_data_secs: u64,
-) -> Result<kalam_link::KalamLinkClient, Box<dyn std::error::Error + Send + Sync>>
-{
+) -> Result<kalam_link::KalamLinkClient, Box<dyn std::error::Error + Send + Sync>> {
     client_for_user_on_url_with_timeouts(
         &leader_or_server_url(),
         default_username(),
@@ -161,7 +160,11 @@ fn subscription_slow_consumer_initial_data() {
     );
 
     // We expect at least an Ack + some snapshot rows
-    assert!(!hit_error, "No errors expected with slow consumer. Events: {:?}", &events[..events.len().min(5)]);
+    assert!(
+        !hit_error,
+        "No errors expected with slow consumer. Events: {:?}",
+        &events[..events.len().min(5)]
+    );
 
     let joined = events.join("\n");
     // Check that the subscription delivered something meaningful
@@ -341,10 +344,14 @@ fn subscription_slow_consumer_concurrent_writes() {
         )
         .await;
 
-        let insert_events = evs.iter().filter(|e| e.contains("Insert") || e.contains("bp_")).count();
+        let insert_events =
+            evs.iter().filter(|e| e.contains("Insert") || e.contains("bp_")).count();
         let errs = evs.iter().filter(|e| e.starts_with("ERROR")).count();
         if hit_error {
-            eprintln!("[TEST] Subscription error encountered; events: {:?}", &evs[..evs.len().min(5)]);
+            eprintln!(
+                "[TEST] Subscription error encountered; events: {:?}",
+                &evs[..evs.len().min(5)]
+            );
         }
         (insert_events, errs)
     });
@@ -415,10 +422,15 @@ fn subscription_reconnect_after_drop() {
         let client2 = slow_client(60, 60).expect("client2");
         let mut sub2 = client2.subscribe(&query).await.expect("subscribe2");
         let (evs2, hit_err2) =
-            drain_with_delay(&mut sub2, 15, Duration::from_millis(0), Duration::from_secs(30)).await;
+            drain_with_delay(&mut sub2, 15, Duration::from_millis(0), Duration::from_secs(30))
+                .await;
         let c2 = evs2.len();
 
-        assert!(!hit_err2, "Re-subscription must not produce errors. Events: {:?}", &evs2[..evs2.len().min(5)]);
+        assert!(
+            !hit_err2,
+            "Re-subscription must not produce errors. Events: {:?}",
+            &evs2[..evs2.len().min(5)]
+        );
 
         let joined2 = evs2.join("\n");
         assert!(
@@ -493,9 +505,13 @@ fn subscription_timeout_graceful_then_reconnect() {
         // This might succeed quickly or fail — either is acceptable
         match client_tight.subscribe(&query).await {
             Ok(mut sub) => {
-                let (evs, _) =
-                    drain_with_delay(&mut sub, 50, Duration::from_millis(0), Duration::from_secs(5))
-                        .await;
+                let (evs, _) = drain_with_delay(
+                    &mut sub,
+                    50,
+                    Duration::from_millis(0),
+                    Duration::from_secs(5),
+                )
+                .await;
                 println!(
                     "[TEST] tight-timeout phase collected {} events (timeout may have fired)",
                     evs.len()
@@ -513,11 +529,19 @@ fn subscription_timeout_graceful_then_reconnect() {
         // ── Phase 2: normal timeouts – must succeed ──
         let client_normal = slow_client(120, 120).expect("normal client");
         let mut sub_normal = client_normal.subscribe(&query).await.expect("normal subscribe");
-        let (evs_normal, hit_err) =
-            drain_with_delay(&mut sub_normal, 40, Duration::from_millis(0), Duration::from_secs(60))
-                .await;
+        let (evs_normal, hit_err) = drain_with_delay(
+            &mut sub_normal,
+            40,
+            Duration::from_millis(0),
+            Duration::from_secs(60),
+        )
+        .await;
 
-        assert!(!hit_err, "Normal re-subscription must not error. Events: {:?}", &evs_normal[..evs_normal.len().min(5)]);
+        assert!(
+            !hit_err,
+            "Normal re-subscription must not error. Events: {:?}",
+            &evs_normal[..evs_normal.len().min(5)]
+        );
         assert!(
             !evs_normal.is_empty(),
             "Normal re-subscription must receive events after tight-timeout failure"
@@ -528,7 +552,10 @@ fn subscription_timeout_graceful_then_reconnect() {
             "Re-subscription should deliver data after timeout recovery. Got: {}",
             &joined[..joined.len().min(400)]
         );
-        println!("[TEST] timeout_graceful_then_reconnect: normal phase got {} events", evs_normal.len());
+        println!(
+            "[TEST] timeout_graceful_then_reconnect: normal phase got {} events",
+            evs_normal.len()
+        );
     });
 
     // Drain lingering background tasks from tight-timeout phase so nextest
@@ -711,10 +738,13 @@ fn subscription_large_initial_data_slow_batch_consumer() {
         let client = slow_client(240, 240).expect("client");
 
         // Use small batch_size to force multiple server-side flush rounds
-        let sub_id = format!("large_batch_{}", std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos());
+        let sub_id = format!(
+            "large_batch_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
         let mut config = SubscriptionConfig::new(&sub_id, &query);
         config.options = Some(SubscriptionOptions::default().with_batch_size(8));
         let mut sub = client.subscribe_with_config(config).await.expect("subscribe");
@@ -748,7 +778,10 @@ fn subscription_large_initial_data_slow_batch_consumer() {
     );
 
     let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", ns));
-    println!("[TEST] large_initial_data_slow_batch_consumer passed ({} / {} rows)", found, total);
+    println!(
+        "[TEST] large_initial_data_slow_batch_consumer passed ({} / {} rows)",
+        found, total
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -875,13 +908,8 @@ fn subscription_stable_after_idle_pause() {
 
         // Resume reading after the pause
         println!("[TEST] idle_pause: subscriber resuming…");
-        let (evs, hit_error) = drain_with_delay(
-            &mut sub,
-            5,
-            Duration::from_millis(0),
-            Duration::from_secs(30),
-        )
-        .await;
+        let (evs, hit_error) =
+            drain_with_delay(&mut sub, 5, Duration::from_millis(0), Duration::from_secs(30)).await;
 
         assert!(!hit_error, "No errors expected after idle pause. Events: {:?}", &evs);
         evs.iter().any(|e| e.contains(&wake_marker))
@@ -955,10 +983,7 @@ fn subscription_burst_then_slow_catchup() {
         )
         .await;
 
-        let burst_evs = evs
-            .iter()
-            .filter(|e| e.contains("Insert") || e.contains("burst_"))
-            .count();
+        let burst_evs = evs.iter().filter(|e| e.contains("Insert") || e.contains("burst_")).count();
         (burst_evs, hit_error)
     });
 

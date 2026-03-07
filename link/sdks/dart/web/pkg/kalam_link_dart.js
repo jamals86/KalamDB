@@ -310,6 +310,25 @@ export class KalamClient {
         return ret !== 0;
     }
     /**
+     * Subscribe to a SQL query and receive materialized live rows.
+     *
+     * The callback receives JSON strings with one of these shapes:
+     * - `{ type: "rows", subscription_id, rows }`
+     * - `{ type: "error", subscription_id, code, message }`
+     * @param {string} sql
+     * @param {string | null | undefined} options
+     * @param {Function} callback
+     * @returns {Promise<string>}
+     */
+    liveQueryRowsWithSql(sql, options, callback) {
+        const ptr0 = passStringToWasm0(sql, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(options) ? 0 : passStringToWasm0(options, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len1 = WASM_VECTOR_LEN;
+        const ret = wasm.kalamclient_liveQueryRowsWithSql(this.__wbg_ptr, ptr0, len0, ptr1, len1, callback);
+        return ret;
+    }
+    /**
      * Login with current Basic Auth credentials and switch to JWT authentication
      *
      * Sends a POST request to `/v1/api/auth/login` with the stored username/password
@@ -1304,7 +1323,7 @@ function __wbg_get_imports() {
             return ret;
         },
         __wbindgen_cast_0000000000000005: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 220, function: Function { arguments: [Externref], shim_idx: 221, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 227, function: Function { arguments: [Externref], shim_idx: 228, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__hc4784aa82de56652, wasm_bindgen__convert__closures_____invoke__h6537501fed6ccdff);
             return ret;
         },

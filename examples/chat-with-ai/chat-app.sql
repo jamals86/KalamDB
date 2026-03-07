@@ -22,4 +22,4 @@ CREATE TABLE IF NOT EXISTS chat_demo.agent_events (
     preview TEXT NOT NULL DEFAULT '',
     message TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMP NOT NULL DEFAULT NOW()
-) WITH (TYPE = 'STREAM', TTL_SECONDS = 120);
+) WITH (TYPE = 'STREAM', TTL_SECONDS = 10);

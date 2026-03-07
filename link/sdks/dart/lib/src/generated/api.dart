@@ -215,6 +215,32 @@ Future<void> dartSubscriptionClose({required DartSubscription subscription}) =>
 String dartSubscriptionId({required DartSubscription subscription}) =>
     RustLib.instance.api.crateApiDartSubscriptionId(subscription: subscription);
 
+/// Create a materialized live-query subscription.
+Future<DartLiveRowsSubscription> dartLiveQueryRowsSubscribe(
+        {required DartKalamClient client,
+        required String sql,
+        DartSubscriptionConfig? config,
+        DartLiveRowsConfig? liveConfig}) =>
+    RustLib.instance.api.crateApiDartLiveQueryRowsSubscribe(
+        client: client, sql: sql, config: config, liveConfig: liveConfig);
+
+/// Pull the next materialized live-row event from a subscription.
+Future<DartLiveRowsEvent?> dartLiveQueryRowsNext(
+        {required DartLiveRowsSubscription subscription}) =>
+    RustLib.instance.api
+        .crateApiDartLiveQueryRowsNext(subscription: subscription);
+
+/// Close a materialized live-row subscription.
+Future<void> dartLiveQueryRowsClose(
+        {required DartLiveRowsSubscription subscription}) =>
+    RustLib.instance.api
+        .crateApiDartLiveQueryRowsClose(subscription: subscription);
+
+/// Get the server-assigned subscription ID for a live-row subscription.
+String dartLiveQueryRowsId({required DartLiveRowsSubscription subscription}) =>
+    RustLib.instance.api
+        .crateApiDartLiveQueryRowsId(subscription: subscription);
+
 /// List all active subscriptions on the shared connection.
 ///
 /// Returns a snapshot of each subscription's metadata including the
@@ -225,6 +251,9 @@ Future<List<DartSubscriptionInfo>> dartListSubscriptions(
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<DartKalamClient>>
 abstract class DartKalamClient implements RustOpaqueInterface {}
+
+// Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<DartLiveRowsSubscription>>
+abstract class DartLiveRowsSubscription implements RustOpaqueInterface {}
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<DartSubscription>>
 abstract class DartSubscription implements RustOpaqueInterface {}

@@ -85,10 +85,7 @@ fn test_cli_init_agent_non_interactive_generates_project() {
         project_dir.join("src/langchain-openai.d.ts").exists(),
         "langchain declaration shim should exist"
     );
-    assert!(
-        project_dir.join("scripts/ensure-sdk.sh").exists(),
-        "ensure-sdk.sh should exist"
-    );
+    assert!(project_dir.join("scripts/ensure-sdk.sh").exists(), "ensure-sdk.sh should exist");
 
     let package_json = fs::read_to_string(project_dir.join("package.json")).expect("read package");
     assert!(
@@ -97,10 +94,7 @@ fn test_cli_init_agent_non_interactive_generates_project() {
     );
 
     let agent_ts = fs::read_to_string(project_dir.join("src/agent.ts")).expect("read agent ts");
-    assert!(
-        agent_ts.contains("runAgent"),
-        "generated agent should use sdk runAgent runtime"
-    );
+    assert!(agent_ts.contains("runAgent"), "generated agent should use sdk runAgent runtime");
 }
 
 #[test]
@@ -122,10 +116,7 @@ fn test_cli_init_agent_rejects_invalid_table_id() {
         .arg("blog-summarizer-agent");
 
     let output = cmd.output().expect("run cli");
-    assert!(
-        !output.status.success(),
-        "init-agent should fail with invalid table id"
-    );
+    assert!(!output.status.success(), "init-agent should fail with invalid table id");
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(

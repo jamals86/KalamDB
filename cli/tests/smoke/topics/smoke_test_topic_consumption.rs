@@ -694,7 +694,8 @@ async fn test_topic_consume_option_matrix_start_batch_auto_ack_modes() {
 
         match test_case.start {
             StartMode::Earliest => {
-                let first_batch = poll_records_until(&mut consumer, 1, Duration::from_secs(20)).await;
+                let first_batch =
+                    poll_records_until(&mut consumer, 1, Duration::from_secs(20)).await;
                 assert!(
                     !first_batch.is_empty(),
                     "earliest should return backlog (batch_size={}, auto_commit={})",
@@ -777,10 +778,7 @@ async fn test_topic_consume_option_matrix_start_batch_auto_ack_modes() {
                     expected_live_ids.insert(live_id);
                     execute_sql(&format!(
                         "INSERT INTO {} (id, payload) VALUES ({}, 'live_{}_{}')",
-                        table_id,
-                        live_id,
-                        test_case.batch_size,
-                        i
+                        table_id, live_id, test_case.batch_size, i
                     ))
                     .await;
                 }

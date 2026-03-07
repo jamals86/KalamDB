@@ -281,9 +281,8 @@ impl NotificationService {
                     }
                 } else {
                     // Shared table: streaming parallel fan-out
-                    let handles = notify_service
-                        .registry
-                        .get_shared_subscriptions_for_table(&task.table_id);
+                    let handles =
+                        notify_service.registry.get_shared_subscriptions_for_table(&task.table_id);
                     if handles.is_empty() {
                         log::debug!(
                             "NotificationWorker: No shared subscriptions for table={} (skipping notification)",
@@ -298,11 +297,7 @@ impl NotificationService {
                     );
 
                     if let Err(e) = notify_service
-                        .notify_shared_table_streaming(
-                            &task.table_id,
-                            task.notification,
-                            handles,
-                        )
+                        .notify_shared_table_streaming(&task.table_id, task.notification, handles)
                         .await
                     {
                         log::warn!(
@@ -344,9 +339,8 @@ impl NotificationService {
             user_id,
             table_id
         );
-        if let Err(e) = self
-            .notify_table_change_with_handles(&table_id, notification, handles)
-            .await
+        if let Err(e) =
+            self.notify_table_change_with_handles(&table_id, notification, handles).await
         {
             log::warn!("Failed to dispatch forwarded notification for table {}: {}", table_id, e);
         }
@@ -371,11 +365,12 @@ impl NotificationService {
             handles.len(),
             table_id
         );
-        if let Err(e) = self
-            .notify_shared_table_streaming(&table_id, notification, handles)
-            .await
-        {
-            log::warn!("Failed to dispatch forwarded shared notification for table {}: {}", table_id, e);
+        if let Err(e) = self.notify_shared_table_streaming(&table_id, notification, handles).await {
+            log::warn!(
+                "Failed to dispatch forwarded shared notification for table {}: {}",
+                table_id,
+                e
+            );
         }
     }
 
@@ -461,8 +456,12 @@ impl NotificationService {
         // Send notifications and increment changes
         let mut notification_count = 0usize;
         let filtering_row = &change_notification.row_data;
-        let mut full_row_json: Option<std::collections::HashMap<String, kalamdb_commons::models::KalamCellValue>> = None;
-        let mut full_old_json: Option<std::collections::HashMap<String, kalamdb_commons::models::KalamCellValue>> = None;
+        let mut full_row_json: Option<
+            std::collections::HashMap<String, kalamdb_commons::models::KalamCellValue>,
+        > = None;
+        let mut full_old_json: Option<
+            std::collections::HashMap<String, kalamdb_commons::models::KalamCellValue>,
+        > = None;
         let seq_value = extract_seq(&change_notification);
         for entry in all_handles.iter() {
             let live_id = entry.key();
@@ -574,13 +573,12 @@ impl NotificationService {
                 ChangeType::Update => {
                     // Compute delta: send only changed columns + PK + _seq
                     let full_old = old_json.unwrap_or_default();
-                    let (delta_new, delta_old) =
-                        compute_json_update_delta(&full_old, &row_json, &change_notification.pk_columns);
-                    kalamdb_commons::Notification::update(
-                        sub_id,
-                        vec![delta_new],
-                        vec![delta_old],
-                    )
+                    let (delta_new, delta_old) = compute_json_update_delta(
+                        &full_old,
+                        &row_json,
+                        &change_notification.pk_columns,
+                    );
+                    kalamdb_commons::Notification::update(sub_id, vec![delta_new], vec![delta_old])
                 },
                 ChangeType::Delete => kalamdb_commons::Notification::delete(sub_id, vec![row_json]),
             };
@@ -710,11 +708,7 @@ impl NotificationService {
                             Ok(true) => {},
                             Ok(false) => continue,
                             Err(e) => {
-                                log::error!(
-                                    "Filter error for live_id={}: {}",
-                                    live_id,
-                                    e
-                                );
+                                log::error!("Filter error for live_id={}: {}", live_id, e);
                                 continue;
                             },
                         }
@@ -728,19 +722,18 @@ impl NotificationService {
                         None => (*row_json).clone(),
                         Some(cols) => cols
                             .iter()
-                            .filter_map(|col| {
-                                row_json.get(col).map(|v| (col.clone(), v.clone()))
-                            })
+                            .filter_map(|col| row_json.get(col).map(|v| (col.clone(), v.clone())))
                             .collect(),
                     };
 
-                    let subscriber_old_json = old_json.as_ref().map(|oj| match &handle.projections {
-                        None => (**oj).clone(),
-                        Some(cols) => cols
-                            .iter()
-                            .filter_map(|col| oj.get(col).map(|v| (col.clone(), v.clone())))
-                            .collect(),
-                    });
+                    let subscriber_old_json =
+                        old_json.as_ref().map(|oj| match &handle.projections {
+                            None => (**oj).clone(),
+                            Some(cols) => cols
+                                .iter()
+                                .filter_map(|col| oj.get(col).map(|v| (col.clone(), v.clone())))
+                                .collect(),
+                        });
 
                     // Build notification with per-subscriber subscription_id
                     let sub_id = live_id.subscription_id().to_string();
@@ -751,8 +744,11 @@ impl NotificationService {
                         ChangeType::Update => {
                             // Compute delta: send only changed columns + PK + _seq
                             let full_old = subscriber_old_json.unwrap_or_default();
-                            let (delta_new, delta_old) =
-                                compute_json_update_delta(&full_old, &subscriber_row_json, &pk_cols_ref);
+                            let (delta_new, delta_old) = compute_json_update_delta(
+                                &full_old,
+                                &subscriber_row_json,
+                                &pk_cols_ref,
+                            );
                             kalamdb_commons::Notification::update(
                                 sub_id,
                                 vec![delta_new],
@@ -866,8 +862,8 @@ mod tests {
     use datafusion::scalar::ScalarValue;
     use kalamdb_commons::models::rows::Row;
     use kalamdb_commons::models::{ConnectionId, NamespaceId, TableName};
-    use kalamdb_commons::Notification;
     use kalamdb_commons::NodeId;
+    use kalamdb_commons::Notification;
     use std::collections::BTreeMap;
     use std::time::Duration;
 
@@ -879,10 +875,7 @@ mod tests {
         let mut values = BTreeMap::new();
         values.insert("id".to_string(), ScalarValue::Int64(Some(id)));
         values.insert("body".to_string(), ScalarValue::Utf8(Some(body.to_string())));
-        values.insert(
-            SystemColumnNames::SEQ.to_string(),
-            ScalarValue::Int64(Some(seq)),
-        );
+        values.insert(SystemColumnNames::SEQ.to_string(), ScalarValue::Int64(Some(seq)));
         Row::new(values)
     }
 
@@ -939,12 +932,7 @@ mod tests {
             &conn_id,
             LiveQueryId::new(UserId::new("u2"), conn_id.clone(), "sub_skip".to_string()),
             table_id.clone(),
-            make_shared_handle(
-                Arc::new(tx_skip),
-                Arc::clone(&flow_skip),
-                Some("id >= 100"),
-                None,
-            ),
+            make_shared_handle(Arc::new(tx_skip), Arc::clone(&flow_skip), Some("id >= 100"), None),
         );
 
         let change = ChangeNotification::insert(table_id.clone(), make_row(42, "hello", 42));
@@ -1038,7 +1026,9 @@ mod tests {
             .expect("message should be present");
 
         match delivered.as_ref() {
-            Notification::Change { subscription_id, .. } => {
+            Notification::Change {
+                subscription_id, ..
+            } => {
                 assert_eq!(subscription_id, "sub_async");
             },
             _ => panic!("expected change notification"),

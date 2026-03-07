@@ -332,7 +332,7 @@ mod tests {
                 assert_eq!(batch_num, 0);
                 assert!(has_more);
                 assert_eq!(status, "loading");
-            }
+            },
             _ => panic!("Expected Ack variant"),
         }
     }
@@ -361,7 +361,7 @@ mod tests {
                 assert_eq!(batch_num, 1);
                 assert!(!has_more);
                 assert_eq!(status, "ready");
-            }
+            },
             _ => panic!("Expected InitialDataBatch variant"),
         }
     }
@@ -385,7 +385,7 @@ mod tests {
                 assert_eq!(rows_json.len(), 1);
                 let parsed: serde_json::Value = serde_json::from_str(&rows_json[0]).unwrap();
                 assert_eq!(parsed["name"], "Bob");
-            }
+            },
             _ => panic!("Expected Insert variant"),
         }
     }
@@ -417,7 +417,7 @@ mod tests {
                 let old_val: serde_json::Value = serde_json::from_str(&old_rows_json[0]).unwrap();
                 assert_eq!(new_val["name"], "Bob2");
                 assert_eq!(old_val["name"], "Bob");
-            }
+            },
             _ => panic!("Expected Update variant"),
         }
     }
@@ -438,7 +438,7 @@ mod tests {
             } => {
                 assert_eq!(subscription_id, "sub-5");
                 assert_eq!(old_rows_json.len(), 1);
-            }
+            },
             _ => panic!("Expected Delete variant"),
         }
     }
@@ -460,7 +460,7 @@ mod tests {
                 assert_eq!(subscription_id, "sub-6");
                 assert_eq!(code, "auth_fail");
                 assert_eq!(message, "Token expired");
-            }
+            },
             _ => panic!("Expected Error variant"),
         }
     }
@@ -474,7 +474,7 @@ mod tests {
         match dart {
             DartChangeEvent::Error { code, .. } => {
                 assert_eq!(code, "unknown");
-            }
+            },
             _ => panic!("Expected Error variant for Unknown"),
         }
     }

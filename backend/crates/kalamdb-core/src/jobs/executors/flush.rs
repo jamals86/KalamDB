@@ -337,9 +337,8 @@ impl JobExecutor for FlushExecutor {
         match table_def.table_type {
             TableType::User => {
                 if let Some(provider_arc) = schema_registry.get_provider(&params.table_id) {
-                    if let Some(provider) = provider_arc
-                        .as_any()
-                        .downcast_ref::<crate::providers::UserTableProvider>()
+                    if let Some(provider) =
+                        provider_arc.as_any().downcast_ref::<crate::providers::UserTableProvider>()
                     {
                         let store = provider.store();
                         let partition = store.partition();

@@ -88,30 +88,18 @@ fn build_config(cli: &Cli, interactive: bool) -> Result<AgentScaffoldConfig> {
         cli.agent_name.as_deref(),
         &default_project_name,
     )?;
-    let output_root = choose_path(
-        interactive,
-        "Output directory",
-        cli.agent_output.as_deref(),
-        Path::new("."),
-    )?;
+    let output_root =
+        choose_path(interactive, "Output directory", cli.agent_output.as_deref(), Path::new("."))?;
     let table_id = choose_value(
         interactive,
         "Table id (namespace.table)",
         cli.agent_table.as_deref(),
         &base_table,
     )?;
-    let topic_id = choose_value(
-        interactive,
-        "Topic id",
-        cli.agent_topic.as_deref(),
-        &default_topic,
-    )?;
-    let group_id = choose_value(
-        interactive,
-        "Consumer group id",
-        cli.agent_group.as_deref(),
-        &default_group,
-    )?;
+    let topic_id =
+        choose_value(interactive, "Topic id", cli.agent_topic.as_deref(), &default_topic)?;
+    let group_id =
+        choose_value(interactive, "Consumer group id", cli.agent_group.as_deref(), &default_group)?;
     let id_column = choose_value(
         interactive,
         "Primary key column",
@@ -224,18 +212,12 @@ fn choose_path(
 
 fn validate_identifier(value: &str, field_name: &str) -> Result<()> {
     if value.is_empty() {
-        return Err(CLIError::ConfigurationError(format!(
-            "{} cannot be empty",
-            field_name
-        )));
+        return Err(CLIError::ConfigurationError(format!("{} cannot be empty", field_name)));
     }
 
     let mut chars = value.chars();
     let Some(first) = chars.next() else {
-        return Err(CLIError::ConfigurationError(format!(
-            "{} cannot be empty",
-            field_name
-        )));
+        return Err(CLIError::ConfigurationError(format!("{} cannot be empty", field_name)));
     };
 
     if !(first == '_' || first.is_ascii_alphabetic()) {
@@ -285,9 +267,7 @@ fn validate_topic_id(topic_id: &str) -> Result<()> {
 
 fn validate_group_id(group_id: &str) -> Result<()> {
     if group_id.trim().is_empty() {
-        return Err(CLIError::ConfigurationError(
-            "agent-group cannot be empty".into(),
-        ));
+        return Err(CLIError::ConfigurationError("agent-group cannot be empty".into()));
     }
 
     Ok(())
@@ -298,14 +278,12 @@ fn parse_table_id(table_id: &str) -> Result<ParsedTableId> {
     let namespace = segments
         .next()
         .ok_or_else(|| CLIError::ConfigurationError("agent-table is required".into()))?;
-    let table = segments
-        .next()
-        .ok_or_else(|| CLIError::ConfigurationError("agent-table must be namespace.table".into()))?;
+    let table = segments.next().ok_or_else(|| {
+        CLIError::ConfigurationError("agent-table must be namespace.table".into())
+    })?;
 
     if segments.next().is_some() {
-        return Err(CLIError::ConfigurationError(
-            "agent-table must be namespace.table".into(),
-        ));
+        return Err(CLIError::ConfigurationError("agent-table must be namespace.table".into()));
     }
 
     validate_identifier(namespace, "table namespace")?;
@@ -355,9 +333,7 @@ fn slugify(value: &str) -> String {
 
 fn resolve_project_dir(output_root: &Path, project_name: &str) -> Result<PathBuf> {
     if project_name.trim().is_empty() {
-        return Err(CLIError::ConfigurationError(
-            "agent-name cannot be empty".into(),
-        ));
+        return Err(CLIError::ConfigurationError("agent-name cannot be empty".into()));
     }
 
     let cwd = env::current_dir()
@@ -380,11 +356,7 @@ fn detect_sdk_dependency(project_dir: &Path) -> Result<String> {
         let candidate = ancestor.join("link/sdks/typescript");
         if candidate.join("package.json").exists() {
             let relative = relative_path(project_dir, &candidate);
-            let relative_str = relative
-                .to_string_lossy()
-                .replace('\\', "/")
-                .trim()
-                .to_string();
+            let relative_str = relative.to_string_lossy().replace('\\', "/").trim().to_string();
 
             if relative_str.is_empty() {
                 break;
@@ -463,9 +435,9 @@ fn generate_agent_project(
     sdk_dependency: &str,
 ) -> Result<()> {
     if project_dir.exists() {
-        let mut entries = project_dir
-            .read_dir()
-            .map_err(|e| CLIError::FileError(format!("Failed to read {}: {}", project_dir.display(), e)))?;
+        let mut entries = project_dir.read_dir().map_err(|e| {
+            CLIError::FileError(format!("Failed to read {}: {}", project_dir.display(), e))
+        })?;
         if entries.next().is_some() {
             return Err(CLIError::FileError(format!(
                 "Target directory {} already exists and is not empty",
@@ -474,12 +446,10 @@ fn generate_agent_project(
         }
     }
 
-    fs::create_dir_all(project_dir.join("src")).map_err(|e| {
-        CLIError::FileError(format!("Failed to create src directory: {}", e))
-    })?;
-    fs::create_dir_all(project_dir.join("scripts")).map_err(|e| {
-        CLIError::FileError(format!("Failed to create scripts directory: {}", e))
-    })?;
+    fs::create_dir_all(project_dir.join("src"))
+        .map_err(|e| CLIError::FileError(format!("Failed to create src directory: {}", e)))?;
+    fs::create_dir_all(project_dir.join("scripts"))
+        .map_err(|e| CLIError::FileError(format!("Failed to create scripts directory: {}", e)))?;
 
     let package_name = format!("kalamdb-{}", slugify(&config.project_name));
     let failure_table = format!("{}.{}_agent_failures", table.namespace, table.table);
@@ -495,30 +465,18 @@ fn generate_agent_project(
     write_file(&project_dir.join("tsconfig.json"), TSCONFIG_TEMPLATE)?;
     write_file(&project_dir.join(".env.example"), &render_env_example(config))?;
     write_file(&project_dir.join(".gitignore"), GITIGNORE_TEMPLATE)?;
-    write_file(
-        &project_dir.join("setup.sql"),
-        &render_setup_sql(config, &failure_table),
-    )?;
-    write_file(
-        &project_dir.join("setup.sh"),
-        &render_setup_sh(config),
-    )?;
+    write_file(&project_dir.join("setup.sql"), &render_setup_sql(config, &failure_table))?;
+    write_file(&project_dir.join("setup.sh"), &render_setup_sh(config))?;
     write_file(
         &project_dir.join("scripts/ensure-sdk.sh"),
         &render_ensure_sdk_sh(&sdk_relative_for_script),
     )?;
-    write_file(
-        &project_dir.join("src/agent.ts"),
-        &render_agent_ts(config, &failure_table),
-    )?;
+    write_file(&project_dir.join("src/agent.ts"), &render_agent_ts(config, &failure_table))?;
     write_file(
         &project_dir.join("src/langchain-openai.d.ts"),
         "declare module '@langchain/openai';\n",
     )?;
-    write_file(
-        &project_dir.join("README.md"),
-        &render_readme(config),
-    )?;
+    write_file(&project_dir.join("README.md"), &render_readme(config))?;
 
     set_executable(&project_dir.join("setup.sh"))?;
     set_executable(&project_dir.join("scripts/ensure-sdk.sh"))?;
@@ -527,9 +485,8 @@ fn generate_agent_project(
 }
 
 fn write_file(path: &Path, content: &str) -> Result<()> {
-    fs::write(path, content).map_err(|e| {
-        CLIError::FileError(format!("Failed to write {}: {}", path.display(), e))
-    })
+    fs::write(path, content)
+        .map_err(|e| CLIError::FileError(format!("Failed to write {}: {}", path.display(), e)))
 }
 
 #[cfg(unix)]

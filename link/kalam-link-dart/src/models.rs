@@ -4,12 +4,13 @@
 //! and `Vec`/`Option` wrappers — fully compatible with flutter_rust_bridge codegen.
 
 use kalam_link::models::{
-    BatchStatus, ChangeEvent, ErrorDetail, HealthCheckResponse, LoginResponse,
-    LoginUserInfo, QueryResponse, QueryResult, ResponseStatus, SchemaField,
+    BatchStatus, ChangeEvent, ErrorDetail, HealthCheckResponse, LoginResponse, LoginUserInfo,
+    QueryResponse, QueryResult, ResponseStatus, SchemaField,
 };
 use kalam_link::models::{
     ServerSetupRequest, ServerSetupResponse, SetupStatusResponse, SetupUserInfo,
 };
+use kalam_link::{LiveRowsConfig, LiveRowsEvent};
 
 // ---------------------------------------------------------------------------
 // Connection lifecycle events (mirrors kalam_link::event_handlers)
@@ -85,7 +86,7 @@ impl DartAuthProvider {
         match self {
             Self::BasicAuth { username, password } => {
                 kalam_link::AuthProvider::basic_auth(username, password)
-            }
+            },
             Self::JwtToken { token } => kalam_link::AuthProvider::jwt_token(token),
             Self::None => kalam_link::AuthProvider::none(),
         }
@@ -389,6 +390,32 @@ pub enum DartChangeEvent {
     },
 }
 
+/// Configuration for Rust-side live row materialization.
+pub struct DartLiveRowsConfig {
+    pub limit: Option<i32>,
+}
+
+impl DartLiveRowsConfig {
+    pub(crate) fn into_native(self) -> LiveRowsConfig {
+        LiveRowsConfig {
+            limit: self.limit.map(|value| value.max(0) as usize),
+        }
+    }
+}
+
+/// High-level event emitted by a Rust live-row subscription.
+pub enum DartLiveRowsEvent {
+    Rows {
+        subscription_id: String,
+        rows_json: Vec<String>,
+    },
+    Error {
+        subscription_id: String,
+        code: String,
+        message: String,
+    },
+}
+
 fn batch_status_str(bs: &BatchStatus) -> String {
     match bs {
         BatchStatus::Loading => "loading".to_owned(),
@@ -397,7 +424,9 @@ fn batch_status_str(bs: &BatchStatus) -> String {
     }
 }
 
-fn json_vec(rows: Vec<std::collections::HashMap<String, kalam_link::KalamCellValue>>) -> Vec<String> {
+fn json_vec(
+    rows: Vec<std::collections::HashMap<String, kalam_link::KalamCellValue>>,
+) -> Vec<String> {
     rows.into_iter()
         .map(|row| serde_json::to_string(&row).unwrap_or_default())
         .collect()
@@ -474,6 +503,29 @@ impl From<ChangeEvent> for DartChangeEvent {
     }
 }
 
+impl From<LiveRowsEvent> for DartLiveRowsEvent {
+    fn from(event: LiveRowsEvent) -> Self {
+        match event {
+            LiveRowsEvent::Rows {
+                subscription_id,
+                rows,
+            } => Self::Rows {
+                subscription_id,
+                rows_json: json_vec(rows),
+            },
+            LiveRowsEvent::Error {
+                subscription_id,
+                code,
+                message,
+            } => Self::Error {
+                subscription_id,
+                code,
+                message,
+            },
+        }
+    }
+}
+
 /// Subscription configuration.
 pub struct DartSubscriptionConfig {
     pub sql: String,
@@ -503,10 +555,7 @@ impl DartSubscriptionConfig {
 
 fn uuid_v4() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
-    let ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
+    let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
     format!("dart-sub-{}", ts)
 }
 

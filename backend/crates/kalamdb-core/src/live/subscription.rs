@@ -249,7 +249,9 @@ impl SubscriptionService {
                     .and_then(|parsed| state.subscriptions.remove(parsed.subscription_id()))
             });
             match subscription {
-                Some((_, sub)) => (state.connection_id.clone(), user_id, sub.table_id, sub.is_shared),
+                Some((_, sub)) => {
+                    (state.connection_id.clone(), user_id, sub.table_id, sub.is_shared)
+                },
                 None => {
                     // This is benign — the subscription may already have been
                     // removed by cleanup_connection (WS close race).

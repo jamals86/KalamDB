@@ -29,7 +29,7 @@ pub async fn send_auth_error(mut session: Session, message: &str) -> Result<(), 
         message: message.to_string(),
     };
     if let Ok(json) = serde_json::to_string(&msg) {
-        let _ = send_data(&mut session, json.as_bytes(), true).await;
+        let _ = send_data(&mut session, json.as_bytes(), false).await;
     }
     session
         .close(Some(CloseReason {
@@ -46,9 +46,10 @@ pub async fn send_error(
     id: &str,
     code: WsErrorCode,
     message: &str,
+    compress: bool,
 ) -> Result<(), ()> {
     let msg = Notification::error(id.to_string(), code.to_string(), message.to_string());
-    send_json(session, &msg, true).await
+    send_json(session, &msg, compress).await
 }
 
 /// Send JSON message with optional compression for large payloads.

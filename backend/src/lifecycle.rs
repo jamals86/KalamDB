@@ -988,7 +988,6 @@ async fn create_default_system_user(
 // ///
 // /// Informs users about password requirements for remote access
 
-
 // async fn check_remote_access_security(
 //     config: &ServerConfig,
 //     users_provider: Arc<kalamdb_system::UsersTableProvider>,

@@ -71,10 +71,7 @@ mod tests {
     fn row_with_seq(seq: i64) -> HashMap<String, KalamCellValue> {
         let mut row = HashMap::new();
         // _seq is serialised as a string on the wire for i64 precision
-        row.insert(
-            SEQ_COLUMN.to_string(),
-            KalamCellValue::text(seq.to_string()),
-        );
+        row.insert(SEQ_COLUMN.to_string(), KalamCellValue::text(seq.to_string()));
         row
     }
 

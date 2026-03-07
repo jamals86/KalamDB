@@ -290,10 +290,7 @@ impl SqlResponse {
 
 impl QueryResult {
     /// Create a result for a SELECT query with rows and schema
-    pub fn with_rows_and_schema(
-        rows: Vec<Vec<KalamCellValue>>,
-        schema: Vec<SchemaField>,
-    ) -> Self {
+    pub fn with_rows_and_schema(rows: Vec<Vec<KalamCellValue>>, schema: Vec<SchemaField>) -> Self {
         let row_count = rows.len();
         Self {
             schema,
@@ -342,8 +339,12 @@ impl QueryResult {
             vec![
                 KalamCellValue::from(map.get("status").cloned().unwrap_or(serde_json::Value::Null)),
                 KalamCellValue::from(map.get("ws_url").cloned().unwrap_or(serde_json::Value::Null)),
-                KalamCellValue::from(map.get("subscription").cloned().unwrap_or(serde_json::Value::Null)),
-                KalamCellValue::from(map.get("message").cloned().unwrap_or(serde_json::Value::Null)),
+                KalamCellValue::from(
+                    map.get("subscription").cloned().unwrap_or(serde_json::Value::Null),
+                ),
+                KalamCellValue::from(
+                    map.get("message").cloned().unwrap_or(serde_json::Value::Null),
+                ),
             ]
         } else {
             vec![KalamCellValue::null(); 4]

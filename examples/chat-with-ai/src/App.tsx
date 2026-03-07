@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Auth, MessageType, createClient, type RowData } from 'kalam-link';
+import { Auth, createClient, type RowData } from 'kalam-link';
 import './styles.css';
 
 type ChatMessage = {
@@ -25,6 +25,9 @@ type LiveDraft = {
   preview: string;
 };
 
+const MAX_CHAT_MESSAGES = 40;
+const MAX_AGENT_EVENTS = 24;
+
 const ROOM = import.meta.env.VITE_CHAT_ROOM ?? 'main';
 const ROOM_SQL = ROOM.replace(/'/g, "''");
 const CHAT_USERNAME = import.meta.env.VITE_KALAMDB_USERNAME ?? 'admin';
@@ -48,11 +51,11 @@ function createAuthedClient() {
       CHAT_USERNAME,
       import.meta.env.VITE_KALAMDB_PASSWORD ?? 'kalamdb123',
     ),
+    disableCompression: true,
   });
 }
 
-const chatClient = createAuthedClient();
-const eventsClient = createAuthedClient();
+const client = createAuthedClient();
 
 function text(row: RowData, key: string): string {
   return row[key]?.asString() ?? '';
@@ -146,101 +149,64 @@ export function App() {
   const [status, setStatus] = useState<'connecting' | 'live' | 'error'>('connecting');
   const [error, setError] = useState<string | null>(null);
   const threadRef = useRef<HTMLDivElement | null>(null);
-  const refreshRef = useRef<() => Promise<void>>(async () => undefined);
   const liveDraft = deriveLiveDraft(events);
 
   useEffect(() => {
     let active = true;
     const unsubscribers: Array<() => Promise<void>> = [];
-    let messagesRefreshInFlight: Promise<void> | null = null;
-    let eventsRefreshInFlight: Promise<void> | null = null;
-
-    const refreshMessages = async (): Promise<void> => {
-      const rows = await chatClient.queryAll(CHAT_SQL);
-      if (active) {
-        setMessages(rows.map(toMessage).slice(-40));
-      }
-    };
-
-    const refreshEvents = async (): Promise<void> => {
-      const rows = await eventsClient.queryAll(EVENTS_SQL);
-      if (active) {
-        setEvents(rows.map(toAgentEvent).slice(-24));
-      }
-    };
-
-    const queueMessagesRefresh = (): void => {
-      if (messagesRefreshInFlight) {
-        return;
-      }
-
-      messagesRefreshInFlight = refreshMessages()
-        .catch((caughtError) => {
-          if (!active) {
-            return;
-          }
-          setStatus('error');
-          setError(caughtError instanceof Error ? caughtError.message : String(caughtError));
-        })
-        .finally(() => {
-          messagesRefreshInFlight = null;
-        });
-    };
-
-    const queueEventsRefresh = (): void => {
-      if (eventsRefreshInFlight) {
-        return;
-      }
-
-      eventsRefreshInFlight = refreshEvents()
-        .catch((caughtError) => {
-          if (!active) {
-            return;
-          }
-          setStatus('error');
-          setError(caughtError instanceof Error ? caughtError.message : String(caughtError));
-        })
-        .finally(() => {
-          eventsRefreshInFlight = null;
-        });
-    };
-
-    refreshRef.current = refreshMessages;
 
     const start = async (): Promise<void> => {
       try {
-        await refreshMessages();
-        await refreshEvents();
-        const messagesUnsubscribe = await chatClient.subscribeWithSql(CHAT_SQL, (event) => {
-          if (event.type === MessageType.SubscriptionAck) {
-            return;
-          }
-          if (event.type === MessageType.Error) {
-            setStatus('error');
-            setError('Message subscription failed. Check the agent output and live event feed.');
-            return;
-          }
-          queueMessagesRefresh();
-        }, { last_rows: 200 });
+        const messagesUnsubscribe = await client.liveQueryRowsWithSql(
+          CHAT_SQL,
+          (nextMessages) => {
+            if (active) {
+              setMessages(nextMessages);
+            }
+          },
+          {
+            mapRow: toMessage,
+            limit: MAX_CHAT_MESSAGES,
+            subscriptionOptions: { last_rows: MAX_CHAT_MESSAGES },
+            onError: (event) => {
+              if (!active) {
+                return;
+              }
+              setStatus('error');
+              setError(`Message subscription failed (${event.code}): ${event.message}`);
+            },
+          },
+        );
         unsubscribers.push(messagesUnsubscribe);
-        const eventsUnsubscribe = await eventsClient.subscribeWithSql(EVENTS_SQL, (event) => {
-          if (event.type === MessageType.SubscriptionAck) {
-            return;
-          }
-          if (event.type === MessageType.Error) {
-            setStatus('error');
-            setError('Event stream subscription failed. Check the agent output and server state.');
-            return;
-          }
-          queueEventsRefresh();
-        }, { last_rows: 200 });
+
+        const eventsUnsubscribe = await client.liveQueryRowsWithSql(
+          EVENTS_SQL,
+          (nextEvents) => {
+            if (active) {
+              setEvents(nextEvents);
+            }
+          },
+          {
+            mapRow: toAgentEvent,
+            limit: MAX_AGENT_EVENTS,
+            subscriptionOptions: { last_rows: MAX_AGENT_EVENTS },
+            onError: (event) => {
+              if (!active) {
+                return;
+              }
+              setStatus('error');
+              setError(`Event subscription failed (${event.code}): ${event.message}`);
+            },
+          },
+        );
         unsubscribers.push(eventsUnsubscribe);
+
         if (active) {
           setStatus('live');
         }
       } catch (caughtError) {
         if (!active) {
-          return;
+            return;
         }
         setStatus('error');
         setError(caughtError instanceof Error ? caughtError.message : String(caughtError));
@@ -254,8 +220,7 @@ export function App() {
       for (const unsubscribe of unsubscribers) {
         void unsubscribe();
       }
-      void chatClient.disconnect();
-      void eventsClient.disconnect();
+      void client.disconnect();
     };
   }, []);
 
@@ -278,11 +243,10 @@ export function App() {
     try {
       setIsSubmitting(true);
       setError(null);
-      await chatClient.query(
+      await client.query(
         'INSERT INTO chat_demo.messages (room, role, author, sender_username, content) VALUES ($1, $2, $3, $4, $5)',
         [ROOM, 'user', CHAT_USERNAME, CHAT_USERNAME, content],
       );
-      await refreshRef.current();
       setDraft('');
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : String(caughtError));

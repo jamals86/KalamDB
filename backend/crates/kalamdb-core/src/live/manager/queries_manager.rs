@@ -621,10 +621,7 @@ mod tests {
         let def = shared_table_def(TableAccess::Private);
         let result =
             LiveQueryManager::validate_table_subscription_permission(Role::Dba, &def, &table_id());
-        assert!(
-            result.is_ok(),
-            "private shared table subscriptions should be allowed for DBA"
-        );
+        assert!(result.is_ok(), "private shared table subscriptions should be allowed for DBA");
     }
 
     #[test]

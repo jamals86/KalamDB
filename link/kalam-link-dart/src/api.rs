@@ -20,9 +20,9 @@
 
 use crate::models::{
     DartAuthProvider, DartChangeEvent, DartConnectionError, DartConnectionEvent,
-    DartDisconnectReason, DartHealthCheckResponse, DartLoginResponse, DartQueryResponse,
-    DartServerSetupRequest, DartServerSetupResponse, DartSetupStatusResponse,
-    DartSubscriptionConfig,
+    DartDisconnectReason, DartHealthCheckResponse, DartLiveRowsConfig, DartLiveRowsEvent,
+    DartLoginResponse, DartQueryResponse, DartServerSetupRequest, DartServerSetupResponse,
+    DartSetupStatusResponse, DartSubscriptionConfig,
 };
 use flutter_rust_bridge::frb;
 use std::collections::VecDeque;
@@ -153,10 +153,8 @@ fn create_client_inner(
 
     // Wire connection lifecycle event handlers that push into the queue.
     if events_enabled {
-        builder = builder.event_handlers(build_event_handlers(
-            event_queue.clone(),
-            event_notify.clone(),
-        ));
+        builder =
+            builder.event_handlers(build_event_handlers(event_queue.clone(), event_notify.clone()));
     }
 
     let client = builder.build()?;
@@ -184,13 +182,8 @@ fn create_client_inner(
 ///
 /// **Note:** `#[frb(sync)]` is intentionally removed so the lock acquisition
 /// runs on a worker thread instead of the Flutter UI thread.
-pub fn dart_update_auth(
-    client: &DartKalamClient,
-    auth: DartAuthProvider,
-) -> anyhow::Result<()> {
-    client
-        .inner
-        .update_shared_auth(auth.into_native());
+pub fn dart_update_auth(client: &DartKalamClient, auth: DartAuthProvider) -> anyhow::Result<()> {
+    client.inner.update_shared_auth(auth.into_native());
     Ok(())
 }
 
@@ -302,10 +295,7 @@ pub async fn dart_execute_query(
         Some(json) => Some(serde_json::from_str(&json)?),
         None => None,
     };
-    let response = client
-        .inner
-        .execute_query(&sql, None, params, namespace.as_deref())
-        .await?;
+    let response = client.inner.execute_query(&sql, None, params, namespace.as_deref()).await?;
     Ok(DartQueryResponse::from(response))
 }
 
@@ -451,6 +441,12 @@ pub struct DartSubscription {
     sub_id: String,
 }
 
+/// Opaque handle to an active high-level live-row subscription.
+pub struct DartLiveRowsSubscription {
+    inner: Arc<Mutex<kalam_link::LiveRowsSubscription>>,
+    sub_id: String,
+}
+
 // ---------------------------------------------------------------------------
 // Shared connection lifecycle
 // ---------------------------------------------------------------------------
@@ -556,6 +552,72 @@ pub async fn dart_subscription_close(subscription: &DartSubscription) -> anyhow:
 /// Get the server-assigned subscription ID.
 #[frb(sync)]
 pub fn dart_subscription_id(subscription: &DartSubscription) -> String {
+    subscription.sub_id.clone()
+}
+
+/// Create a materialized live-query subscription.
+pub async fn dart_live_query_rows_subscribe(
+    client: &DartKalamClient,
+    sql: String,
+    config: Option<DartSubscriptionConfig>,
+    live_config: Option<DartLiveRowsConfig>,
+) -> anyhow::Result<DartLiveRowsSubscription> {
+    let native_live_config = live_config.unwrap_or(DartLiveRowsConfig { limit: None }).into_native();
+    let sub = if let Some(cfg) = config {
+        let mut native_cfg = cfg.into_native();
+        native_cfg.sql = sql;
+        client
+            .inner
+            .live_query_rows_with_config(native_cfg, native_live_config)
+            .await?
+    } else {
+        let native_cfg = kalam_link::SubscriptionConfig::new(
+            format!(
+                "dart-live-{}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos()
+            ),
+            sql,
+        );
+        client
+            .inner
+            .live_query_rows_with_config(native_cfg, native_live_config)
+            .await?
+    };
+
+    let sub_id = sub.subscription_id().to_owned();
+    Ok(DartLiveRowsSubscription {
+        inner: Arc::new(Mutex::new(sub)),
+        sub_id,
+    })
+}
+
+/// Pull the next materialized live-row event from a subscription.
+pub async fn dart_live_query_rows_next(
+    subscription: &DartLiveRowsSubscription,
+) -> anyhow::Result<Option<DartLiveRowsEvent>> {
+    let mut sub = subscription.inner.lock().await;
+    match sub.next().await {
+        Some(Ok(event)) => Ok(Some(DartLiveRowsEvent::from(event))),
+        Some(Err(e)) => Err(e.into()),
+        None => Ok(None),
+    }
+}
+
+/// Close a materialized live-row subscription.
+pub async fn dart_live_query_rows_close(
+    subscription: &DartLiveRowsSubscription,
+) -> anyhow::Result<()> {
+    let mut sub = subscription.inner.lock().await;
+    sub.close().await?;
+    Ok(())
+}
+
+/// Get the server-assigned subscription ID for a live-row subscription.
+#[frb(sync)]
+pub fn dart_live_query_rows_id(subscription: &DartLiveRowsSubscription) -> String {
     subscription.sub_id.clone()
 }
 

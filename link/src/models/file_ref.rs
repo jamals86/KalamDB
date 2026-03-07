@@ -90,10 +90,7 @@ impl FileRef {
     /// ```
     pub fn download_url(&self, base_url: &str, namespace: &str, table: &str) -> String {
         let base = base_url.trim_end_matches('/');
-        format!(
-            "{}/api/v1/files/{}/{}/{}/{}",
-            base, namespace, table, self.sub, self.id
-        )
+        format!("{}/api/v1/files/{}/{}/{}/{}", base, namespace, table, self.sub, self.id)
     }
 
     /// Relative HTTP path (no host) for this file.
@@ -102,10 +99,7 @@ impl FileRef {
     /// /api/v1/files/{namespace}/{table}/{sub}/{id}
     /// ```
     pub fn relative_url(&self, namespace: &str, table: &str) -> String {
-        format!(
-            "/api/v1/files/{}/{}/{}/{}",
-            namespace, table, self.sub, self.id
-        )
+        format!("/api/v1/files/{}/{}/{}/{}", namespace, table, self.sub, self.id)
     }
 
     // ------------------------------------------------------------------
@@ -314,10 +308,7 @@ mod tests {
             fr.download_url("http://localhost:8080", "default", "users"),
             "http://localhost:8080/api/v1/files/default/users/f0001/123"
         );
-        assert_eq!(
-            fr.relative_url("default", "users"),
-            "/api/v1/files/default/users/f0001/123"
-        );
+        assert_eq!(fr.relative_url("default", "users"), "/api/v1/files/default/users/f0001/123");
     }
 
     #[test]

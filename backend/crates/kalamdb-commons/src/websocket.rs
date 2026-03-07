@@ -460,9 +460,9 @@ pub struct ChangeNotification {
     pub change_type: ChangeType,
     pub table_id: crate::models::TableId,
     pub row_data: Row,
-    pub old_data: Option<Row>,      // For UPDATE notifications
-    pub row_id: Option<String>,     // For DELETE notifications (hard delete)
-    pub pk_columns: Vec<String>,    // Primary key column name(s) for UPDATE delta
+    pub old_data: Option<Row>,   // For UPDATE notifications
+    pub row_id: Option<String>,  // For DELETE notifications (hard delete)
+    pub pk_columns: Vec<String>, // Primary key column name(s) for UPDATE delta
 }
 
 impl ChangeNotification {
@@ -660,11 +660,7 @@ impl Notification {
     /// the primary key column(s) and `_seq` for identification.
     /// Clients can derive which columns changed by inspecting the keys in `rows[0]`
     /// and filtering out those starting with `_` (system columns).
-    pub fn update(
-        subscription_id: String,
-        new_rows: Vec<RowData>,
-        old_rows: Vec<RowData>,
-    ) -> Self {
+    pub fn update(subscription_id: String, new_rows: Vec<RowData>, old_rows: Vec<RowData>) -> Self {
         Self::Change {
             subscription_id,
             change_type: ChangeType::Update,

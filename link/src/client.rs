@@ -13,7 +13,7 @@ use crate::{
         ConnectionOptions, HealthCheckResponse, HttpVersion, QueryResponse, SubscriptionConfig,
     },
     query::{QueryExecutor, UploadProgressCallback},
-    subscription::SubscriptionManager,
+    subscription::{LiveRowsConfig, LiveRowsSubscription, SubscriptionManager},
     timeouts::KalamLinkTimeouts,
 };
 use std::{
@@ -232,7 +232,8 @@ impl KalamLinkClient {
             let conn_guard = self.connection.lock().await;
             if let Some(ref conn) = *conn_guard {
                 let options = config.options.unwrap_or_default();
-                let (event_rx, generation) = conn.subscribe(config.id.clone(), config.sql, options).await?;
+                let (event_rx, generation) =
+                    conn.subscribe(config.id.clone(), config.sql, options).await?;
                 let unsub_tx = conn.unsubscribe_tx();
                 return Ok(SubscriptionManager::from_shared(
                     config.id,
@@ -255,6 +256,34 @@ impl KalamLinkClient {
             &self.event_handlers,
         )
         .await
+    }
+
+    /// Subscribe to a SQL query and receive materialized row snapshots.
+    pub async fn live_query_rows(&self, query: &str) -> Result<LiveRowsSubscription> {
+        self.live_query_rows_with_config(
+            SubscriptionConfig::new(
+                format!(
+                    "live_rows_{}",
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_nanos()
+                ),
+                query,
+            ),
+            LiveRowsConfig::default(),
+        )
+        .await
+    }
+
+    /// Subscribe with advanced low-level and materialization configuration.
+    pub async fn live_query_rows_with_config(
+        &self,
+        config: SubscriptionConfig,
+        live_rows_config: LiveRowsConfig,
+    ) -> Result<LiveRowsSubscription> {
+        let subscription = self.subscribe_with_config(config).await?;
+        Ok(LiveRowsSubscription::new(subscription, live_rows_config))
     }
 
     /// Establish a shared WebSocket connection.
@@ -463,10 +492,7 @@ impl KalamLinkClient {
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
             let message = if status.as_u16() == 403 {
-                format!(
-                    "Health check endpoint is restricted to localhost connections ({})",
-                    body
-                )
+                format!("Health check endpoint is restricted to localhost connections ({})", body)
             } else {
                 format!("HTTP {} — {}", status, body)
             };
@@ -1087,9 +1113,7 @@ mod tests {
         let client = KalamLinkClient::builder()
             .base_url("http://localhost:3000")
             .jwt_token("test_token")
-            .connection_options(
-                ConnectionOptions::new().with_ws_lazy_connect(true),
-            )
+            .connection_options(ConnectionOptions::new().with_ws_lazy_connect(true))
             .build()
             .expect("build should succeed");
 

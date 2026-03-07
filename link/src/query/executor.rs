@@ -144,8 +144,7 @@ impl QueryExecutor {
         params: Option<Vec<serde_json::Value>>,
         namespace_id: Option<String>,
     ) -> Result<QueryResponse> {
-        self.execute_with_progress(sql, files, params, namespace_id, None)
-            .await
+        self.execute_with_progress(sql, files, params, namespace_id, None).await
     }
 
     /// Execute a SQL query with optional parameters and namespace, with upload progress callback.
@@ -324,10 +323,7 @@ impl QueryExecutor {
             return Ok(query_response);
         }
 
-        let error_text = response
-            .text()
-            .await
-            .unwrap_or_else(|_| "Unknown error".to_string());
+        let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
 
         if status.is_client_error() {
             let status_code = status.as_u16();
@@ -345,10 +341,7 @@ impl QueryExecutor {
             return Ok(json_response);
         }
 
-        warn!(
-            "[LINK_HTTP] Server error: status={} message=\"{}\"",
-            status, error_text
-        );
+        warn!("[LINK_HTTP] Server error: status={} message=\"{}\"", status, error_text);
 
         Err(KalamLinkError::ServerError {
             status_code: status.as_u16(),
@@ -382,11 +375,7 @@ mod tests {
             frame.unwrap();
         }
 
-        let progress = last_progress
-            .lock()
-            .unwrap()
-            .clone()
-            .expect("no progress reported");
+        let progress = last_progress.lock().unwrap().clone().expect("no progress reported");
         assert_eq!(progress.file_index, 2);
         assert_eq!(progress.total_files, 3);
         assert_eq!(progress.file_name, "example.txt");

@@ -25,16 +25,19 @@ pub async fn cleanup_connection(
         (state.connection_id().clone(), state.user_id.clone(), state.subscriptions.len())
     };
 
-    // Unregister from unified registry (handles subscription cleanup)
-    let removed_live_ids = registry.unregister_connection(&connection_id);
-
-    // Unregister from live query manager (delete from system.live_queries)
-    if let Some(ref uid) = user_id {
-        if let Err(e) = live_query_manager.unregister_connection(uid, &connection_id).await {
-            // Log error but don't panic - orphans will be cleaned up on next server restart
-            log::warn!("Failed to cleanup live queries for connection {}: {}", connection_id, e);
+    let removed_live_ids = if let Some(ref uid) = user_id {
+        match live_query_manager.unregister_connection(uid, &connection_id).await {
+            Ok(live_ids) => live_ids,
+            Err(e) => {
+                log::warn!("Failed to cleanup live queries for connection {}: {}", connection_id, e);
+                registry.unregister_connection(&connection_id)
+            },
         }
+    } else {
+        registry.unregister_connection(&connection_id)
+    };
 
+    if let Some(ref uid) = user_id {
         // Update rate limiter
         rate_limiter.cleanup_connection(&connection_id);
         for _ in 0..subscription_count {

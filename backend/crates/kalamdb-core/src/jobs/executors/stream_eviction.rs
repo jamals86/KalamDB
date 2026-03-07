@@ -323,6 +323,7 @@ mod tests {
                     .join("streams")
                     .join(namespace.as_str())
                     .join(table_name_value.as_str()),
+                max_rows_per_user: 256, // Default per-user retention limit
                 shard_router: ShardRouter::default_config(),
                 ttl_seconds: Some(1),
             },

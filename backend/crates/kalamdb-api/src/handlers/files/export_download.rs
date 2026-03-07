@@ -38,8 +38,14 @@ pub async fn download_export(
     }
 
     // Security: validate path components
-    if user_id.contains("..") || user_id.contains('/') || user_id.contains('\\') || user_id.contains('\0')
-        || export_id.contains("..") || export_id.contains('/') || export_id.contains('\\') || export_id.contains('\0')
+    if user_id.contains("..")
+        || user_id.contains('/')
+        || user_id.contains('\\')
+        || user_id.contains('\0')
+        || export_id.contains("..")
+        || export_id.contains('/')
+        || export_id.contains('\\')
+        || export_id.contains('\0')
     {
         return HttpResponse::BadRequest().json(SqlResponse::error(
             ErrorCode::InvalidInput,

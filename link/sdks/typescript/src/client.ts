@@ -17,6 +17,8 @@ import type {
   ConsumeContext,
   ConsumerHandle,
   ConsumerHandler,
+  LiveRowsCallback,
+  LiveRowsOptions,
   LogEntry,
   LogListener,
   LoginResponse,
@@ -28,6 +30,7 @@ import type {
   QueryResponse,
   ServerMessage,
   SubscriptionCallback,
+  SubscriptionErrorEvent,
   SubscriptionInfo,
   SubscriptionOptions,
   Unsubscribe,
@@ -58,6 +61,19 @@ import {
 // Re-export so consumers of client.ts don't need a separate file_ref import.
 export { KalamChange, KalamRow, wrapRows };
 export type { FileRefContext };
+
+type NormalizedSubscriptionEvent = ServerMessage & {
+  rows?: RowData[];
+  old_values?: RowData[];
+};
+
+type LiveRowsWasmEvent = {
+  type: 'rows' | 'error';
+  subscription_id: string;
+  rows?: RowData[];
+  code?: string;
+  message?: string;
+};
 
 type DynamicImport = (specifier: string) => Promise<Record<string, unknown>>;
 
@@ -95,6 +111,105 @@ function getNodeProcess(): NodeProcessShim | undefined {
     process?: NodeProcessShim;
   };
   return runtime.process;
+}
+
+function wrapSubscriptionRows(rows: unknown): RowData[] | undefined {
+  if (!Array.isArray(rows)) {
+    return undefined;
+  }
+
+  return rows.map((row) => wrapRowMap((row ?? {}) as Record<string, unknown>));
+}
+
+function normalizeSubscriptionEvent(event: ServerMessage): NormalizedSubscriptionEvent {
+  const normalized = { ...event } as NormalizedSubscriptionEvent;
+
+  if ('rows' in normalized) {
+    normalized.rows = wrapSubscriptionRows(normalized.rows);
+  }
+  if ('old_values' in normalized) {
+    normalized.old_values = wrapSubscriptionRows(normalized.old_values);
+  }
+
+  return normalized;
+}
+
+function normalizeLiveRowsWasmEvent(event: {
+  type: 'rows' | 'error';
+  subscription_id: string;
+  rows?: unknown;
+  code?: string;
+  message?: string;
+}): LiveRowsWasmEvent {
+  return {
+    ...event,
+    rows: wrapSubscriptionRows(event.rows),
+  };
+}
+
+function defaultRowKey(value: unknown): string | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const candidate = (value as { id?: unknown }).id;
+  if (typeof candidate === 'string') {
+    return candidate;
+  }
+  if (candidate instanceof KalamCellValue) {
+    return candidate.asString();
+  }
+
+  return null;
+}
+
+function upsertLimited<T>(
+  current: T[],
+  incoming: T[],
+  getKey: (row: T) => string | null | undefined,
+  limit?: number,
+): T[] {
+  const next = [...current];
+
+  for (const item of incoming) {
+    const key = getKey(item);
+    if (key) {
+      const existingIndex = next.findIndex((entry) => getKey(entry) === key);
+      if (existingIndex >= 0) {
+        next[existingIndex] = item;
+        continue;
+      }
+    }
+
+    next.push(item);
+  }
+
+  if (typeof limit === 'number' && limit >= 0 && next.length > limit) {
+    return next.slice(-limit);
+  }
+
+  return next;
+}
+
+function removeMaterializedRows<T>(
+  current: T[],
+  removed: T[],
+  getKey: (row: T) => string | null | undefined,
+): T[] {
+  const keys = new Set(
+    removed
+      .map((row) => getKey(row))
+      .filter((key): key is string => typeof key === 'string' && key.length > 0),
+  );
+
+  if (keys.size === 0) {
+    return current;
+  }
+
+  return current.filter((row) => {
+    const key = getKey(row);
+    return !key || !keys.has(key);
+  });
 }
 
 /* ================================================================== */
@@ -1150,7 +1265,7 @@ export class KalamDBClient {
     const logFn = this.log.bind(this);
     const wrappedCallback = (eventJson: string) => {
       try {
-        const event = JSON.parse(eventJson) as ServerMessage;
+        const event = normalizeSubscriptionEvent(JSON.parse(eventJson) as ServerMessage);
         logFn(LogLevel.Verbose, 'subscription', `Event: type=${event.type}`);
         callback(event);
       } catch (error) {
@@ -1177,6 +1292,146 @@ export class KalamDBClient {
     return async () => {
       await this.unsubscribe(subscriptionId);
     };
+  }
+
+  /**
+   * Subscribe to a SQL query and receive the SDK-maintained current row set.
+   *
+   * The SDK applies `initial_data_batch`, `insert`, `update`, and `delete`
+   * events internally so application code only handles the latest row array.
+   */
+  async liveQueryRowsWithSql<T = RowData>(
+    sql: string,
+    callback: LiveRowsCallback<T>,
+    options: LiveRowsOptions<T> = {},
+  ): Promise<Unsubscribe> {
+    if (options.getKey) {
+      return this.liveQueryRowsWithSqlFallback(sql, callback, options);
+    }
+
+    await this.ensureConnected();
+    if (!this.wasmClient) throw new Error('WASM client not initialized');
+
+    const wasmClient = this.wasmClient as typeof this.wasmClient & {
+      liveQueryRowsWithSql?: (
+        sql: string,
+        optionsJson: string | undefined,
+        callback: Function,
+      ) => Promise<string>;
+    };
+
+    if (typeof wasmClient.liveQueryRowsWithSql !== 'function') {
+      return this.liveQueryRowsWithSqlFallback(sql, callback, options);
+    }
+
+    const mapRow = options.mapRow ?? ((row: RowData) => row as unknown as T);
+    const wrappedCallback = (eventJson: string) => {
+      try {
+        const event = normalizeLiveRowsWasmEvent(JSON.parse(eventJson) as {
+          type: 'rows' | 'error';
+          subscription_id: string;
+          rows?: unknown;
+          code?: string;
+          message?: string;
+        });
+
+        if (event.type === 'error') {
+          options.onError?.({
+            type: 'error',
+            subscription_id: event.subscription_id,
+            code: event.code ?? 'unknown',
+            message: event.message ?? 'Live query failed',
+          });
+          return;
+        }
+
+        callback((event.rows ?? []).map(mapRow));
+      } catch (error) {
+        this.log(LogLevel.Error, 'subscription', `Failed to parse live rows event: ${error}`);
+      }
+    };
+
+    const optionsJson = JSON.stringify({
+      limit: options.limit,
+      subscription_options: options.subscriptionOptions,
+    });
+    const subscriptionId = await wasmClient.liveQueryRowsWithSql(
+      sql,
+      optionsJson,
+      wrappedCallback as unknown as Function,
+    );
+
+    this.subscriptions.set(subscriptionId, {
+      id: subscriptionId,
+      tableName: sql,
+      createdAt: new Date(),
+      lastSeqId: undefined,
+      closed: false,
+    });
+
+    return async () => {
+      await this.unsubscribe(subscriptionId);
+    };
+  }
+
+  private async liveQueryRowsWithSqlFallback<T = RowData>(
+    sql: string,
+    callback: LiveRowsCallback<T>,
+    options: LiveRowsOptions<T> = {},
+  ): Promise<Unsubscribe> {
+    const mapRow = options.mapRow ?? ((row: RowData) => row as unknown as T);
+    const getKey = options.getKey ?? ((row: T) => defaultRowKey(row));
+    let rows: T[] = [];
+
+    return this.subscribeWithSql(
+      sql,
+      (event) => {
+        const normalizedEvent = event as NormalizedSubscriptionEvent;
+
+        if (normalizedEvent.type === 'subscription_ack') {
+          return;
+        }
+
+        if (normalizedEvent.type === 'error') {
+          options.onError?.(normalizedEvent as SubscriptionErrorEvent);
+          return;
+        }
+
+        if (normalizedEvent.type === 'initial_data_batch') {
+          rows = (normalizedEvent.rows ?? []).map(mapRow);
+          if (typeof options.limit === 'number' && options.limit >= 0 && rows.length > options.limit) {
+            rows = rows.slice(-options.limit);
+          }
+          callback([...rows]);
+          return;
+        }
+
+        if (normalizedEvent.type !== 'change') {
+          return;
+        }
+
+        if (normalizedEvent.change_type === 'delete') {
+          rows = removeMaterializedRows(rows, (normalizedEvent.old_values ?? []).map(mapRow), getKey);
+          callback([...rows]);
+          return;
+        }
+
+        rows = upsertLimited(rows, (normalizedEvent.rows ?? []).map(mapRow), getKey, options.limit);
+        callback([...rows]);
+      },
+      options.subscriptionOptions,
+    );
+  }
+
+  /**
+   * Subscribe to a table and receive the SDK-maintained current row set.
+   */
+  async liveTableRows<T = RowData>(
+    tableName: string,
+    callback: LiveRowsCallback<T>,
+    options: LiveRowsOptions<T> = {},
+  ): Promise<Unsubscribe> {
+    return this.liveQueryRowsWithSql(`SELECT * FROM ${tableName}`, callback, options);
   }
 
   /** Unsubscribe by subscription ID */

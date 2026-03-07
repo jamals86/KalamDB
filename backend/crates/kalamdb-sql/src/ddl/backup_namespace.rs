@@ -107,24 +107,21 @@ mod tests {
     #[test]
     fn test_parse_backup_database() {
         let stmt =
-            BackupDatabaseStatement::parse("BACKUP DATABASE TO '/backups/kalamdb.tar.gz'")
-                .unwrap();
+            BackupDatabaseStatement::parse("BACKUP DATABASE TO '/backups/kalamdb.tar.gz'").unwrap();
         assert_eq!(stmt.backup_path, "/backups/kalamdb.tar.gz");
     }
 
     #[test]
     fn test_parse_backup_database_double_quotes() {
-        let stmt =
-            BackupDatabaseStatement::parse("BACKUP DATABASE TO \"/backups/kalamdb.tar.gz\"")
-                .unwrap();
+        let stmt = BackupDatabaseStatement::parse("BACKUP DATABASE TO \"/backups/kalamdb.tar.gz\"")
+            .unwrap();
         assert_eq!(stmt.backup_path, "/backups/kalamdb.tar.gz");
     }
 
     #[test]
     fn test_parse_backup_database_lowercase() {
         let stmt =
-            BackupDatabaseStatement::parse("backup database to '/backups/kalamdb.tar.gz'")
-                .unwrap();
+            BackupDatabaseStatement::parse("backup database to '/backups/kalamdb.tar.gz'").unwrap();
         assert_eq!(stmt.backup_path, "/backups/kalamdb.tar.gz");
     }
 
@@ -148,8 +145,7 @@ mod tests {
 
     #[test]
     fn test_parse_backup_database_path_traversal_blocked() {
-        let result =
-            BackupDatabaseStatement::parse("BACKUP DATABASE TO '../../../etc/passwd'");
+        let result = BackupDatabaseStatement::parse("BACKUP DATABASE TO '../../../etc/passwd'");
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("path traversal"));
 

@@ -42,9 +42,7 @@ pub struct RestoreParams {
 impl JobParams for RestoreParams {
     fn validate(&self) -> Result<(), KalamDbError> {
         if self.backup_path.is_empty() {
-            return Err(KalamDbError::InvalidOperation(
-                "backup_path cannot be empty".to_string(),
-            ));
+            return Err(KalamDbError::InvalidOperation("backup_path cannot be empty".to_string()));
         }
         Ok(())
     }
@@ -122,10 +120,7 @@ impl JobExecutor for RestoreExecutor {
         let config = ctx.app_ctx.config();
         let storage = &config.storage;
 
-        ctx.log_info(&format!(
-            "Starting full database restore from '{}'",
-            backup_dir.display()
-        ));
+        ctx.log_info(&format!("Starting full database restore from '{}'", backup_dir.display()));
 
         let storage_backend = ctx.app_ctx.storage_backend();
         let rocksdb_backup_dir = backup_dir.join("rocksdb");
@@ -155,10 +150,7 @@ impl JobExecutor for RestoreExecutor {
             let backup_toml = backup_dir.join("server.toml");
             if backup_toml.exists() {
                 fs::copy(&backup_toml, Path::new("server.toml")).map_err(|e| {
-                    KalamDbError::InvalidOperation(format!(
-                        "Failed to restore server.toml: {}",
-                        e
-                    ))
+                    KalamDbError::InvalidOperation(format!("Failed to restore server.toml: {}", e))
                 })?;
             }
 
@@ -179,14 +171,14 @@ impl JobExecutor for RestoreExecutor {
                         params.backup_path
                     )),
                 })
-            }
+            },
             Err(e) => {
                 ctx.log_error(&format!("Restore failed: {}", e));
                 Ok(JobDecision::Failed {
                     message: format!("Restore failed: {}", e),
                     exception_trace: Some(format!("{:?}", e)),
                 })
-            }
+            },
         }
     }
 
