@@ -219,3 +219,67 @@ test('liveQueryRowsWithSql delegates materialized rows to the Rust/WASM layer', 
 
   await unsubscribe();
 });
+
+test('parallel subscribe storms connect once and keep sibling subscriptions isolated', async () => {
+  const client = createClient({
+    url: 'http://127.0.0.1:8080',
+    authProvider: async () => ({ type: 'none' }),
+  });
+
+  const fakeWasmClient = createFakeWasmClient();
+  client.initialized = true;
+  client.wasmClient = fakeWasmClient;
+
+  const eventBatches = Array.from({ length: 12 }, () => []);
+  const unsubs = await Promise.all(
+    eventBatches.map((events, index) =>
+      client.subscribeWithSql(
+        `SELECT * FROM chat_demo.messages WHERE id = ${index + 1}`,
+        (event) => {
+          events.push(event);
+        },
+      )),
+  );
+
+  assert.equal(fakeWasmClient.connectCalls, 1);
+  assert.equal(fakeWasmClient.subscribeCalls, 12);
+  assert.equal(client.getSubscriptionCount(), 12);
+
+  fakeWasmClient.emit('sub-5', {
+    type: 'change',
+    change_type: 'insert',
+    subscription_id: 'sub-5',
+    rows: [{ id: 5, content: 'five' }],
+    old_values: [],
+  });
+  fakeWasmClient.emit('sub-9', {
+    type: 'change',
+    change_type: 'insert',
+    subscription_id: 'sub-9',
+    rows: [{ id: 9, content: 'nine' }],
+    old_values: [],
+  });
+
+  assert.equal(eventBatches[4].length, 1);
+  assert.equal(eventBatches[8].length, 1);
+  assert.equal(eventBatches[4][0].rows[0].id.asInt(), 5);
+  assert.equal(eventBatches[8][0].rows[0].id.asInt(), 9);
+
+  await unsubs[4]();
+  assert.equal(client.getSubscriptionCount(), 11);
+
+  fakeWasmClient.emit('sub-9', {
+    type: 'change',
+    change_type: 'insert',
+    subscription_id: 'sub-9',
+    rows: [{ id: 9, content: 'nine-again' }],
+    old_values: [],
+  });
+
+  assert.equal(eventBatches[4].length, 1);
+  assert.equal(eventBatches[8].length, 2);
+  assert.equal(eventBatches[8][1].rows[0].content.asString(), 'nine-again');
+
+  await Promise.all(unsubs.filter((_, index) => index !== 4).map((unsub) => unsub()));
+  assert.equal(client.getSubscriptionCount(), 0);
+});

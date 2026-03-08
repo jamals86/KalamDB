@@ -14,12 +14,11 @@
 //! # Example
 //!
 //! ```ignore
-//! use kalamdb_store::{RocksDBBackend, storage_trait::StorageBackend};
+//! use kalamdb_store::storage_trait::StorageBackend;
 //! use std::sync::Arc;
 //!
 //! # fn example() -> anyhow::Result<()> {
-//! # let db = std::sync::Arc::new(rocksdb::DB::open_default("test_db")?);
-//! # let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(db));
+//! # let backend: Arc<dyn StorageBackend> = todo!();
 //! // Execute SQL against system tables
 //! let results = kalamdb.execute("SELECT * FROM system.users WHERE username = 'alice'")?;
 //!

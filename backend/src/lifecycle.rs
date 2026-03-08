@@ -14,8 +14,7 @@ use kalamdb_core::live::ConnectionsManager;
 use kalamdb_core::live_query::LiveQueryManager;
 use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
 use kalamdb_core::sql::executor::SqlExecutor;
-use kalamdb_store::RocksDBBackend;
-use kalamdb_store::RocksDbInit;
+use kalamdb_store::open_storage_backend;
 use kalamdb_system::providers::storages::models::StorageMode;
 use log::debug;
 use log::{info, warn};
@@ -84,37 +83,24 @@ pub struct ApplicationComponents {
     pub connection_registry: Arc<ConnectionsManager>,
 }
 
-/// Initialize RocksDB, DataFusion, services, rate limiter, and flush scheduler.
+/// Initialize the storage backend, DataFusion, services, rate limiter, and flush scheduler.
 pub async fn bootstrap(
     config: &ServerConfig,
 ) -> Result<(ApplicationComponents, Arc<kalamdb_core::app_context::AppContext>)> {
-    // Initialize RocksDB
+    // Initialize the storage backend
     let phase_start = std::time::Instant::now();
     let db_path = config.storage.rocksdb_dir();
     std::fs::create_dir_all(&db_path)?;
 
-    let db_init = RocksDbInit::new(db_path.to_str().unwrap(), config.storage.rocksdb.clone());
-    let (db, cf_names) = db_init.open_with_cf_names()?;
+    let (backend, partition_count) = open_storage_backend(&db_path, &config.storage.rocksdb)?;
     info!(
-        "RocksDB initialized at {} with {} column families ({:.2}ms)",
+        "Storage backend initialized at {} with {} partitions ({:.2}ms)",
         db_path.display(),
-        cf_names.len(),
+        partition_count,
         phase_start.elapsed().as_secs_f64() * 1000.0
     );
-
-    // Initialize RocksDB backend with performance settings from config
-    // sync_writes=false (default) gives 10-100x better write throughput
-    // WAL is still enabled so data is safe from crashes (only ~1s of data could be lost)
-    let backend = Arc::new(RocksDBBackend::with_options_and_settings(
-        db,
-        config.storage.rocksdb.sync_writes,
-        config.storage.rocksdb.disable_wal,
-        config.storage.rocksdb.clone(),
-    ));
-    // Track known CF names for list_partitions() and orphan cleanup
-    backend.set_known_cf_names(cf_names);
     if !config.storage.rocksdb.sync_writes {
-        debug!("RocksDB async writes enabled (sync_writes=false) for high throughput");
+        debug!("Async writes enabled (sync_writes=false) for high throughput");
     }
 
     // Initialize core stores from generic backend (uses kalamdb_store::StorageBackend)
@@ -380,27 +366,18 @@ pub async fn bootstrap_isolated(
 ) -> Result<(ApplicationComponents, Arc<kalamdb_core::app_context::AppContext>)> {
     let bootstrap_start = std::time::Instant::now();
 
-    // Initialize RocksDB
+    // Initialize the storage backend
     let phase_start = std::time::Instant::now();
     let db_path = config.storage.rocksdb_dir();
     std::fs::create_dir_all(&db_path)?;
 
-    let db_init = RocksDbInit::new(db_path.to_str().unwrap(), config.storage.rocksdb.clone());
-    let (db, cf_names) = db_init.open_with_cf_names()?;
+    let (backend, partition_count) = open_storage_backend(&db_path, &config.storage.rocksdb)?;
     debug!(
-        "RocksDB initialized at {} with {} CFs ({:.2}ms)",
+        "Storage backend initialized at {} with {} partitions ({:.2}ms)",
         db_path.display(),
-        cf_names.len(),
+        partition_count,
         phase_start.elapsed().as_secs_f64() * 1000.0
     );
-
-    let backend = Arc::new(RocksDBBackend::with_options_and_settings(
-        db,
-        config.storage.rocksdb.sync_writes,
-        config.storage.rocksdb.disable_wal,
-        config.storage.rocksdb.clone(),
-    ));
-    backend.set_known_cf_names(cf_names);
 
     // Node ID: use cluster.node_id (u64) if cluster mode, otherwise default to 1 for standalone
     let node_id = if let Some(cluster) = &config.cluster {
@@ -547,6 +524,14 @@ pub async fn run(
         );
     } else {
         warn!("Connection protection is DISABLED - server may be vulnerable to DoS attacks");
+    }
+
+    if config.security.cors.allowed_origins.is_empty()
+        || config.security.cors.allowed_origins.contains(&"*".to_string())
+    {
+        debug!("CORS: allowing any origin");
+    } else {
+        debug!("CORS: allowed origins={:?}", config.security.cors.allowed_origins);
     }
 
     // Get JobsManager for graceful shutdown

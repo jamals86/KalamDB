@@ -107,19 +107,19 @@ impl SchemasStore {
         // Store the versioned entry
         let version_key = TableVersionId::versioned(table_id.clone(), version);
         log::debug!(
-            "[SchemasStore::put_version] table_id={}, version={}, version_key={:?}",
+            "[SchemasStore::put_version] table_id={}, version={}, version_key={}",
             table_id,
             version,
-            String::from_utf8_lossy(&version_key.as_storage_key())
+            version_key
         );
         self.put(&version_key, table_def)?;
 
         // Update the latest pointer
         let latest_key = TableVersionId::latest(table_id.clone());
         log::debug!(
-            "[SchemasStore::put_version] table_id={}, latest_key={:?}",
+            "[SchemasStore::put_version] table_id={}, latest_key={}",
             table_id,
-            String::from_utf8_lossy(&latest_key.as_storage_key())
+            latest_key
         );
         self.put(&latest_key, table_def)?;
 

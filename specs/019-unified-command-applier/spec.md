@@ -695,7 +695,7 @@ impl RaftStateMachine<TypeConfig> for KalamStateMachine {
 # These are the ONLY cluster settings needed:
 cluster_id = "cluster"
 node_id = 1
-rpc_addr = "0.0.0.0:9100"
+rpc_addr = "0.0.0.0:9188"
 api_addr = "0.0.0.0:8080"
 
 # OpenRaft Config (passed to openraft::Config)
@@ -706,7 +706,7 @@ snapshot_threshold = 10000           # Entries before snapshot
 # Peer nodes
 [[cluster.peers]]
 node_id = 2
-rpc_addr = "10.0.0.2:9100"
+rpc_addr = "10.0.0.2:9188"
 api_addr = "http://10.0.0.2:8080"
 
 # NOTE: No min_replication_nodes setting!

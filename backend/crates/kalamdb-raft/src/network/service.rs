@@ -397,7 +397,15 @@ pub async fn start_rpc_server(
     })?;
 
     let (addr, bind_addr) = match advertise_addr.parse::<std::net::SocketAddr>() {
-        Ok(addr) => (addr, advertise_addr.clone()),
+        Ok(addr) => {
+            if addr.ip().is_unspecified() {
+                return Err(crate::RaftError::Config(format!(
+                    "Invalid advertised RPC address '{}': wildcard addresses are not reachable by peers. Use a concrete hostname or IP",
+                    advertise_addr
+                )));
+            }
+            (addr, advertise_addr.clone())
+        },
         Err(_) => {
             let bind_addr = format!("0.0.0.0:{}", port);
             let addr: std::net::SocketAddr = bind_addr.parse().map_err(|e| {

@@ -33,8 +33,6 @@ impl RocksDbInit {
 
     /// Open or create the RocksDB database and ensure system CFs exist.
     pub fn open(&self) -> Result<Arc<DB>> {
-        let path = Path::new(&self.db_path);
-
         let mut db_opts = Options::default();
         db_opts.create_if_missing(true);
         db_opts.create_missing_column_families(true);
@@ -62,42 +60,38 @@ impl RocksDbInit {
         // The bloom filters and block cache are already configured via set_block_based_table_factory()
         // which provides the read-path optimizations without the memory penalty.
 
-        // Determine existing CFs (or default if DB missing)
-        let mut existing = match DB::list_cf(&db_opts, path) {
-            Ok(cfs) if !cfs.is_empty() => cfs,
-            _ => vec!["default".to_string()],
-        };
+        let (db, _) = self.open_internal(&db_opts, &cache)?;
+        Ok(db)
+    }
 
-        // Ensure system CFs using single source of truth (SystemTable + StoragePartition)
-        // 1) All system tables' CFs (skip views which have no column family)
-        for table in SystemTable::all_tables().iter() {
-            if let Some(name) = table.column_family_name() {
-                if !existing.iter().any(|n| n == name) {
-                    existing.push(name.to_string());
-                }
-            }
-        }
+    /// Open and return both the DB and the list of column family names.
+    ///
+    /// This avoids re-listing column families from disk after opening, which
+    /// can noticeably add startup time when there are many partitions.
+    pub fn open_with_cf_names(&self) -> Result<(Arc<DB>, Vec<String>)> {
+        let mut db_opts = Options::default();
+        db_opts.create_if_missing(true);
+        db_opts.create_missing_column_families(true);
 
-        // 2) Additional named partitions used by the system
-        let extra_partitions = [
-            StoragePartition::InformationSchemaTables.name(),
-            StoragePartition::SystemColumns.name(),
-            StoragePartition::UserTableCounters.name(),
-            StoragePartition::SystemUsersUsernameIdx.name(),
-            StoragePartition::SystemUsersRoleIdx.name(),
-            StoragePartition::SystemUsersDeletedAtIdx.name(),
-            StoragePartition::ManifestCache.name(),
-            StoragePartition::SystemJobsStatusIdx.name(),
-        ];
+        db_opts.set_write_buffer_size(self.settings.write_buffer_size);
+        db_opts.set_max_write_buffer_number(self.settings.max_write_buffers);
+        db_opts.set_max_background_jobs(self.settings.max_background_jobs);
+        db_opts.increase_parallelism(self.settings.max_background_jobs);
+        db_opts.set_max_open_files(self.settings.max_open_files);
 
-        for name in extra_partitions.iter() {
-            if !existing.iter().any(|n| n == name) {
-                existing.push((*name).to_string());
-            }
-        }
+        let cache = Cache::new_lru_cache(self.settings.block_cache_size);
+        let block_opts = create_block_options_with_cache(&cache);
+        db_opts.set_block_based_table_factory(&block_opts);
+
+        self.open_internal(&db_opts, &cache)
+    }
+
+    fn open_internal(&self, db_opts: &Options, cache: &Cache) -> Result<(Arc<DB>, Vec<String>)> {
+        let path = Path::new(&self.db_path);
+        let cf_names = self.collect_column_family_names(db_opts, path);
 
         // Build CF descriptors with memory-optimized options
-        let cf_descriptors: Vec<_> = existing
+        let cf_descriptors: Vec<_> = cf_names
             .iter()
             .map(|name| {
                 let mut cf_opts = Options::default();
@@ -107,7 +101,6 @@ impl RocksDbInit {
             })
             .collect();
 
-        let cf_names: Vec<String> = existing.clone();
         let db = DB::open_cf_descriptors(&db_opts, path, cf_descriptors)?;
         let db = Arc::new(db);
 
@@ -124,20 +117,41 @@ impl RocksDbInit {
             log::info!("Startup compaction completed in {:?}", start.elapsed());
         }
 
-        Ok(db)
+        Ok((db, cf_names))
     }
 
-    /// Open and return both the DB and the list of column family names.
-    ///
-    /// This is useful for detecting orphaned column families at startup.
-    pub fn open_with_cf_names(&self) -> Result<(Arc<DB>, Vec<String>)> {
-        let db = self.open()?;
-        // Re-list CFs from disk to get the authoritative list
-        let path = std::path::Path::new(&self.db_path);
-        let mut db_opts = Options::default();
-        db_opts.create_if_missing(false);
-        let cf_names = DB::list_cf(&db_opts, path).unwrap_or_else(|_| vec!["default".to_string()]);
-        Ok((db, cf_names))
+    fn collect_column_family_names(&self, db_opts: &Options, path: &Path) -> Vec<String> {
+        let mut existing = match DB::list_cf(db_opts, path) {
+            Ok(cfs) if !cfs.is_empty() => cfs,
+            _ => vec!["default".to_string()],
+        };
+
+        for table in SystemTable::all_tables().iter() {
+            if let Some(name) = table.column_family_name() {
+                if !existing.iter().any(|existing_name| existing_name == name) {
+                    existing.push(name.to_string());
+                }
+            }
+        }
+
+        let extra_partitions = [
+            StoragePartition::InformationSchemaTables.name(),
+            StoragePartition::SystemColumns.name(),
+            StoragePartition::UserTableCounters.name(),
+            StoragePartition::SystemUsersUsernameIdx.name(),
+            StoragePartition::SystemUsersRoleIdx.name(),
+            StoragePartition::SystemUsersDeletedAtIdx.name(),
+            StoragePartition::ManifestCache.name(),
+            StoragePartition::SystemJobsStatusIdx.name(),
+        ];
+
+        for name in extra_partitions {
+            if !existing.iter().any(|existing_name| existing_name == name) {
+                existing.push(name.to_string());
+            }
+        }
+
+        existing
     }
 
     /// Close database handle (drop Arc)

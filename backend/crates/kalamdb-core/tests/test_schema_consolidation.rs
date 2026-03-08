@@ -10,20 +10,20 @@
 use kalamdb_commons::{NamespaceId, TableId, TableName};
 use kalamdb_core::system_table_registration::register_system_tables;
 use kalamdb_store::entity_store::EntityStore;
-use kalamdb_store::RocksDBBackend;
-use rocksdb::DB;
+use kalamdb_store::test_utils::TestDb;
 use std::sync::Arc;
-use tempfile::TempDir;
+
+fn create_test_db_and_backend() -> (TestDb, Arc<dyn kalamdb_store::StorageBackend>) {
+    let test_db = TestDb::with_system_tables().expect("Failed to create test database");
+    let backend = test_db.backend();
+    (test_db, backend)
+}
 
 #[tokio::test]
 async fn test_schema_store_persistence() {
     use kalamdb_registry::TableSchemaStore;
 
-    let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let db = Arc::new(
-        DB::open_default(temp_dir.path().to_str().unwrap()).expect("Failed to create RocksDB"),
-    );
-    let backend: Arc<dyn kalamdb_store::StorageBackend> = Arc::new(RocksDBBackend::new(db));
+    let (_test_db, backend) = create_test_db_and_backend();
 
     // Register system tables - this populates the schema store
     let system_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
@@ -69,11 +69,7 @@ async fn test_schema_cache_basic_operations() {
     use kalamdb_core::schema_registry::SchemaRegistry;
     use kalamdb_registry::TableSchemaStore;
 
-    let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let db = Arc::new(
-        DB::open_default(temp_dir.path().to_str().unwrap()).expect("Failed to create RocksDB"),
-    );
-    let backend: Arc<dyn kalamdb_store::StorageBackend> = Arc::new(RocksDBBackend::new(db));
+    let (_test_db, backend) = create_test_db_and_backend();
 
     // Register system tables to get populated schema store
     let system_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
@@ -111,11 +107,7 @@ async fn test_schema_cache_basic_operations() {
 async fn test_schema_versioning() {
     use kalamdb_registry::TableSchemaStore;
 
-    let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let db = Arc::new(
-        DB::open_default(temp_dir.path().to_str().unwrap()).expect("Failed to create RocksDB"),
-    );
-    let backend: Arc<dyn kalamdb_store::StorageBackend> = Arc::new(RocksDBBackend::new(db));
+    let (_test_db, backend) = create_test_db_and_backend();
 
     // Register system tables
     let system_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
@@ -153,11 +145,7 @@ async fn test_schema_versioning() {
 async fn test_all_system_tables_have_schemas() {
     use kalamdb_registry::TableSchemaStore;
 
-    let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let db = Arc::new(
-        DB::open_default(temp_dir.path().to_str().unwrap()).expect("Failed to create RocksDB"),
-    );
-    let backend: Arc<dyn kalamdb_store::StorageBackend> = Arc::new(RocksDBBackend::new(db));
+    let (_test_db, backend) = create_test_db_and_backend();
 
     // Register system tables
     let system_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
@@ -212,11 +200,7 @@ async fn test_all_system_tables_have_schemas() {
 async fn test_internal_api_schema_matches_describe_table() {
     use kalamdb_registry::TableSchemaStore;
 
-    let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let db = Arc::new(
-        DB::open_default(temp_dir.path().to_str().unwrap()).expect("Failed to create RocksDB"),
-    );
-    let backend: Arc<dyn kalamdb_store::StorageBackend> = Arc::new(RocksDBBackend::new(db));
+    let (_test_db, backend) = create_test_db_and_backend();
 
     // Register system tables
     let system_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
@@ -266,11 +250,7 @@ async fn test_internal_api_schema_matches_describe_table() {
 async fn test_cache_invalidation_on_alter_table() {
     use kalamdb_commons::models::schemas::{ColumnDefinition, TableDefinition};
 
-    let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let db = Arc::new(
-        DB::open_default(temp_dir.path().to_str().unwrap()).expect("Failed to create RocksDB"),
-    );
-    let backend: Arc<dyn kalamdb_store::StorageBackend> = Arc::new(RocksDBBackend::new(db));
+    let (_test_db, backend) = create_test_db_and_backend();
 
     // Create schema store and cache
     let system_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());

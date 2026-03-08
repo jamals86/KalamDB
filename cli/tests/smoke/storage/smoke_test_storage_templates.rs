@@ -60,13 +60,11 @@ fn smoke_storage_custom_templates() {
     let test_password = "TplPassword123!";
 
     let base_dir = storage_base_dir().join(generate_unique_namespace("tpl_smoke"));
-    let local_fs_checks = base_dir.parent().map(|p| p.exists()).unwrap_or(false);
-    if local_fs_checks {
-        if base_dir.exists() {
-            let _ = fs::remove_dir_all(&base_dir);
-        }
-        fs::create_dir_all(&base_dir).expect("create base directory for storage");
+    if base_dir.exists() {
+        let _ = fs::remove_dir_all(&base_dir);
     }
+    fs::create_dir_all(&base_dir).expect("create base directory for storage");
+    let local_fs_checks = true;
     let base_dir_sql =
         escape_single_quotes(base_dir.to_str().expect("base directory path should be valid UTF-8"));
 

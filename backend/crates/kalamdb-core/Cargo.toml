@@ -93,7 +93,6 @@ bytes = { workspace = true }
 # Testing utilities
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
-rocksdb = { workspace = true }  # Only for TestDb in tests
 parquet = { workspace = true }
 ntest = { workspace = true }
 

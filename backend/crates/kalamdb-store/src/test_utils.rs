@@ -5,6 +5,7 @@
 use anyhow::Result;
 use rocksdb::{Options, DB};
 use std::collections::{BTreeMap, HashMap};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use tempfile::TempDir;
 
@@ -219,6 +220,35 @@ impl TestDb {
             db: Arc::new(db),
             temp_dir,
         })
+    }
+
+    /// Create a test database initialized with the standard system partitions.
+    pub fn with_system_tables() -> Result<Self> {
+        let temp_dir = TempDir::new()?;
+        let db_path = temp_dir.path().join("rocksdb");
+        std::fs::create_dir_all(&db_path)?;
+
+        let init = crate::rocksdb_init::RocksDbInit::with_defaults(db_path.to_string_lossy());
+        let db = init.open()?;
+
+        Ok(Self { db, temp_dir })
+    }
+
+    /// Return the test workspace root path backing this database.
+    pub fn path(&self) -> &Path {
+        self.temp_dir.path()
+    }
+
+    /// Create and return a storage directory within the test workspace.
+    pub fn storage_dir(&self) -> Result<PathBuf> {
+        let storage_dir = self.temp_dir.path().join("storage");
+        std::fs::create_dir_all(&storage_dir)?;
+        Ok(storage_dir)
+    }
+
+    /// Create a generic storage backend for this test database.
+    pub fn backend(&self) -> Arc<dyn StorageBackend> {
+        Arc::new(crate::rocksdb_impl::RocksDBBackend::new(Arc::clone(&self.db)))
     }
 
     /// Create a test database with common user table column families.
