@@ -24,6 +24,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartKalamClientPtr;
 
   CrossPlatformFinalizerArg
+      get rust_arc_decrement_strong_count_DartLiveRowsSubscriptionPtr => wire
+          ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartLiveRowsSubscriptionPtr;
+
+  CrossPlatformFinalizerArg
       get rust_arc_decrement_strong_count_DartSubscriptionPtr => wire
           ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartSubscriptionPtr;
 
@@ -33,6 +37,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   DartKalamClient
       dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartKalamClient(
+          dynamic raw);
+
+  @protected
+  DartLiveRowsSubscription
+      dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartLiveRowsSubscription(
           dynamic raw);
 
   @protected
@@ -46,6 +55,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           dynamic raw);
 
   @protected
+  DartLiveRowsSubscription
+      dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartLiveRowsSubscription(
+          dynamic raw);
+
+  @protected
   DartSubscription
       dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartSubscription(
           dynamic raw);
@@ -53,6 +67,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   DartKalamClient
       dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartKalamClient(
+          dynamic raw);
+
+  @protected
+  DartLiveRowsSubscription
+      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartLiveRowsSubscription(
           dynamic raw);
 
   @protected
@@ -87,6 +106,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   DartErrorDetail dco_decode_box_autoadd_dart_error_detail(dynamic raw);
+
+  @protected
+  DartLiveRowsConfig dco_decode_box_autoadd_dart_live_rows_config(dynamic raw);
+
+  @protected
+  DartLiveRowsEvent dco_decode_box_autoadd_dart_live_rows_event(dynamic raw);
 
   @protected
   DartServerSetupRequest dco_decode_box_autoadd_dart_server_setup_request(
@@ -125,6 +150,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   DartHealthCheckResponse dco_decode_dart_health_check_response(dynamic raw);
+
+  @protected
+  DartLiveRowsConfig dco_decode_dart_live_rows_config(dynamic raw);
+
+  @protected
+  DartLiveRowsEvent dco_decode_dart_live_rows_event(dynamic raw);
 
   @protected
   DartLoginResponse dco_decode_dart_login_response(dynamic raw);
@@ -201,6 +232,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   DartErrorDetail? dco_decode_opt_box_autoadd_dart_error_detail(dynamic raw);
 
   @protected
+  DartLiveRowsConfig? dco_decode_opt_box_autoadd_dart_live_rows_config(
+      dynamic raw);
+
+  @protected
+  DartLiveRowsEvent? dco_decode_opt_box_autoadd_dart_live_rows_event(
+      dynamic raw);
+
+  @protected
   DartSubscriptionConfig? dco_decode_opt_box_autoadd_dart_subscription_config(
       dynamic raw);
 
@@ -231,6 +270,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           SseDeserializer deserializer);
 
   @protected
+  DartLiveRowsSubscription
+      sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartLiveRowsSubscription(
+          SseDeserializer deserializer);
+
+  @protected
   DartSubscription
       sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartSubscription(
           SseDeserializer deserializer);
@@ -241,6 +285,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           SseDeserializer deserializer);
 
   @protected
+  DartLiveRowsSubscription
+      sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartLiveRowsSubscription(
+          SseDeserializer deserializer);
+
+  @protected
   DartSubscription
       sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartSubscription(
           SseDeserializer deserializer);
@@ -248,6 +297,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   DartKalamClient
       sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartKalamClient(
+          SseDeserializer deserializer);
+
+  @protected
+  DartLiveRowsSubscription
+      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartLiveRowsSubscription(
           SseDeserializer deserializer);
 
   @protected
@@ -286,6 +340,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   DartErrorDetail sse_decode_box_autoadd_dart_error_detail(
+      SseDeserializer deserializer);
+
+  @protected
+  DartLiveRowsConfig sse_decode_box_autoadd_dart_live_rows_config(
+      SseDeserializer deserializer);
+
+  @protected
+  DartLiveRowsEvent sse_decode_box_autoadd_dart_live_rows_event(
       SseDeserializer deserializer);
 
   @protected
@@ -328,6 +390,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   DartHealthCheckResponse sse_decode_dart_health_check_response(
+      SseDeserializer deserializer);
+
+  @protected
+  DartLiveRowsConfig sse_decode_dart_live_rows_config(
+      SseDeserializer deserializer);
+
+  @protected
+  DartLiveRowsEvent sse_decode_dart_live_rows_event(
       SseDeserializer deserializer);
 
   @protected
@@ -418,6 +488,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  DartLiveRowsConfig? sse_decode_opt_box_autoadd_dart_live_rows_config(
+      SseDeserializer deserializer);
+
+  @protected
+  DartLiveRowsEvent? sse_decode_opt_box_autoadd_dart_live_rows_event(
+      SseDeserializer deserializer);
+
+  @protected
   DartSubscriptionConfig? sse_decode_opt_box_autoadd_dart_subscription_config(
       SseDeserializer deserializer);
 
@@ -450,6 +528,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void
+      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartLiveRowsSubscription(
+          DartLiveRowsSubscription self, SseSerializer serializer);
+
+  @protected
+  void
       sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartSubscription(
           DartSubscription self, SseSerializer serializer);
 
@@ -460,6 +543,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void
+      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartLiveRowsSubscription(
+          DartLiveRowsSubscription self, SseSerializer serializer);
+
+  @protected
+  void
       sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartSubscription(
           DartSubscription self, SseSerializer serializer);
 
@@ -467,6 +555,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void
       sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartKalamClient(
           DartKalamClient self, SseSerializer serializer);
+
+  @protected
+  void
+      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartLiveRowsSubscription(
+          DartLiveRowsSubscription self, SseSerializer serializer);
 
   @protected
   void
@@ -505,6 +598,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_box_autoadd_dart_error_detail(
       DartErrorDetail self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_dart_live_rows_config(
+      DartLiveRowsConfig self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_dart_live_rows_event(
+      DartLiveRowsEvent self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_dart_server_setup_request(
@@ -551,6 +652,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_dart_health_check_response(
       DartHealthCheckResponse self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_dart_live_rows_config(
+      DartLiveRowsConfig self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_dart_live_rows_event(
+      DartLiveRowsEvent self, SseSerializer serializer);
 
   @protected
   void sse_encode_dart_login_response(
@@ -643,6 +752,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       DartErrorDetail? self, SseSerializer serializer);
 
   @protected
+  void sse_encode_opt_box_autoadd_dart_live_rows_config(
+      DartLiveRowsConfig? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_box_autoadd_dart_live_rows_event(
+      DartLiveRowsEvent? self, SseSerializer serializer);
+
+  @protected
   void sse_encode_opt_box_autoadd_dart_subscription_config(
       DartSubscriptionConfig? self, SseSerializer serializer);
 
@@ -710,6 +827,38 @@ class RustLibWire implements BaseWire {
           'frbgen_kalam_link_rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartKalamClient');
   late final _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartKalamClient =
       _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartKalamClientPtr
+          .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
+
+  void
+      rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartLiveRowsSubscription(
+    ffi.Pointer<ffi.Void> ptr,
+  ) {
+    return _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartLiveRowsSubscription(
+      ptr,
+    );
+  }
+
+  late final _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartLiveRowsSubscriptionPtr =
+      _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<ffi.Void>)>>(
+          'frbgen_kalam_link_rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartLiveRowsSubscription');
+  late final _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartLiveRowsSubscription =
+      _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartLiveRowsSubscriptionPtr
+          .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
+
+  void
+      rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartLiveRowsSubscription(
+    ffi.Pointer<ffi.Void> ptr,
+  ) {
+    return _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartLiveRowsSubscription(
+      ptr,
+    );
+  }
+
+  late final _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartLiveRowsSubscriptionPtr =
+      _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<ffi.Void>)>>(
+          'frbgen_kalam_link_rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartLiveRowsSubscription');
+  late final _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartLiveRowsSubscription =
+      _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartLiveRowsSubscriptionPtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
   void

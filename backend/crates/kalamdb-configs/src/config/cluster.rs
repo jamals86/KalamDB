@@ -19,8 +19,8 @@ use serde::{Deserialize, Serialize};
 /// [cluster]
 /// cluster_id = "cluster"
 /// node_id = 1
-/// rpc_addr = "0.0.0.0:9100"
-/// api_addr = "0.0.0.0:8080"
+/// rpc_addr = "127.0.0.1:9188"
+/// api_addr = "127.0.0.1:8080"
 /// user_shards = 12
 /// shared_shards = 1
 /// heartbeat_interval_ms = 50
@@ -31,7 +31,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// [[cluster.peers]]
 /// node_id = 2
-/// rpc_addr = "10.0.0.2:9100"
+/// rpc_addr = "10.0.0.2:9188"
 /// api_addr = "http://10.0.0.2:8080"
 /// ```
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -44,11 +44,15 @@ pub struct ClusterConfig {
     /// This is the authoritative node ID for the server.
     pub node_id: u64,
 
-    /// RPC address for Raft inter-node communication (e.g., "0.0.0.0:9100")
+    /// RPC address advertised to peer nodes for Raft inter-node communication.
+    ///
+    /// This must be a reachable host/IP for other nodes, not a wildcard bind address.
+    /// Examples: "127.0.0.1:9188" for local tests, "kalamdb-node1:9188" in Docker,
+    /// or "10.0.0.1:9188" on a private network.
     #[serde(default = "default_rpc_addr")]
     pub rpc_addr: String,
 
-    /// API address for client HTTP requests (e.g., "0.0.0.0:8080")
+    /// API address advertised to other nodes and clients (e.g., "127.0.0.1:8080")
     /// This should match the server.host:server.port
     #[serde(default = "default_api_addr")]
     pub api_addr: String,
@@ -133,7 +137,7 @@ pub struct ClusterConfig {
 pub struct PeerConfig {
     /// Peer's unique node ID (must be >= 1)
     pub node_id: u64,
-    /// Peer's RPC address for Raft communication (e.g., "10.0.0.2:9100")
+    /// Peer's RPC address for Raft communication (e.g., "10.0.0.2:9188")
     pub rpc_addr: String,
     /// Peer's API address for client requests (e.g., "10.0.0.2:8080")
     pub api_addr: String,
@@ -166,7 +170,7 @@ fn default_cluster_id() -> String {
 }
 
 fn default_rpc_addr() -> String {
-    "0.0.0.0:9100".to_string()
+    "127.0.0.1:9188".to_string()
 }
 
 fn default_api_addr() -> String {
@@ -245,6 +249,23 @@ impl ClusterConfig {
             return Err("node_id must be > 0".to_string());
         }
 
+        validate_advertised_address("cluster.rpc_addr", &self.rpc_addr)?;
+        validate_advertised_address("cluster.api_addr", &self.api_addr)?;
+
+        for peer in &self.peers {
+            if peer.node_id == 0 {
+                return Err("cluster.peers[].node_id must be > 0".to_string());
+            }
+            validate_advertised_address(
+                &format!("cluster.peers(node_id={}).rpc_addr", peer.node_id),
+                &peer.rpc_addr,
+            )?;
+            validate_advertised_address(
+                &format!("cluster.peers(node_id={}).api_addr", peer.node_id),
+                &peer.api_addr,
+            )?;
+        }
+
         // Check election timeout > heartbeat
         if self.election_timeout_ms.0 <= self.heartbeat_interval_ms {
             return Err("election_timeout_min must be > heartbeat_interval".to_string());
@@ -296,7 +317,7 @@ impl ClusterConfig {
 
     /// Get the total number of Raft groups
     pub fn total_groups(&self) -> usize {
-        3 // metadata groups (system, users, jobs)
+        1 // unified metadata group
             + self.user_shards as usize
             + self.shared_shards as usize
     }
@@ -307,6 +328,24 @@ impl ClusterConfig {
     }
 }
 
+fn validate_advertised_address(field_name: &str, value: &str) -> Result<(), String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(format!("{} cannot be empty", field_name));
+    }
+
+    if let Ok(addr) = trimmed.parse::<std::net::SocketAddr>() {
+        if addr.ip().is_unspecified() {
+            return Err(format!(
+                "{} must not use an unspecified/wildcard address ({}). Use a reachable hostname or IP instead",
+                field_name, value
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -315,11 +354,11 @@ mod tests {
         ClusterConfig {
             cluster_id: "test-cluster".to_string(),
             node_id: 1,
-            rpc_addr: "127.0.0.1:9100".to_string(),
+            rpc_addr: "127.0.0.1:9188".to_string(),
             api_addr: "127.0.0.1:8080".to_string(),
             peers: vec![PeerConfig {
                 node_id: 2,
-                rpc_addr: "127.0.0.2:9100".to_string(),
+                rpc_addr: "127.0.0.2:9188".to_string(),
                 api_addr: "127.0.0.2:8080".to_string(),
                 rpc_server_name: None,
             }],
@@ -389,7 +428,16 @@ mod tests {
     #[test]
     fn test_total_groups() {
         let config = valid_config();
-        assert_eq!(config.total_groups(), 3 + 12 + 1);
+        assert_eq!(config.total_groups(), 1 + 12 + 1);
+    }
+
+    #[test]
+    fn test_validate_rejects_wildcard_rpc_addr() {
+        let mut config = valid_config();
+        config.rpc_addr = "0.0.0.0:9188".to_string();
+
+        let err = config.validate().expect_err("wildcard advertise address must be rejected");
+        assert!(err.contains("cluster.rpc_addr"));
     }
 
     #[test]

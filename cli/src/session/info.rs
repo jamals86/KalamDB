@@ -26,10 +26,15 @@ impl CLISession {
                 self.server_build_date = health.build_date.and_then(Self::normalize_server_field);
                 None
             },
-            Err(KalamLinkError::ServerError { status_code: 403, .. }) => {
+            Err(KalamLinkError::ServerError {
+                status_code: 403, ..
+            }) => {
                 // Health endpoint is localhost-only; server is reachable but we can't
                 // refresh version info. Preserve the current connected state.
-                Some("Health endpoint is restricted to localhost (remote connection detected)".to_string())
+                Some(
+                    "Health endpoint is restricted to localhost (remote connection detected)"
+                        .to_string(),
+                )
             },
             Err(e) => {
                 self.connected = false;

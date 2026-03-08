@@ -26,10 +26,7 @@ impl ExportUserDataStatement {
         // Nothing beyond the keywords is expected
         let remaining = sql.trim()["EXPORT USER DATA".len()..].trim();
         if !remaining.is_empty() {
-            return Err(format!(
-                "Unexpected tokens after EXPORT USER DATA: '{}'",
-                remaining
-            ));
+            return Err(format!("Unexpected tokens after EXPORT USER DATA: '{}'", remaining));
         }
 
         Ok(Self)
@@ -54,10 +51,7 @@ impl ShowExportStatement {
 
         let remaining = sql.trim()["SHOW EXPORT".len()..].trim();
         if !remaining.is_empty() {
-            return Err(format!(
-                "Unexpected tokens after SHOW EXPORT: '{}'",
-                remaining
-            ));
+            return Err(format!("Unexpected tokens after SHOW EXPORT: '{}'", remaining));
         }
 
         Ok(Self)

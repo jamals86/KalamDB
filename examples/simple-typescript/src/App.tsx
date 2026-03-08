@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   Auth,
-  MessageType,
   createClient,
   type RowData,
 } from 'kalam-link';
@@ -29,6 +28,7 @@ const client = createClient({
     import.meta.env.VITE_KALAMDB_USERNAME ?? 'demo-user',
     import.meta.env.VITE_KALAMDB_PASSWORD ?? 'demo123',
   ),
+  disableCompression: true,
 });
 
 function readText(row: RowData, key: string): string {
@@ -67,36 +67,30 @@ export function App() {
     let active = true;
     let unsubscribe: (() => Promise<void>) | undefined;
 
-    const refresh = async (): Promise<void> => {
-      const rows = await client.queryAll(FEED_SQL);
-      if (!active) {
-        return;
-      }
-      setItems(rows.map(toActivity));
-    };
-
     const start = async (): Promise<void> => {
       try {
-        await refresh();
-        unsubscribe = await client.subscribeWithSql(
+        unsubscribe = await client.live(
           FEED_SQL,
-          async (event) => {
-            if (event.type === MessageType.SubscriptionAck) {
-              setStatus('live');
+          (rows) => {
+            if (!active) {
               return;
             }
-            if (event.type === MessageType.Error) {
-              setStatus('error');
-              setError('Subscription dropped. Check the KalamDB server logs.');
-              return;
-            }
-            await refresh();
+
+            setItems(rows.map(toActivity));
+            setStatus('live');
           },
-          { last_rows: 12 },
+          {
+            subscriptionOptions: { last_rows: 12 },
+            onError: (event) => {
+              if (!active) {
+                return;
+              }
+
+              setStatus('error');
+              setError(`Subscription dropped (${event.code}): ${event.message}`);
+            },
+          },
         );
-        if (active) {
-          setStatus('live');
-        }
       } catch (caughtError) {
         if (!active) {
           return;
@@ -214,7 +208,7 @@ export function App() {
       <section className="panel">
         <div className="panel-head">
           <h2>Live feed</h2>
-          <p>The UI refreshes from the same SQL query after every subscription event.</p>
+          <p>The SDK keeps the current row set materialized so the UI only renders snapshots.</p>
         </div>
         <div className="feed" data-testid="feed-list">
           {items.map((item) => (

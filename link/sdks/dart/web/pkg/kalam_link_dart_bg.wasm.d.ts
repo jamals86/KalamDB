@@ -23,6 +23,7 @@ export const kalamclient_getSubscriptions: (a: number) => any;
 export const kalamclient_insert: (a: number, b: number, c: number, d: number, e: number) => any;
 export const kalamclient_isConnected: (a: number) => number;
 export const kalamclient_isReconnecting: (a: number) => number;
+export const kalamclient_liveQueryRowsWithSql: (a: number, b: number, c: number, d: number, e: number, f: any) => any;
 export const kalamclient_login: (a: number) => any;
 export const kalamclient_new: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
 export const kalamclient_onConnect: (a: number, b: any) => void;

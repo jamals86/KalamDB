@@ -272,7 +272,7 @@ async fn test_auth_cache_effectiveness() {
 /// Test concurrent authentication load
 #[tokio::test]
 async fn test_concurrent_auth_load() {
-    use kalamdb_api::repositories::user_repo::CoreUsersRepo;
+    use kalamdb_api::repositories::CachedUsersRepo;
     use kalamdb_auth::{authenticate, AuthRequest, UserRepository};
     use std::sync::Arc;
 
@@ -289,9 +289,9 @@ async fn test_concurrent_auth_load() {
         users.push((username, password.to_string()));
     }
 
-    // Create user repository adapter
+    // Use the cached repository path that production auth uses.
     let user_repo: Arc<dyn UserRepository> =
-        Arc::new(CoreUsersRepo::new(server.app_context.system_tables().users()));
+        Arc::new(CachedUsersRepo::new(server.app_context.system_tables().users()));
 
     // Concurrent authentication test
     let num_concurrent_requests = 50;

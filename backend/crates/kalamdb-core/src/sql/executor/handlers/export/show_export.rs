@@ -28,10 +28,7 @@ impl ShowExportHandler {
         let config = self.app_context.config();
         let host = &config.server.host;
         let port = config.server.port;
-        format!(
-            "http://{}:{}/v1/exports/{}/{}",
-            host, port, user_id, export_id
-        )
+        format!("http://{}:{}/v1/exports/{}/{}", host, port, user_id, export_id)
     }
 
     /// Extract export_id from job parameters JSON
@@ -109,11 +106,7 @@ impl TypedStatementHandler<ShowExportStatement> for ShowExportHandler {
                     .map(|dt| dt.to_rfc3339())
                     .unwrap_or_else(|| job.created_at.to_string()),
             );
-            messages.push(
-                job.message
-                    .clone()
-                    .unwrap_or_default(),
-            );
+            messages.push(job.message.clone().unwrap_or_default());
 
             // Build download URL only for completed jobs
             let url = if job.status == kalamdb_system::JobStatus::Completed {

@@ -1,7 +1,10 @@
 use super::test_support::{consolidated_helpers, TestServer};
+use kalamdb_api::handlers::ws::events::cleanup::cleanup_connection;
+use kalamdb_api::limiter::RateLimiter;
 use kalam_link::models::ResponseStatus;
 use kalamdb_commons::models::{ConnectionId, ConnectionInfo, Role, UserId};
 use kalamdb_commons::websocket::{SubscriptionOptions, SubscriptionRequest};
+use std::sync::Arc;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_live_queries_metadata() {
@@ -118,5 +121,74 @@ async fn test_live_queries_metadata() {
         response_after_close.results[0].rows.as_ref().unwrap().len(),
         0,
         "Expected 0 rows after connection close"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_cleanup_connection_removes_live_queries_and_registry_state() {
+    let server = TestServer::new_shared().await;
+    let manager = server.app_context.live_query_manager();
+    let registry = manager.registry();
+    let rate_limiter = Arc::new(RateLimiter::new());
+    let ns = consolidated_helpers::unique_namespace("live_queries_cleanup");
+
+    let user_id = UserId::new("root");
+    let conn_id = ConnectionId::new("conn_cleanup_test".to_string());
+
+    let registration = registry
+        .register_connection(conn_id.clone(), ConnectionInfo::new(None))
+        .expect("Failed to register connection");
+    let connection_state = registration.state;
+
+    connection_state.write().mark_authenticated(user_id.clone(), Role::User);
+    registry.on_authenticated(&conn_id, user_id.clone());
+
+    let create_ns = format!("CREATE NAMESPACE IF NOT EXISTS {}", ns);
+    let ns_resp = server.execute_sql_as_user(&create_ns, "root").await;
+    assert_eq!(
+        ns_resp.status,
+        ResponseStatus::Success,
+        "namespace create failed: {:?}",
+        ns_resp.error
+    );
+
+    let create_table = format!(
+        "CREATE TABLE {}.events (id INT PRIMARY KEY, value TEXT) WITH (TYPE = 'USER')",
+        ns
+    );
+    let table_resp = server.execute_sql_as_user(&create_table, "root").await;
+    assert_eq!(
+        table_resp.status,
+        ResponseStatus::Success,
+        "table create failed: {:?}",
+        table_resp.error
+    );
+
+    let subscription = SubscriptionRequest {
+        id: "sub_cleanup_test".to_string(),
+        sql: format!("SELECT * FROM {}.events", ns),
+        options: SubscriptionOptions::default(),
+    };
+
+    manager
+        .register_subscription_with_initial_data(&connection_state, &subscription, None)
+        .await
+        .expect("Failed to register subscription");
+
+    let sql = "SELECT * FROM system.live_queries WHERE subscription_id = 'sub_cleanup_test'";
+    let response_before = server.execute_sql(sql).await;
+    assert_eq!(response_before.status, ResponseStatus::Success, "SQL failed: {:?}", response_before.error);
+    assert_eq!(response_before.results[0].rows.as_ref().unwrap().len(), 1);
+
+    cleanup_connection(&connection_state, &registry, &rate_limiter, &manager).await;
+
+    assert!(registry.get_connection(&conn_id).is_none(), "connection registry entry should be removed");
+
+    let response_after = server.execute_sql(sql).await;
+    assert_eq!(response_after.status, ResponseStatus::Success, "SQL failed: {:?}", response_after.error);
+    assert_eq!(
+        response_after.results[0].rows.as_ref().unwrap().len(),
+        0,
+        "Expected 0 rows in system.live_queries after cleanup_connection"
     );
 }

@@ -160,7 +160,7 @@ impl AppContext {
     /// ```no_run
     /// use kalamdb_core::app_context::AppContext;
     /// use kalamdb_commons::NodeId;
-    /// # use kalamdb_store::{RocksDBBackend, StorageBackend};
+    /// # use kalamdb_store::StorageBackend;
     /// # use std::sync::Arc;
     ///
     /// let backend: Arc<dyn StorageBackend> = todo!();
@@ -518,8 +518,6 @@ impl AppContext {
             app_ctx.system_tables().manifest().set_in_memory_checker(Arc::new(
                 move |cache_key: &str| manifest_for_checker.is_in_hot_cache_by_string(cache_key),
             ));
-
-            app_ctx.wire_raft_appliers();
 
             // Cleanup orphan live queries from previous server run
             // Live queries don't persist across restarts (WebSocket connections are lost)

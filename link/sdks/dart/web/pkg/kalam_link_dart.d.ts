@@ -776,6 +776,14 @@ export class KalamClient {
      */
     isReconnecting(): boolean;
     /**
+     * Subscribe to a SQL query and receive materialized live rows.
+     *
+     * The callback receives JSON strings with one of these shapes:
+     * - `{ type: "rows", subscription_id, rows }`
+     * - `{ type: "error", subscription_id, code, message }`
+     */
+    liveQueryRowsWithSql(sql: string, options: string | null | undefined, callback: Function): Promise<string>;
+    /**
      * Login with current Basic Auth credentials and switch to JWT authentication
      *
      * Sends a POST request to `/v1/api/auth/login` with the stored username/password
@@ -1200,6 +1208,7 @@ export interface InitOutput {
     readonly kalamclient_insert: (a: number, b: number, c: number, d: number, e: number) => any;
     readonly kalamclient_isConnected: (a: number) => number;
     readonly kalamclient_isReconnecting: (a: number) => number;
+    readonly kalamclient_liveQueryRowsWithSql: (a: number, b: number, c: number, d: number, e: number, f: any) => any;
     readonly kalamclient_login: (a: number) => any;
     readonly kalamclient_new: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
     readonly kalamclient_onConnect: (a: number, b: any) => void;

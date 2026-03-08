@@ -1804,6 +1804,14 @@ fn is_transient_missing_relation(sql: &str, message: &str) -> bool {
         || lower_sql.starts_with("alter table")
 }
 
+fn is_rate_limited_error(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("rate_limit_exceeded")
+        || lower.contains("too many queries per second")
+        || lower.contains("server error (429)")
+        || lower.contains("too many requests")
+}
+
 pub fn is_retryable_cluster_error_for_sql(sql: &str, message: &str) -> bool {
     is_leader_error(message)
         || is_network_error(message)
@@ -3012,11 +3020,28 @@ fn execute_sql_via_client_internal(
                     return Err(last_err.unwrap_or_else(|| "All cluster nodes failed".into()));
                 }
 
-                let max_attempts = if is_cluster_mode() { 1 } else { 5 };
+                let max_attempts = if is_cluster_mode() { 1 } else { 8 };
                 for attempt in 0..max_attempts {
-                    let response =
-                        execute_once(&base_url, &username_owned, &password_owned, &sql, &params)
-                            .await?;
+                    let response = match execute_once(
+                        &base_url,
+                        &username_owned,
+                        &password_owned,
+                        &sql,
+                        &params,
+                    )
+                    .await
+                    {
+                        Ok(response) => response,
+                        Err(err) => {
+                            let err_msg = err.to_string();
+                            if is_rate_limited_error(&err_msg) && attempt + 1 < max_attempts {
+                                let delay_ms = 250 + attempt * 250;
+                                tokio::time::sleep(Duration::from_millis(delay_ms as u64)).await;
+                                continue;
+                            }
+                            return Err(err);
+                        },
+                    };
 
                     if response.success() {
                         return Ok::<_, Box<dyn std::error::Error + Send + Sync>>(response);
@@ -3029,6 +3054,12 @@ fn execute_sql_via_client_internal(
 
                     if is_retryable_cluster_error_for_sql(&sql, &err_msg) {
                         let delay_ms = 200 + attempt * 200;
+                        tokio::time::sleep(Duration::from_millis(delay_ms as u64)).await;
+                        continue;
+                    }
+
+                    if is_rate_limited_error(&err_msg) && attempt + 1 < max_attempts {
+                        let delay_ms = 250 + attempt * 250;
                         tokio::time::sleep(Duration::from_millis(delay_ms as u64)).await;
                         continue;
                     }

@@ -202,7 +202,10 @@ fn smoke_subscription_listing_tracks_seq_id() {
 
             client.connect().await.expect("connect");
 
-            let cfg = SubscriptionConfig::new("sub_seq_1".to_string(), format!("SELECT * FROM {}", full_clone));
+            let cfg = SubscriptionConfig::new(
+                "sub_seq_1".to_string(),
+                format!("SELECT * FROM {}", full_clone),
+            );
             let mut sub = client.subscribe_with_config(cfg).await.expect("subscribe");
 
             // Wait for ack
@@ -224,7 +227,9 @@ fn smoke_subscription_listing_tracks_seq_id() {
             client
                 .execute_query(
                     &format!("INSERT INTO {} (id, v) VALUES ('r1', 'hello')", full_clone),
-                    None, None, None,
+                    None,
+                    None,
+                    None,
                 )
                 .await
                 .expect("insert");

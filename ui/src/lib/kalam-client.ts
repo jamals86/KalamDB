@@ -9,7 +9,16 @@
  * which demonstrates proper WASM initialization and query execution.
  */
 
-import { KalamDBClient, Auth, type QueryResponse, type ServerMessage, type Unsubscribe, type SubscriptionOptions } from 'kalam-link';
+import {
+  KalamDBClient,
+  Auth,
+  type LiveRowsOptions,
+  type QueryResponse,
+  type RowData,
+  type ServerMessage,
+  type SubscriptionOptions,
+  type Unsubscribe,
+} from 'kalam-link';
 
 let client: KalamDBClient | null = null;
 let currentToken: string | null = null;
@@ -422,6 +431,39 @@ export async function subscribe(
 }
 
 /**
+ * Subscribe to a materialized live row set.
+ *
+ * Accepts either a full SQL query or a table name, mirroring `subscribe()`.
+ */
+export async function subscribeRows<T = RowData>(
+  tableOrQuery: string,
+  callback: (rows: T[]) => void,
+  options?: LiveRowsOptions<T>,
+): Promise<Unsubscribe> {
+  if (!currentToken) {
+    throw new Error('Not authenticated. Please log in first.');
+  }
+
+  if (!client || !isInitialized) {
+    await initializeClient(currentToken);
+  }
+
+  const { sql: cleanSql } = parseOptionsFromSql(tableOrQuery);
+  const trimmed = cleanSql.trim().toLowerCase();
+  const isSqlQuery = trimmed.startsWith('select ') ||
+                     trimmed.startsWith('select\n') ||
+                     trimmed.startsWith('select\t');
+
+  if (isSqlQuery) {
+    console.log('[kalam-client] Detected SQL query, using live');
+    return client!.live(cleanSql, callback, options);
+  }
+
+  console.log('[kalam-client] Detected table name, using liveTableRows');
+  return client!.liveTableRows(cleanSql, callback, options);
+}
+
+/**
  * Get subscription count
  */
 export function getSubscriptionCount(): number {
@@ -429,4 +471,4 @@ export function getSubscriptionCount(): number {
 }
 
 // Re-export types for convenience
-export type { QueryResponse, ServerMessage, Unsubscribe, SubscriptionOptions };
+export type { LiveRowsOptions, QueryResponse, RowData, ServerMessage, SubscriptionOptions, Unsubscribe };

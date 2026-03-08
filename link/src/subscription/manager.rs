@@ -15,9 +15,7 @@ use crate::{
     },
     error::{KalamLinkError, Result},
     event_handlers::{ConnectionError, EventHandlers},
-    models::{
-        BatchStatus, ChangeEvent, ConnectionOptions, SubscriptionConfig,
-    },
+    models::{BatchStatus, ChangeEvent, ConnectionOptions, SubscriptionConfig},
     subscription::ws_reader_loop,
     timeouts::KalamLinkTimeouts,
 };
@@ -174,10 +172,7 @@ impl SubscriptionManager {
         let keepalive_interval = if timeouts.keepalive_interval.is_zero() {
             None
         } else {
-            Some(jitter_keepalive_interval(
-                timeouts.keepalive_interval,
-                &subscription_id,
-            ))
+            Some(jitter_keepalive_interval(timeouts.keepalive_interval, &subscription_id))
         };
 
         // Send subscription request
@@ -324,9 +319,7 @@ impl SubscriptionManager {
 
         // Shared connection path: tell the connection task to unsubscribe us.
         if let Some(tx) = self.shared_unsubscribe_tx.take() {
-            let _ = tx
-                .send((self.subscription_id.clone(), self.generation))
-                .await;
+            let _ = tx.send((self.subscription_id.clone(), self.generation)).await;
         }
 
         // Per-subscription path: signal the background reader task.
@@ -396,9 +389,7 @@ mod tests {
     async fn test_close_marks_subscription_as_closed() {
         let mut sub = make_test_sub().await;
         assert!(!sub.is_closed());
-        sub.close()
-            .await
-            .expect("close should succeed on a stream-less sub");
+        sub.close().await.expect("close should succeed on a stream-less sub");
         assert!(sub.is_closed(), "subscription should be closed after close()");
     }
 
@@ -406,9 +397,7 @@ mod tests {
     async fn test_close_is_idempotent() {
         let mut sub = make_test_sub().await;
         sub.close().await.expect("first close should succeed");
-        sub.close()
-            .await
-            .expect("second close should also succeed (no-op)");
+        sub.close().await.expect("second close should also succeed (no-op)");
         assert!(sub.is_closed());
     }
 
@@ -418,10 +407,7 @@ mod tests {
         let result = tokio::time::timeout(std::time::Duration::from_millis(100), sub.next())
             .await
             .expect("next() should complete quickly when stream is None");
-        assert!(
-            result.is_none(),
-            "next() should return None when stream is None"
-        );
+        assert!(result.is_none(), "next() should return None when stream is None");
     }
 
     #[tokio::test]

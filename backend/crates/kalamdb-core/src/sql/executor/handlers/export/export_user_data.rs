@@ -35,11 +35,8 @@ impl TypedStatementHandler<ExportUserDataStatement> for ExportUserDataHandler {
         let user_id = context.user_id().to_string();
 
         // Generate a unique export ID
-        let export_id = format!(
-            "export-{}-{}",
-            &user_id,
-            chrono::Utc::now().format("%Y%m%d-%H%M%S")
-        );
+        let export_id =
+            format!("export-{}-{}", &user_id, chrono::Utc::now().format("%Y%m%d-%H%M%S"));
 
         let params = UserExportParams {
             user_id: user_id.clone(),
@@ -47,11 +44,8 @@ impl TypedStatementHandler<ExportUserDataStatement> for ExportUserDataHandler {
         };
 
         // Idempotency: one export per user per day
-        let idempotency_key = format!(
-            "user_export:{}:{}",
-            &user_id,
-            chrono::Utc::now().format("%Y%m%d")
-        );
+        let idempotency_key =
+            format!("user_export:{}:{}", &user_id, chrono::Utc::now().format("%Y%m%d"));
 
         let job_manager = self.app_context.job_manager();
         let job_id: JobId = job_manager

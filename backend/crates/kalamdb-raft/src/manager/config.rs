@@ -83,7 +83,7 @@ impl Default for RaftManagerConfig {
         Self {
             cluster_id: "kalamdb".to_string(),
             node_id: NodeId::new(1),
-            rpc_addr: "127.0.0.1:9100".to_string(),
+            rpc_addr: "127.0.0.1:9188".to_string(),
             api_addr: "127.0.0.1:8080".to_string(),
             peers: vec![],
             rpc_tls: RpcTlsConfig::default(),

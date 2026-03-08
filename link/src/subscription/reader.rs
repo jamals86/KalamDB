@@ -5,8 +5,8 @@
 
 use crate::{
     connection::{
-        decode_ws_payload, parse_message, send_next_batch_request, WebSocketStream,
-        FAR_FUTURE, MAX_WS_TEXT_MESSAGE_BYTES,
+        decode_ws_payload, parse_message, send_next_batch_request, WebSocketStream, FAR_FUTURE,
+        MAX_WS_TEXT_MESSAGE_BYTES,
     },
     error::{KalamLinkError, Result},
     event_handlers::{ConnectionError, DisconnectReason, EventHandlers},
@@ -203,8 +203,7 @@ pub(crate) async fn ws_reader_loop(
             Some(Ok(Message::Binary(data))) => match decode_ws_payload(&data) {
                 Ok(text) => {
                     event_handlers.emit_receive(&text);
-                    if process_and_forward(&text, &mut ws_stream, &event_tx, &subscription_id)
-                        .await
+                    if process_and_forward(&text, &mut ws_stream, &event_tx, &subscription_id).await
                     {
                         return;
                     }
@@ -238,9 +237,7 @@ pub(crate) async fn ws_reader_loop(
                 event_handlers.emit_error(ConnectionError::new(&msg, false));
                 event_handlers
                     .emit_disconnect(DisconnectReason::new(format!("WebSocket error: {}", msg)));
-                let _ = event_tx
-                    .send(Err(KalamLinkError::WebSocketError(msg)))
-                    .await;
+                let _ = event_tx.send(Err(KalamLinkError::WebSocketError(msg))).await;
                 return;
             },
             None => {

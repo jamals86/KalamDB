@@ -143,7 +143,6 @@ actix-web = { workspace = true }
 tokio-tungstenite = { workspace = true }
 futures-util = { workspace = true }
 uuid = { workspace = true }
-rocksdb = { workspace = true }
 base64 = { workspace = true }
 bcrypt = { workspace = true }
 datafusion = { workspace = true }

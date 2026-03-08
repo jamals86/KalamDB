@@ -27,6 +27,7 @@ pub async fn handle_subscribe(
     session: &mut Session,
     rate_limiter: &Arc<RateLimiter>,
     live_query_manager: &Arc<LiveQueryManager>,
+    compression_enabled: bool,
 ) -> Result<(), String> {
     let user_id = connection_state.read().user_id().cloned().ok_or("Not authenticated")?;
 
@@ -37,6 +38,7 @@ pub async fn handle_subscribe(
             "invalid_subscription",
             WsErrorCode::InvalidSubscriptionId,
             "Subscription ID cannot be empty",
+            compression_enabled,
         )
         .await;
         return Ok(());
@@ -49,6 +51,7 @@ pub async fn handle_subscribe(
             &subscription.id,
             WsErrorCode::SubscriptionLimitExceeded,
             "Maximum subscriptions reached",
+            compression_enabled,
         )
         .await;
         return Ok(());
@@ -118,7 +121,7 @@ pub async fn handle_subscribe(
                 batch_control.clone(),
                 result.schema.clone(),
             );
-            let _ = send_json(session, &ack, true).await;
+            let _ = send_json(session, &ack, compression_enabled).await;
 
             if let Some(initial) = result.initial_data {
                 // Convert Row objects to HashMap (always using simple JSON format)
@@ -133,6 +136,7 @@ pub async fn handle_subscribe(
                                 &subscription_id,
                                 WsErrorCode::ConversionError,
                                 &format!("Failed to convert row data: {}", e),
+                                compression_enabled,
                             )
                             .await
                             .map_err(|_| "Failed to send error message".to_string());
@@ -145,7 +149,7 @@ pub async fn handle_subscribe(
                     rows_json,
                     batch_control,
                 );
-                let _ = send_json(session, &batch_msg, true).await;
+                let _ = send_json(session, &batch_msg, compression_enabled).await;
 
                 if !initial.has_more {
                     let flushed = connection_state.read().complete_initial_load(&subscription_id);
@@ -196,7 +200,7 @@ pub async fn handle_subscribe(
                     );
                 },
             }
-            let _ = send_error(session, &subscription_id, code, &message).await;
+            let _ = send_error(session, &subscription_id, code, &message, compression_enabled).await;
             Ok(())
         },
     }

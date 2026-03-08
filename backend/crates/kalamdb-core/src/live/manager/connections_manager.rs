@@ -60,8 +60,7 @@ pub struct ConnectionsManager {
         DashMap<(UserId, TableId), Arc<DashMap<LiveQueryId, SubscriptionHandle>>>,
     /// TableId → DashMap<LiveQueryId, SubscriptionHandle> for shared table subscriptions
     /// Shared tables are not scoped per-user, so notifications go to all subscribers
-    shared_table_subscriptions:
-        DashMap<TableId, Arc<DashMap<LiveQueryId, SubscriptionHandle>>>,
+    shared_table_subscriptions: DashMap<TableId, Arc<DashMap<LiveQueryId, SubscriptionHandle>>>,
     /// Shared empty map to avoid allocations on lookup misses
     empty_subscriptions: Arc<DashMap<LiveQueryId, SubscriptionHandle>>,
     /// LiveQueryId → ConnectionId reverse index
@@ -228,6 +227,10 @@ impl ConnectionsManager {
     ///
     /// Returns the list of removed LiveQueryIds for cleanup.
     pub fn unregister_connection(&self, connection_id: &ConnectionId) -> Vec<LiveQueryId> {
+        debug!(
+            "unregister_connection: starting cleanup for connection {}",
+            connection_id
+        );
         let removed_live_ids =
             if let Some((_, shared_state)) = self.connections.remove(connection_id) {
                 self.total_connections.fetch_sub(1, Ordering::AcqRel);
@@ -242,19 +245,19 @@ impl ConnectionsManager {
                         let key = (user_id.clone(), sub.table_id.clone());
                         if let Some(entries) = self.user_table_subscriptions.get(&key) {
                             entries.remove(&sub.live_id);
-                            if entries.is_empty() {
-                                drop(entries);
-                                self.user_table_subscriptions.remove(&key);
-                            }
                         }
+                        // Atomically remove outer entry only if inner map is now empty.
+                        // This avoids a TOCTOU race where index_subscription adds a
+                        // new handle between is_empty() and remove().
+                        self.user_table_subscriptions
+                            .remove_if(&key, |_, handles| handles.is_empty());
+
                         // Also try shared_table_subscriptions
                         if let Some(entries) = self.shared_table_subscriptions.get(&sub.table_id) {
                             entries.remove(&sub.live_id);
-                            if entries.is_empty() {
-                                drop(entries);
-                                self.shared_table_subscriptions.remove(&sub.table_id);
-                            }
                         }
+                        self.shared_table_subscriptions
+                            .remove_if(&sub.table_id, |_, handles| handles.is_empty());
                     }
                 }
 
@@ -384,11 +387,7 @@ impl ConnectionsManager {
     }
 
     /// Remove shared table subscription from indices
-    pub fn unindex_shared_subscription(
-        &self,
-        live_id: &LiveQueryId,
-        table_id: &TableId,
-    ) {
+    pub fn unindex_shared_subscription(&self, live_id: &LiveQueryId, table_id: &TableId) {
         // Remove from reverse index
         self.live_id_to_connection.remove(live_id);
 
@@ -525,11 +524,7 @@ impl ConnectionsManager {
 
     /// Send notification to all shared table subscriptions for a table
     #[inline]
-    pub fn notify_shared_table(
-        &self,
-        table_id: &TableId,
-        notification: Notification,
-    ) {
+    pub fn notify_shared_table(&self, table_id: &TableId, notification: Notification) {
         if let Some(handles) = self.shared_table_subscriptions.get(table_id) {
             let notification = Arc::new(notification);
             for handle in handles.iter() {
@@ -976,12 +971,7 @@ mod tests {
         let handle = create_test_handle(Arc::new(tx));
 
         // Index a shared subscription
-        registry.index_shared_subscription(
-            &conn_id,
-            live_id.clone(),
-            table_id.clone(),
-            handle,
-        );
+        registry.index_shared_subscription(&conn_id, live_id.clone(), table_id.clone(), handle);
 
         assert_eq!(registry.subscription_count(), 1);
         assert!(registry.has_shared_subscriptions(&table_id));
@@ -1108,12 +1098,7 @@ mod tests {
             let (tx, rx) = mpsc::channel(64);
             let handle = create_test_handle(Arc::new(tx));
 
-            registry.index_shared_subscription(
-                &conn_id,
-                live_id,
-                table_id.clone(),
-                handle,
-            );
+            registry.index_shared_subscription(&conn_id, live_id, table_id.clone(), handle);
 
             receivers.push(rx);
         }
@@ -1153,12 +1138,7 @@ mod tests {
             let (tx, rx) = mpsc::channel(64);
             let handle = create_test_handle(Arc::new(tx));
 
-            registry.index_shared_subscription(
-                &conn_id,
-                live_id,
-                table_id.clone(),
-                handle,
-            );
+            registry.index_shared_subscription(&conn_id, live_id, table_id.clone(), handle);
 
             receivers.push(rx);
         }
@@ -1197,6 +1177,64 @@ mod tests {
             subscriber_count, received
         );
     }
+
+    #[tokio::test]
+    async fn test_shared_subscription_parallel_registration_and_notification() {
+        let registry = create_test_registry();
+        let table_id = make_table_id("shared", "parallel_changes");
+        let subscriber_count = 16;
+
+        let handles: Vec<_> = (0..subscriber_count)
+            .map(|i| {
+                let registry = Arc::clone(&registry);
+                let table_id = table_id.clone();
+                tokio::spawn(async move {
+                    let conn_id = ConnectionId::new(&format!("parallel_conn_{}", i));
+                    let user_id = UserId::new(&format!("parallel_user_{}", i));
+                    registry
+                        .register_connection(conn_id.clone(), ConnectionInfo::new(None))
+                        .unwrap();
+                    let live_id = LiveQueryId::new(
+                        user_id,
+                        conn_id.clone(),
+                        format!("parallel_sub_{}", i),
+                    );
+                    let (tx, rx) = mpsc::channel(64);
+                    registry.index_shared_subscription(
+                        &conn_id,
+                        live_id,
+                        table_id,
+                        create_test_handle(Arc::new(tx)),
+                    );
+                    rx
+                })
+            })
+            .collect();
+
+        let mut receivers = Vec::with_capacity(subscriber_count);
+        for handle in handles {
+            receivers.push(handle.await.expect("registration task panicked"));
+        }
+
+        assert_eq!(
+            registry.subscription_count(),
+            subscriber_count,
+            "expected all parallel subscriptions to register"
+        );
+
+        let notification = Notification::insert(
+            "parallel".to_string(),
+            vec![std::collections::HashMap::new()],
+        );
+        registry.notify_shared_table(&table_id, notification);
+
+        for mut rx in receivers {
+            let msg = tokio::time::timeout(Duration::from_secs(1), rx.recv()).await;
+            assert!(msg.is_ok(), "subscriber should receive notification within timeout");
+            assert!(msg.unwrap().is_some(), "subscriber channel closed");
+        }
+    }
+
 
     #[tokio::test]
     async fn test_shared_subscription_mixed_with_user_subscriptions() {
@@ -1240,13 +1278,19 @@ mod tests {
             Notification::insert("shared".to_string(), vec![std::collections::HashMap::new()]);
         registry.notify_shared_table(&shared_table, shared_notif);
         assert!(rx1.try_recv().is_ok(), "shared subscriber should receive");
-        assert!(rx2.try_recv().is_err(), "user subscriber should NOT receive shared notification");
+        assert!(
+            rx2.try_recv().is_err(),
+            "user subscriber should NOT receive shared notification"
+        );
 
         // User table notification should only go to user subscriber
         let user_notif =
             Notification::insert("user".to_string(), vec![std::collections::HashMap::new()]);
         registry.notify_table_for_user(&user_id, &user_table, user_notif);
-        assert!(rx1.try_recv().is_err(), "shared subscriber should NOT receive user notification");
+        assert!(
+            rx1.try_recv().is_err(),
+            "shared subscriber should NOT receive user notification"
+        );
         assert!(rx2.try_recv().is_ok(), "user subscriber should receive");
     }
 
@@ -1255,7 +1299,8 @@ mod tests {
         let registry = create_test_registry();
         let conn_id = ConnectionId::new("rev_conn");
         let table_id = make_table_id("shared", "reverse");
-        let live_id = LiveQueryId::new(UserId::new("rev_u"), conn_id.clone(), "rev_sub".to_string());
+        let live_id =
+            LiveQueryId::new(UserId::new("rev_u"), conn_id.clone(), "rev_sub".to_string());
 
         let _reg = registry
             .register_connection(conn_id.clone(), ConnectionInfo::new(None))

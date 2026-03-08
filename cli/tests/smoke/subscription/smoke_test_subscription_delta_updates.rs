@@ -39,10 +39,8 @@ fn smoke_subscription_update_sends_delta_only() {
     execute_sql_as_root_via_client(&create_sql).expect("create table should succeed");
 
     // 2) Insert a row with all columns populated
-    let ins = format!(
-        "INSERT INTO {} (name, email, age) VALUES ('Alice', 'alice@test.com', 30)",
-        full
-    );
+    let ins =
+        format!("INSERT INTO {} (name, email, age) VALUES ('Alice', 'alice@test.com', 30)", full);
     execute_sql_as_root_via_client(&ins).expect("insert should succeed");
 
     // Wait for data to be visible
@@ -129,10 +127,7 @@ fn smoke_subscription_update_sends_delta_only() {
     );
 
     // 6) Test updating multiple columns — verify changed_columns lists both
-    let upd2 = format!(
-        "UPDATE {} SET email = 'bob@test.com', age = 31 WHERE name = 'Bob'",
-        full
-    );
+    let upd2 = format!("UPDATE {} SET email = 'bob@test.com', age = 31 WHERE name = 'Bob'", full);
     execute_sql_as_root_via_client(&upd2).expect("multi-column update should succeed");
 
     let mut update2_lines: Vec<String> = Vec::new();

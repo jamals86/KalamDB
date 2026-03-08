@@ -65,21 +65,31 @@ import { createClient, Auth } from 'kalam-link';
 
 const client = createClient({
   url: 'http://localhost:8080',
-  auth: Auth.jwt('<user-token>'),
+  authProvider: async () => Auth.jwt('<user-token>'),
 });
 
-await client.connect();
+const threadSql = `
+  SELECT id, role, content, created_at
+  FROM chat.messages
+  WHERE thread_id = 'thread_42'
+  ORDER BY created_at ASC
+`;
 
 await client.query(`
   INSERT INTO chat.messages (thread_id, role, content)
   VALUES ('thread_42', 'user', 'hello from frontend');
 `);
 
-const unsubscribe = await client.subscribeWithSql(
-  `SUBSCRIBE TO chat.messages WHERE thread_id = 'thread_42' OPTIONS (last_rows = 20);`,
-  (event) => {
-    console.log('live event', event);
-  }
+const unsubscribe = await client.live(
+  threadSql,
+  (rows) => {
+    // If `chat.messages` is a USER table, each signed-in user only sees
+    // their own rows even though the SQL text is identical for everyone.
+    console.log('live rows', rows);
+  },
+  {
+    subscriptionOptions: { last_rows: 20 },
+  },
 );
 
 // Later
@@ -96,7 +106,7 @@ import { createClient, Auth, runAgent } from 'kalam-link';
 
 const client = createClient({
   url: 'http://localhost:8080',
-  auth: Auth.basic('root', 'kalamdb123'),
+  authProvider: async () => Auth.basic('root', 'kalamdb123'),
 });
 
 const abort = new AbortController();

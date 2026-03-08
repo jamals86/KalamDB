@@ -124,6 +124,10 @@ while IFS= read -r line || [[ -n "$line" ]]; do
   fi
 done < "$SQL_FILE"
 
+log "Creating topic for agent consumption"
+execute_sql_allow_exists "CREATE TOPIC chat_demo.ai_inbox"
+execute_sql_allow_exists "ALTER TOPIC chat_demo.ai_inbox ADD SOURCE chat_demo.messages ON INSERT"
+
 log "Ensuring demo admin user exists"
 execute_sql_allow_exists "CREATE USER 'admin' WITH PASSWORD 'kalamdb123' ROLE dba"
 

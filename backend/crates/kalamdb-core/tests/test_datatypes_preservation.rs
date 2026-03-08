@@ -16,20 +16,14 @@ use kalamdb_commons::models::schemas::{ColumnDefinition, TableDefinition, TableT
 use kalamdb_commons::{NamespaceId, TableId, TableName};
 use kalamdb_core::providers::flush::UserTableFlushJob;
 use kalamdb_core::system_table_registration::register_system_tables;
-use kalamdb_store::RocksDBBackend;
+use kalamdb_store::test_utils::TestDb;
 use kalamdb_tables::{new_user_table_store, UserTableRow, UserTableRowId};
-use rocksdb::DB;
-use tempfile::TempDir;
 
 #[tokio::test]
 async fn test_datatypes_preservation_values() {
     // Setup temp RocksDB and output dir
-    let temp = TempDir::new().expect("Failed to create temp dir");
-    let db = Arc::new(
-        DB::open_default(temp.path().join("rocksdb").to_str().unwrap())
-            .expect("Failed to create RocksDB"),
-    );
-    let backend: Arc<dyn kalamdb_store::StorageBackend> = Arc::new(RocksDBBackend::new(db));
+    let test_db = TestDb::with_system_tables().expect("Failed to create test database");
+    let backend: Arc<dyn kalamdb_store::StorageBackend> = test_db.backend();
 
     // Register system tables (schema store not strictly required here, but keep consistent)
     let system_schema = Arc::new(MemorySchemaProvider::new());

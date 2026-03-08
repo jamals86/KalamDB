@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Table,
   TableBody,
@@ -19,7 +19,9 @@ import {
 } from '@/components/ui/select';
 import { Card } from '@/components/ui/card';
 import type { LiveQuery, LiveQueryFilters } from '@/services/liveQueryService';
-import { useGetLiveQueriesQuery, useKillLiveQueryMutation } from '@/store/apiSlice';
+import { useKillLiveQueryMutation } from '@/store/apiSlice';
+import { subscribeRows, type RowData } from '@/lib/kalam-client';
+import { buildLiveQueriesQuery } from '@/services/sql/queries/liveQueryQueries';
 import { Loader2, RefreshCw, XCircle, Activity, Clock, Database, CheckCircle } from 'lucide-react';
 
 export function LiveQueryList() {
@@ -30,12 +32,9 @@ export function LiveQueryList() {
     status: 'all',
   });
   const [appliedFilters, setAppliedFilters] = useState<LiveQueryFilters>({});
-  const {
-    data: liveQueries = [],
-    isFetching: isLoading,
-    error,
-    refetch,
-  } = useGetLiveQueriesQuery(appliedFilters, { pollingInterval: 5000 });
+  const [liveQueries, setLiveQueries] = useState<LiveQuery[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [killLiveQueryMutation] = useKillLiveQueryMutation();
   const [killingIds, setKillingIds] = useState<Set<string>>(new Set());
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -51,6 +50,74 @@ export function LiveQueryList() {
     [filters.namespace_id, filters.status, filters.table_name, filters.user_id],
   );
 
+  const liveQuerySql = useMemo(() => buildLiveQueriesQuery(appliedFilters), [appliedFilters]);
+
+  useEffect(() => {
+    let active = true;
+    let unsubscribe: (() => Promise<void>) | undefined;
+
+    const toLiveQuery = (row: RowData): LiveQuery => ({
+      live_id: row.live_id?.asString() ?? '',
+      connection_id: row.connection_id?.asString() ?? '',
+      subscription_id: row.subscription_id?.asString() ?? '',
+      namespace_id: row.namespace_id?.asString() ?? '',
+      table_name: row.table_name?.asString() ?? '',
+      user_id: row.user_id?.asString() ?? '',
+      query: row.query?.asString() ?? '',
+      options: row.options?.asString() ?? null,
+      status: row.status?.asString() ?? '',
+      created_at: row.created_at?.asInt() ?? 0,
+      last_update: row.last_update?.asInt() ?? 0,
+      changes: row.changes?.asInt() ?? 0,
+      node: row.node_id?.asString() ?? '',
+    });
+
+    const start = async (): Promise<void> => {
+      try {
+        setIsLoading(true);
+        setError(null);
+        unsubscribe = await subscribeRows(
+          liveQuerySql,
+          (rows) => {
+            if (!active) {
+              return;
+            }
+
+            setLiveQueries(rows);
+            setIsLoading(false);
+          },
+          {
+            mapRow: toLiveQuery,
+            // limit: appliedFilters.limit ?? 1000,
+            subscriptionOptions: { last_rows: appliedFilters.limit ?? 1000 },
+            onError: (event) => {
+              if (!active) {
+                return;
+              }
+
+              setError(`${event.code}: ${event.message}`);
+              setIsLoading(false);
+            },
+          },
+        );
+      } catch (caughtError) {
+        if (!active) {
+          return;
+        }
+
+        setError(caughtError instanceof Error ? caughtError.message : String(caughtError));
+        setIsLoading(false);
+      }
+    };
+
+    void start();
+
+    return () => {
+      active = false;
+      void unsubscribe?.();
+    };
+  }, [appliedFilters.limit, liveQuerySql]);
+
   const handleKillQuery = async (liveQuery: LiveQuery) => {
     if (!confirm(`Kill live query for ${liveQuery.user_id} on ${liveQuery.namespace_id}.${liveQuery.table_name}?`)) {
       return;
@@ -64,7 +131,6 @@ export function LiveQueryList() {
       await killLiveQueryMutation(liveQuery.live_id).unwrap();
       setSuccessMessage(`Successfully killed query ${liveQuery.subscription_id}`);
       setTimeout(() => setSuccessMessage(null), 3000);
-      await refetch();
     } catch (err) {
       setKillError(err instanceof Error ? err.message : 'Failed to kill query');
       setTimeout(() => setKillError(null), 5000);
@@ -78,7 +144,7 @@ export function LiveQueryList() {
   };
 
   const handleRefresh = () => {
-    void refetch();
+    setAppliedFilters((current) => ({ ...current }));
   };
 
   const handleApplyFilters = () => {
@@ -141,7 +207,7 @@ export function LiveQueryList() {
             <Clock className="h-8 w-8 text-orange-600" />
             <div>
               <p className="text-sm text-muted-foreground">Auto-refresh</p>
-              <p className="text-lg font-semibold">Every 5s</p>
+              <p className="text-lg font-semibold">Live</p>
             </div>
           </div>
         </Card>
@@ -197,7 +263,7 @@ export function LiveQueryList() {
       {/* Error Display */}
       {error && (
         <div className="p-4 text-sm text-red-700 bg-red-50 border border-red-200 rounded">
-          {"error" in error ? error.error : "Failed to fetch live queries"}
+          {error}
         </div>
       )}
 

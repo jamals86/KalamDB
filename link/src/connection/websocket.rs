@@ -8,8 +8,8 @@ use crate::{
     auth::AuthProvider,
     error::{KalamLinkError, Result},
     models::{
-        ChangeEvent, ChangeTypeRaw, ClientMessage, ServerMessage,
-        SubscriptionOptions, SubscriptionRequest, WsAuthCredentials,
+        ChangeEvent, ChangeTypeRaw, ClientMessage, ServerMessage, SubscriptionOptions,
+        SubscriptionRequest, WsAuthCredentials,
     },
 };
 use futures_util::{SinkExt, StreamExt};
@@ -106,10 +106,7 @@ pub(crate) fn resolve_ws_url(
 
 fn validate_ws_url(url: &Url, require_ws_scheme: bool, context: &str) -> Result<()> {
     if url.host_str().is_none() {
-        return Err(KalamLinkError::ConfigurationError(format!(
-            "{} must include a host",
-            context
-        )));
+        return Err(KalamLinkError::ConfigurationError(format!("{} must include a host", context)));
     }
 
     if !url.username().is_empty() || url.password().is_some() {
@@ -157,10 +154,7 @@ pub(crate) async fn connect_with_optional_local_bind(
         return connect_async(request).await;
     }
 
-    let host = request
-        .uri()
-        .host()
-        .ok_or(WsError::Url(UrlError::NoHostName))?;
+    let host = request.uri().host().ok_or(WsError::Url(UrlError::NoHostName))?;
     let port = request
         .uri()
         .port_u16()
@@ -338,12 +332,9 @@ pub(crate) async fn send_auth_and_wait(
         KalamLinkError::WebSocketError(format!("Failed to serialize auth message: {}", e))
     })?;
 
-    ws_stream
-        .send(Message::Text(payload.into()))
-        .await
-        .map_err(|e| {
-            KalamLinkError::WebSocketError(format!("Failed to send auth message: {}", e))
-        })?;
+    ws_stream.send(Message::Text(payload.into())).await.map_err(|e| {
+        KalamLinkError::WebSocketError(format!("Failed to send auth message: {}", e))
+    })?;
 
     // Loop until AuthSuccess/AuthError, tolerating Ping/Pong during handshake.
     let deadline = TokioInstant::now() + auth_timeout;
@@ -378,9 +369,7 @@ pub(crate) async fn send_auth_and_wait(
             Ok(Some(Ok(Message::Ping(payload)))) => {
                 let _ = ws_stream.send(Message::Pong(payload)).await;
             },
-            Ok(Some(Ok(
-                Message::Pong(_) | Message::Binary(_) | Message::Frame(_),
-            ))) => {
+            Ok(Some(Ok(Message::Pong(_) | Message::Binary(_) | Message::Frame(_)))) => {
                 continue;
             },
             Ok(Some(Ok(Message::Close(_)))) => {
@@ -484,8 +473,9 @@ pub(crate) fn parse_message(text: &str) -> Result<Option<ChangeEvent>> {
 
 /// Spread keepalive pings across connections to avoid synchronized bursts.
 ///
-/// Uses deterministic jitter (+/-20%) derived from `subscription_id` so
-/// reconnecting preserves phase and avoids thundering-herd effects.
+/// Uses deterministic jitter (0-20% earlier than the base interval) derived
+/// from `subscription_id` so reconnecting preserves phase, avoids
+/// thundering-herd effects, and never exceeds the configured heartbeat budget.
 pub(crate) fn jitter_keepalive_interval(base: Duration, subscription_id: &str) -> Duration {
     if base.is_zero() {
         return base;
@@ -501,12 +491,8 @@ pub(crate) fn jitter_keepalive_interval(base: Duration, subscription_id: &str) -
     subscription_id.hash(&mut hasher);
     let hashed = hasher.finish();
 
-    let offset = (hashed % (2 * jitter_span + 1)) as i64 - jitter_span as i64;
-    let jittered_ms = if offset >= 0 {
-        base_ms.saturating_add(offset as u64)
-    } else {
-        base_ms.saturating_sub((-offset) as u64).max(1)
-    };
+    let offset = (hashed % jitter_span).saturating_add(1);
+    let jittered_ms = base_ms.saturating_sub(offset).max(1);
 
     Duration::from_millis(jittered_ms)
 }
@@ -530,10 +516,7 @@ pub(crate) fn decode_ws_payload(data: &[u8]) -> Result<String> {
             })?;
 
     String::from_utf8(decompressed).map_err(|e| {
-        KalamLinkError::WebSocketError(format!(
-            "Invalid UTF-8 in decompressed message: {}",
-            e
-        ))
+        KalamLinkError::WebSocketError(format!("Invalid UTF-8 in decompressed message: {}", e))
     })
 }
 
@@ -670,10 +653,10 @@ mod tests {
         let base = Duration::from_secs(20);
         let jittered = jitter_keepalive_interval(base, "sub-b");
         let min = Duration::from_secs(16); // -20%
-        let max = Duration::from_secs(24); // +20%
+        let max = Duration::from_secs(20);
         assert!(
-            jittered >= min && jittered <= max,
-            "jittered interval {:?} must be within [{:?}, {:?}]",
+            jittered >= min && jittered < max,
+            "jittered interval {:?} must be within [{:?}, {:?})",
             jittered,
             min,
             max

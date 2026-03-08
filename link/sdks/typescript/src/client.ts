@@ -17,6 +17,8 @@ import type {
   ConsumeContext,
   ConsumerHandle,
   ConsumerHandler,
+  LiveRowsCallback,
+  LiveRowsOptions,
   LogEntry,
   LogListener,
   LoginResponse,
@@ -28,6 +30,7 @@ import type {
   QueryResponse,
   ServerMessage,
   SubscriptionCallback,
+  SubscriptionErrorEvent,
   SubscriptionInfo,
   SubscriptionOptions,
   Unsubscribe,
@@ -59,6 +62,19 @@ import {
 export { KalamChange, KalamRow, wrapRows };
 export type { FileRefContext };
 
+type NormalizedSubscriptionEvent = ServerMessage & {
+  rows?: RowData[];
+  old_values?: RowData[];
+};
+
+type LiveRowsWasmEvent = {
+  type: 'rows' | 'error';
+  subscription_id: string;
+  rows?: RowData[];
+  code?: string;
+  message?: string;
+};
+
 type DynamicImport = (specifier: string) => Promise<Record<string, unknown>>;
 
 type NodeProcessShim = {
@@ -85,6 +101,8 @@ type NodeUrlShim = {
   fileURLToPath(url: URL): string;
 };
 
+type WasmAuthProviderResult = { jwt: { token: string } } | null;
+
 const dynamicImport = new Function(
   'specifier',
   'return import(specifier)',
@@ -95,6 +113,105 @@ function getNodeProcess(): NodeProcessShim | undefined {
     process?: NodeProcessShim;
   };
   return runtime.process;
+}
+
+function wrapSubscriptionRows(rows: unknown): RowData[] | undefined {
+  if (!Array.isArray(rows)) {
+    return undefined;
+  }
+
+  return rows.map((row) => wrapRowMap((row ?? {}) as Record<string, unknown>));
+}
+
+function normalizeSubscriptionEvent(event: ServerMessage): NormalizedSubscriptionEvent {
+  const normalized = { ...event } as NormalizedSubscriptionEvent;
+
+  if ('rows' in normalized) {
+    normalized.rows = wrapSubscriptionRows(normalized.rows);
+  }
+  if ('old_values' in normalized) {
+    normalized.old_values = wrapSubscriptionRows(normalized.old_values);
+  }
+
+  return normalized;
+}
+
+function normalizeLiveRowsWasmEvent(event: {
+  type: 'rows' | 'error';
+  subscription_id: string;
+  rows?: unknown;
+  code?: string;
+  message?: string;
+}): LiveRowsWasmEvent {
+  return {
+    ...event,
+    rows: wrapSubscriptionRows(event.rows),
+  };
+}
+
+function defaultRowKey(value: unknown): string | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const candidate = (value as { id?: unknown }).id;
+  if (typeof candidate === 'string') {
+    return candidate;
+  }
+  if (candidate instanceof KalamCellValue) {
+    return candidate.asString();
+  }
+
+  return null;
+}
+
+function upsertLimited<T>(
+  current: T[],
+  incoming: T[],
+  getKey: (row: T) => string | null | undefined,
+  limit?: number,
+): T[] {
+  const next = [...current];
+
+  for (const item of incoming) {
+    const key = getKey(item);
+    if (key) {
+      const existingIndex = next.findIndex((entry) => getKey(entry) === key);
+      if (existingIndex >= 0) {
+        next[existingIndex] = item;
+        continue;
+      }
+    }
+
+    next.push(item);
+  }
+
+  if (typeof limit === 'number' && limit >= 0 && next.length > limit) {
+    return next.slice(-limit);
+  }
+
+  return next;
+}
+
+function removeMaterializedRows<T>(
+  current: T[],
+  removed: T[],
+  getKey: (row: T) => string | null | undefined,
+): T[] {
+  const keys = new Set(
+    removed
+      .map((row) => getKey(row))
+      .filter((key): key is string => typeof key === 'string' && key.length > 0),
+  );
+
+  if (keys.size === 0) {
+    return current;
+  }
+
+  return current.filter((row) => {
+    const key = getKey(row);
+    return !key || !keys.has(key);
+  });
 }
 
 /* ================================================================== */
@@ -147,6 +264,7 @@ export class KalamDBClient {
   private wasmUrl?: string | BufferSource;
   private wsLazyConnect: boolean;
   private pingIntervalMs: number;
+  private autoReconnectEnabled = true;
 
   /** Current minimum log level. */
   private _logLevel: LogLevel;
@@ -307,8 +425,10 @@ export class KalamDBClient {
 
       switch (initialCreds.type) {
         case 'basic':
-          this.wasmClient = new WasmClient(this.url, initialCreds.username, initialCreds.password);
-          this.log(LogLevel.Debug, 'init', 'Created WASM client with basic auth');
+          // Keep basic credentials in TypeScript and exchange them for JWT
+          // before the first authenticated operation.
+          this.wasmClient = WasmClient.anonymous(this.url);
+          this.log(LogLevel.Debug, 'init', 'Created anonymous WASM client placeholder for basic auth');
           break;
         case 'jwt':
           this.wasmClient = WasmClient.withJwt(this.url, initialCreds.token);
@@ -322,59 +442,10 @@ export class KalamDBClient {
 
       // Wire authProvider for WebSocket (re-)connections.
       this.log(LogLevel.Debug, 'init', 'Wiring async auth provider');
-      const provider = this._authProvider;
-      const baseUrl = this.url;
-      const logFn = this.log.bind(this);
-      const updateAuth = (auth: AuthCredentials) => { this.auth = auth; };
-      this.wasmClient.setAuthProvider(async () => {
-        logFn(LogLevel.Debug, 'auth', 'Auth provider invoked for credentials...');
-        const creds = await resolveAuthProviderWithRetry(provider, {
-          maxAttempts: this.authProviderMaxAttempts,
-          initialBackoffMs: this.authProviderInitialBackoffMs,
-          maxBackoffMs: this.authProviderMaxBackoffMs,
-        });
-        logFn(LogLevel.Debug, 'auth', `Auth provider resolved: type=${creds.type}`);
-        if (creds.type === 'jwt') {
-          return { jwt: { token: creds.token } };
-        }
-        if (creds.type === 'none') {
-          return null;
-        }
-        if (creds.type === 'basic') {
-          // Basic auth: use a direct fetch to avoid re-entering the WASM object
-          // (calling wasmClient.login() from inside a WASM callback would cause
-          // a Rust "recursive use of an object" panic).
-          logFn(LogLevel.Debug, 'auth', 'Auth provider returned basic — performing direct HTTP login for JWT...');
-          const resp = await fetch(`${baseUrl}/v1/api/auth/login`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username: creds.username, password: creds.password }),
-          });
-          if (!resp.ok) {
-            const body = await resp.text().catch(() => '');
-            throw new Error(body || `Login failed: HTTP ${resp.status}`);
-          }
-          const loginResp = (await resp.json()) as LoginResponse;
-          updateAuth({ type: 'jwt', token: loginResp.access_token });
-          logFn(LogLevel.Debug, 'auth', 'Login successful via authProvider bridge (direct fetch)');
-          return { jwt: { token: loginResp.access_token } };
-        }
-        throw new Error('authProvider returned an unknown credential type');
-      });
-
-      // Wire disable compression option
-      if (this.disableCompression) {
-        this.wasmClient.setDisableCompression(true);
-      }
-
-      // Forward ws_lazy_connect to WASM for cross-layer consistency.
-      this.wasmClient.setWsLazyConnect(this.wsLazyConnect);
+      this.attachWasmClientState();
 
       this.initialized = true;
       this.log(LogLevel.Info, 'init', 'WASM initialization complete');
-
-      // Wire connection lifecycle event handlers to the WASM client
-      this.applyEventHandlers();
 
       // Eager connect: when wsLazyConnect is false, connect immediately.
       if (!this.wsLazyConnect) {
@@ -410,6 +481,7 @@ export class KalamDBClient {
         this.log(LogLevel.Info, 'connection', `Connecting to ${this.url}...`);
         await this.initialize();
         if (!this.wasmClient) throw new Error('WASM client not initialized');
+        this.wasmClient.setAutoReconnect(this.autoReconnectEnabled);
 
         // Auto-login: exchange Basic credentials for JWT before WebSocket connect.
         if (this.auth.type === 'basic') {
@@ -450,10 +522,46 @@ export class KalamDBClient {
   async disconnect(): Promise<void> {
     this.log(LogLevel.Info, 'connection', 'Disconnecting...');
     if (this.wasmClient) {
+      this.wasmClient.setAutoReconnect(false);
       await this.wasmClient.disconnect();
+      await new Promise((resolve) => setTimeout(resolve, 0));
     }
     this.subscriptions.clear();
     this.log(LogLevel.Debug, 'connection', 'Disconnected and subscriptions cleared');
+  }
+
+  /**
+   * Permanently tear down the current WASM client instance and release resources.
+   *
+   * Unlike `disconnect()`, this also frees the underlying WASM object and clears
+   * local client state so long-lived Node.js processes and test runners do not
+   * retain dormant sockets or callbacks after a suite completes.
+   *
+   * The client may be initialized again later if needed.
+   */
+  async shutdown(): Promise<void> {
+    this.log(LogLevel.Info, 'connection', 'Shutting down client...');
+
+    const wasmClient = this.wasmClient;
+    this.wasmClient = null;
+    this.initialized = false;
+    this.connecting = null;
+    this.subscriptions.clear();
+
+    if (!wasmClient) {
+      return;
+    }
+
+    try {
+      wasmClient.setAutoReconnect(false);
+      await wasmClient.disconnect();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    } finally {
+      if (typeof wasmClient.free === 'function') {
+        wasmClient.free();
+      }
+      this.log(LogLevel.Debug, 'connection', 'Client shutdown complete');
+    }
   }
 
   /**
@@ -472,7 +580,7 @@ export class KalamDBClient {
    * ```
    */
   async [Symbol.asyncDispose](): Promise<void> {
-    await this.disconnect();
+    await this.shutdown();
   }
 
   /**
@@ -482,7 +590,7 @@ export class KalamDBClient {
    * does not await. Prefer `await using` for reliable cleanup.
    */
   [Symbol.dispose](): void {
-    void this.disconnect();
+    void this.shutdown();
   }
 
   /** Whether the WebSocket connection is active */
@@ -596,6 +704,7 @@ export class KalamDBClient {
 
   /** Enable/disable automatic reconnection */
   setAutoReconnect(enabled: boolean): void {
+    this.autoReconnectEnabled = enabled;
     this.requireInit();
     this.wasmClient!.setAutoReconnect(enabled);
   }
@@ -1066,10 +1175,10 @@ export class KalamDBClient {
     if (this.auth.type !== 'basic') {
       throw new Error('login() requires Basic auth credentials. Use authProvider returning Auth.basic(username, password)');
     }
-    if (!this.wasmClient) throw new Error('WASM client not initialized');
+    const response = await this.performDirectBasicLogin(this.auth.username, this.auth.password);
 
-    // WASM client's login() returns the full LoginResponse as a JsValue
-    const response = (await this.wasmClient.login()) as LoginResponse;
+    this.wasmClient = WasmClient.withJwt(this.url, response.access_token);
+    this.attachWasmClientState();
 
     // Update TypeScript client's auth state to match
     this.auth = { type: 'jwt', token: response.access_token };
@@ -1150,7 +1259,7 @@ export class KalamDBClient {
     const logFn = this.log.bind(this);
     const wrappedCallback = (eventJson: string) => {
       try {
-        const event = JSON.parse(eventJson) as ServerMessage;
+        const event = normalizeSubscriptionEvent(JSON.parse(eventJson) as ServerMessage);
         logFn(LogLevel.Verbose, 'subscription', `Event: type=${event.type}`);
         callback(event);
       } catch (error) {
@@ -1177,6 +1286,142 @@ export class KalamDBClient {
     return async () => {
       await this.unsubscribe(subscriptionId);
     };
+  }
+
+  /**
+   * Subscribe to a SQL query and receive the SDK-maintained current row set.
+   *
+   * The SDK applies `initial_data_batch`, `insert`, `update`, and `delete`
+   * events internally so application code only handles the latest row array.
+   */
+  async live<T = RowData>(
+    sql: string,
+    callback: LiveRowsCallback<T>,
+    options: LiveRowsOptions<T> = {},
+  ): Promise<Unsubscribe> {
+    if (options.getKey) {
+      return this.liveFallback(sql, callback, options);
+    }
+
+    await this.ensureConnected();
+    if (!this.wasmClient) throw new Error('WASM client not initialized');
+
+    const wasmClient = this.wasmClient as typeof this.wasmClient & {
+      liveQueryRowsWithSql?: (
+        sql: string,
+        optionsJson: string | undefined,
+        callback: Function,
+      ) => Promise<string>;
+    };
+
+    if (typeof wasmClient.liveQueryRowsWithSql !== 'function') {
+      return this.liveFallback(sql, callback, options);
+    }
+
+    const mapRow = options.mapRow ?? ((row: RowData) => row as unknown as T);
+    const wrappedCallback = (eventJson: string) => {
+      try {
+        const event = normalizeLiveRowsWasmEvent(JSON.parse(eventJson) as {
+          type: 'rows' | 'error';
+          subscription_id: string;
+          rows?: unknown;
+          code?: string;
+          message?: string;
+        });
+
+        if (event.type === 'error') {
+          options.onError?.({
+            type: 'error',
+            subscription_id: event.subscription_id,
+            code: event.code ?? 'unknown',
+            message: event.message ?? 'Live query failed',
+          });
+          return;
+        }
+
+        callback((event.rows ?? []).map(mapRow));
+      } catch (error) {
+        this.log(LogLevel.Error, 'subscription', `Failed to parse live rows event: ${error}`);
+      }
+    };
+
+    const optionsJson = JSON.stringify({
+      subscription_options: options.subscriptionOptions,
+    });
+    const subscriptionId = await wasmClient.liveQueryRowsWithSql(
+      sql,
+      optionsJson,
+      wrappedCallback as unknown as Function,
+    );
+
+    this.subscriptions.set(subscriptionId, {
+      id: subscriptionId,
+      tableName: sql,
+      createdAt: new Date(),
+      lastSeqId: undefined,
+      closed: false,
+    });
+
+    return async () => {
+      await this.unsubscribe(subscriptionId);
+    };
+  }
+
+  private async liveFallback<T = RowData>(
+    sql: string,
+    callback: LiveRowsCallback<T>,
+    options: LiveRowsOptions<T> = {},
+  ): Promise<Unsubscribe> {
+    const mapRow = options.mapRow ?? ((row: RowData) => row as unknown as T);
+    const getKey = options.getKey ?? ((row: T) => defaultRowKey(row));
+    let rows: T[] = [];
+
+    return this.subscribeWithSql(
+      sql,
+      (event) => {
+        const normalizedEvent = event as NormalizedSubscriptionEvent;
+
+        if (normalizedEvent.type === 'subscription_ack') {
+          return;
+        }
+
+        if (normalizedEvent.type === 'error') {
+          options.onError?.(normalizedEvent as SubscriptionErrorEvent);
+          return;
+        }
+
+        if (normalizedEvent.type === 'initial_data_batch') {
+          rows = (normalizedEvent.rows ?? []).map(mapRow);
+          callback([...rows]);
+          return;
+        }
+
+        if (normalizedEvent.type !== 'change') {
+          return;
+        }
+
+        if (normalizedEvent.change_type === 'delete') {
+          rows = removeMaterializedRows(rows, (normalizedEvent.old_values ?? []).map(mapRow), getKey);
+          callback([...rows]);
+          return;
+        }
+
+        rows = upsertLimited(rows, (normalizedEvent.rows ?? []).map(mapRow), getKey);
+        callback([...rows]);
+      },
+      options.subscriptionOptions,
+    );
+  }
+
+  /**
+   * Subscribe to a table and receive the SDK-maintained current row set.
+   */
+  async liveTableRows<T = RowData>(
+    tableName: string,
+    callback: LiveRowsCallback<T>,
+    options: LiveRowsOptions<T> = {},
+  ): Promise<Unsubscribe> {
+    return this.live(`SELECT * FROM ${tableName}`, callback, options);
   }
 
   /** Unsubscribe by subscription ID */
@@ -1406,6 +1651,62 @@ export class KalamDBClient {
     if (!this.wasmClient) {
       throw new Error('WASM client not initialized. Call initialize() first.');
     }
+  }
+
+  private async performDirectBasicLogin(username: string, password: string): Promise<LoginResponse> {
+    const response = await fetch(`${this.url}/v1/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => '');
+      throw new Error(body || `Login failed: HTTP ${response.status}`);
+    }
+
+    return (await response.json()) as LoginResponse;
+  }
+
+  private async resolveWasmAuthProvider(): Promise<WasmAuthProviderResult> {
+    this.log(LogLevel.Debug, 'auth', 'Auth provider invoked for credentials...');
+    const creds = await resolveAuthProviderWithRetry(this._authProvider, {
+      maxAttempts: this.authProviderMaxAttempts,
+      initialBackoffMs: this.authProviderInitialBackoffMs,
+      maxBackoffMs: this.authProviderMaxBackoffMs,
+    });
+    this.log(LogLevel.Debug, 'auth', `Auth provider resolved: type=${creds.type}`);
+
+    if (creds.type === 'jwt') {
+      return { jwt: { token: creds.token } };
+    }
+
+    if (creds.type === 'none') {
+      return null;
+    }
+
+    if (creds.type === 'basic') {
+      this.log(LogLevel.Debug, 'auth', 'Auth provider returned basic — performing direct HTTP login for JWT...');
+      const loginResp = await this.performDirectBasicLogin(creds.username, creds.password);
+      this.auth = { type: 'jwt', token: loginResp.access_token };
+      this.log(LogLevel.Debug, 'auth', 'Login successful via authProvider bridge (direct fetch)');
+      return { jwt: { token: loginResp.access_token } };
+    }
+
+    throw new Error('authProvider returned an unknown credential type');
+  }
+
+  private attachWasmClientState(): void {
+    this.requireInit();
+    this.wasmClient!.setAuthProvider(async () => this.resolveWasmAuthProvider());
+
+    if (this.disableCompression) {
+      this.wasmClient!.setDisableCompression(true);
+    }
+
+    this.wasmClient!.setAutoReconnect(this.autoReconnectEnabled);
+    this.wasmClient!.setWsLazyConnect(this.wsLazyConnect);
+    this.applyEventHandlers();
   }
 
   private async ensureJwtForBasicAuth(): Promise<void> {

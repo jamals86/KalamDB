@@ -13,9 +13,7 @@ pub(crate) fn ws_url_from_http_opts(
     } else if base_url.starts_with("http://") {
         base_url.replacen("http://", "ws://", 1)
     } else {
-        return Err(JsValue::from_str(
-            "Base URL must start with http:// or https://",
-        ));
+        return Err(JsValue::from_str("Base URL must start with http:// or https://"));
     };
     // Strip trailing slash before appending path
     let ws_url = ws_url.trim_end_matches('/');

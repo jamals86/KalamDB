@@ -327,9 +327,9 @@ impl CLISession {
                     true,
                 ),
                 // Health endpoint is localhost-only; treat as connected (version info unavailable)
-                Err(KalamLinkError::ServerError { status_code: 403, .. }) => {
-                    (None, None, None, true)
-                },
+                Err(KalamLinkError::ServerError {
+                    status_code: 403, ..
+                }) => (None, None, None, true),
                 Err(_e) => (None, None, None, false),
             };
 

@@ -6,21 +6,14 @@
 use kalamdb_commons::NodeId;
 use kalamdb_configs::ServerConfig;
 use kalamdb_core::app_context::AppContext;
-use kalamdb_store::{RocksDBBackend, RocksDbInit};
+use kalamdb_store::test_utils::TestDb;
 use std::sync::Arc;
-use tempfile::TempDir;
 
 /// Helper to create AppContext with temporary RocksDB for testing
-async fn create_test_app_context() -> (Arc<AppContext>, TempDir) {
-    let temp_dir = TempDir::new().expect("Failed to create temp directory");
-    let rocksdb_path = temp_dir.path().join("rocksdb");
-    let storage_base_path = temp_dir.path().join("storage");
-    std::fs::create_dir_all(&rocksdb_path).expect("Failed to create rocksdb directory");
-    std::fs::create_dir_all(&storage_base_path).expect("Failed to create storage directory");
-
-    let init = RocksDbInit::with_defaults(rocksdb_path.to_str().expect("valid rocksdb path"));
-    let db = init.open().expect("Failed to open RocksDB");
-    let backend = Arc::new(RocksDBBackend::new(db));
+async fn create_test_app_context() -> (Arc<AppContext>, TestDb) {
+    let test_db = TestDb::with_system_tables().expect("Failed to create test database");
+    let storage_base_path = test_db.storage_dir().expect("Failed to create storage directory");
+    let backend = test_db.backend();
     let app_context = AppContext::create_isolated(
         backend,
         NodeId::new(1),
@@ -28,13 +21,13 @@ async fn create_test_app_context() -> (Arc<AppContext>, TempDir) {
         ServerConfig::default(),
     );
 
-    (app_context, temp_dir)
+    (app_context, test_db)
 }
 
 #[tokio::test]
 async fn test_information_schema_columns_query() {
     // Initialize AppContext (which registers information_schema.columns)
-    let (app_ctx, _temp_dir) = create_test_app_context().await;
+    let (app_ctx, _test_db) = create_test_app_context().await;
 
     // Get the base session context
     let session = app_ctx.base_session_context();

@@ -372,8 +372,8 @@ pub fn default_websocket_heartbeat_interval() -> Option<u64> {
 // RocksDB defaults (MEMORY OPTIMIZED)
 pub fn default_rocksdb_write_buffer_size() -> usize {
     512 * 1024 // 512KB (reduced from 2MB for lower memory footprint with many CFs)
-             // With 50+ column families, write buffers dominate memory usage:
-             // 512KB × 2 buffers × 50 CFs = 50MB vs 2MB × 2 × 50 = 200MB
+               // With 50+ column families, write buffers dominate memory usage:
+               // 512KB × 2 buffers × 50 CFs = 50MB vs 2MB × 2 × 50 = 200MB
 }
 
 pub fn default_rocksdb_max_write_buffers() -> i32 {

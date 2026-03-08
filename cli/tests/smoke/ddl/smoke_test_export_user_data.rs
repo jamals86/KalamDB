@@ -30,10 +30,7 @@ fn parse_job_id(output: &str) -> Option<String> {
     let marker = "Job ID: ";
     let idx = output.find(marker)?;
     let rest = &output[idx + marker.len()..];
-    let id: String = rest
-        .chars()
-        .take_while(|c| c.is_alphanumeric() || *c == '-')
-        .collect();
+    let id: String = rest.chars().take_while(|c| c.is_alphanumeric() || *c == '-').collect();
     if id.is_empty() {
         None
     } else {
@@ -65,16 +62,10 @@ fn http_get_with_token(
     let url = url.to_string();
     let token = token.to_string();
 
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()?;
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
 
     let result = rt.block_on(async move {
-        let response = reqwest::Client::new()
-            .get(&url)
-            .bearer_auth(&token)
-            .send()
-            .await?;
+        let response = reqwest::Client::new().get(&url).bearer_auth(&token).send().await?;
 
         let status = response.status().as_u16();
         let ct = response
@@ -91,16 +82,11 @@ fn http_get_with_token(
 }
 
 /// Get a Bearer token for the given credentials synchronously.
-fn get_token_sync(
-    username: &str,
-    password: &str,
-) -> Result<String, Box<dyn std::error::Error>> {
+fn get_token_sync(username: &str, password: &str) -> Result<String, Box<dyn std::error::Error>> {
     let username = username.to_string();
     let password = password.to_string();
 
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()?;
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
 
     let token = rt.block_on(async move { get_access_token(&username, &password).await })?;
     Ok(token)
@@ -233,16 +219,16 @@ fn smoke_show_export_returns_completed_status_and_download_url() {
         parse_job_id(&export_out).unwrap_or_else(|| panic!("No job id in: {}", export_out));
 
     // Wait for completion
-    let status = wait_for_job_finished(&job_id, EXPORT_JOB_TIMEOUT)
-        .expect("export job should finish");
+    let status =
+        wait_for_job_finished(&job_id, EXPORT_JOB_TIMEOUT).expect("export job should finish");
     assert_eq!(status, "completed");
 
     // SHOW EXPORT — run as the export user
-    let show_out_json =
-        execute_sql_via_client_as_json(&export_user, export_pass, "SHOW EXPORT")
-            .expect("SHOW EXPORT failed");
+    let show_out_json = execute_sql_via_client_as_json(&export_user, export_pass, "SHOW EXPORT")
+        .expect("SHOW EXPORT failed");
 
-    let json: serde_json::Value = serde_json::from_str(&show_out_json).expect("parse SHOW EXPORT JSON");
+    let json: serde_json::Value =
+        serde_json::from_str(&show_out_json).expect("parse SHOW EXPORT JSON");
     let rows = get_rows_as_hashmaps(&json).unwrap_or_default();
 
     assert!(!rows.is_empty(), "SHOW EXPORT returned no rows after a completed export");
@@ -259,10 +245,7 @@ fn smoke_show_export_returns_completed_status_and_download_url() {
     });
 
     let row = matching_row.unwrap_or_else(|| {
-        panic!(
-            "Job {} not found in SHOW EXPORT result. Rows: {:?}",
-            job_id, rows
-        )
+        panic!("Job {} not found in SHOW EXPORT result. Rows: {:?}", job_id, rows)
     });
 
     // Verify status column
@@ -402,7 +385,8 @@ fn smoke_export_download_zip_is_valid() {
     );
 
     assert!(
-        content_type.contains("application/zip") || content_type.contains("application/octet-stream"),
+        content_type.contains("application/zip")
+            || content_type.contains("application/octet-stream"),
         "Expected application/zip content-type; got '{}'",
         content_type
     );
@@ -482,8 +466,8 @@ fn smoke_export_download_forbidden_for_other_user() {
     assert_eq!(status, "completed");
 
     // Get download URL via User A's SHOW EXPORT
-    let show_json = execute_sql_via_client_as_json(&user_a, pass_a, "SHOW EXPORT")
-        .expect("SHOW EXPORT failed");
+    let show_json =
+        execute_sql_via_client_as_json(&user_a, pass_a, "SHOW EXPORT").expect("SHOW EXPORT failed");
     let json: serde_json::Value = serde_json::from_str(&show_json).expect("parse JSON");
     let rows = get_rows_as_hashmaps(&json).unwrap_or_default();
 

@@ -58,9 +58,7 @@ impl QueryResult {
         let Some(rows) = &self.rows else {
             return vec![];
         };
-        (0..rows.len())
-            .filter_map(|i| self.row_as_map(i))
-            .collect()
+        (0..rows.len()).filter_map(|i| self.row_as_map(i)).collect()
     }
 
     /// Build `named_rows` from `schema` + `rows`, then clear positional `rows`.

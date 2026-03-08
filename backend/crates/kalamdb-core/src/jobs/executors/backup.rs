@@ -40,9 +40,7 @@ pub struct BackupParams {
 impl JobParams for BackupParams {
     fn validate(&self) -> Result<(), KalamDbError> {
         if self.backup_path.is_empty() {
-            return Err(KalamDbError::InvalidOperation(
-                "backup_path cannot be empty".to_string(),
-            ));
+            return Err(KalamDbError::InvalidOperation("backup_path cannot be empty".to_string()));
         }
         Ok(())
     }
@@ -121,10 +119,7 @@ impl JobExecutor for BackupExecutor {
         let config = ctx.app_ctx.config();
         let storage = &config.storage;
 
-        ctx.log_info(&format!(
-            "Starting full database backup to '{}'",
-            backup_dir.display()
-        ));
+        ctx.log_info(&format!("Starting full database backup to '{}'", backup_dir.display()));
 
         let storage_backend = ctx.app_ctx.storage_backend();
         let rocksdb_backup_dir = backup_dir.join("rocksdb");
@@ -153,10 +148,7 @@ impl JobExecutor for BackupExecutor {
             let server_toml = Path::new("server.toml");
             if server_toml.exists() {
                 fs::copy(server_toml, backup_dir.join("server.toml")).map_err(|e| {
-                    KalamDbError::InvalidOperation(format!(
-                        "Failed to copy server.toml: {}",
-                        e
-                    ))
+                    KalamDbError::InvalidOperation(format!("Failed to copy server.toml: {}", e))
                 })?;
                 total_bytes += server_toml.metadata().map(|m| m.len()).unwrap_or(0);
             }
@@ -179,14 +171,14 @@ impl JobExecutor for BackupExecutor {
                         params.backup_path, size_mb
                     )),
                 })
-            }
+            },
             Err(e) => {
                 ctx.log_error(&format!("Backup failed: {}", e));
                 Ok(JobDecision::Failed {
                     message: format!("Backup failed: {}", e),
                     exception_trace: Some(format!("{:?}", e)),
                 })
-            }
+            },
         }
     }
 

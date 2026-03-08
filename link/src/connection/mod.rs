@@ -42,4 +42,5 @@ pub(crate) const MAX_WS_DECOMPRESSED_MESSAGE_BYTES: usize = 64 << 20;
 #[cfg(feature = "tokio-runtime")]
 /// A duration far enough in the future (~100 years) to act as "never" for
 /// deadline calculations without overflowing `Instant::now() + dur`.
-pub(crate) const FAR_FUTURE: std::time::Duration = std::time::Duration::from_secs(100 * 365 * 24 * 3600);
+pub(crate) const FAR_FUTURE: std::time::Duration =
+    std::time::Duration::from_secs(100 * 365 * 24 * 3600);

@@ -11,7 +11,7 @@ use kalamdb_commons::websocket::{SubscriptionOptions, SubscriptionRequest};
 use kalamdb_commons::{NamespaceId, TableName};
 use kalamdb_commons::{NodeId, UserId};
 use kalamdb_sharding::ShardRouter;
-use kalamdb_store::RocksDbInit;
+use kalamdb_store::test_utils::TestDb;
 use kalamdb_tables::{
     new_shared_table_store, new_stream_table_store, new_user_table_store, StreamTableStoreConfig,
 };
@@ -36,13 +36,10 @@ fn create_test_subscription_request(
     }
 }
 
-async fn create_test_manager() -> (Arc<ConnectionsManager>, LiveQueryManager, TempDir) {
+async fn create_test_manager() -> (Arc<ConnectionsManager>, LiveQueryManager, TestDb) {
     let app_ctx = test_app_context_simple();
-    let temp_dir = TempDir::new().unwrap();
-    let init = RocksDbInit::with_defaults(temp_dir.path().to_str().unwrap());
-    let db = Arc::new(init.open().unwrap());
-    let backend: Arc<dyn kalamdb_store::StorageBackend> =
-        Arc::new(kalamdb_store::RocksDBBackend::new(Arc::clone(&db)));
+    let test_db = TestDb::new(&[]).unwrap();
+    let backend: Arc<dyn kalamdb_store::StorageBackend> = test_db.backend();
 
     let live_queries_provider = app_ctx.system_tables().live_queries();
     let schema_registry = app_ctx.schema_registry();
@@ -63,6 +60,7 @@ async fn create_test_manager() -> (Arc<ConnectionsManager>, LiveQueryManager, Te
                 .join("streams")
                 .join(test_namespace.as_str())
                 .join(test_table.as_str()),
+            max_rows_per_user: 256, // Default per-user retention limit
             shard_router: ShardRouter::default_config(),
             ttl_seconds: Some(60),
         },
@@ -157,7 +155,7 @@ async fn create_test_manager() -> (Arc<ConnectionsManager>, LiveQueryManager, Te
     );
     let sql_executor = Arc::new(SqlExecutor::new(app_ctx, false));
     manager.set_sql_executor(sql_executor);
-    (connection_registry, manager, temp_dir)
+    (connection_registry, manager, test_db)
 }
 
 /// Helper to register and authenticate a connection
@@ -322,7 +320,7 @@ fn test_build_subscription_schema_projection_keeps_defs_and_order() {
 
 #[tokio::test]
 async fn test_register_connection() {
-    let (registry, _manager, _temp_dir) = create_test_manager().await;
+    let (registry, _manager, _test_db) = create_test_manager().await;
     let user_id = UserId::new("user1".to_string());
     let connection_id = ConnectionId::new("conn1".to_string());
 
@@ -335,7 +333,7 @@ async fn test_register_connection() {
 #[tokio::test]
 #[ignore] // Requires Raft leader for live query persistence
 async fn test_register_subscription() {
-    let (registry, manager, _temp_dir) = create_test_manager().await;
+    let (registry, manager, _test_db) = create_test_manager().await;
     let user_id = UserId::new("user1".to_string());
     let connection_id = ConnectionId::new("conn1".to_string());
 
@@ -361,7 +359,7 @@ async fn test_register_subscription() {
 
 #[tokio::test]
 async fn test_extract_table_name() {
-    let (_registry, manager, _temp_dir) = create_test_manager().await;
+    let (_registry, manager, _test_db) = create_test_manager().await;
 
     let table_name = manager
         .extract_table_name_from_query("SELECT * FROM user1.messages WHERE id > 0")
@@ -378,9 +376,53 @@ async fn test_extract_table_name() {
 }
 
 #[tokio::test]
+async fn test_register_subscription_rejects_order_by() {
+    let (registry, manager, _test_db) = create_test_manager().await;
+    let user_id = UserId::new("user1".to_string());
+    let connection_id = ConnectionId::new("conn1".to_string());
+
+    let connection_state = register_and_auth_connection(&registry, connection_id, user_id);
+    let subscription = create_test_subscription_request(
+        "q1".to_string(),
+        "SELECT * FROM user1.messages WHERE id > 0 ORDER BY id".to_string(),
+        None,
+    );
+
+    let err = manager
+        .register_subscription_with_initial_data(&connection_state, &subscription, None)
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, crate::error::KalamDbError::InvalidSql(_)));
+    assert!(err.to_string().contains("ORDER BY"));
+}
+
+#[tokio::test]
+async fn test_register_subscription_rejects_system_projection() {
+    let (registry, manager, _test_db) = create_test_manager().await;
+    let user_id = UserId::new("user1".to_string());
+    let connection_id = ConnectionId::new("conn1".to_string());
+
+    let connection_state = register_and_auth_connection(&registry, connection_id, user_id);
+    let subscription = create_test_subscription_request(
+        "q1".to_string(),
+        "SELECT _seq FROM user1.messages".to_string(),
+        None,
+    );
+
+    let err = manager
+        .register_subscription_with_initial_data(&connection_state, &subscription, None)
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, crate::error::KalamDbError::InvalidSql(_)));
+    assert!(err.to_string().contains("_seq"));
+}
+
+#[tokio::test]
 #[ignore] // Requires Raft leader for live query persistence
 async fn test_get_subscriptions_for_table() {
-    let (registry, manager, _temp_dir) = create_test_manager().await;
+    let (registry, manager, _test_db) = create_test_manager().await;
     let user_id = UserId::new("user1".to_string());
     let connection_id = ConnectionId::new("conn1".to_string());
 
@@ -425,7 +467,7 @@ async fn test_get_subscriptions_for_table() {
 #[tokio::test]
 #[ignore] // Requires Raft leader for live query persistence
 async fn test_unregister_connection() {
-    let (registry, manager, _temp_dir) = create_test_manager().await;
+    let (registry, manager, _test_db) = create_test_manager().await;
     let user_id = UserId::new("user1".to_string());
     let connection_id = ConnectionId::new("conn1".to_string());
 
@@ -467,7 +509,7 @@ async fn test_unregister_connection() {
 #[tokio::test]
 #[ignore] // Requires Raft leader for live query persistence
 async fn test_unregister_subscription() {
-    let (registry, manager, _temp_dir) = create_test_manager().await;
+    let (registry, manager, _test_db) = create_test_manager().await;
     let user_id = UserId::new("user1".to_string());
     let connection_id = ConnectionId::new("conn1".to_string());
 
@@ -501,7 +543,7 @@ async fn test_unregister_subscription() {
 #[tokio::test]
 #[ignore] // Requires Raft leader for live query persistence
 async fn test_multi_subscription_support() {
-    let (registry, manager, _temp_dir) = create_test_manager().await;
+    let (registry, manager, _test_db) = create_test_manager().await;
     let user_id = UserId::new("user1".to_string());
     let connection_id = ConnectionId::new("conn1".to_string());
 

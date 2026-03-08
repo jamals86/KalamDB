@@ -24,7 +24,7 @@ use actix_web::{Error, HttpResponse};
 use futures_util::future::LocalBoxFuture;
 use kalamdb_api::limiter::{ConnectionGuard, ConnectionGuardResult};
 use kalamdb_configs::{RateLimitSettings, ServerConfig};
-use log::{debug, warn};
+use log::warn;
 use std::future::{ready, Ready};
 use std::net::IpAddr;
 use std::sync::Arc;
@@ -43,12 +43,10 @@ pub fn build_cors_from_config(config: &ServerConfig) -> Cors {
         || cors_config.allowed_origins.contains(&"*".to_string())
     {
         cors = cors.allow_any_origin();
-        debug!("CORS: Allowing any origin");
     } else {
         for origin in &cors_config.allowed_origins {
             cors = cors.allowed_origin(origin);
         }
-        debug!("CORS: Allowed origins: {:?}", cors_config.allowed_origins);
     }
 
     // Configure allowed methods

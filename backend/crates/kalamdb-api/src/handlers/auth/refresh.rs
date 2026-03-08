@@ -139,7 +139,8 @@ pub async fn refresh_handler(
 
     let expires_at = Utc::now() + Duration::hours(config.jwt_expiry_hours);
     let refresh_expires_at = Utc::now() + Duration::hours(refresh_expiry_hours);
-    let admin_ui_access = matches!(user.role, kalamdb_commons::Role::Dba | kalamdb_commons::Role::System);
+    let admin_ui_access =
+        matches!(user.role, kalamdb_commons::Role::Dba | kalamdb_commons::Role::System);
 
     // Convert timestamps properly
     let created_at = chrono::DateTime::from_timestamp_millis(user.created_at)

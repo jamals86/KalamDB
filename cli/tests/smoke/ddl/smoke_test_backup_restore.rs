@@ -31,10 +31,7 @@ fn parse_job_id(output: &str) -> Option<String> {
     let marker = "Job ID: ";
     let idx = output.find(marker)?;
     let rest = &output[idx + marker.len()..];
-    let id: String = rest
-        .chars()
-        .take_while(|c| c.is_alphanumeric() || *c == '-')
-        .collect();
+    let id: String = rest.chars().take_while(|c| c.is_alphanumeric() || *c == '-').collect();
     if id.is_empty() {
         None
     } else {
@@ -65,11 +62,9 @@ fn smoke_backup_database_job_completes() {
     let backup_path = tmp_backup_path("kdb_bkp");
 
     // Issue the backup command
-    let output = execute_sql_as_root_via_client(&format!(
-        "BACKUP DATABASE TO '{}'",
-        backup_path.display()
-    ))
-    .expect("BACKUP DATABASE should succeed");
+    let output =
+        execute_sql_as_root_via_client(&format!("BACKUP DATABASE TO '{}'", backup_path.display()))
+            .expect("BACKUP DATABASE should succeed");
 
     assert!(
         output.contains("backup started") || output.contains("Job ID"),
@@ -77,8 +72,8 @@ fn smoke_backup_database_job_completes() {
         output
     );
 
-    let job_id = parse_job_id(&output)
-        .unwrap_or_else(|| panic!("Could not parse job id from: {}", output));
+    let job_id =
+        parse_job_id(&output).unwrap_or_else(|| panic!("Could not parse job id from: {}", output));
 
     println!("🗄️  Backup job: {}", job_id);
 
@@ -89,11 +84,12 @@ fn smoke_backup_database_job_completes() {
     assert_eq!(status, "completed", "Backup job did not complete: {}", job_id);
 
     // Verify backup directory structure
-    assert!(backup_path.exists(), "Backup directory was not created: {}", backup_path.display());
     assert!(
-        backup_path.join("rocksdb").exists(),
-        "Backup is missing rocksdb/ subdirectory"
+        backup_path.exists(),
+        "Backup directory was not created: {}",
+        backup_path.display()
     );
+    assert!(backup_path.join("rocksdb").exists(), "Backup is missing rocksdb/ subdirectory");
 
     println!("✅  Backup directory verified at {}", backup_path.display());
 
@@ -116,14 +112,11 @@ fn smoke_restore_from_backup_job_completes() {
     let backup_path = tmp_backup_path("kdb_restore");
 
     // Step 1: create a backup to restore from
-    let bkp_out = execute_sql_as_root_via_client(&format!(
-        "BACKUP DATABASE TO '{}'",
-        backup_path.display()
-    ))
-    .expect("BACKUP DATABASE should succeed");
+    let bkp_out =
+        execute_sql_as_root_via_client(&format!("BACKUP DATABASE TO '{}'", backup_path.display()))
+            .expect("BACKUP DATABASE should succeed");
 
-    let bkp_job_id =
-        parse_job_id(&bkp_out).unwrap_or_else(|| panic!("No job id in: {}", bkp_out));
+    let bkp_job_id = parse_job_id(&bkp_out).unwrap_or_else(|| panic!("No job id in: {}", bkp_out));
     let bkp_status = wait_for_job_finished(&bkp_job_id, BACKUP_JOB_TIMEOUT)
         .unwrap_or_else(|e| panic!("Backup job wait failed: {}", e));
     assert_eq!(bkp_status, "completed", "Backup must complete before restore test");
@@ -287,10 +280,7 @@ fn smoke_restore_nonexistent_path_returns_error() {
     // Make sure the path does NOT exist on this machine (best-effort)
     let _ = std::fs::remove_dir_all(bad_path);
 
-    let result = execute_sql_as_root_via_client(&format!(
-        "RESTORE DATABASE FROM '{}'",
-        bad_path
-    ));
+    let result = execute_sql_as_root_via_client(&format!("RESTORE DATABASE FROM '{}'", bad_path));
 
     let is_error = match &result {
         Err(_) => true,
@@ -322,14 +312,11 @@ fn smoke_backup_job_visible_in_system_jobs() {
 
     let backup_path = tmp_backup_path("kdb_jobs_vis");
 
-    let output = execute_sql_as_root_via_client(&format!(
-        "BACKUP DATABASE TO '{}'",
-        backup_path.display()
-    ))
-    .expect("BACKUP DATABASE should succeed");
+    let output =
+        execute_sql_as_root_via_client(&format!("BACKUP DATABASE TO '{}'", backup_path.display()))
+            .expect("BACKUP DATABASE should succeed");
 
-    let job_id =
-        parse_job_id(&output).unwrap_or_else(|| panic!("No job id in: {}", output));
+    let job_id = parse_job_id(&output).unwrap_or_else(|| panic!("No job id in: {}", output));
 
     // Wait for job to appear and finish in system.jobs
     let status = wait_for_job_finished(&job_id, BACKUP_JOB_TIMEOUT)

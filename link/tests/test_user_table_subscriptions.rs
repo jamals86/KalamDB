@@ -201,7 +201,10 @@ fn extract_string_value(value: &kalam_link::KalamCellValue) -> Option<String> {
         .or_else(|| value.get("Utf8").and_then(|v| v.as_str()).map(|s| s.to_string()))
 }
 
-fn row_matches_type(row: &std::collections::HashMap<String, kalam_link::KalamCellValue>, expected: &str) -> bool {
+fn row_matches_type(
+    row: &std::collections::HashMap<String, kalam_link::KalamCellValue>,
+    expected: &str,
+) -> bool {
     if let Some(type_obj) = row.get("type") {
         if let Some(type_str) = extract_string_value(type_obj) {
             return type_str == expected;

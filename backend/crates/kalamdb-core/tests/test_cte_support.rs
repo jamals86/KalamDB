@@ -15,23 +15,16 @@ use kalamdb_configs::ServerConfig;
 use kalamdb_core::app_context::AppContext;
 use kalamdb_core::sql::context::{ExecutionContext, ExecutionResult};
 use kalamdb_core::sql::executor::SqlExecutor;
-use kalamdb_store::{RocksDBBackend, RocksDbInit};
+use kalamdb_store::test_utils::TestDb;
 use kalamdb_system::providers::storages::models::StorageType;
 use kalamdb_system::Storage;
 use std::sync::Arc;
-use tempfile::TempDir;
 
 /// Helper to create AppContext with temporary RocksDB for testing
-async fn create_test_app_context() -> (Arc<AppContext>, TempDir) {
-    let temp_dir = TempDir::new().expect("Failed to create temp directory");
-    let rocksdb_path = temp_dir.path().join("rocksdb");
-    let storage_base_path = temp_dir.path().join("storage");
-    std::fs::create_dir_all(&rocksdb_path).expect("Failed to create rocksdb directory");
-    std::fs::create_dir_all(&storage_base_path).expect("Failed to create storage directory");
-
-    let init = RocksDbInit::with_defaults(rocksdb_path.to_str().unwrap());
-    let db = init.open().expect("Failed to open RocksDB"); // Returns Arc<DB>
-    let backend = Arc::new(RocksDBBackend::new(db));
+async fn create_test_app_context() -> (Arc<AppContext>, TestDb) {
+    let test_db = TestDb::with_system_tables().expect("Failed to create test database");
+    let storage_base_path = test_db.storage_dir().expect("Failed to create storage directory");
+    let backend = test_db.backend();
     let config = ServerConfig::default();
     let node_id = NodeId::new(1);
 
@@ -72,7 +65,7 @@ async fn create_test_app_context() -> (Arc<AppContext>, TempDir) {
             .expect("Failed to create default local storage");
     }
 
-    (app_context, temp_dir)
+    (app_context, test_db)
 }
 
 /// Helper to create ExecutionContext

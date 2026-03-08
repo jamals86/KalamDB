@@ -596,9 +596,6 @@ impl crate::utils::dml_provider::KalamTableProvider for StreamTableProvider {
         rows: Vec<Row>,
     ) -> Result<Vec<ScalarValue>, KalamDbError> {
         let keys = self.insert_batch(user_id, rows).await?;
-        Ok(keys
-            .into_iter()
-            .map(|k| ScalarValue::Int64(Some(k.seq.as_i64())))
-            .collect())
+        Ok(keys.into_iter().map(|k| ScalarValue::Int64(Some(k.seq.as_i64()))).collect())
     }
 }

@@ -143,3 +143,30 @@ test('message insert streams a live draft and syncs the committed reply to both 
   expect(pageOneScroll.maxScrollTop - pageOneScroll.scrollTop).toBeLessThan(24);
   expect(pageTwoScroll.maxScrollTop - pageTwoScroll.scrollTop).toBeLessThan(24);
 });
+
+test('a tab that joins mid-stream catches the active draft and final reply', async ({ browser, baseURL }) => {
+  const uniqueMessage = `latency spike ${'x'.repeat(1200)} ${Date.now()}`;
+  const context = await browser.newContext();
+  const pageOne = await context.newPage();
+
+  await pageOne.goto(baseURL);
+  await expect(pageOne.getByTestId('chat-status')).toContainText('Live');
+
+  await pageOne.getByLabel('Message').fill(uniqueMessage);
+  await pageOne.getByRole('button', { name: 'Send through KalamDB' }).click();
+
+  await expect(pageOne.getByTestId('stream-preview')).toContainText('AI reply:', { timeout: 15000 });
+
+  const pageTwo = await context.newPage();
+  await pageTwo.goto(baseURL);
+  await expect(pageTwo.getByTestId('chat-status')).toContainText('Live');
+  await expect(pageTwo.getByTestId('chat-thread')).toContainText(uniqueMessage, { timeout: 15000 });
+  await expect(pageTwo.getByTestId('stream-preview')).toContainText('AI reply:', { timeout: 15000 });
+
+  await pageTwo.reload();
+  await expect(pageTwo.getByTestId('chat-status')).toContainText('Live');
+  await expect(pageTwo.getByTestId('chat-thread')).toContainText(uniqueMessage, { timeout: 15000 });
+
+  await expect(pageOne.getByTestId('chat-thread')).toContainText('AI reply: KalamDB stored', { timeout: 20000 });
+  await expect(pageTwo.getByTestId('chat-thread')).toContainText('AI reply: KalamDB stored', { timeout: 20000 });
+});

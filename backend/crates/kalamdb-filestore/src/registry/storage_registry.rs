@@ -334,14 +334,11 @@ impl StorageRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_store::RocksDbInit;
-    use once_cell::sync::Lazy;
-    use std::fs;
-    use std::sync::{Arc, Mutex};
-    use tempfile::Builder;
+    use kalamdb_store::test_utils::InMemoryBackend;
+    use std::sync::Arc;
 
-    // Note: Full integration tests require a RocksDB instance
-    // These are unit tests for template validation logic
+    // These are unit tests for template validation logic.
+    // Use an in-memory backend so validation tests do not depend on RocksDB lifecycle.
 
     #[test]
     fn test_validate_shared_template_valid() {
@@ -395,41 +392,15 @@ mod tests {
 
     // Helper to create a mock registry for tests that don't need DB
     fn create_mock_registry() -> StorageRegistry {
-        static TEST_DIRS: Lazy<Mutex<Vec<tempfile::TempDir>>> =
-            Lazy::new(|| Mutex::new(Vec::new()));
-
-        let temp_dir = Builder::new()
-            .prefix("kalamdb-storage-registry-tests")
-            .tempdir()
-            .expect("Failed to create temp directory for storage registry tests");
-
-        let db_path = temp_dir.path().join("rocksdb");
-        fs::create_dir_all(&db_path)
-            .expect("Failed to create RocksDB directory for storage registry tests");
-
-        let db_path_string = db_path.to_string_lossy().into_owned();
-        TEST_DIRS.lock().expect("Temp dir mutex poisoned").push(temp_dir);
-
-        let db_init = RocksDbInit::with_defaults(db_path_string);
-        let db = db_init.open().expect("Failed to open RocksDB for storage registry tests");
-
-        let backend: Arc<dyn kalamdb_store::StorageBackend> =
-            Arc::new(kalamdb_store::RocksDBBackend::new(db.clone()));
+        let backend: Arc<dyn kalamdb_store::StorageBackend> = Arc::new(InMemoryBackend::new());
 
         // Create StoragesTableProvider for tests
         let storages_provider =
             Arc::new(kalamdb_system::providers::storages::StoragesTableProvider::new(backend));
 
-        // Use a temp storage base under the temp dir for tests
-        let default_storage_path = db_path
-            .parent()
-            .unwrap_or_else(|| std::path::Path::new("."))
-            .join("storage")
-            .to_string_lossy()
-            .into_owned();
         StorageRegistry::new(
             storages_provider,
-            default_storage_path,
+            "/tmp/kalamdb-storage-registry-tests".to_string(),
             kalamdb_configs::config::types::RemoteStorageTimeouts::default(),
         )
     }

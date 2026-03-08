@@ -1899,4 +1899,414 @@ class _$DartConnectionEvent_SendCopyWithImpl<$Res>
   }
 }
 
+/// @nodoc
+mixin _$DartLiveRowsEvent {
+  String get subscriptionId;
+
+  /// Create a copy of DartLiveRowsEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $DartLiveRowsEventCopyWith<DartLiveRowsEvent> get copyWith =>
+      _$DartLiveRowsEventCopyWithImpl<DartLiveRowsEvent>(
+          this as DartLiveRowsEvent, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is DartLiveRowsEvent &&
+            (identical(other.subscriptionId, subscriptionId) ||
+                other.subscriptionId == subscriptionId));
+  }
+
+  @override
+  int get hashCode => Object.hash(runtimeType, subscriptionId);
+
+  @override
+  String toString() {
+    return 'DartLiveRowsEvent(subscriptionId: $subscriptionId)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $DartLiveRowsEventCopyWith<$Res> {
+  factory $DartLiveRowsEventCopyWith(
+          DartLiveRowsEvent value, $Res Function(DartLiveRowsEvent) _then) =
+      _$DartLiveRowsEventCopyWithImpl;
+  @useResult
+  $Res call({String subscriptionId});
+}
+
+/// @nodoc
+class _$DartLiveRowsEventCopyWithImpl<$Res>
+    implements $DartLiveRowsEventCopyWith<$Res> {
+  _$DartLiveRowsEventCopyWithImpl(this._self, this._then);
+
+  final DartLiveRowsEvent _self;
+  final $Res Function(DartLiveRowsEvent) _then;
+
+  /// Create a copy of DartLiveRowsEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  @override
+  $Res call({
+    Object? subscriptionId = null,
+  }) {
+    return _then(_self.copyWith(
+      subscriptionId: null == subscriptionId
+          ? _self.subscriptionId
+          : subscriptionId // ignore: cast_nullable_to_non_nullable
+              as String,
+    ));
+  }
+}
+
+/// Adds pattern-matching-related methods to [DartLiveRowsEvent].
+extension DartLiveRowsEventPatterns on DartLiveRowsEvent {
+  /// A variant of `map` that fallback to returning `orElse`.
+  ///
+  /// It is equivalent to doing:
+  /// ```dart
+  /// switch (sealedClass) {
+  ///   case final Subclass value:
+  ///     return ...;
+  ///   case _:
+  ///     return orElse();
+  /// }
+  /// ```
+
+  @optionalTypeArgs
+  TResult maybeMap<TResult extends Object?>({
+    TResult Function(DartLiveRowsEvent_Rows value)? rows,
+    TResult Function(DartLiveRowsEvent_Error value)? error,
+    required TResult orElse(),
+  }) {
+    final _that = this;
+    switch (_that) {
+      case DartLiveRowsEvent_Rows() when rows != null:
+        return rows(_that);
+      case DartLiveRowsEvent_Error() when error != null:
+        return error(_that);
+      case _:
+        return orElse();
+    }
+  }
+
+  /// A `switch`-like method, using callbacks.
+  ///
+  /// Callbacks receives the raw object, upcasted.
+  /// It is equivalent to doing:
+  /// ```dart
+  /// switch (sealedClass) {
+  ///   case final Subclass value:
+  ///     return ...;
+  ///   case final Subclass2 value:
+  ///     return ...;
+  /// }
+  /// ```
+
+  @optionalTypeArgs
+  TResult map<TResult extends Object?>({
+    required TResult Function(DartLiveRowsEvent_Rows value) rows,
+    required TResult Function(DartLiveRowsEvent_Error value) error,
+  }) {
+    final _that = this;
+    switch (_that) {
+      case DartLiveRowsEvent_Rows():
+        return rows(_that);
+      case DartLiveRowsEvent_Error():
+        return error(_that);
+    }
+  }
+
+  /// A variant of `map` that fallback to returning `null`.
+  ///
+  /// It is equivalent to doing:
+  /// ```dart
+  /// switch (sealedClass) {
+  ///   case final Subclass value:
+  ///     return ...;
+  ///   case _:
+  ///     return null;
+  /// }
+  /// ```
+
+  @optionalTypeArgs
+  TResult? mapOrNull<TResult extends Object?>({
+    TResult? Function(DartLiveRowsEvent_Rows value)? rows,
+    TResult? Function(DartLiveRowsEvent_Error value)? error,
+  }) {
+    final _that = this;
+    switch (_that) {
+      case DartLiveRowsEvent_Rows() when rows != null:
+        return rows(_that);
+      case DartLiveRowsEvent_Error() when error != null:
+        return error(_that);
+      case _:
+        return null;
+    }
+  }
+
+  /// A variant of `when` that fallback to an `orElse` callback.
+  ///
+  /// It is equivalent to doing:
+  /// ```dart
+  /// switch (sealedClass) {
+  ///   case Subclass(:final field):
+  ///     return ...;
+  ///   case _:
+  ///     return orElse();
+  /// }
+  /// ```
+
+  @optionalTypeArgs
+  TResult maybeWhen<TResult extends Object?>({
+    TResult Function(String subscriptionId, List<String> rowsJson)? rows,
+    TResult Function(String subscriptionId, String code, String message)? error,
+    required TResult orElse(),
+  }) {
+    final _that = this;
+    switch (_that) {
+      case DartLiveRowsEvent_Rows() when rows != null:
+        return rows(_that.subscriptionId, _that.rowsJson);
+      case DartLiveRowsEvent_Error() when error != null:
+        return error(_that.subscriptionId, _that.code, _that.message);
+      case _:
+        return orElse();
+    }
+  }
+
+  /// A `switch`-like method, using callbacks.
+  ///
+  /// As opposed to `map`, this offers destructuring.
+  /// It is equivalent to doing:
+  /// ```dart
+  /// switch (sealedClass) {
+  ///   case Subclass(:final field):
+  ///     return ...;
+  ///   case Subclass2(:final field2):
+  ///     return ...;
+  /// }
+  /// ```
+
+  @optionalTypeArgs
+  TResult when<TResult extends Object?>({
+    required TResult Function(String subscriptionId, List<String> rowsJson)
+        rows,
+    required TResult Function(
+            String subscriptionId, String code, String message)
+        error,
+  }) {
+    final _that = this;
+    switch (_that) {
+      case DartLiveRowsEvent_Rows():
+        return rows(_that.subscriptionId, _that.rowsJson);
+      case DartLiveRowsEvent_Error():
+        return error(_that.subscriptionId, _that.code, _that.message);
+    }
+  }
+
+  /// A variant of `when` that fallback to returning `null`
+  ///
+  /// It is equivalent to doing:
+  /// ```dart
+  /// switch (sealedClass) {
+  ///   case Subclass(:final field):
+  ///     return ...;
+  ///   case _:
+  ///     return null;
+  /// }
+  /// ```
+
+  @optionalTypeArgs
+  TResult? whenOrNull<TResult extends Object?>({
+    TResult? Function(String subscriptionId, List<String> rowsJson)? rows,
+    TResult? Function(String subscriptionId, String code, String message)?
+        error,
+  }) {
+    final _that = this;
+    switch (_that) {
+      case DartLiveRowsEvent_Rows() when rows != null:
+        return rows(_that.subscriptionId, _that.rowsJson);
+      case DartLiveRowsEvent_Error() when error != null:
+        return error(_that.subscriptionId, _that.code, _that.message);
+      case _:
+        return null;
+    }
+  }
+}
+
+/// @nodoc
+
+class DartLiveRowsEvent_Rows extends DartLiveRowsEvent {
+  const DartLiveRowsEvent_Rows(
+      {required this.subscriptionId, required final List<String> rowsJson})
+      : _rowsJson = rowsJson,
+        super._();
+
+  @override
+  final String subscriptionId;
+  final List<String> _rowsJson;
+  List<String> get rowsJson {
+    if (_rowsJson is EqualUnmodifiableListView) return _rowsJson;
+    // ignore: implicit_dynamic_type
+    return EqualUnmodifiableListView(_rowsJson);
+  }
+
+  /// Create a copy of DartLiveRowsEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @override
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $DartLiveRowsEvent_RowsCopyWith<DartLiveRowsEvent_Rows> get copyWith =>
+      _$DartLiveRowsEvent_RowsCopyWithImpl<DartLiveRowsEvent_Rows>(
+          this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is DartLiveRowsEvent_Rows &&
+            (identical(other.subscriptionId, subscriptionId) ||
+                other.subscriptionId == subscriptionId) &&
+            const DeepCollectionEquality().equals(other._rowsJson, _rowsJson));
+  }
+
+  @override
+  int get hashCode => Object.hash(runtimeType, subscriptionId,
+      const DeepCollectionEquality().hash(_rowsJson));
+
+  @override
+  String toString() {
+    return 'DartLiveRowsEvent.rows(subscriptionId: $subscriptionId, rowsJson: $rowsJson)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $DartLiveRowsEvent_RowsCopyWith<$Res>
+    implements $DartLiveRowsEventCopyWith<$Res> {
+  factory $DartLiveRowsEvent_RowsCopyWith(DartLiveRowsEvent_Rows value,
+          $Res Function(DartLiveRowsEvent_Rows) _then) =
+      _$DartLiveRowsEvent_RowsCopyWithImpl;
+  @override
+  @useResult
+  $Res call({String subscriptionId, List<String> rowsJson});
+}
+
+/// @nodoc
+class _$DartLiveRowsEvent_RowsCopyWithImpl<$Res>
+    implements $DartLiveRowsEvent_RowsCopyWith<$Res> {
+  _$DartLiveRowsEvent_RowsCopyWithImpl(this._self, this._then);
+
+  final DartLiveRowsEvent_Rows _self;
+  final $Res Function(DartLiveRowsEvent_Rows) _then;
+
+  /// Create a copy of DartLiveRowsEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @override
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? subscriptionId = null,
+    Object? rowsJson = null,
+  }) {
+    return _then(DartLiveRowsEvent_Rows(
+      subscriptionId: null == subscriptionId
+          ? _self.subscriptionId
+          : subscriptionId // ignore: cast_nullable_to_non_nullable
+              as String,
+      rowsJson: null == rowsJson
+          ? _self._rowsJson
+          : rowsJson // ignore: cast_nullable_to_non_nullable
+              as List<String>,
+    ));
+  }
+}
+
+/// @nodoc
+
+class DartLiveRowsEvent_Error extends DartLiveRowsEvent {
+  const DartLiveRowsEvent_Error(
+      {required this.subscriptionId, required this.code, required this.message})
+      : super._();
+
+  @override
+  final String subscriptionId;
+  final String code;
+  final String message;
+
+  /// Create a copy of DartLiveRowsEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @override
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $DartLiveRowsEvent_ErrorCopyWith<DartLiveRowsEvent_Error> get copyWith =>
+      _$DartLiveRowsEvent_ErrorCopyWithImpl<DartLiveRowsEvent_Error>(
+          this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is DartLiveRowsEvent_Error &&
+            (identical(other.subscriptionId, subscriptionId) ||
+                other.subscriptionId == subscriptionId) &&
+            (identical(other.code, code) || other.code == code) &&
+            (identical(other.message, message) || other.message == message));
+  }
+
+  @override
+  int get hashCode => Object.hash(runtimeType, subscriptionId, code, message);
+
+  @override
+  String toString() {
+    return 'DartLiveRowsEvent.error(subscriptionId: $subscriptionId, code: $code, message: $message)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $DartLiveRowsEvent_ErrorCopyWith<$Res>
+    implements $DartLiveRowsEventCopyWith<$Res> {
+  factory $DartLiveRowsEvent_ErrorCopyWith(DartLiveRowsEvent_Error value,
+          $Res Function(DartLiveRowsEvent_Error) _then) =
+      _$DartLiveRowsEvent_ErrorCopyWithImpl;
+  @override
+  @useResult
+  $Res call({String subscriptionId, String code, String message});
+}
+
+/// @nodoc
+class _$DartLiveRowsEvent_ErrorCopyWithImpl<$Res>
+    implements $DartLiveRowsEvent_ErrorCopyWith<$Res> {
+  _$DartLiveRowsEvent_ErrorCopyWithImpl(this._self, this._then);
+
+  final DartLiveRowsEvent_Error _self;
+  final $Res Function(DartLiveRowsEvent_Error) _then;
+
+  /// Create a copy of DartLiveRowsEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @override
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? subscriptionId = null,
+    Object? code = null,
+    Object? message = null,
+  }) {
+    return _then(DartLiveRowsEvent_Error(
+      subscriptionId: null == subscriptionId
+          ? _self.subscriptionId
+          : subscriptionId // ignore: cast_nullable_to_non_nullable
+              as String,
+      code: null == code
+          ? _self.code
+          : code // ignore: cast_nullable_to_non_nullable
+              as String,
+      message: null == message
+          ? _self.message
+          : message // ignore: cast_nullable_to_non_nullable
+              as String,
+    ));
+  }
+}
+
 // dart format on

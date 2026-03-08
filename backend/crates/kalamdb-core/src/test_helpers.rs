@@ -8,12 +8,11 @@ use crate::jobs::executors::{
 use datafusion::prelude::SessionContext;
 use kalamdb_commons::models::{NamespaceId, NodeId, StorageId};
 use kalamdb_store::test_utils::TestDb;
-use kalamdb_store::{RocksDBBackend, StorageBackend};
+use kalamdb_store::StorageBackend;
 use kalamdb_system::{StoragePartition, SystemTable};
 use once_cell::sync::OnceCell;
 use std::sync::Arc;
 use std::sync::Once;
-use tempfile::TempDir;
 
 static TEST_DB: OnceCell<Arc<TestDb>> = OnceCell::new();
 static TEST_RUNTIME: OnceCell<Arc<tokio::runtime::Runtime>> = OnceCell::new();
@@ -38,8 +37,7 @@ pub fn init_test_app_context() -> Arc<TestDb> {
 
         TEST_DB.set(test_db.clone()).ok();
 
-        let storage_backend: Arc<dyn StorageBackend> =
-            Arc::new(RocksDBBackend::new(test_db.db.clone()));
+        let storage_backend: Arc<dyn StorageBackend> = test_db.backend();
 
         let mut test_config = kalamdb_configs::ServerConfig::default();
         test_config.storage.data_path = "data".to_string();
@@ -152,14 +150,10 @@ pub fn test_app_context_simple() -> Arc<AppContext> {
     column_families.push("stream_table:app:events");
 
     let test_db = TestDb::new(&column_families).expect("create test db");
+    let storage_backend: Arc<dyn StorageBackend> = test_db.backend();
 
-    let storage_backend: Arc<dyn StorageBackend> =
-        Arc::new(RocksDBBackend::new(test_db.db.clone()));
-
-    let temp_dir = TempDir::new().expect("create temp data dir");
-    let data_path = temp_dir.path().to_path_buf();
-    let storage_base_path = data_path.join("storage");
-    std::fs::create_dir_all(&storage_base_path).expect("create storage base path");
+    let storage_base_path = test_db.storage_dir().expect("create storage base path");
+    let data_path = test_db.path().to_path_buf();
 
     let mut test_config = kalamdb_configs::ServerConfig::default();
     test_config.storage.data_path = data_path.to_string_lossy().to_string();
@@ -194,7 +188,7 @@ pub fn test_app_context_simple() -> Arc<AppContext> {
             .unwrap();
     }
 
-    std::mem::forget(temp_dir);
+    std::mem::forget(test_db);
     app_ctx
 }
 

@@ -176,9 +176,7 @@ impl ClusterMessageHandler for CoreClusterHandler {
             },
             None => {
                 // Shared table notification — dispatch to all local shared-table subscribers
-                self.notification_service
-                    .notify_forwarded_shared(table_id, notification)
-                    .await;
+                self.notification_service.notify_forwarded_shared(table_id, notification).await;
             },
         }
 

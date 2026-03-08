@@ -16,29 +16,45 @@ use std::sync::RwLock;
 /// Key for the in-memory store: (user_id string, timestamp_ms, row_id bytes for uniqueness)
 type RowKey = (String, u64, Vec<u8>);
 
+#[derive(Debug, Default)]
+struct MemoryStoreState {
+    data: BTreeMap<RowKey, StreamLogRecord>,
+    per_user_entry_counts: HashMap<UserId, usize>,
+}
+
 /// In-memory stream log store backed by BTreeMap.
 #[derive(Debug)]
 pub struct MemoryStreamLogStore {
+    max_rows_per_user: usize,
     table_id: TableId,
     /// Main storage: BTreeMap keyed by (user_id, timestamp, row_id_bytes)
     /// Stores either Put or Delete records
-    data: RwLock<BTreeMap<RowKey, StreamLogRecord>>,
+    state: RwLock<MemoryStoreState>,
 }
 
 impl MemoryStreamLogStore {
+    pub const DEFAULT_MAX_ROWS_PER_USER: usize = 256;
+
     /// Create a new in-memory stream log store.
     pub fn new(config: StreamLogConfig) -> Self {
         Self {
             table_id: config.table_id,
-            data: RwLock::new(BTreeMap::new()),
+            max_rows_per_user: Self::DEFAULT_MAX_ROWS_PER_USER,
+            state: RwLock::new(MemoryStoreState::default()),
         }
     }
 
     /// Create with just a table_id (simpler constructor).
     pub fn with_table_id(table_id: TableId) -> Self {
+        Self::with_table_id_and_limit(table_id, Self::DEFAULT_MAX_ROWS_PER_USER)
+    }
+
+    /// Create with a custom per-user retention limit.
+    pub fn with_table_id_and_limit(table_id: TableId, max_rows_per_user: usize) -> Self {
         Self {
             table_id,
-            data: RwLock::new(BTreeMap::new()),
+            max_rows_per_user,
+            state: RwLock::new(MemoryStoreState::default()),
         }
     }
 
@@ -55,76 +71,87 @@ impl MemoryStreamLogStore {
     ) -> Result<()> {
         self.ensure_table(table_id)?;
         let key = self.make_key(row_id);
-        let mut data = self
-            .data
+        let mut state = self
+            .state
             .write()
             .map_err(|e| StreamLogError::Io(format!("Failed to acquire write lock: {}", e)))?;
-        data.insert(
-            key,
-            StreamLogRecord::Delete {
-                row_id: row_id.clone(),
-            },
-        );
+        let was_new = state
+            .data
+            .insert(
+                key,
+                StreamLogRecord::Delete {
+                    row_id: row_id.clone(),
+                },
+            )
+            .is_none();
+        if was_new {
+            *state.per_user_entry_counts.entry(row_id.user_id().clone()).or_default() += 1;
+        }
+        self.evict_excess_user_rows(&mut state, row_id.user_id());
         Ok(())
     }
 
     /// Delete old logs before a given timestamp and return count of deleted entries.
     pub fn delete_old_logs_with_count(&self, before_time: u64) -> Result<usize> {
-        let mut data = self
-            .data
+        let mut state = self
+            .state
             .write()
             .map_err(|e| StreamLogError::Io(format!("Failed to acquire write lock: {}", e)))?;
-        let before_len = data.len();
-        data.retain(|(_, ts, _), _| *ts >= before_time);
-        Ok(before_len - data.len())
+        let before_len = state.data.len();
+        let mut removed_per_user: HashMap<UserId, usize> = HashMap::new();
+        state.data.retain(|(user_id, ts, _), _| {
+            let keep = *ts >= before_time;
+            if !keep {
+                *removed_per_user.entry(UserId::from(user_id.as_str())).or_default() += 1;
+            }
+            keep
+        });
+        for (user_id, removed) in removed_per_user {
+            Self::decrement_user_count(&mut state.per_user_entry_counts, &user_id, removed);
+        }
+        Ok(before_len - state.data.len())
     }
 
     /// Check if there are any logs before a given timestamp.
     pub fn has_logs_before(&self, before_time: u64) -> Result<bool> {
-        let data = self
-            .data
+        let state = self
+            .state
             .read()
             .map_err(|e| StreamLogError::Io(format!("Failed to acquire read lock: {}", e)))?;
 
-        Ok(data.keys().any(|(_, ts, _)| *ts < before_time))
+        Ok(state.data.keys().any(|(_, ts, _)| *ts < before_time))
     }
 
     /// List all unique user IDs in the store.
     pub fn list_user_ids(&self) -> Result<Vec<UserId>> {
-        let data = self
-            .data
+        let state = self
+            .state
             .read()
             .map_err(|e| StreamLogError::Io(format!("Failed to acquire read lock: {}", e)))?;
 
-        let mut users: Vec<UserId> = Vec::new();
-        let mut last_user: Option<&str> = None;
-        for (user_id, _, _) in data.keys() {
-            let current = user_id.as_str();
-            if last_user != Some(current) {
-                users.push(UserId::from(current));
-                last_user = Some(current);
-            }
-        }
-        Ok(users)
+        let mut user_ids: Vec<_> = state.per_user_entry_counts.keys().cloned().collect();
+        user_ids.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+        Ok(user_ids)
     }
 
     /// Clear all data from the store.
     pub fn clear(&self) -> Result<()> {
-        let mut data = self
-            .data
+        let mut state = self
+            .state
             .write()
             .map_err(|e| StreamLogError::Io(format!("Failed to acquire write lock: {}", e)))?;
-        data.clear();
+        state.data.clear();
+        state.per_user_entry_counts.clear();
         Ok(())
     }
 
     /// Get the current number of records in the store.
     pub fn len(&self) -> Result<usize> {
-        let data = self
-            .data
+        let state = self
+            .state
             .read()
             .map_err(|e| StreamLogError::Io(format!("Failed to acquire read lock: {}", e)))?;
-        Ok(data.len())
+        Ok(state.data.len())
     }
 
     /// Check if the store is empty.
@@ -145,15 +172,58 @@ impl MemoryStreamLogStore {
     fn make_key(&self, row_id: &StreamTableRowId) -> RowKey {
         let user_id = row_id.user_id().as_str().to_string();
         let ts = row_id.seq().timestamp_millis();
-        // Use the seq ID as bytes for uniqueness within the same millisecond
-        let seq_bytes = row_id.seq().as_i64().to_le_bytes().to_vec();
+        // Keep numeric sequence ordering inside the BTreeMap so oldest/newest
+        // iteration semantics remain correct when multiple rows share a timestamp.
+        let seq_bytes = row_id.seq().as_i64().to_be_bytes().to_vec();
         (user_id, ts, seq_bytes)
     }
 
     fn seq_from_key(seq_bytes: &[u8]) -> i64 {
         let mut buf = [0u8; 8];
         buf.copy_from_slice(seq_bytes);
-        i64::from_le_bytes(buf)
+        i64::from_be_bytes(buf)
+    }
+
+    fn user_range_bounds(user_id: &UserId) -> (RowKey, RowKey) {
+        (
+            (user_id.as_str().to_string(), 0, vec![0; 8]),
+            (user_id.as_str().to_string(), u64::MAX, vec![u8::MAX; 8]),
+        )
+    }
+
+    fn evict_excess_user_rows(&self, state: &mut MemoryStoreState, user_id: &UserId) {
+        let current = state.per_user_entry_counts.get(user_id).copied().unwrap_or(0);
+        let excess = current.saturating_sub(self.max_rows_per_user);
+        if excess == 0 {
+            return;
+        }
+
+        let (start, end) = Self::user_range_bounds(user_id);
+        let keys_to_remove: Vec<RowKey> =
+            state.data.range(start..=end).take(excess).map(|(key, _)| key.clone()).collect();
+
+        for key in &keys_to_remove {
+            state.data.remove(key);
+        }
+
+        Self::decrement_user_count(&mut state.per_user_entry_counts, user_id, keys_to_remove.len());
+    }
+
+    fn decrement_user_count(
+        per_user_entry_counts: &mut HashMap<UserId, usize>,
+        user_id: &UserId,
+        removed: usize,
+    ) {
+        if removed == 0 {
+            return;
+        }
+
+        if let Some(count) = per_user_entry_counts.get_mut(user_id) {
+            *count = count.saturating_sub(removed);
+            if *count == 0 {
+                per_user_entry_counts.remove(user_id);
+            }
+        }
     }
 
     fn read_range_internal(
@@ -163,8 +233,8 @@ impl MemoryStreamLogStore {
         end_time: u64,
         limit: usize,
     ) -> Result<Vec<(StreamTableRowId, StreamTableRow)>> {
-        let data = self
-            .data
+        let state = self
+            .state
             .read()
             .map_err(|e| StreamLogError::Io(format!("Failed to acquire read lock: {}", e)))?;
 
@@ -172,7 +242,7 @@ impl MemoryStreamLogStore {
         let mut deleted: HashSet<i64> = HashSet::new();
 
         // Iterate in order to process puts and deletes correctly
-        for ((u, ts, seq_bytes), record) in data.iter() {
+        for ((u, ts, seq_bytes), record) in state.data.iter() {
             if u != user_id.as_str() {
                 continue;
             }
@@ -208,8 +278,8 @@ impl MemoryStreamLogStore {
         user_id: &UserId,
         limit: usize,
     ) -> Result<Vec<(StreamTableRowId, StreamTableRow)>> {
-        let data = self
-            .data
+        let state = self
+            .state
             .read()
             .map_err(|e| StreamLogError::Io(format!("Failed to acquire read lock: {}", e)))?;
 
@@ -217,7 +287,7 @@ impl MemoryStreamLogStore {
         let mut deleted: HashSet<i64> = HashSet::new();
 
         // Iterate in reverse order (newest first)
-        for ((u, _ts, seq_bytes), record) in data.iter().rev() {
+        for ((u, _ts, seq_bytes), record) in state.data.iter().rev() {
             if u != user_id.as_str() {
                 continue;
             }
@@ -252,14 +322,24 @@ impl StreamLogStore for MemoryStreamLogStore {
         rows: HashMap<StreamTableRowId, StreamTableRow>,
     ) -> Result<()> {
         self.ensure_table(table_id)?;
-        let mut data = self
-            .data
+        let mut state = self
+            .state
             .write()
             .map_err(|e| StreamLogError::Io(format!("Failed to acquire write lock: {}", e)))?;
+        let mut affected_users = HashSet::new();
 
         for (row_id, row) in rows {
+            let user_id = row_id.user_id().clone();
             let key = self.make_key(&row_id);
-            data.insert(key, StreamLogRecord::Put { row_id, row });
+            let was_new = state.data.insert(key, StreamLogRecord::Put { row_id, row }).is_none();
+            if was_new {
+                *state.per_user_entry_counts.entry(user_id.clone()).or_default() += 1;
+            }
+            affected_users.insert(user_id);
+        }
+
+        for user_id in affected_users {
+            self.evict_excess_user_rows(&mut state, &user_id);
         }
         Ok(())
     }
@@ -314,7 +394,7 @@ mod tests {
 
     fn create_test_store() -> MemoryStreamLogStore {
         let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("events"));
-        MemoryStreamLogStore::with_table_id(table_id)
+        MemoryStreamLogStore::with_table_id_and_limit(table_id, 1024)
     }
 
     #[test]
@@ -460,5 +540,70 @@ mod tests {
         store.clear().unwrap();
 
         assert!(store.is_empty().unwrap());
+    }
+
+    #[test]
+    fn test_memory_store_evicts_oldest_rows_per_user() {
+        let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("events"));
+        let store = MemoryStreamLogStore::with_table_id_and_limit(table_id.clone(), 2);
+        let user_id = UserId::new("user-1");
+
+        let seq1 = SeqId::new(1000);
+        let seq2 = SeqId::new(2000);
+        let seq3 = SeqId::new(3000);
+
+        let row_id1 = StreamTableRowId::new(user_id.clone(), seq1);
+        let row_id2 = StreamTableRowId::new(user_id.clone(), seq2);
+        let row_id3 = StreamTableRowId::new(user_id.clone(), seq3);
+
+        let mut rows = HashMap::new();
+        rows.insert(row_id1.clone(), build_row(&user_id, seq1));
+        rows.insert(row_id2.clone(), build_row(&user_id, seq2));
+        rows.insert(row_id3.clone(), build_row(&user_id, seq3));
+
+        store.append_rows(&table_id, &user_id, rows).unwrap();
+
+        assert_eq!(store.len().unwrap(), 2);
+
+        let result = store.read_in_time_range(&table_id, &user_id, 0, u64::MAX, 10).unwrap();
+        assert!(!result.contains_key(&row_id1));
+        assert!(result.contains_key(&row_id2));
+        assert!(result.contains_key(&row_id3));
+    }
+
+    #[test]
+    fn test_memory_store_evicts_per_user_independently() {
+        let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("events"));
+        let store = MemoryStreamLogStore::with_table_id_and_limit(table_id.clone(), 2);
+        let user1 = UserId::new("user-1");
+        let user2 = UserId::new("user-2");
+
+        let mut user1_rows = HashMap::new();
+        user1_rows.insert(
+            StreamTableRowId::new(user1.clone(), SeqId::new(1000)),
+            build_row(&user1, SeqId::new(1000)),
+        );
+        user1_rows.insert(
+            StreamTableRowId::new(user1.clone(), SeqId::new(2000)),
+            build_row(&user1, SeqId::new(2000)),
+        );
+        user1_rows.insert(
+            StreamTableRowId::new(user1.clone(), SeqId::new(3000)),
+            build_row(&user1, SeqId::new(3000)),
+        );
+        store.append_rows(&table_id, &user1, user1_rows).unwrap();
+
+        let mut user2_rows = HashMap::new();
+        user2_rows.insert(
+            StreamTableRowId::new(user2.clone(), SeqId::new(4000)),
+            build_row(&user2, SeqId::new(4000)),
+        );
+        store.append_rows(&table_id, &user2, user2_rows).unwrap();
+
+        let user1_result = store.read_in_time_range(&table_id, &user1, 0, u64::MAX, 10).unwrap();
+        let user2_result = store.read_in_time_range(&table_id, &user2, 0, u64::MAX, 10).unwrap();
+
+        assert_eq!(user1_result.len(), 2);
+        assert_eq!(user2_result.len(), 1);
     }
 }

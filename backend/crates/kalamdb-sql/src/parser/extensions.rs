@@ -394,7 +394,7 @@ mod tests {
 
     #[test]
     fn test_parse_cluster_join_removed() {
-        let sql = "CLUSTER JOIN 10.0.0.2:9100";
+        let sql = "CLUSTER JOIN 10.0.0.2:9188";
         let result = ExtensionStatement::parse(sql);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("CLUSTER JOIN/LEAVE commands were removed"));

@@ -59,13 +59,11 @@ async fn resolve_auth_for_reconnect(
 pub(crate) async fn reconnect_internal_with_auth(
     url: String,
     auth: WasmAuthProvider,
-    ws_ref: Rc<RefCell<Option<WebSocket>>>,
     auth_provider_cb: Option<js_sys::Function>,
     disable_compression: bool,
-) -> Result<(), JsValue> {
+) -> Result<WebSocket, JsValue> {
     // Resolve auth (dynamic provider takes precedence).
-    let resolved_auth =
-        resolve_auth_for_reconnect(&auth_provider_cb, auth).await?;
+    let resolved_auth = resolve_auth_for_reconnect(&auth_provider_cb, auth).await?;
 
     if matches!(resolved_auth, WasmAuthProvider::Basic { .. }) {
         return Err(JsValue::from_str(
@@ -143,12 +141,10 @@ pub(crate) async fn reconnect_internal_with_auth(
     ws.set_onmessage(Some(onmessage.as_ref().unchecked_ref()));
     onmessage.forget();
 
-    *ws_ref.borrow_mut() = Some(ws);
-
     JsFuture::from(connect_promise).await?;
     JsFuture::from(auth_promise).await?;
 
-    Ok(())
+    Ok(ws)
 }
 
 /// Restart the keepalive ping interval after a successful reconnection.
@@ -183,10 +179,8 @@ pub(crate) fn restart_ping_timer(
         }
     }) as Box<dyn FnMut()>);
 
-    let id = super::helpers::global_set_interval(
-        ping_cb.as_ref().unchecked_ref(),
-        interval_ms as i32,
-    );
+    let id =
+        super::helpers::global_set_interval(ping_cb.as_ref().unchecked_ref(), interval_ms as i32);
     ping_cb.forget();
     *ping_interval_id.borrow_mut() = id;
 }

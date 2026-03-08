@@ -1,6 +1,6 @@
 import { config as loadEnv } from 'dotenv';
 import { fileURLToPath } from 'node:url';
-import { Auth, createClient, type RowData } from 'kalam-link';
+import { Auth, createClient, runAgent } from 'kalam-link';
 
 loadEnv({ path: '.env.local', quiet: true });
 loadEnv({ quiet: true });
@@ -8,72 +8,30 @@ loadEnv({ quiet: true });
 const KALAMDB_URL = process.env.KALAMDB_URL ?? 'http://127.0.0.1:8080';
 const KALAMDB_USERNAME = process.env.KALAMDB_USERNAME ?? 'admin';
 const KALAMDB_PASSWORD = process.env.KALAMDB_PASSWORD ?? 'kalamdb123';
-const POLL_INTERVAL_MS = 200;
 const THINKING_DELAY_MS = 250;
 const STREAM_DELAY_MS = 80;
 const STREAM_CHUNK_SIZE = 18;
+
+const TOPIC_NAME = 'chat_demo.ai_inbox';
+const CONSUMER_GROUP = 'chat-ai-agent';
+const CONSUMER_START = 'earliest';
 
 type StartAgentOptions = {
   stopSignal?: AbortSignal;
 };
 
-type StringCellLike = {
-  asString: () => string | null;
-};
-
-type IntCellLike = {
-  asInt: () => number | null;
-};
-
-type PendingMessage = {
-  id: string;
-  room: string;
-  senderUsername: string;
-  content: string;
-};
-
 type AgentEventStage = 'thinking' | 'typing' | 'message_saved' | 'complete' | 'log';
 
-function isStringCellLike(value: unknown): value is StringCellLike {
-  return Boolean(value) && typeof value === 'object' && typeof (value as StringCellLike).asString === 'function';
-}
-
-function isIntCellLike(value: unknown): value is IntCellLike {
-  return Boolean(value) && typeof value === 'object' && typeof (value as IntCellLike).asInt === 'function';
-}
-
-function text(row: RowData, key: string): string {
-  return isStringCellLike(row[key]) ? row[key].asString() ?? '' : '';
-}
-
-function int(row: RowData, key: string): number {
-  return isIntCellLike(row[key]) ? row[key].asInt() ?? 0 : 0;
-}
-
-export function toPendingMessage(row: RowData): PendingMessage | null {
-  const id = text(row, 'id');
-  const room = text(row, 'room') || 'main';
-  const senderUsername = text(row, 'sender_username').trim();
-  const content = text(row, 'content').trim();
-  const createdAt = int(row, 'created_at');
-
-  if (!id || !senderUsername || !content || createdAt <= 0) {
-    return null;
-  }
-
-  return { id, room, senderUsername, content };
+interface ChatRow {
+  id: string;
+  room: string;
+  sender_username: string;
+  content: string;
+  role: string;
 }
 
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function initialWatermark(client: ReturnType<typeof createClient>): Promise<PendingMessage | null> {
-  const row = await client.queryOne(
-    "SELECT id, room, sender_username, content, created_at FROM chat_demo.messages WHERE role = 'user' ORDER BY id DESC LIMIT 1",
-  );
-
-  return row ? toPendingMessage(row) : null;
 }
 
 function assertValidUsername(username: string): string {
@@ -94,7 +52,8 @@ function buildExecuteAsUser(targetUsername: string, statement: string): string {
 
 async function emitEvent(
   client: ReturnType<typeof createClient>,
-  pending: PendingMessage,
+  room: string,
+  senderUsername: string,
   responseId: string,
   stage: AgentEventStage,
   preview: string,
@@ -102,58 +61,31 @@ async function emitEvent(
 ): Promise<void> {
   const statement = [
     'INSERT INTO chat_demo.agent_events (response_id, room, sender_username, stage, preview, message)',
-    `VALUES (${sqlLiteral(responseId)}, ${sqlLiteral(pending.room)}, ${sqlLiteral(pending.senderUsername)}, ${sqlLiteral(stage)}, ${sqlLiteral(preview)}, ${sqlLiteral(message)})`,
+    `VALUES (${sqlLiteral(responseId)}, ${sqlLiteral(room)}, ${sqlLiteral(senderUsername)}, ${sqlLiteral(stage)}, ${sqlLiteral(preview)}, ${sqlLiteral(message)})`,
   ].join(' ');
 
-  await client.query(buildExecuteAsUser(pending.senderUsername, statement));
+  //TODO: We can use client.executeAsUser instead
+  await client.query(buildExecuteAsUser(senderUsername, statement));
 }
 
 async function insertAssistantMessage(
   client: ReturnType<typeof createClient>,
-  pending: PendingMessage,
+  room: string,
+  senderUsername: string,
   reply: string,
 ): Promise<void> {
   const statement = [
     'INSERT INTO chat_demo.messages (room, role, author, sender_username, content)',
-    `VALUES (${sqlLiteral(pending.room)}, 'assistant', 'KalamDB Copilot', ${sqlLiteral(pending.senderUsername)}, ${sqlLiteral(reply)})`,
+    `VALUES (${sqlLiteral(room)}, 'assistant', 'KalamDB Copilot', ${sqlLiteral(senderUsername)}, ${sqlLiteral(reply)})`,
   ].join(' ');
 
-  await client.query(buildExecuteAsUser(pending.senderUsername, statement));
-}
-
-async function processMessage(
-  client: ReturnType<typeof createClient>,
-  pending: PendingMessage,
-): Promise<void> {
-  const responseId = `reply-${pending.id}`;
-
-  console.log(`[agent] received user message id=${pending.id} user=${pending.senderUsername} room=${pending.room}`);
-  await emitEvent(client, pending, responseId, 'log', '', `Picked up user message ${pending.id}`);
-  await emitEvent(client, pending, responseId, 'thinking', '', 'Planning assistant reply');
-  await sleep(THINKING_DELAY_MS);
-
-  const reply = buildReply(pending.content);
-  let streamedReply = '';
-
-  for (let index = 0; index < reply.length; index += STREAM_CHUNK_SIZE) {
-    streamedReply += reply.slice(index, index + STREAM_CHUNK_SIZE);
-    await emitEvent(client, pending, responseId, 'typing', streamedReply, `Streamed ${streamedReply.length}/${reply.length} characters`);
-    await sleep(STREAM_DELAY_MS);
-  }
-
-  console.log(`[agent] committing assistant reply for user=${pending.senderUsername} message=${pending.id}`);
-  await emitEvent(client, pending, responseId, 'log', streamedReply, 'Persisting final assistant reply');
-  await insertAssistantMessage(client, pending, reply);
-  await emitEvent(client, pending, responseId, 'message_saved', reply, 'Assistant reply committed');
-  await sleep(STREAM_DELAY_MS);
-  await emitEvent(client, pending, responseId, 'complete', reply, 'Live stream finished');
-  console.log(`[agent] completed reply for user=${pending.senderUsername} message=${pending.id}`);
+  await client.query(buildExecuteAsUser(senderUsername, statement));
 }
 
 export function buildReply(content: string): string {
   const trimmed = content.trim();
   const lowered = trimmed.toLowerCase();
-  let extra = 'This demo now writes your persisted chat rows into a USER table and streams the live drafting state through a STREAM table.';
+  let extra = 'This demo now uses runAgent() to consume new user messages from a topic — zero polling, zero wasted queries.';
 
   if (lowered.includes('latency')) {
     extra = 'I would inspect the slowest route first, then compare the latest write volume against the baseline you see in the database.';
@@ -172,36 +104,79 @@ export async function startChatAgent(options: StartAgentOptions = {}): Promise<v
     authProvider: async () => Auth.basic(KALAMDB_USERNAME, KALAMDB_PASSWORD),
   });
 
-  console.log(`chat-demo-agent ready (user=${KALAMDB_USERNAME}, mode=user-table-poller)`);
+  console.log(`chat-demo-agent ready (user=${KALAMDB_USERNAME}, mode=topic-consumer via runAgent)`);
+  console.log(`  topic=${TOPIC_NAME}  group=${CONSUMER_GROUP}`);
 
-  try {
-    let watermark = await initialWatermark(client);
+  await runAgent<ChatRow>({
+    client,
+    name: 'chat-ai-agent',
+    topic: TOPIC_NAME,
+    groupId: CONSUMER_GROUP,
+    start: CONSUMER_START,
+    batchSize: 10,
+    timeoutSeconds: 30,
+    stopSignal: options.stopSignal,
 
-    while (!options.stopSignal?.aborted) {
-      const rows = watermark
-        ? await client.queryAll(
-          "SELECT id, room, sender_username, content, created_at FROM chat_demo.messages WHERE role = 'user' AND id > CAST($1 AS BIGINT) ORDER BY id ASC LIMIT 25",
-          [watermark.id],
-        )
-        : await client.queryAll(
-          "SELECT id, room, sender_username, content, created_at FROM chat_demo.messages WHERE role = 'user' ORDER BY id ASC LIMIT 25",
-        );
-
-      for (const row of rows) {
-        const pending = toPendingMessage(row);
-        if (!pending) {
-          continue;
-        }
-
-        await processMessage(client, pending);
-        watermark = pending;
+    rowParser: (message) => {
+      const payload = message.value as Record<string, unknown> | undefined;
+      if (!payload) {
+        return null;
       }
 
-      await sleep(POLL_INTERVAL_MS);
-    }
-  } finally {
-    await client.disconnect();
-  }
+      // Topic CDC envelope: { row: { ... }, op: "INSERT", ... }
+      const raw = (payload.row ?? payload) as Record<string, unknown>;
+      const id = String(raw.id ?? '');
+      const room = String(raw.room ?? 'main');
+      const role = String(raw.role ?? '').trim();
+      const senderUsername = String(raw.sender_username ?? '').trim();
+      const content = String(raw.content ?? '').trim();
+
+      if (!id || !senderUsername || !content || !role) {
+        return null;
+      }
+
+      return { id, room, sender_username: senderUsername, content, role };
+    },
+
+    onRow: async (_ctx, row) => {
+      if (row.role !== 'user') {
+        console.log(`[agent] skipping non-user message id=${row.id} role=${row.role}`);
+        return;
+      }
+
+      const responseId = `reply-${row.id}`;
+
+      console.log(`[agent] received user message id=${row.id} user=${row.sender_username} room=${row.room}`);
+      await emitEvent(client, row.room, row.sender_username, responseId, 'log', '', `Picked up user message ${row.id}`);
+      await emitEvent(client, row.room, row.sender_username, responseId, 'thinking', '', 'Planning assistant reply');
+      await sleep(THINKING_DELAY_MS);
+
+      const reply = buildReply(row.content);
+      let streamedReply = '';
+
+      for (let index = 0; index < reply.length; index += STREAM_CHUNK_SIZE) {
+        streamedReply += reply.slice(index, index + STREAM_CHUNK_SIZE);
+        await emitEvent(client, row.room, row.sender_username, responseId, 'typing', streamedReply, `Streamed ${streamedReply.length}/${reply.length} characters`);
+        await sleep(STREAM_DELAY_MS);
+      }
+
+      console.log(`[agent] committing assistant reply for user=${row.sender_username} message=${row.id}`);
+      await emitEvent(client, row.room, row.sender_username, responseId, 'log', streamedReply, 'Persisting final assistant reply');
+      await insertAssistantMessage(client, row.room, row.sender_username, reply);
+      await emitEvent(client, row.room, row.sender_username, responseId, 'message_saved', reply, 'Assistant reply committed');
+      await sleep(STREAM_DELAY_MS);
+      await emitEvent(client, row.room, row.sender_username, responseId, 'complete', reply, 'Live stream finished');
+      console.log(`[agent] completed reply for user=${row.sender_username} message=${row.id}`);
+    },
+
+    onError: ({ error, runKey }) => {
+      console.error(`[agent] error processing ${runKey}:`, error);
+    },
+
+    onRetry: ({ attempt, maxAttempts, backoffMs, runKey }) => {
+      console.warn(`[agent] retrying ${runKey} (attempt ${attempt}/${maxAttempts}, backoff ${backoffMs}ms)`);
+    },
+  });
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

@@ -57,7 +57,7 @@ fn is_expected_ws_disconnect(e: &ProtocolError) -> bool {
                 || msg.contains("connection aborted")
                 || msg.contains("payload reached eof")
                 || msg.contains("connection closed")
-        }
+        },
         // A clean close-frame received just before we polled is also harmless.
         _ => false,
     }
@@ -269,14 +269,14 @@ async fn handle_websocket(
                                 warn!("Message too large from {}: {} bytes (max {})",
                                     connection_id, text.len(), max_message_size);
                                 let _ = send_error(&mut session, "protocol", WsErrorCode::MessageTooLarge,
-                                    &format!("Message exceeds maximum size of {} bytes", max_message_size)).await;
+                                    &format!("Message exceeds maximum size of {} bytes", max_message_size), compression_enabled).await;
                                 continue;
                             }
 
                             // Rate limit check
                             if !rate_limiter.check_message_rate(&connection_id) {
                                 warn!("Message rate limit exceeded: {}", connection_id);
-                                let _ = send_error(&mut session, "rate_limit", WsErrorCode::RateLimitExceeded, "Too many messages").await;
+                                let _ = send_error(&mut session, "rate_limit", WsErrorCode::RateLimitExceeded, "Too many messages", compression_enabled).await;
                                 continue;
                             }
 
@@ -290,6 +290,7 @@ async fn handle_websocket(
                                 &rate_limiter,
                                 &live_query_manager,
                                 &user_repo,
+                                compression_enabled,
                             ).await {
                                 error!("Error handling message: {}", e);
                                 let _ = session.close(Some(CloseReason {
@@ -301,7 +302,7 @@ async fn handle_websocket(
                         }
                         Some(Ok(Message::Binary(_))) => {
                             warn!("Binary messages not supported: {}", connection_id);
-                            let _ = send_error(&mut session, "protocol", WsErrorCode::UnsupportedData, "Binary not supported").await;
+                            let _ = send_error(&mut session, "protocol", WsErrorCode::UnsupportedData, "Binary not supported", compression_enabled).await;
                         }
                         Some(Ok(Message::Close(reason))) => {
                             debug!("Client requested close: {:?}", reason);
@@ -364,6 +365,7 @@ async fn handle_text_message(
     rate_limiter: &Arc<RateLimiter>,
     live_query_manager: &Arc<kalamdb_core::live::LiveQueryManager>,
     user_repo: &Arc<dyn UserRepository>,
+    compression_enabled: bool,
 ) -> Result<(), String> {
     let msg: ClientMessage =
         serde_json::from_str(text).map_err(|e| format!("Invalid message: {}", e))?;
@@ -390,6 +392,7 @@ async fn handle_text_message(
                     "subscribe",
                     WsErrorCode::AuthRequired,
                     "Authentication required before subscribing",
+                    compression_enabled,
                 )
                 .await;
                 return Ok(());
@@ -400,6 +403,7 @@ async fn handle_text_message(
                 session,
                 rate_limiter,
                 live_query_manager,
+                compression_enabled,
             )
             .await
         },
@@ -416,6 +420,7 @@ async fn handle_text_message(
                 last_seq_id,
                 session,
                 live_query_manager,
+                compression_enabled,
             )
             .await
         },

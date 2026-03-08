@@ -219,8 +219,8 @@ impl ServerConfig {
             let cluster = self.cluster.get_or_insert_with(|| ClusterConfig {
                 cluster_id: cluster_id.clone().unwrap_or_else(|| "cluster".to_string()),
                 node_id: parsed_node_id,
-                rpc_addr: rpc_addr.clone().unwrap_or_else(|| "0.0.0.0:9100".to_string()),
-                api_addr: api_addr.clone().unwrap_or_else(|| "0.0.0.0:8080".to_string()),
+                rpc_addr: rpc_addr.clone().unwrap_or_else(|| "127.0.0.1:9188".to_string()),
+                api_addr: api_addr.clone().unwrap_or_else(|| "127.0.0.1:8080".to_string()),
                 peers: Vec::new(),
                 rpc_tls: ClusterRpcTlsConfig::default(),
                 user_shards: 12,

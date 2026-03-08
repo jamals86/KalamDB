@@ -14,7 +14,44 @@ import {
   sleep,
 } from '../helpers.mjs';
 
-describe('Subscription', { timeout: 60_000 }, () => {
+async function waitFor(predicate, timeoutMs = 20_000, intervalMs = 200) {
+  const started = Date.now();
+  while (!predicate()) {
+    if (Date.now() - started > timeoutMs) {
+      throw new Error('Timed out waiting for condition');
+    }
+    await sleep(intervalMs);
+  }
+}
+
+function insertedIds(events) {
+  const ids = new Set();
+  for (const event of events) {
+    if (event.type !== 'change' || !Array.isArray(event.rows)) continue;
+    for (const row of event.rows) {
+      const id = typeof row?.id?.asInt === 'function' ? row.id.asInt() : row?.id;
+      if (id !== undefined && id !== null) {
+        ids.add(id);
+      }
+    }
+  }
+  return ids;
+}
+
+async function shutdownClient(client) {
+  if (!client) {
+    return;
+  }
+
+  if (typeof client.shutdown === 'function') {
+    await client.shutdown();
+    return;
+  }
+
+  await client.disconnect();
+}
+
+describe('Subscription', { timeout: 150_000 }, () => {
   let client;
   const ns = uniqueName('ts_sub');
   const tbl = `${ns}.messages`;
@@ -33,7 +70,7 @@ describe('Subscription', { timeout: 60_000 }, () => {
   after(async () => {
     await client.unsubscribeAll();
     await dropTable(client, tbl);
-    await client.disconnect();
+    await shutdownClient(client);
   });
 
   // -----------------------------------------------------------------------
@@ -95,10 +132,13 @@ describe('Subscription', { timeout: 60_000 }, () => {
 
     const rows = changeEvents[0].rows;
     assert.ok(rows, 'change event should have rows');
-    assert.ok(rows.some((r) => r.id === 500), 'should see inserted row id');
+    assert.ok(
+      rows.some((r) => (typeof r.id?.asInt === 'function' ? r.id.asInt() : r.id) === 500),
+      'should see inserted row id',
+    );
 
     await unsub();
-    await writer.disconnect();
+    await shutdownClient(writer);
   });
 
   // -----------------------------------------------------------------------
@@ -124,7 +164,7 @@ describe('Subscription', { timeout: 60_000 }, () => {
     assert.ok(ack, 'should get ack for sql subscription');
 
     await unsub();
-    await writer.disconnect();
+    await shutdownClient(writer);
   });
 
   // -----------------------------------------------------------------------
@@ -160,5 +200,102 @@ describe('Subscription', { timeout: 60_000 }, () => {
 
     await client.unsubscribeAll();
     assert.equal(client.getSubscriptionCount(), 0);
+  });
+
+  test('concurrent writers fan out inserts to every subscriber client', async () => {
+    const subscriberClients = await Promise.all(Array.from({ length: 3 }, () => connectJwtClient()));
+    const writerClients = await Promise.all(Array.from({ length: 2 }, () => connectJwtClient()));
+    const eventBatches = subscriberClients.map(() => []);
+    const baseId = (Date.now() % 1_000_000) * 100;
+    const ids = Array.from({ length: 8 }, (_, index) => baseId + index + 1);
+    const unsubs = [];
+
+    try {
+      for (const [index, subscriber] of subscriberClients.entries()) {
+        const unsub = await subscriber.subscribeWithSql(
+          `SELECT id, body FROM ${tbl} WHERE id >= ${baseId}`,
+          (event) => eventBatches[index].push(event),
+          { last_rows: 0 },
+        );
+        unsubs.push(unsub);
+      }
+
+      await waitFor(() =>
+        eventBatches.every((events) => events.some((event) => event.type === 'subscription_ack')),
+      );
+
+      await Promise.all(
+        ids.map((id, index) =>
+          writerClients[index % writerClients.length].query(
+            `INSERT INTO ${tbl} (id, body) VALUES (${id}, 'fanout-${index}')`,
+          )),
+      );
+
+      await waitFor(
+        () => eventBatches.every((events) => ids.every((id) => insertedIds(events).has(id))),
+        30_000,
+      );
+
+      for (const events of eventBatches) {
+        for (const id of ids) {
+          assert.ok(insertedIds(events).has(id), `subscriber missed id ${id}`);
+        }
+      }
+    } finally {
+      for (const unsub of unsubs.reverse()) {
+        await unsub();
+      }
+      await Promise.all(writerClients.map((writer) => shutdownClient(writer)));
+      await Promise.all(subscriberClients.map((subscriber) => shutdownClient(subscriber)));
+    }
+  });
+
+  test('one client keeps many simultaneous subscriptions isolated', async () => {
+    const writer = await connectJwtClient();
+    const baseId = (Date.now() % 1_000_000) * 100 + 500;
+    const ids = Array.from({ length: 6 }, (_, index) => baseId + index + 1);
+    const eventBatches = new Map(ids.map((id) => [id, []]));
+    const unsubs = [];
+
+    try {
+      for (const id of ids) {
+        const unsub = await client.subscribeWithSql(
+          `SELECT id, body FROM ${tbl} WHERE id = ${id}`,
+          (event) => eventBatches.get(id).push(event),
+          { last_rows: 0 },
+        );
+        unsubs.push(unsub);
+      }
+
+      await waitFor(() =>
+        ids.every((id) => eventBatches.get(id).some((event) => event.type === 'subscription_ack')),
+      );
+
+      const queries = client.getSubscriptions().map((sub) => sub.tableName);
+      for (const id of ids) {
+        assert.ok(
+          queries.some((query) => query.includes(`id = ${id}`)),
+          `expected active subscription for id ${id}`,
+        );
+      }
+
+      await Promise.all(
+        ids.map((id) => writer.query(`INSERT INTO ${tbl} (id, body) VALUES (${id}, 'isolated-${id}')`)),
+      );
+
+      await waitFor(
+        () => ids.every((id) => insertedIds(eventBatches.get(id)).has(id)),
+        30_000,
+      );
+
+      for (const id of ids) {
+        assert.deepEqual([...insertedIds(eventBatches.get(id))], [id]);
+      }
+    } finally {
+      for (const unsub of unsubs.reverse()) {
+        await unsub();
+      }
+      await shutdownClient(writer);
+    }
   });
 });

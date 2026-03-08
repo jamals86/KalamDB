@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'auth.dart';
+import 'cell_value.dart';
 import 'logger.dart';
 import 'models.dart';
 import 'seq_id.dart';
@@ -161,7 +162,8 @@ class KalamClient {
       keepaliveIntervalMs: keepaliveInterval?.inMilliseconds,
       wsLazyConnect: wsLazyConnect,
     );
-    final client = KalamClient._(      handle,
+    final client = KalamClient._(
+      handle,
       connectionHandlers,
       initialAuth: effectiveAuth,
       authProvider: authProvider,
@@ -225,7 +227,8 @@ class KalamClient {
         // Exchange basic credentials for JWT.
         await login(freshAuth.username, freshAuth.password);
       } else {
-        await bridge.dartUpdateAuth(client: _handle, auth: _toBridgeAuth(freshAuth));
+        await bridge.dartUpdateAuth(
+            client: _handle, auth: _toBridgeAuth(freshAuth));
       }
     }();
 
@@ -481,6 +484,174 @@ class KalamClient {
     );
 
     return controller.stream;
+  }
+
+  /// Subscribe to a SQL query and receive the current materialized row set.
+  ///
+  /// The row materialization happens inside kalam-link's Rust layer, so Dart
+  /// applications can use a higher-level live query API without reimplementing
+  /// insert/update/delete reconciliation.
+  Stream<List<T>> liveQueryRowsWithSql<T>(
+    String sql, {
+    int? batchSize,
+    int? lastRows,
+    SeqId? fromSeqId,
+    String? subscriptionId,
+    int? limit,
+    T Function(Map<String, KalamCellValue> row)? mapRow,
+  }) {
+    late StreamController<List<T>> controller;
+    var closed = false;
+    String? activeSubId;
+
+    List<T> decodeRows(List<String> rowsJson) {
+      final rows = rowsJson
+          .map((json) => Map<String, dynamic>.from(jsonDecode(json) as Map))
+          .map((row) => row
+              .map((key, value) => MapEntry(key, KalamCellValue.from(value))))
+          .toList(growable: false);
+      final mapper = mapRow;
+      if (mapper == null) {
+        return rows.cast<T>();
+      }
+      return rows.map(mapper).toList(growable: false);
+    }
+
+    Future<void> runSubscription() async {
+      bridge.DartLiveRowsSubscription? sub;
+      try {
+        await refreshAuth();
+        await _ensureJwtForBasicAuth();
+
+        sub = await bridge.dartLiveQueryRowsSubscribe(
+          client: _handle,
+          sql: sql,
+          config: (batchSize != null ||
+                  lastRows != null ||
+                  subscriptionId != null ||
+                  fromSeqId != null)
+              ? gen.DartSubscriptionConfig(
+                  sql: sql,
+                  batchSize: batchSize,
+                  lastRows: lastRows,
+                  id: subscriptionId,
+                  fromSeqId: fromSeqId?.toInt(),
+                )
+              : null,
+          liveConfig: gen.DartLiveRowsConfig(limit: limit),
+        );
+        activeSubId = bridge.dartLiveQueryRowsId(subscription: sub);
+
+        while (!closed && !_isDisposed) {
+          final event = await bridge.dartLiveQueryRowsNext(subscription: sub);
+          if (event == null || closed) break;
+
+          switch (event) {
+            case gen.DartLiveRowsEvent_Rows(:final rowsJson):
+              controller.add(decodeRows(rowsJson));
+            case gen.DartLiveRowsEvent_Error(
+                :final subscriptionId,
+                :final code,
+                :final message,
+              ):
+              controller.addError(
+                SubscriptionError(
+                  subscriptionId: subscriptionId,
+                  code: code,
+                  message: message,
+                ),
+              );
+          }
+        }
+      } catch (error, stackTrace) {
+        if (!closed && !_isDisposed) {
+          KalamLogger.error('subscription', 'Live rows error: $error');
+          controller.addError(error, stackTrace);
+        }
+      } finally {
+        activeSubId = null;
+        if (sub != null) {
+          try {
+            await bridge.dartLiveQueryRowsClose(subscription: sub);
+          } catch (_) {}
+        }
+      }
+    }
+
+    Future<void> reconnectLoop() async {
+      const initialDelay = Duration(seconds: 1);
+      const maxDelay = Duration(seconds: 30);
+      var delay = initialDelay;
+
+      while (!closed && !_isDisposed) {
+        try {
+          delay = initialDelay;
+          KalamLogger.debug(
+              'subscription', 'Running live rows subscription for: $sql');
+          await runSubscription();
+        } catch (e, st) {
+          KalamLogger.warn('subscription', 'Live rows subscription error: $e');
+          if (!closed && !_isDisposed) {
+            controller.addError(e, st);
+          }
+        }
+
+        if (closed || _isDisposed) break;
+
+        KalamLogger.info(
+          'subscription',
+          'Live rows subscription ended, reconnecting in ${delay.inMilliseconds}ms',
+        );
+        await Future<void>.delayed(delay);
+        delay = Duration(
+          milliseconds:
+              (delay.inMilliseconds * 2).clamp(0, maxDelay.inMilliseconds),
+        );
+      }
+
+      if (!closed) {
+        await controller.close();
+      }
+    }
+
+    controller = StreamController<List<T>>(
+      onListen: () => reconnectLoop(),
+      onCancel: () async {
+        closed = true;
+        final subId = activeSubId;
+        if (subId != null) {
+          try {
+            await bridge.dartCancelSubscription(
+              client: _handle,
+              subscriptionId: subId,
+            );
+          } catch (_) {}
+        }
+      },
+    );
+
+    return controller.stream;
+  }
+
+  /// Subscribe to a table and receive the current materialized row set.
+  Stream<List<T>> liveTableRows<T>(
+    String tableName, {
+    int? batchSize,
+    int? lastRows,
+    SeqId? fromSeqId,
+    String? subscriptionId,
+    int? limit,
+    T Function(Map<String, KalamCellValue> row)? mapRow,
+  }) {
+    return liveQueryRowsWithSql<T>(
+      'SELECT * FROM $tableName',
+      batchSize: batchSize,
+      lastRows: lastRows,
+      fromSeqId: fromSeqId,
+      subscriptionId: subscriptionId,
+      limit: limit,
+      mapRow: mapRow,
+    );
   }
 
   /// List all active subscriptions on the shared connection.
