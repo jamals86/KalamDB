@@ -18,8 +18,6 @@ type ActivityItem = {
 const FEED_SQL = [
   'SELECT id, service, level, actor, message, created_at',
   'FROM demo.activity_feed',
-  'ORDER BY created_at DESC',
-  'LIMIT 12',
 ].join(' ');
 
 const client = createClient({
@@ -44,6 +42,16 @@ function toActivity(row: RowData): ActivityItem {
     message: readText(row, 'message'),
     createdAt: readText(row, 'created_at'),
   };
+}
+
+function readTimestamp(row: RowData, key: string): number {
+  return row[key]?.asDate()?.getTime() ?? row[key]?.asInt() ?? 0;
+}
+
+function sortRecentActivity(rows: RowData[]): RowData[] {
+  return [...rows]
+    .sort((left, right) => readTimestamp(right, 'created_at') - readTimestamp(left, 'created_at'))
+    .slice(0, 12);
 }
 
 export function App() {
@@ -76,7 +84,7 @@ export function App() {
               return;
             }
 
-            setItems(rows.map(toActivity));
+            setItems(sortRecentActivity(rows).map(toActivity));
             setStatus('live');
           },
           {

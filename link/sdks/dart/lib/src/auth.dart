@@ -52,8 +52,9 @@ final class NoAuth extends Auth {
 /// Called before each (re-)connection attempt to obtain fresh credentials.
 /// Ideal for implementing refresh-token flows.
 ///
-/// The returned [Auth] should be [Auth.jwt] or [Auth.none].
-/// Returning [Auth.basic] will cause a [StateError] at connect time.
+/// The returned [Auth] is usually [Auth.jwt] or [Auth.none].
+/// Returning [Auth.basic] is also supported: the client will exchange the
+/// Basic credentials for a JWT before the first query or WebSocket connect.
 ///
 /// ```dart
 /// Future<KalamClient> create() async {

@@ -20,6 +20,8 @@ Future<void> main() async {
       Platform.environment['KALAM_URL'] ?? 'http://localhost:8080';
   final adminUser = Platform.environment['KALAM_USER'] ?? 'admin';
   final adminPass = Platform.environment['KALAM_PASS'] ?? 'kalamdb123';
+  const namespace = 'sdk_examples';
+  const fullTable = '$namespace.tasks';
   // -------------------------------------------------------------------------
   // 1. Initialize the Rust runtime (once, at app startup)
   // -------------------------------------------------------------------------
@@ -62,22 +64,25 @@ Future<void> main() async {
   // -------------------------------------------------------------------------
   // 6. Run queries (JWT client)
   // -------------------------------------------------------------------------
-  // Create a table
-  await client.query(
-      'CREATE TABLE IF NOT EXISTS tasks (id INT, title TEXT, done BOOLEAN)');
+    await client.query('CREATE NAMESPACE IF NOT EXISTS $namespace');
+
+    // Recreate the demo table so the example is safe to re-run.
+    await client.query('DROP TABLE IF EXISTS $fullTable');
+    await client.query(
+      'CREATE TABLE $fullTable (id INT PRIMARY KEY, title TEXT, done BOOLEAN)');
 
   // Insert rows
-  await client.query(
-    r"INSERT INTO tasks (id, title, done) VALUES ($1, $2, $3)",
+    await client.query(
+      'INSERT INTO $fullTable (id, title, done) VALUES (\$1, \$2, \$3)',
     params: [1, 'Buy groceries', false],
   );
-  await client.query(
-    r"INSERT INTO tasks (id, title, done) VALUES ($1, $2, $3)",
+    await client.query(
+      'INSERT INTO $fullTable (id, title, done) VALUES (\$1, \$2, \$3)',
     params: [2, 'Write tests', true],
   );
 
   // Select all rows
-  final result = await client.query('SELECT * FROM tasks ORDER BY id');
+  final result = await client.query('SELECT * FROM $fullTable ORDER BY id');
   if (result.success) {
     print('Columns: ${result.columns.map((c) => c.name).join(', ')}');
     for (final row in result.rows) {
@@ -99,7 +104,7 @@ Future<void> main() async {
   // 8. Live subscriptions (JWT client)
   // -------------------------------------------------------------------------
   final stream = client.subscribe(
-    'SELECT * FROM tasks',
+    'SELECT * FROM $fullTable',
   );
 
   // Listen for 5 seconds, then cancel.

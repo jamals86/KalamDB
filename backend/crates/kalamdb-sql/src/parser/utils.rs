@@ -20,6 +20,16 @@ static CURRENT_ROLE_CALL_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?i)\bCURRENT_ROLE\s*\(\s*\)").expect("valid regex"));
 static CURRENT_USER_ID_CALL_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?i)\bCURRENT_USER_ID\s*\(\s*\)").expect("valid regex"));
+static CURRENT_USER_KEYWORD_RE: Lazy<Regex> =
+    Lazy::new(|| {
+        Regex::new(r"(?i)(^|[^A-Za-z0-9_])(CURRENT_USER)([^A-Za-z0-9_(]|$)")
+            .expect("valid regex")
+    });
+static CURRENT_ROLE_KEYWORD_RE: Lazy<Regex> =
+    Lazy::new(|| {
+        Regex::new(r"(?i)(^|[^A-Za-z0-9_])(CURRENT_ROLE)([^A-Za-z0-9_(]|$)")
+            .expect("valid regex")
+    });
 
 /// Default sqlparser options used across KalamDB
 pub fn parser_options() -> ParserOptions {
@@ -43,8 +53,10 @@ pub fn normalize_context_keyword_calls_for_sqlparser(sql: &str) -> String {
 pub fn rewrite_context_functions_for_datafusion(sql: &str) -> String {
     let sql = CURRENT_USER_ID_CALL_RE.replace_all(sql, "KDB_CURRENT_USER_ID()");
     let sql = CURRENT_USER_CALL_RE.replace_all(&sql, "KDB_CURRENT_USER()");
-    CURRENT_ROLE_CALL_RE
-        .replace_all(&sql, "KDB_CURRENT_ROLE()")
+    let sql = CURRENT_ROLE_CALL_RE.replace_all(&sql, "KDB_CURRENT_ROLE()");
+    let sql = CURRENT_USER_KEYWORD_RE.replace_all(&sql, "${1}KDB_CURRENT_USER()${3}");
+    CURRENT_ROLE_KEYWORD_RE
+        .replace_all(&sql, "${1}KDB_CURRENT_ROLE()${3}")
         .into_owned()
 }
 
@@ -492,6 +504,17 @@ mod tests {
         assert_eq!(
             rewritten,
             "SELECT KDB_CURRENT_USER(), KDB_CURRENT_USER_ID(), KDB_CURRENT_ROLE()"
+        );
+    }
+
+    #[test]
+    fn test_rewrite_context_keywords_for_datafusion() {
+        let rewritten = rewrite_context_functions_for_datafusion(
+            "SELECT CURRENT_USER AS username, CURRENT_ROLE AS role",
+        );
+        assert_eq!(
+            rewritten,
+            "SELECT KDB_CURRENT_USER() AS username, KDB_CURRENT_ROLE() AS role"
         );
     }
 }

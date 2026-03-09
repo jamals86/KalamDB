@@ -34,13 +34,6 @@ http-body-util = { workspace = true }
 # HTTP Basic Auth encoding
 base64 = { workspace = true }
 
-# Date/time handling for timestamp formatting
-# Minimal features: no serde, no iana-time-zone, no oldtime (saves ~0.3MB)
-chrono = { version = "0.4.44", default-features = false, features = ["clock", "std"] }
-
-# Random number generation for WASM
-getrandom = { version = "0.2", optional = true, features = ["js"] }
-
 # Futures utilities
 futures-util = { workspace = true, default-features = false }
 
@@ -92,7 +85,7 @@ default = ["tokio-runtime"]
 tokio-runtime = ["tokio", "reqwest", "tokio-tungstenite"]
 # Optional HTTP/2 support via reqwest (adds ~1.7MB h2 crate)
 http2 = ["reqwest/http2"]
-wasm = ["wasm-bindgen", "wasm-bindgen-futures", "js-sys", "web-sys", "getrandom", "tsify-next", "serde-wasm-bindgen", "chrono/wasmbind"]
+wasm = ["wasm-bindgen", "wasm-bindgen-futures", "js-sys", "web-sys", "tsify-next", "serde-wasm-bindgen"]
 # End-to-end tests require a running KalamDB server
 e2e-tests = []
 

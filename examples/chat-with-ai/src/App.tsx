@@ -8,6 +8,7 @@ type ChatMessage = {
   author: string;
   content: string;
   createdAt: string;
+  sortKey: number;
 };
 
 type AgentEvent = {
@@ -17,6 +18,7 @@ type AgentEvent = {
   preview: string;
   message: string;
   createdAt: string;
+  sortKey: number;
 };
 
 type LiveDraft = {
@@ -35,13 +37,11 @@ const CHAT_SQL = [
   'SELECT id, role, author, content, created_at',
   'FROM chat_demo.messages',
   `WHERE room = '${ROOM_SQL}'`,
-  'ORDER BY created_at ASC, id ASC',
 ].join(' ');
 const EVENTS_SQL = [
   'SELECT id, response_id, stage, preview, message, created_at',
   'FROM chat_demo.agent_events',
   `WHERE room = '${ROOM_SQL}'`,
-  'ORDER BY created_at ASC, id ASC',
 ].join(' ');
 
 function createAuthedClient() {
@@ -81,16 +81,19 @@ function formatTimestamp(rawValue: string): string {
 }
 
 function toMessage(row: RowData): ChatMessage {
+  const sortKey = row['created_at']?.asDate()?.getTime() ?? row['_seq']?.asSeqId()?.timestampMillis() ?? 0;
   return {
     id: text(row, 'id'),
     role: text(row, 'role'),
     author: text(row, 'author'),
     content: text(row, 'content'),
     createdAt: formatTimestamp(text(row, 'created_at')),
+    sortKey,
   };
 }
 
 function toAgentEvent(row: RowData): AgentEvent {
+  const sortKey = row['created_at']?.asDate()?.getTime() ?? row['_seq']?.asSeqId()?.timestampMillis() ?? 0;
   return {
     id: text(row, 'id'),
     responseId: text(row, 'response_id'),
@@ -98,7 +101,16 @@ function toAgentEvent(row: RowData): AgentEvent {
     preview: text(row, 'preview'),
     message: text(row, 'message'),
     createdAt: formatTimestamp(text(row, 'created_at')),
+    sortKey,
   };
+}
+
+function sortMessages(rows: ChatMessage[]): ChatMessage[] {
+  return [...rows].sort((left, right) => left.sortKey - right.sortKey || left.id.localeCompare(right.id));
+}
+
+function sortEvents(rows: AgentEvent[]): AgentEvent[] {
+  return [...rows].sort((left, right) => left.sortKey - right.sortKey || left.id.localeCompare(right.id));
 }
 
 function deriveLiveDraft(events: AgentEvent[]): LiveDraft | null {
@@ -161,7 +173,7 @@ export function App() {
           CHAT_SQL,
           (nextMessages) => {
             if (active) {
-              setMessages(nextMessages);
+              setMessages(sortMessages(nextMessages));
             }
           },
           {
@@ -182,7 +194,7 @@ export function App() {
           EVENTS_SQL,
           (nextEvents) => {
             if (active) {
-              setEvents(nextEvents);
+              setEvents(sortEvents(nextEvents));
             }
           },
           {

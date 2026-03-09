@@ -491,6 +491,11 @@ class KalamClient {
   /// The row materialization happens inside kalam-link's Rust layer, so Dart
   /// applications can use a higher-level live query API without reimplementing
   /// insert/update/delete reconciliation.
+  ///
+  /// The SQL must use the strict live-query shape: `SELECT ... FROM ... WHERE ...`.
+  /// Do not include `ORDER BY` or `LIMIT` here. If you need rewind, use
+  /// [lastRows]. If you need presentation ordering or capping, do that in Dart
+  /// after receiving the materialized row set.
   Stream<List<T>> liveQueryRowsWithSql<T>(
     String sql, {
     int? batchSize,

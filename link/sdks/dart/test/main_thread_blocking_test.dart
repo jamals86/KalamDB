@@ -391,13 +391,27 @@ void main() {
   });
 
   group('Async API contract', () {
-    test('connect() calls dartCreateClient and dartConnect', () async {
+    test('connect() creates client and defers websocket connect by default', () async {
       final client = await KalamClient.connect(url: 'https://test.example.com');
 
       expect(mockApi.createClientCalls, 1,
           reason: 'connect() should create exactly one client');
+      expect(mockApi.connectCalls, 0,
+          reason: 'connect() should not eagerly connect the WebSocket when wsLazyConnect=true');
+
+      await client.dispose();
+    });
+
+    test('connect() eagerly connects when wsLazyConnect is false', () async {
+      final client = await KalamClient.connect(
+        url: 'https://test.example.com',
+        wsLazyConnect: false,
+      );
+
+      expect(mockApi.createClientCalls, 1,
+          reason: 'connect() should create exactly one client');
       expect(mockApi.connectCalls, 1,
-          reason: 'connect() should establish one WebSocket connection');
+          reason: 'connect() should establish one WebSocket connection when wsLazyConnect=false');
 
       await client.dispose();
     });

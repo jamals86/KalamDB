@@ -116,8 +116,8 @@ impl Credentials {
     /// Returns false if expiration is unknown (assume valid)
     pub fn is_expired(&self) -> bool {
         if let Some(expires_at) = &self.expires_at {
-            if let Ok(exp) = chrono::DateTime::parse_from_rfc3339(expires_at) {
-                return exp < chrono::Utc::now();
+            if let Ok(exp_ms) = crate::timestamp::parse_iso8601(expires_at) {
+                return exp_ms < crate::timestamp::now();
             }
         }
         false
@@ -128,8 +128,8 @@ impl Credentials {
     pub fn is_refresh_expired(&self) -> bool {
         match (&self.refresh_token, &self.refresh_expires_at) {
             (Some(_), Some(expires_at)) => {
-                if let Ok(exp) = chrono::DateTime::parse_from_rfc3339(expires_at) {
-                    exp < chrono::Utc::now()
+                if let Ok(exp_ms) = crate::timestamp::parse_iso8601(expires_at) {
+                    exp_ms < crate::timestamp::now()
                 } else {
                     // Invalid format, assume expired
                     true

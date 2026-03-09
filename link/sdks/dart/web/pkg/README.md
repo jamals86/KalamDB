@@ -1,423 +1,58 @@
 # kalam-link
 
-Rust client library for KalamDB with WebAssembly support and multi-language SDKs.
+Shared transport/core crate and SDK workspace for KalamDB clients.
 
-## Project Structure
+This directory contains:
 
-```
+- the Rust `kalam-link` core crate used by higher-level SDKs
+- the publishable TypeScript package in [sdks/typescript](sdks/typescript/README.md)
+- the publishable Dart/Flutter package in [sdks/dart](sdks/dart/README.md)
+
+## Canonical SDK Docs
+
+Use the package-specific READMEs as the source of truth for public APIs:
+
+- TypeScript / JavaScript SDK: [sdks/typescript/README.md](sdks/typescript/README.md)
+- Dart / Flutter SDK: [sdks/dart/README.md](sdks/dart/README.md)
+
+Older constructor-based examples, manual `connect()` walkthroughs, and raw WASM `KalamClient(...)` snippets are not accurate for the current SDKs.
+
+## Current SDK Shape
+
+### TypeScript / JavaScript
+
+- Create clients with `createClient({ url, authProvider, ... })`
+- `authProvider` is required and can return `Auth.basic(...)`, `Auth.jwt(...)`, or `Auth.none()`
+- WebSocket connection management is automatic; with `wsLazyConnect: true` the SDK connects on the first realtime call
+- Prefer `live()` / `liveTableRows()` for UI state and `subscribeWithSql()` when you need raw protocol events
+- Topic worker APIs live in the TypeScript SDK: `consumer()`, `consumeBatch()`, `ack()`, `runAgent()`
+
+### Dart / Flutter
+
+- Call `KalamClient.init()` once before first use
+- Create clients with `KalamClient.connect(url: ..., authProvider: ...)`
+- Auth flows use `authProvider`, `login(...)`, `refreshToken(...)`, and `refreshAuth(...)`
+- The SDK exposes both low-level events via `subscribe(...)` and materialized row helpers via `liveQueryRowsWithSql()` / `liveTableRows()`
+
+## Repository Layout
+
+```text
 link/
-├── src/                      # Rust source code
-│   ├── lib.rs               # Library entry point
-│   ├── wasm.rs              # WASM bindings
-│   ├── client.rs            # Native Rust client (used by CLI)
-│   ├── models.rs            # Data models
-│   └── ...
-├── tests/                    # Rust crate tests
-├── Cargo.toml               # Rust package configuration
-├── README.md                # This file
-└── sdks/                    # Multi-language SDK directory
-    └── typescript/          # TypeScript/JavaScript SDK (npm-publishable)
-      ├── package.json     # npm package: kalam-link
-        ├── build.sh         # Compiles Rust → WASM
-        ├── README.md        # Complete SDK documentation
-        ├── tests/           # 14 passing tests
-        ├── .gitignore       # Excludes node_modules
-        ├── kalam_link.js    # WASM bindings (37 KB)
-        ├── kalam_link.d.ts  # TypeScript definitions
-        └── kalam_link_bg.wasm  # Compiled WASM module
+|-- Cargo.toml
+|-- src/                  # shared Rust transport/core crate
+`-- sdks/
+    |-- typescript/       # npm package: kalam-link
+    `-- dart/             # pub package: kalam_link
 ```
 
-## SDK Architecture Principles
+## Build Notes
 
-**SDKs as First-Class Packages**:
-- Each language SDK in `sdks/{language}/` is a complete, publishable package
-- SDKs include: build system, tests, docs, package config, .gitignore
-- Examples import SDKs as local dependencies (e.g., `"kalam-link": "file:../../link/sdks/typescript"`)
-- **Examples MUST NOT implement their own clients** - all functionality comes from SDKs
-- If examples need features, add them to the SDK for all users
+Package-specific build, test, and publish instructions live with each SDK:
 
-**Benefits**:
-- ✅ Examples validate real SDK usability
-- ✅ No code duplication between examples  
-- ✅ SDKs ready to publish without modification
-- ✅ Improvements benefit all users immediately
+- TypeScript / JavaScript: [sdks/typescript/README.md](sdks/typescript/README.md)
+- Dart / Flutter: [sdks/dart/README.md](sdks/dart/README.md)
 
-See [SDK Integration Guide](../specs/006-docker-wasm-examples/SDK_INTEGRATION.md) for detailed architecture.
-
-## Features
-
-- 🦀 **Dual-mode library**: Use natively in Rust or compile to WebAssembly for JavaScript/TypeScript
-- 🔐 **HTTP Basic Auth & JWT**: Secure authentication for all API requests
-- 🔄 **Real-time subscriptions**: Subscribe to table changes with WebSocket support
-- 📊 **SQL queries**: Execute SQL queries and get results
-- 🌐 **Cross-platform**: Works in native Rust applications, browsers, and Node.js
-- 🌍 **Multi-language SDKs**: Official SDKs for different languages
-
-## Installation
-
-### Native Rust Usage
-
-Add to your `Cargo.toml`:
-
-```toml
-[dependencies]
-kalam-link = { path = "../link" }
-```
-
-### TypeScript/JavaScript SDK
-
-The TypeScript SDK is a complete, npm-publishable package at `sdks/typescript/`:
-
-**Installation** (as local dependency in examples):
-```json
-{
-  "dependencies": {
-    "kalam-link": "file:../../link/sdks/typescript"
-  }
-}
-```
-
-**Building the SDK**:
-```bash
-cd link/sdks/typescript
-npm install
-npm run build  # Compiles Rust → WASM (wasm-pack) and builds TypeScript into dist/
-```
-
-**Testing**:
-```bash
-npx http-server -p 3000
-# Open http://localhost:3000/tests/browser-test.html
-```
-
-**Usage**:
-```typescript
-import { createClient, Auth } from 'kalam-link';
-
-const client = createClient({
-  url: 'http://localhost:8080',
-  auth: Auth.basic('username', 'password')
-});
-
-// Connect and query
-await client.connect();
-const result = await client.query('SELECT * FROM todos WHERE owner_id = $1', [42]);
-console.log(result.results[0]?.rows);
-```
-
-**Complete Documentation**: See [sdks/typescript/README.md](sdks/typescript/README.md) for full API reference, examples, and troubleshooting.
-
-## Usage
-
-### Native Rust
-
-```rust
-use kalam_link::client::KalamClient;
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = KalamClient::new("http://localhost:8080", "your-api-key")?;
-    
-    // Insert data
-    client.insert("users", serde_json::json!({
-        "name": "Alice",
-        "email": "alice@example.com"
-    })).await?;
-    
-    // Query data
-    let results = client.query("SELECT * FROM users WHERE name = 'Alice'").await?;
-    println!("Results: {:?}", results);
-    
-    Ok(())
-}
-```
-
-### WebAssembly - Node.js
-
-```javascript
-import { readFile } from 'fs/promises';
-import init, { KalamClient } from './pkg/kalam_link.js';
-
-// Initialize WASM module
-const wasmBuffer = await readFile('./pkg/kalam_link_bg.wasm');
-await init(wasmBuffer);
-
-// Create client
-const client = new KalamClient('http://localhost:8080', 'username', 'password');
-
-// Connect to server
-await client.connect();
-
-// Insert data
-await client.insert('users', JSON.stringify({
-  name: 'Alice',
-  email: 'alice@example.com'
-}));
-
-// Query data
-const results = await client.query("SELECT * FROM users WHERE name = 'Alice'");
-console.log('Results:', results);
-
-// Disconnect
-await client.disconnect();
-```
-
-### WebAssembly - Browser
-
-```html
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>KalamDB Browser Example</title>
-</head>
-<body>
-  <script type="module">
-    import init, { KalamClient } from './pkg/kalam_link.js';
-
-    // Initialize WASM module
-    await init();
-
-    // Create client
-    const client = new KalamClient('http://localhost:8080', 'username', 'password');
-
-    // Connect to server
-    await client.connect();
-
-    // Insert data
-    await client.insert('users', JSON.stringify({
-      name: 'Alice',
-      email: 'alice@example.com'
-    }));
-
-    // Query data
-    const results = await client.query("SELECT * FROM users WHERE name = 'Alice'");
-    console.log('Results:', results);
-
-    // Subscribe to changes
-    const subscriptionId = await client.subscribe('users', (event) => {
-      console.log('Table changed:', event);
-    });
-
-    // Later: Unsubscribe
-    await client.unsubscribe(subscriptionId);
-
-    // Disconnect
-    await client.disconnect();
-  </script>
-</body>
-</html>
-```
-
-### TypeScript Support
-
-The WASM build includes TypeScript definitions (`kalam_link.d.ts`):
-
-```typescript
-import init, { KalamClient } from './pkg/kalam_link.js';
-
-// TypeScript knows the types!
-const client: KalamClient = new KalamClient(
-  'http://localhost:8080',
-  'username', 'password'
-);
-
-// Methods are fully typed
-const isConnected: boolean = client.isConnected();
-```
-
-## API Reference
-
-### `KalamClient`
-
-#### Constructor
-
-```rust
-new KalamClient(url: string, username, password: string)
-```
-
-Creates a new KalamDB client.
-
-**Parameters:**
-- `url` - Server URL (e.g., `http://localhost:8080`)
-- `username, password` - API key for authentication
-
-**Throws:**
-- Error if `url` or `username, password` is empty
-
-**Example:**
-```javascript
-const client = new KalamClient('http://localhost:8080', 'my-api-key');
-```
-
-#### Connection Methods
-
-##### `connect()`
-
-```rust
-async connect() -> Promise<void>
-```
-
-Establishes connection to the KalamDB server.
-
-##### `disconnect()`
-
-```rust
-async disconnect() -> Promise<void>
-```
-
-Closes the connection to the server.
-
-##### `isConnected()`
-
-```rust
-isConnected() -> boolean
-```
-
-Returns `true` if currently connected, `false` otherwise.
-
-#### Data Methods
-
-##### `insert()`
-
-```rust
-async insert(table_name: string, data: string) -> Promise<string>
-```
-
-Inserts a row into a table.
-
-**Parameters:**
-- `table_name` - Name of the table
-- `data` - JSON string containing the data to insert
-
-**Returns:** Response from the server
-
-##### `delete()`
-
-```rust
-async delete(table_name: string, row_id: string) -> Promise<string>
-```
-
-Deletes a row from a table.
-
-**Parameters:**
-- `table_name` - Name of the table
-- `row_id` - ID of the row to delete
-
-**Returns:** Response from the server
-
-##### `query()`
-
-```rust
-async query(sql: string) -> Promise<string>
-```
-
-Executes a SQL query.
-
-**Parameters:**
-- `sql` - SQL query string
-
-**Returns:** JSON string containing query results
-
-#### Subscription Methods
-
-##### `subscribe()`
-
-```rust
-async subscribe(table_name: string, callback: Function) -> Promise<string>
-```
-
-Subscribes to changes in a table.
-
-**Parameters:**
-- `table_name` - Name of the table to subscribe to
-- `callback` - Function called when the table changes
-
-**Returns:** Subscription ID
-
-##### `unsubscribe()`
-
-```rust
-async unsubscribe(subscription_id: string) -> Promise<void>
-```
-
-Unsubscribes from a table.
-
-**Parameters:**
-- `subscription_id` - ID returned from `subscribe()`
-
-## Feature Flags
-
-The library supports two mutually exclusive feature sets:
-
-### `tokio-runtime` (default)
-
-For native Rust applications. Includes:
-- `tokio` - Async runtime
-- `reqwest` - HTTP client
-- `tokio-tungstenite` - WebSocket client
-
-**Build:**
-```bash
-cargo build  # Uses default features
-```
-
-### `wasm`
-
-For WebAssembly (browser/Node.js). Includes:
-- `wasm-bindgen` - Rust/JS interop
-- `wasm-bindgen-futures` - Async support
-- `js-sys` - JavaScript global APIs
-- `web-sys` - Web APIs
-- `getrandom` with "js" feature - Random number generation
-
-**Build:**
-```bash
-wasm-pack build --target web --features wasm --no-default-features
-```
-
-## Testing
-
-### Native Tests
-
-```bash
-cargo test
-```
-
-### WASM Tests (Node.js)
-
-```bash
-# Build WASM first
-wasm-pack build --target web --out-dir pkg --features wasm --no-default-features
-
-# Run Node.js tests
-node test-wasm.mjs
-```
-
-Expected output:
-```
-🧪 Testing kalam-link WASM module...
-
-✅ WASM module initialized successfully
-✅ KalamClient created successfully
-✅ client.connect() succeeded
-✅ client.disconnect() succeeded
-✅ Correctly rejected empty URL
-✅ Correctly rejected empty API key
-
-🎉 All WASM tests passed!
-```
-
-## Development
-
-### Project Structure
-
-```
-kalam-link/
-├── Cargo.toml              # Package manifest with feature flags
-├── README.md               # This file
-├── src/
-│   ├── lib.rs              # Library root with conditional modules
+If you change the shared Rust core in this directory, validate the affected SDK package afterward.
 │   ├── client.rs           # Native Rust client (tokio-runtime)
 │   ├── auth.rs             # Authentication (tokio-runtime)
 │   ├── query.rs            # Query execution (tokio-runtime)
