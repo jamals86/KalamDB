@@ -11,12 +11,14 @@ function escapeSqlLiteral(value: string): string {
   return value.replace(/'/g, "''");
 }
 
-export function buildAuditLogsQuery(filters?: AuditLogFilters): string {
-  let sql = `
+function buildAuditLogsSelect(): string {
+  return `
     SELECT audit_id, timestamp, actor_user_id, actor_username, action, target, details, ip_address
     FROM system.audit_log
   `;
+}
 
+function buildAuditLogsWhereClause(filters?: AuditLogFilters): string {
   const conditions: string[] = [];
   if (filters?.username) {
     conditions.push(`actor_username LIKE '%${escapeSqlLiteral(filters.username)}%'`);
@@ -34,9 +36,15 @@ export function buildAuditLogsQuery(filters?: AuditLogFilters): string {
     conditions.push(`timestamp <= '${escapeSqlLiteral(filters.endDate)}'`);
   }
 
-  if (conditions.length > 0) {
-    sql += ` WHERE ${conditions.join(" AND ")}`;
-  }
+  return conditions.length > 0 ? ` WHERE ${conditions.join(" AND ")}` : "";
+}
+
+export function buildAuditLogsSubscriptionQuery(filters?: AuditLogFilters): string {
+  return `${buildAuditLogsSelect()}${buildAuditLogsWhereClause(filters)}`;
+}
+
+export function buildAuditLogsQuery(filters?: AuditLogFilters): string {
+  let sql = buildAuditLogsSubscriptionQuery(filters);
 
   sql += " ORDER BY timestamp DESC";
   sql += ` LIMIT ${filters?.limit ?? 1000}`;

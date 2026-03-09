@@ -5,7 +5,12 @@ import { executeQuery, getCurrentToken } from "./kalam-client";
 // SQL calls should go through kalam-link in `kalam-client.ts`.
 
 const API_BASE = "/v1/api";
-const NO_AUTH_ENDPOINTS = new Set(["/auth/login", "/auth/setup", "/auth/status"]);
+const NO_AUTH_ENDPOINTS = new Set([
+  "/auth/login",
+  "/auth/refresh",
+  "/auth/setup",
+  "/auth/status",
+]);
 
 export interface ApiError {
   error: string;

@@ -25,6 +25,56 @@ pub struct CookieConfig {
     pub domain: Option<String>,
 }
 
+fn build_token_cookie<'a>(
+    name: &'a str,
+    value: String,
+    expires_in: Duration,
+    config: &CookieConfig,
+) -> Cookie<'a> {
+    let expiry = Utc::now() + expires_in;
+
+    let mut cookie = Cookie::build(name, value)
+        .path(config.path.clone())
+        .http_only(true)
+        .secure(config.secure)
+        .same_site(config.same_site)
+        .expires(
+            cookie::time::OffsetDateTime::from_unix_timestamp(expiry.timestamp()).unwrap_or_else(
+                |_| {
+                    log::warn!(
+                        "JWT expiry timestamp {} is out of OffsetDateTime range; \
+                        falling back to current time plus 24 h",
+                        expiry.timestamp()
+                    );
+                    cookie::time::OffsetDateTime::now_utc() + cookie::time::Duration::hours(24)
+                },
+            ),
+        )
+        .finish();
+
+    if let Some(ref domain) = config.domain {
+        cookie.set_domain(domain.clone());
+    }
+
+    cookie
+}
+
+fn build_expired_cookie<'a>(name: &'a str, config: &CookieConfig) -> Cookie<'a> {
+    let mut cookie = Cookie::build(name, "")
+        .path(config.path.clone())
+        .http_only(true)
+        .secure(config.secure)
+        .same_site(config.same_site)
+        .expires(cookie::time::OffsetDateTime::UNIX_EPOCH)
+        .finish();
+
+    if let Some(ref domain) = config.domain {
+        cookie.set_domain(domain.clone());
+    }
+
+    cookie
+}
+
 impl Default for CookieConfig {
     fn default() -> Self {
         Self {
@@ -62,32 +112,16 @@ pub fn create_auth_cookie<'a>(
     expires_in: Duration,
     config: &CookieConfig,
 ) -> Cookie<'a> {
-    let expiry = Utc::now() + expires_in;
+    build_token_cookie(AUTH_COOKIE_NAME, token.to_string(), expires_in, config)
+}
 
-    let mut cookie = Cookie::build(AUTH_COOKIE_NAME, token.to_string())
-        .path(config.path.clone())
-        .http_only(true)
-        .secure(config.secure)
-        .same_site(config.same_site)
-        .expires(
-            cookie::time::OffsetDateTime::from_unix_timestamp(expiry.timestamp()).unwrap_or_else(
-                |_| {
-                    log::warn!(
-                        "JWT expiry timestamp {} is out of OffsetDateTime range; \
-                        falling back to current time plus 24 h",
-                        expiry.timestamp()
-                    );
-                    cookie::time::OffsetDateTime::now_utc() + cookie::time::Duration::hours(24)
-                },
-            ),
-        )
-        .finish();
-
-    if let Some(ref domain) = config.domain {
-        cookie.set_domain(domain.clone());
-    }
-
-    cookie
+/// Create an HttpOnly refresh cookie with the given JWT token.
+pub fn create_refresh_cookie<'a>(
+    token: &str,
+    expires_in: Duration,
+    config: &CookieConfig,
+) -> Cookie<'a> {
+    build_token_cookie(REFRESH_COOKIE_NAME, token.to_string(), expires_in, config)
 }
 
 /// Create a cookie that clears/expires the authentication cookie.
@@ -100,19 +134,12 @@ pub fn create_auth_cookie<'a>(
 /// # Returns
 /// An expired cookie that will clear the auth cookie
 pub fn create_logout_cookie<'a>(config: &CookieConfig) -> Cookie<'a> {
-    let mut cookie = Cookie::build(AUTH_COOKIE_NAME, "")
-        .path(config.path.clone())
-        .http_only(true)
-        .secure(config.secure)
-        .same_site(config.same_site)
-        .expires(cookie::time::OffsetDateTime::UNIX_EPOCH)
-        .finish();
+    build_expired_cookie(AUTH_COOKIE_NAME, config)
+}
 
-    if let Some(ref domain) = config.domain {
-        cookie.set_domain(domain.clone());
-    }
-
-    cookie
+/// Create a cookie that clears/expires the refresh cookie.
+pub fn create_refresh_logout_cookie<'a>(config: &CookieConfig) -> Cookie<'a> {
+    build_expired_cookie(REFRESH_COOKIE_NAME, config)
 }
 
 /// Extract the auth token from request cookies.
@@ -128,6 +155,17 @@ where
 {
     cookies
         .filter(|c| c.name() == AUTH_COOKIE_NAME)
+        .map(|c| c.value().to_string())
+        .next()
+}
+
+/// Extract the refresh token from request cookies.
+pub fn extract_refresh_token<'a, I>(cookies: I) -> Option<String>
+where
+    I: Iterator<Item = Cookie<'a>>,
+{
+    cookies
+        .filter(|c| c.name() == REFRESH_COOKIE_NAME)
         .map(|c| c.value().to_string())
         .next()
 }
@@ -159,6 +197,42 @@ mod tests {
         assert_eq!(cookie.name(), AUTH_COOKIE_NAME);
         assert_eq!(cookie.value(), "");
         assert!(cookie.http_only().unwrap_or(false));
+    }
+
+    #[test]
+    fn test_create_refresh_cookie() {
+        let config = CookieConfig::default();
+        let token = "refresh.jwt.token";
+        let expires_in = Duration::hours(24 * 7);
+
+        let cookie = create_refresh_cookie(token, expires_in, &config);
+
+        assert_eq!(cookie.name(), REFRESH_COOKIE_NAME);
+        assert_eq!(cookie.value(), token);
+        assert!(cookie.http_only().unwrap_or(false));
+        assert_eq!(cookie.same_site(), Some(SameSite::Strict));
+        assert_eq!(cookie.path(), Some("/"));
+    }
+
+    #[test]
+    fn test_create_refresh_logout_cookie() {
+        let config = CookieConfig::default();
+        let cookie = create_refresh_logout_cookie(&config);
+
+        assert_eq!(cookie.name(), REFRESH_COOKIE_NAME);
+        assert_eq!(cookie.value(), "");
+        assert!(cookie.http_only().unwrap_or(false));
+    }
+
+    #[test]
+    fn test_extract_refresh_token() {
+        let config = CookieConfig::default();
+        let refresh_cookie = create_refresh_cookie("refresh-token", Duration::hours(24), &config);
+        let auth_cookie = create_auth_cookie("access-token", Duration::hours(1), &config);
+
+        let refresh = extract_refresh_token(vec![auth_cookie, refresh_cookie].into_iter());
+
+        assert_eq!(refresh.as_deref(), Some("refresh-token"));
     }
 
     #[test]

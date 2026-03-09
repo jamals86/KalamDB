@@ -1,6 +1,7 @@
-import { useMemo, useState } from 'react';
-import { useGetAuditLogsQuery } from '@/store/apiSlice';
+import { useEffect, useMemo, useState } from 'react';
 import type { AuditLog, AuditLogFilters } from '@/services/auditLogService';
+import { subscribeRows, type RowData } from '@/lib/kalam-client';
+import { buildAuditLogsSubscriptionQuery } from '@/services/sql/queries/auditLogQueries';
 import {
   Table,
   TableBody,
@@ -56,19 +57,88 @@ function formatTimestamp(timestamp: string): string {
 export function AuditLogList() {
   const [showFilters, setShowFilters] = useState(false);
   const [selectedLog, setSelectedLog] = useState<AuditLog | null>(null);
+  const [logs, setLogs] = useState<AuditLog[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [draftFilters, setDraftFilters] = useState<AuditLogFilters>({
     limit: 100,
   });
   const [appliedFilters, setAppliedFilters] = useState<AuditLogFilters>({
     limit: 100,
   });
+  const [refreshKey, setRefreshKey] = useState(0);
 
-  const {
-    data: logs = [],
-    isFetching: isLoading,
-    error,
-    refetch,
-  } = useGetAuditLogsQuery(appliedFilters);
+  const auditLogSql = useMemo(
+    () => buildAuditLogsSubscriptionQuery(appliedFilters),
+    [appliedFilters],
+  );
+
+  useEffect(() => {
+    let active = true;
+    let unsubscribe: (() => Promise<void>) | undefined;
+
+    const toAuditLog = (row: RowData): AuditLog => ({
+      audit_id: row.audit_id?.asString() ?? '',
+      timestamp: row.timestamp?.asString() ?? '',
+      actor_user_id: row.actor_user_id?.asString() ?? '',
+      actor_username: row.actor_username?.asString() ?? '',
+      action: row.action?.asString() ?? '',
+      target: row.target?.asString() ?? '',
+      details: row.details?.asString() ?? null,
+      ip_address: row.ip_address?.asString() ?? null,
+    });
+
+    const start = async (): Promise<void> => {
+      try {
+        setIsLoading(true);
+        setError(null);
+        unsubscribe = await subscribeRows(
+          auditLogSql,
+          (rows) => {
+            if (!active) {
+              return;
+            }
+
+            setLogs(
+              [...rows]
+                .sort(
+                  (left, right) =>
+                    new Date(right.timestamp).getTime() - new Date(left.timestamp).getTime(),
+                )
+                .slice(0, appliedFilters.limit ?? 100),
+            );
+            setIsLoading(false);
+          },
+          {
+            mapRow: toAuditLog,
+            subscriptionOptions: { last_rows: appliedFilters.limit ?? 100 },
+            onError: (event) => {
+              if (!active) {
+                return;
+              }
+
+              setError(`${event.code}: ${event.message}`);
+              setIsLoading(false);
+            },
+          },
+        );
+      } catch (caughtError) {
+        if (!active) {
+          return;
+        }
+
+        setError(caughtError instanceof Error ? caughtError.message : String(caughtError));
+        setIsLoading(false);
+      }
+    };
+
+    void start();
+
+    return () => {
+      active = false;
+      void unsubscribe?.();
+    };
+  }, [appliedFilters.limit, auditLogSql, refreshKey]);
 
   const handleApplyFilters = () => {
     setAppliedFilters({ ...draftFilters });
@@ -80,6 +150,10 @@ export function AuditLogList() {
     setDraftFilters(clearedFilters);
     setAppliedFilters(clearedFilters);
     setShowFilters(false);
+  };
+
+  const handleRefresh = () => {
+    setRefreshKey((current) => current + 1);
   };
 
   const hasActiveFilters = useMemo(
@@ -98,8 +172,8 @@ export function AuditLogList() {
     return (
       <Card className="border-red-200">
         <CardContent className="py-6">
-          <p className="text-red-700">{"error" in error ? error.error : "Failed to fetch audit logs"}</p>
-          <Button variant="outline" onClick={() => void refetch()} className="mt-2">
+          <p className="text-red-700">{error}</p>
+          <Button variant="outline" onClick={handleRefresh} className="mt-2">
             Retry
           </Button>
         </CardContent>
@@ -135,7 +209,7 @@ export function AuditLogList() {
           <span className="text-sm text-muted-foreground">
             {logs.length} log{logs.length !== 1 ? 's' : ''}
           </span>
-          <Button variant="outline" size="icon" onClick={() => void refetch()} disabled={isLoading}>
+          <Button variant="outline" size="icon" onClick={handleRefresh} disabled={isLoading}>
             <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
           </Button>
         </div>

@@ -3,10 +3,15 @@
 //! These tests verify that the context functions work end-to-end with ExecutionContext.
 
 use datafusion::prelude::SessionContext;
-use kalamdb_commons::{Role, UserId, UserName};
+use kalamdb_commons::{NodeId, Role, UserId, UserName};
+use kalamdb_configs::ServerConfig;
+use kalamdb_core::app_context::AppContext;
 use kalamdb_core::sql::context::ExecutionContext;
+use kalamdb_core::sql::context::ExecutionResult;
 use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
+use kalamdb_core::sql::executor::SqlExecutor;
 use kalamdb_session::AuthSession;
+use kalamdb_store::test_utils::TestDb;
 use std::sync::Arc;
 
 /// Helper to create a simple test session with custom functions registered
@@ -15,6 +20,20 @@ fn create_test_session() -> Arc<SessionContext> {
     let factory =
         DataFusionSessionFactory::new().expect("Failed to create DataFusionSessionFactory");
     Arc::new(factory.create_session())
+}
+
+fn create_test_app_context() -> Arc<AppContext> {
+    let test_db = TestDb::with_system_tables().expect("Failed to create test database");
+    let storage_base_path = test_db.storage_dir().expect("Failed to create storage directory");
+    let app_context = AppContext::create_isolated(
+        test_db.backend(),
+        NodeId::new(1),
+        storage_base_path.to_string_lossy().into_owned(),
+        ServerConfig::default(),
+    );
+
+    std::mem::forget(test_db);
+    app_context
 }
 
 #[tokio::test]
@@ -352,6 +371,7 @@ async fn test_sql_standard_context_function_aliases() {
     let username = UserName::new("admin");
     let user_id = UserId::new("u_admin");
     let role = Role::Dba;
+    let app_context = create_test_app_context();
 
     let auth_session = AuthSession::with_username_and_auth_details(
         user_id,
@@ -361,17 +381,22 @@ async fn test_sql_standard_context_function_aliases() {
         kalamdb_session::AuthMethod::Bearer,
     );
 
-    let exec_ctx = ExecutionContext::from_session(auth_session, create_test_session());
-    let session = exec_ctx.create_session_with_user();
+    let exec_ctx = ExecutionContext::from_session(auth_session, app_context.base_session_context());
+    let executor = SqlExecutor::new(app_context, false);
 
-    let result = session
-        .sql(
+    let result = executor
+        .execute(
             "SELECT CURRENT_USER() AS username, CURRENT_USER_ID() AS user_id, CURRENT_ROLE() AS role",
+            &exec_ctx,
+            vec![],
         )
         .await;
     assert!(result.is_ok(), "Query failed: {:?}", result.err());
 
-    let batches = result.unwrap().collect().await.unwrap();
+    let batches = match result.unwrap() {
+        ExecutionResult::Rows { batches, .. } => batches,
+        other => panic!("Expected row result, got {:?}", other),
+    };
     assert_eq!(batches.len(), 1);
     assert_eq!(batches[0].num_rows(), 1);
 

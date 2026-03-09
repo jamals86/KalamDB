@@ -8,14 +8,14 @@ use kalamdb_auth::providers::jwt_auth::{
     create_and_sign_refresh_token, validate_jwt_token, TokenType,
 };
 use kalamdb_auth::{
-    create_and_sign_token, create_auth_cookie, extract_client_ip_secure, CookieConfig,
-    UserRepository,
+    create_and_sign_token, create_auth_cookie, create_refresh_cookie, extract_client_ip_secure,
+    CookieConfig, UserRepository,
 };
 use kalamdb_configs::AuthSettings;
 use std::sync::Arc;
 
 use super::models::{AuthErrorResponse, LoginResponse, UserInfo};
-use super::{extract_bearer_or_cookie_token, map_auth_error_to_response};
+use super::{extract_refresh_or_bearer_token, map_auth_error_to_response};
 use crate::limiter::RateLimiter;
 
 /// POST /v1/api/auth/refresh
@@ -38,7 +38,7 @@ pub async fn refresh_handler(
         ));
     }
 
-    let token = match extract_bearer_or_cookie_token(&req) {
+    let token = match extract_refresh_or_bearer_token(&req) {
         Ok(t) => t,
         Err(err) => return map_auth_error_to_response(err),
     };
@@ -131,11 +131,16 @@ pub async fn refresh_handler(
 
     // Create new cookie
     let cookie_config = CookieConfig {
-        secure: config.cookie_secure,
+        secure: config.cookie_secure && req.connection_info().scheme() == "https",
         ..Default::default()
     };
-    let cookie =
+    let auth_cookie =
         create_auth_cookie(&new_token, Duration::hours(config.jwt_expiry_hours), &cookie_config);
+    let refresh_cookie = create_refresh_cookie(
+        &new_refresh_token,
+        Duration::hours(refresh_expiry_hours),
+        &cookie_config,
+    );
 
     let expires_at = Utc::now() + Duration::hours(config.jwt_expiry_hours);
     let refresh_expires_at = Utc::now() + Duration::hours(refresh_expiry_hours);
@@ -150,7 +155,10 @@ pub async fn refresh_handler(
         .unwrap_or_else(chrono::Utc::now)
         .to_rfc3339();
 
-    HttpResponse::Ok().cookie(cookie).json(LoginResponse {
+    HttpResponse::Ok()
+        .cookie(auth_cookie)
+        .cookie(refresh_cookie)
+        .json(LoginResponse {
         user: UserInfo {
             id: user.user_id.clone(),
             username: user.username.clone(),

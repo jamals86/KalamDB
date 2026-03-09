@@ -65,12 +65,28 @@ pub fn parse_sql_statements(
     sql: &str,
     dialect: &dyn Dialect,
 ) -> Result<Vec<Statement>, ParserError> {
-    let sql = normalize_context_keyword_calls_for_sqlparser(sql);
-    Parser::new(dialect)
+    let parse_with_sql = |candidate: &str| {
+        Parser::new(dialect)
         .with_options(parser_options())
         .with_recursion_limit(DEFAULT_SQL_RECURSION_LIMIT)
-        .try_with_sql(&sql)?
+        .try_with_sql(candidate)?
         .parse_statements()
+    };
+
+    match parse_with_sql(sql) {
+        Ok(statements) => Ok(statements),
+        Err(original_error)
+            if CURRENT_USER_CALL_RE.is_match(sql) || CURRENT_ROLE_CALL_RE.is_match(sql) =>
+        {
+            let normalized_sql = normalize_context_keyword_calls_for_sqlparser(sql);
+            if normalized_sql == sql {
+                return Err(original_error);
+            }
+
+            parse_with_sql(&normalized_sql).map_err(|_| original_error)
+        },
+        Err(error) => Err(error),
+    }
 }
 
 /// Parse a single SQL statement using KalamDB defaults and GenericDialect.
