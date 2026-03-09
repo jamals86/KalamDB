@@ -1,14 +1,23 @@
-# KalamDB TypeScript SDK - Quick Start Guide
+# KalamDB TypeScript SDK Quick Start
 
-Get up and running with the KalamDB TypeScript SDK in 5 minutes!
+Get a working query + realtime flow running with the current `kalam-link` API.
 
 ## Prerequisites
 
-- Node.js 18+ or modern browser
-- Running KalamDB server (see [server setup](../../../docs/getting-started/quick-start.md))
-- Basic TypeScript/JavaScript knowledge
+- Node.js 18+ or a modern browser runtime
+- A running KalamDB server
+- Valid credentials for that server
 
-If you're building the SDK from source in this repo, see [README.md](README.md#build-from-source-this-repo).
+If you are running KalamDB locally from this repo, a common local default is:
+
+- URL: `http://localhost:8080`
+- user: `admin`
+- password: `kalamdb123`
+
+For server setup and auth flows, see:
+
+- [README.md](README.md)
+- [../../../docs/getting-started/authentication.md](../../../docs/getting-started/authentication.md)
 
 ## Installation
 
@@ -18,75 +27,102 @@ npm install kalam-link
 
 ## 1. Create a Client
 
+The current TypeScript SDK requires `authProvider`.
+
 ```typescript
-import { createClient, Auth } from 'kalam-link';
+import { Auth, createClient } from 'kalam-link';
 
 const client = createClient({
   url: 'http://localhost:8080',
-  // For local dev, the default root user supports an empty password:
-  auth: Auth.basic('root', '')
+  authProvider: async () => Auth.basic('admin', 'kalamdb123'),
 });
 ```
 
-## 2. Connect to Server
+There is no `auth:` option in the current SDK.
+
+## 2. Execute a Query
+
+HTTP queries work without manually calling `connect()`.
 
 ```typescript
-await client.connect();
-console.log('Connected:', client.isConnected()); // true
+const result = await client.query('SELECT CURRENT_USER()');
+console.log(result.success, result.rows);
 ```
 
-## 3. Execute SQL Queries
+There is no public `client.connect()` step in the current TypeScript SDK. The client initializes itself on first use, and realtime connection management is automatic.
 
-Start with a simple query to verify connectivity:
+## 3. Start Realtime Updates
+
+For UI state, prefer `live()` so the SDK gives you the current materialized row set directly.
 
 ```typescript
-const result = await client.query('SELECT 1');
-console.log(result.status);
-console.log(result.results[0]);
+const stop = await client.live(
+  "SELECT * FROM app.messages WHERE room = 'main'",
+  (rows) => {
+    console.log('rows', rows.length);
+  },
+  {
+    subscriptionOptions: { last_rows: 20 },
+  },
+);
 ```
 
-For schema/table creation and the supported SQL dialect, use the canonical docs:
+Live SQL should stay in the strict supported form:
 
-- [SQL Reference](../../../docs/reference/sql.md)
-- [API Reference](../../../docs/api/api-reference.md)
+- `SELECT ... FROM ... WHERE ...`
+- do not put `ORDER BY` or `LIMIT` inside `live()` / `subscribeWithSql()` SQL
+- do ordering or capping in application code after rows arrive
 
-## 4. Real-time Subscriptions
+## 4. Low-level Subscription API
 
-Subscribe to live updates on a table:
+Use `subscribeWithSql()` only when you need raw subscription protocol events.
 
 ```typescript
-const unsubscribe = await client.subscribe('app.users', (event) => {
-  if (event.type === 'change') {
-    console.log('Change:', event.change_type);
-  }
-});
+const stopRaw = await client.subscribeWithSql(
+  "SELECT * FROM app.messages WHERE room = 'main'",
+  (event) => {
+    console.log(event.type);
+  },
+  { last_rows: 20 },
+);
 
-await unsubscribe();
+await stopRaw();
 ```
 
 ## 5. Cleanup
 
 ```typescript
+await stop();
 await client.disconnect();
 ```
 
 ## Complete Example
 
 ```typescript
-import { createClient, Auth } from 'kalam-link';
+import { Auth, createClient } from 'kalam-link';
 
 async function main() {
-  // 1. Create and connect
   const client = createClient({
     url: 'http://localhost:8080',
-    auth: Auth.basic('root', '')
+    authProvider: async () => Auth.basic('admin', 'kalamdb123'),
   });
-  await client.connect();
+
+  const me = await client.query('SELECT CURRENT_USER()');
+  console.log('current user', me.rows);
+
+  const stop = await client.live(
+    "SELECT * FROM app.messages WHERE room = 'main'",
+    (rows) => console.log('live rows', rows.length),
+    { subscriptionOptions: { last_rows: 10 } },
+  );
 
   try {
-    const result = await client.query('SELECT CURRENT_USER()');
-    console.log('Current user:', result);
+    await client.query(
+      'INSERT INTO app.messages (room, body) VALUES ($1, $2)',
+      ['main', 'hello from quickstart'],
+    );
   } finally {
+    await stop();
     await client.disconnect();
   }
 }
@@ -96,48 +132,6 @@ main().catch(console.error);
 
 ## Next Steps
 
-- 📖 Read the [full API documentation](README.md)
-- 🔍 Explore [SQL syntax reference](../../../docs/reference/sql.md)
-- 💡 Check out [complete examples](README.md#complete-examples)
-- 🧪 Run the [integration tests](tests/integration.test.js)
-
-## Troubleshooting
-
-### "Cannot find module 'kalam-link'"
-
-Make sure you've installed the package:
-```bash
-npm install kalam-link
-```
-
-### "WebSocket connection failed"
-
-- Ensure KalamDB server is running on the specified URL
-- Check that the server URL is correct (default: `http://localhost:8080`)
-- Verify firewall/network settings allow WebSocket connections
-
-### "Authentication failed"
-
-- Verify username and password are correct
-- For local development, use `root` with an empty password: `Auth.basic('root', '')`
-- Check server logs for authentication errors
-
-### Type errors in TypeScript
-
-Ensure your `tsconfig.json` has:
-```json
-{
-  "compilerOptions": {
-    "module": "ES2020",
-    "moduleResolution": "node",
-    "esModuleInterop": true
-  }
-}
-```
-
-## Support
-
-Need help? 
-- 📖 [Full Documentation](../../../docs/)
-- 🐛 [Report Issues](https://github.com/jamals86/KalamDB/issues)
-- 💬 [Join Discussions](https://github.com/jamals86/KalamDB/discussions)
+- Full SDK docs: [README.md](README.md)
+- SQL reference: [../../../docs/reference/sql.md](../../../docs/reference/sql.md)
+- Workspace examples: [../../../examples](../../../examples)

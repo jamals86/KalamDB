@@ -26,7 +26,7 @@ pub use setup::{server_setup_handler, setup_status_handler};
 
 use actix_web::HttpRequest;
 use actix_web::HttpResponse;
-use kalamdb_auth::{extract_auth_token, AuthError};
+use kalamdb_auth::{extract_auth_token, extract_refresh_token, AuthError};
 use models::AuthErrorResponse;
 
 /// Map authentication errors to HTTP responses
@@ -100,4 +100,41 @@ pub(crate) fn extract_bearer_or_cookie_token(req: &HttpRequest) -> Result<String
 
     extract_auth_token(req.cookies().ok().iter().flat_map(|c| c.iter().cloned()))
         .ok_or_else(|| AuthError::MissingAuthorization("No auth token found".to_string()))
+}
+
+/// Extract refresh token from refresh cookie, or fall back to bearer auth.
+pub(crate) fn extract_refresh_or_bearer_token(req: &HttpRequest) -> Result<String, AuthError> {
+    if let Some(token) =
+        extract_refresh_token(req.cookies().ok().iter().flat_map(|c| c.iter().cloned()))
+    {
+        return Ok(token);
+    }
+
+    if let Some(raw_header) = req.headers().get(actix_web::http::header::AUTHORIZATION) {
+        let auth_header = raw_header.to_str().map_err(|_| {
+            AuthError::MalformedAuthorization(
+                "Authorization header contains invalid characters".to_string(),
+            )
+        })?;
+
+        let mut parts = auth_header.splitn(2, ' ');
+        let scheme = parts.next().unwrap_or_default().trim();
+        let token = parts.next().unwrap_or_default().trim();
+
+        if !scheme.eq_ignore_ascii_case("Bearer") {
+            return Err(AuthError::MalformedAuthorization(
+                "Authorization header must use Bearer token".to_string(),
+            ));
+        }
+
+        if token.is_empty() {
+            return Err(AuthError::MalformedAuthorization("Bearer token missing".to_string()));
+        }
+
+        return Ok(token.to_string());
+    }
+
+    Err(AuthError::MissingAuthorization(
+        "No refresh token found".to_string(),
+    ))
 }

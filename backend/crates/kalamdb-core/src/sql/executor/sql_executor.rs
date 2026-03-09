@@ -146,11 +146,7 @@ impl SqlExecutor {
         // custom DDL (CREATE NAMESPACE, CREATE USER, SHOW TABLES, etc.).
         // When it fails we fall through with None — the classifier and
         // executor handle these statements via their own tokeniser.
-        let sqlparser_compatible_sql =
-            kalamdb_sql::normalize_context_keyword_calls_for_sqlparser(sql);
-        let parsed_statement = kalamdb_sql::parse_single_statement(&sqlparser_compatible_sql)
-            .ok()
-            .flatten();
+        let parsed_statement = kalamdb_sql::parse_single_statement(sql).ok().flatten();
         let table_id = parsed_statement.as_ref().and_then(|stmt| {
             kalamdb_sql::extract_dml_table_id_from_statement(
                 stmt,

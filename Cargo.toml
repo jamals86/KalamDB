@@ -87,7 +87,7 @@ actix-files = "0.6.10"
 actix-multipart = "0.7"
 
 # UUID generation
-uuid = { version = "1.21.0", features = ["v4", "v7", "serde"] }
+uuid = { version = "1.22.0", features = ["v4", "v7", "serde"] }
 
 # NanoID generation (21-char URL-safe unique IDs)
 nanoid = "0.4.0"
@@ -175,9 +175,8 @@ ntest = "0.9.5"
 wasm-bindgen = { version = "0.2.114" }
 wasm-bindgen-futures = { version = "0.4.64" }
 js-sys = { version = "0.3.91" }
-libc = "0.2.182"
+libc = "0.2.183"
 web-sys = { version = "0.3.91" }
-getrandom = { version = "0.2.15" }
 tsify-next = { version = "0.5", default-features = false, features = ["js"] }
 serde-wasm-bindgen = "0.6"
 flate2 = "1.1.9"

@@ -10,14 +10,16 @@ function escapeSqlLiteral(value: string): string {
   return value.replace(/'/g, "''");
 }
 
-export function buildLiveQueriesQuery(filters?: LiveQueryFilters): string {
-  let sql = `
+function buildLiveQueriesSelect(): string {
+  return `
     SELECT live_id, connection_id, subscription_id, namespace_id,
            table_name, user_id, query, options, status,
            created_at, last_update, changes, node_id
     FROM system.live_queries
   `;
+}
 
+function buildLiveQueriesWhereClause(filters?: LiveQueryFilters): string {
   const conditions: string[] = [];
   if (filters?.user_id) {
     conditions.push(`user_id = '${escapeSqlLiteral(filters.user_id)}'`);
@@ -32,9 +34,15 @@ export function buildLiveQueriesQuery(filters?: LiveQueryFilters): string {
     conditions.push(`status = '${escapeSqlLiteral(filters.status)}'`);
   }
 
-  if (conditions.length > 0) {
-    sql += ` WHERE ${conditions.join(" AND ")}`;
-  }
+  return conditions.length > 0 ? ` WHERE ${conditions.join(" AND ")}` : "";
+}
+
+export function buildLiveQueriesSubscriptionQuery(filters?: LiveQueryFilters): string {
+  return `${buildLiveQueriesSelect()}${buildLiveQueriesWhereClause(filters)}`;
+}
+
+export function buildLiveQueriesQuery(filters?: LiveQueryFilters): string {
+  let sql = buildLiveQueriesSubscriptionQuery(filters);
 
   sql += " ORDER BY created_at DESC";
   sql += ` LIMIT ${filters?.limit ?? 1000}`;

@@ -4,9 +4,212 @@
 //! to various human-readable formats. This module is exposed via WASM bindings
 //! for use in all language SDKs (TypeScript, Python, etc.).
 
-use chrono::{DateTime, Datelike, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+const MILLIS_PER_SECOND: i64 = 1_000;
+const MILLIS_PER_MINUTE: i64 = 60 * MILLIS_PER_SECOND;
+const MILLIS_PER_HOUR: i64 = 60 * MILLIS_PER_MINUTE;
+const MILLIS_PER_DAY: i64 = 24 * MILLIS_PER_HOUR;
+
+const WEEKDAY_NAMES: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTH_NAMES: [&str; 12] = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov",
+    "Dec",
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct UtcDateTimeParts {
+    year: i32,
+    month: u8,
+    day: u8,
+    hour: u8,
+    minute: u8,
+    second: u8,
+    millisecond: u16,
+    weekday: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseError {
+    message: &'static str,
+}
+
+impl ParseError {
+    const fn new(message: &'static str) -> Self {
+        Self { message }
+    }
+}
+
+impl fmt::Display for ParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.message)
+    }
+}
+
+impl std::error::Error for ParseError {}
+
+fn split_timestamp(ms: i64) -> Option<UtcDateTimeParts> {
+    let days = ms.div_euclid(MILLIS_PER_DAY);
+    let millis_of_day = ms.rem_euclid(MILLIS_PER_DAY);
+    let (year, month, day) = civil_from_days(days)?;
+
+    let hour = (millis_of_day / MILLIS_PER_HOUR) as u8;
+    let minute = ((millis_of_day % MILLIS_PER_HOUR) / MILLIS_PER_MINUTE) as u8;
+    let second = ((millis_of_day % MILLIS_PER_MINUTE) / MILLIS_PER_SECOND) as u8;
+    let millisecond = (millis_of_day % MILLIS_PER_SECOND) as u16;
+    let weekday = (days + 4).rem_euclid(7) as u8;
+
+    Some(UtcDateTimeParts {
+        year,
+        month,
+        day,
+        hour,
+        minute,
+        second,
+        millisecond,
+        weekday,
+    })
+}
+
+fn civil_from_days(days: i64) -> Option<(i32, u8, u8)> {
+    let z = i128::from(days) + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = mp + if mp < 10 { 3 } else { -9 };
+    let year = y + if m <= 2 { 1 } else { 0 };
+
+    Some((
+        i32::try_from(year).ok()?,
+        u8::try_from(m).ok()?,
+        u8::try_from(d).ok()?,
+    ))
+}
+
+fn days_from_civil(year: i32, month: u8, day: u8) -> i64 {
+    let year = i64::from(year) - if month <= 2 { 1 } else { 0 };
+    let era = if year >= 0 { year } else { year - 399 } / 400;
+    let yoe = year - era * 400;
+    let month = i64::from(month);
+    let day = i64::from(day);
+    let doy = (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
+fn is_leap_year(year: i32) -> bool {
+    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+}
+
+fn days_in_month(year: i32, month: u8) -> Option<u8> {
+    Some(match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if is_leap_year(year) => 29,
+        2 => 28,
+        _ => return None,
+    })
+}
+
+fn parse_digits(bytes: &[u8], start: usize, len: usize) -> Result<u32, ParseError> {
+    let end = start.checked_add(len).ok_or_else(|| ParseError::new("Invalid timestamp"))?;
+    let slice = bytes.get(start..end).ok_or_else(|| ParseError::new("Invalid timestamp"))?;
+    if !slice.iter().all(|byte| byte.is_ascii_digit()) {
+        return Err(ParseError::new("Invalid timestamp digits"));
+    }
+
+    let mut value = 0u32;
+    for byte in slice {
+        value = value * 10 + u32::from(byte - b'0');
+    }
+    Ok(value)
+}
+
+fn parse_fractional_millis(bytes: &[u8], start: usize, end: usize) -> Result<u16, ParseError> {
+    let digits = bytes.get(start..end).ok_or_else(|| ParseError::new("Invalid timestamp"))?;
+    if digits.is_empty() || !digits.iter().all(|byte| byte.is_ascii_digit()) {
+        return Err(ParseError::new("Invalid fractional seconds"));
+    }
+
+    let mut millis = 0u16;
+    for index in 0..3 {
+        millis *= 10;
+        if let Some(byte) = digits.get(index) {
+            millis += u16::from(byte - b'0');
+        }
+    }
+    Ok(millis)
+}
+
+fn parse_offset_millis(bytes: &[u8], start: usize) -> Result<i64, ParseError> {
+    match bytes.get(start) {
+        Some(b'Z') => {
+            if start + 1 != bytes.len() {
+                return Err(ParseError::new("Invalid trailing timestamp data"));
+            }
+            Ok(0)
+        },
+        Some(sign @ (b'+' | b'-')) => {
+            if start + 6 != bytes.len() || bytes.get(start + 3) != Some(&b':') {
+                return Err(ParseError::new("Invalid timestamp offset"));
+            }
+
+            let offset_hours = parse_digits(bytes, start + 1, 2)?;
+            let offset_minutes = parse_digits(bytes, start + 4, 2)?;
+            if offset_hours > 23 || offset_minutes > 59 {
+                return Err(ParseError::new("Invalid timestamp offset"));
+            }
+
+            let offset_ms = i64::from(offset_hours) * MILLIS_PER_HOUR
+                + i64::from(offset_minutes) * MILLIS_PER_MINUTE;
+            if *sign == b'-' {
+                Ok(-offset_ms)
+            } else {
+                Ok(offset_ms)
+            }
+        },
+        _ => Err(ParseError::new("Timestamp must end with Z or an offset")),
+    }
+}
+
+fn format_parts_iso8601(parts: UtcDateTimeParts, include_millis: bool, zulu: bool) -> String {
+    if include_millis {
+        if zulu {
+            format!(
+                "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+                parts.year,
+                parts.month,
+                parts.day,
+                parts.hour,
+                parts.minute,
+                parts.second,
+                parts.millisecond
+            )
+        } else {
+            format!(
+                "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}+00:00",
+                parts.year,
+                parts.month,
+                parts.day,
+                parts.hour,
+                parts.minute,
+                parts.second,
+                parts.millisecond
+            )
+        }
+    } else {
+        format!(
+            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+            parts.year, parts.month, parts.day, parts.hour, parts.minute, parts.second
+        )
+    }
+}
 
 /// Timestamp format options.
 ///
@@ -137,47 +340,56 @@ impl TimestampFormatter {
 
     /// Format as ISO 8601 with milliseconds: `2024-12-14T15:30:45.123Z`
     fn format_iso8601(&self, ms: i64) -> String {
-        match Utc.timestamp_millis_opt(ms).single() {
-            Some(dt) => dt.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+        match split_timestamp(ms) {
+            Some(parts) => format_parts_iso8601(parts, true, true),
             None => format!("Invalid timestamp: {}", ms),
         }
     }
 
     /// Format as ISO 8601 date only: `2024-12-14`
     fn format_iso8601_date(&self, ms: i64) -> String {
-        match Utc.timestamp_millis_opt(ms).single() {
-            Some(dt) => format!("{:04}-{:02}-{:02}", dt.year(), dt.month(), dt.day()),
+        match split_timestamp(ms) {
+            Some(parts) => format!("{:04}-{:02}-{:02}", parts.year, parts.month, parts.day),
             None => format!("Invalid timestamp: {}", ms),
         }
     }
 
     /// Format as ISO 8601 without milliseconds: `2024-12-14T15:30:45Z`
     fn format_iso8601_datetime(&self, ms: i64) -> String {
-        match Utc.timestamp_millis_opt(ms).single() {
-            Some(dt) => dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        match split_timestamp(ms) {
+            Some(parts) => format_parts_iso8601(parts, false, true),
             None => format!("Invalid timestamp: {}", ms),
         }
     }
 
     /// Format as RFC 2822: `Fri, 14 Dec 2024 15:30:45 +0000`
     fn format_rfc2822(&self, ms: i64) -> String {
-        match Utc.timestamp_millis_opt(ms).single() {
-            Some(dt) => dt.to_rfc2822(),
+        match split_timestamp(ms) {
+            Some(parts) => format!(
+                "{}, {:02} {} {:04} {:02}:{:02}:{:02} +0000",
+                WEEKDAY_NAMES[usize::from(parts.weekday)],
+                parts.day,
+                MONTH_NAMES[usize::from(parts.month - 1)],
+                parts.year,
+                parts.hour,
+                parts.minute,
+                parts.second
+            ),
             None => format!("Invalid timestamp: {}", ms),
         }
     }
 
     /// Format as RFC 3339: `2024-12-14T15:30:45.123+00:00`
     fn format_rfc3339(&self, ms: i64) -> String {
-        match Utc.timestamp_millis_opt(ms).single() {
-            Some(dt) => dt.to_rfc3339_opts(chrono::SecondsFormat::Millis, false),
+        match split_timestamp(ms) {
+            Some(parts) => format_parts_iso8601(parts, true, false),
             None => format!("Invalid timestamp: {}", ms),
         }
     }
 
     /// Format as relative time: `2 hours ago`, `in 5 minutes`
     pub fn format_relative(&self, ms: i64) -> String {
-        let now = Utc::now().timestamp_millis();
+        let now = now();
         let diff_ms = now - ms;
         let abs_diff = diff_ms.abs();
         let is_future = diff_ms < 0;
@@ -245,9 +457,62 @@ impl Default for TimestampFormatter {
 /// let ms = parse_iso8601("2024-12-14T15:30:45.123Z").unwrap();
 /// assert_eq!(ms, 1734190245123);
 /// ```
-pub fn parse_iso8601(iso: &str) -> Result<i64, chrono::ParseError> {
-    let dt = DateTime::parse_from_rfc3339(iso)?;
-    Ok(dt.timestamp_millis())
+pub fn parse_iso8601(iso: &str) -> Result<i64, ParseError> {
+    let bytes = iso.as_bytes();
+    if bytes.len() < 20 {
+        return Err(ParseError::new("Timestamp too short"));
+    }
+
+    if bytes.get(4) != Some(&b'-')
+        || bytes.get(7) != Some(&b'-')
+        || bytes.get(10) != Some(&b'T')
+        || bytes.get(13) != Some(&b':')
+        || bytes.get(16) != Some(&b':')
+    {
+        return Err(ParseError::new("Timestamp must be RFC3339/ISO8601"));
+    }
+
+    let year = i32::try_from(parse_digits(bytes, 0, 4)?).map_err(|_| ParseError::new("Invalid year"))?;
+    let month = u8::try_from(parse_digits(bytes, 5, 2)?).map_err(|_| ParseError::new("Invalid month"))?;
+    let day = u8::try_from(parse_digits(bytes, 8, 2)?).map_err(|_| ParseError::new("Invalid day"))?;
+    let hour = u8::try_from(parse_digits(bytes, 11, 2)?).map_err(|_| ParseError::new("Invalid hour"))?;
+    let minute = u8::try_from(parse_digits(bytes, 14, 2)?).map_err(|_| ParseError::new("Invalid minute"))?;
+    let second = u8::try_from(parse_digits(bytes, 17, 2)?).map_err(|_| ParseError::new("Invalid second"))?;
+
+    if !(1..=12).contains(&month)
+        || day == 0
+        || day > days_in_month(year, month).ok_or_else(|| ParseError::new("Invalid month"))?
+        || hour > 23
+        || minute > 59
+        || second > 59
+    {
+        return Err(ParseError::new("Invalid timestamp component"));
+    }
+
+    let mut index = 19;
+    let mut millisecond = 0u16;
+    if bytes.get(index) == Some(&b'.') {
+        index += 1;
+        let fraction_start = index;
+        while matches!(bytes.get(index), Some(byte) if byte.is_ascii_digit()) {
+            index += 1;
+        }
+        millisecond = parse_fractional_millis(bytes, fraction_start, index)?;
+    }
+
+    let offset_ms = parse_offset_millis(bytes, index)?;
+    let days = days_from_civil(year, month, day);
+    let local_ms = days
+        .checked_mul(MILLIS_PER_DAY)
+        .and_then(|value| value.checked_add(i64::from(hour) * MILLIS_PER_HOUR))
+        .and_then(|value| value.checked_add(i64::from(minute) * MILLIS_PER_MINUTE))
+        .and_then(|value| value.checked_add(i64::from(second) * MILLIS_PER_SECOND))
+        .and_then(|value| value.checked_add(i64::from(millisecond)))
+        .ok_or_else(|| ParseError::new("Timestamp out of range"))?;
+
+    local_ms
+        .checked_sub(offset_ms)
+        .ok_or_else(|| ParseError::new("Timestamp out of range"))
 }
 
 /// Get current timestamp in milliseconds (compatible with KalamDB).
@@ -261,7 +526,10 @@ pub fn parse_iso8601(iso: &str) -> Result<i64, chrono::ParseError> {
 /// assert!(current_ms > 1700000000000); // After Nov 2023
 /// ```
 pub fn now() -> i64 {
-    Utc::now().timestamp_millis()
+    match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(duration) => duration.as_millis().min(i64::MAX as u128) as i64,
+        Err(error) => -(error.duration().as_millis().min(i64::MAX as u128) as i64),
+    }
 }
 
 #[cfg(test)]
@@ -316,6 +584,22 @@ mod tests {
     fn test_parse_iso8601() {
         let ms = parse_iso8601("2024-12-14T15:30:45.123Z").unwrap();
         assert!(ms > 1700000000000);
+    }
+
+    #[test]
+    fn test_parse_iso8601_with_offset() {
+        let utc = parse_iso8601("2024-12-14T15:30:45.123Z").unwrap();
+        let offset = parse_iso8601("2024-12-14T17:30:45.123+02:00").unwrap();
+        assert_eq!(utc, offset);
+    }
+
+    #[test]
+    fn test_format_rfc2822() {
+        let formatter = TimestampFormatter::new(TimestampFormat::Rfc2822);
+        assert_eq!(
+            formatter.format(Some(1734190245123)),
+            "Sat, 14 Dec 2024 15:30:45 +0000"
+        );
     }
 
     #[test]

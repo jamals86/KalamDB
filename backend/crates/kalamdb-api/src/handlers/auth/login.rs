@@ -6,8 +6,8 @@ use actix_web::{web, HttpRequest, HttpResponse};
 use chrono::{Duration, Utc};
 use kalamdb_auth::providers::jwt_auth::create_and_sign_refresh_token;
 use kalamdb_auth::{
-    authenticate, create_and_sign_token, create_auth_cookie, extract_client_ip_secure, AuthRequest,
-    CookieConfig, UserRepository,
+    authenticate, create_and_sign_token, create_auth_cookie, create_refresh_cookie,
+    extract_client_ip_secure, AuthRequest, CookieConfig, UserRepository,
 };
 use kalamdb_commons::Role;
 use kalamdb_configs::AuthSettings;
@@ -104,11 +104,16 @@ pub async fn login_handler(
 
     // Create HttpOnly cookie
     let cookie_config = CookieConfig {
-        secure: config.cookie_secure,
+        secure: config.cookie_secure && req.connection_info().scheme() == "https",
         ..Default::default()
     };
-    let cookie =
+    let auth_cookie =
         create_auth_cookie(&token, Duration::hours(config.jwt_expiry_hours), &cookie_config);
+    let refresh_cookie = create_refresh_cookie(
+        &refresh_token,
+        Duration::hours(refresh_expiry_hours),
+        &cookie_config,
+    );
 
     let expires_at = Utc::now() + Duration::hours(config.jwt_expiry_hours);
     let refresh_expires_at = Utc::now() + Duration::hours(refresh_expiry_hours);
@@ -121,7 +126,10 @@ pub async fn login_handler(
         .unwrap_or_else(chrono::Utc::now)
         .to_rfc3339();
 
-    HttpResponse::Ok().cookie(cookie).json(LoginResponse {
+    HttpResponse::Ok()
+        .cookie(auth_cookie)
+        .cookie(refresh_cookie)
+        .json(LoginResponse {
         user: UserInfo {
             id: user.user_id.clone(),
             username: user.username.clone(),

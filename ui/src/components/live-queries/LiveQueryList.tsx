@@ -21,7 +21,7 @@ import { Card } from '@/components/ui/card';
 import type { LiveQuery, LiveQueryFilters } from '@/services/liveQueryService';
 import { useKillLiveQueryMutation } from '@/store/apiSlice';
 import { subscribeRows, type RowData } from '@/lib/kalam-client';
-import { buildLiveQueriesQuery } from '@/services/sql/queries/liveQueryQueries';
+import { buildLiveQueriesSubscriptionQuery } from '@/services/sql/queries/liveQueryQueries';
 import { Loader2, RefreshCw, XCircle, Activity, Clock, Database, CheckCircle } from 'lucide-react';
 
 export function LiveQueryList() {
@@ -39,6 +39,7 @@ export function LiveQueryList() {
   const [killingIds, setKillingIds] = useState<Set<string>>(new Set());
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [killError, setKillError] = useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   const filterParams = useMemo<LiveQueryFilters>(
     () => ({
@@ -50,7 +51,10 @@ export function LiveQueryList() {
     [filters.namespace_id, filters.status, filters.table_name, filters.user_id],
   );
 
-  const liveQuerySql = useMemo(() => buildLiveQueriesQuery(appliedFilters), [appliedFilters]);
+  const liveQuerySql = useMemo(
+    () => buildLiveQueriesSubscriptionQuery(appliedFilters),
+    [appliedFilters],
+  );
 
   useEffect(() => {
     let active = true;
@@ -83,12 +87,15 @@ export function LiveQueryList() {
               return;
             }
 
-            setLiveQueries(rows);
+            setLiveQueries(
+              [...rows]
+                .sort((left, right) => right.created_at - left.created_at)
+                .slice(0, appliedFilters.limit ?? 1000),
+            );
             setIsLoading(false);
           },
           {
             mapRow: toLiveQuery,
-            // limit: appliedFilters.limit ?? 1000,
             subscriptionOptions: { last_rows: appliedFilters.limit ?? 1000 },
             onError: (event) => {
               if (!active) {
@@ -116,7 +123,7 @@ export function LiveQueryList() {
       active = false;
       void unsubscribe?.();
     };
-  }, [appliedFilters.limit, liveQuerySql]);
+  }, [appliedFilters.limit, liveQuerySql, refreshKey]);
 
   const handleKillQuery = async (liveQuery: LiveQuery) => {
     if (!confirm(`Kill live query for ${liveQuery.user_id} on ${liveQuery.namespace_id}.${liveQuery.table_name}?`)) {
@@ -144,7 +151,7 @@ export function LiveQueryList() {
   };
 
   const handleRefresh = () => {
-    setAppliedFilters((current) => ({ ...current }));
+    setRefreshKey((current) => current + 1);
   };
 
   const handleApplyFilters = () => {

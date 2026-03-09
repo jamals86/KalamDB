@@ -65,13 +65,13 @@ export const refresh = createAsyncThunk(
 
 export const checkAuth = createAsyncThunk(
   "auth/checkAuth",
-  async (_, { dispatch, rejectWithValue }) => {
+  async (_, { rejectWithValue }) => {
     try {
-      const userInfo = await authApi.me();
-      // After getting user info, trigger a refresh to get access token and expiry
-      await dispatch(refresh()).unwrap();
-      return userInfo;
+      const response = await authApi.refresh();
+      await setClientToken(response.access_token);
+      return response;
     } catch (err) {
+      await clearClient();
       return rejectWithValue("Not authenticated");
     }
   }
@@ -134,12 +134,17 @@ const authSlice = createSlice({
         state.isLoading = true;
       })
       .addCase(checkAuth.fulfilled, (state, action) => {
-        state.user = action.payload;
+        state.user = action.payload.user;
+        state.accessToken = action.payload.access_token;
+        state.expiresAt = action.payload.expires_at;
         state.isAuthenticated = true;
         state.isLoading = false;
+        state.error = null;
       })
       .addCase(checkAuth.rejected, (state) => {
         state.user = null;
+        state.accessToken = null;
+        state.expiresAt = null;
         state.isAuthenticated = false;
         state.isLoading = false;
       });
