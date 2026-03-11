@@ -62,6 +62,8 @@ env:
   CARGO_TERM_COLOR: always
   RUST_VERSION: "1.92.0"
   DEFAULT_PLATFORMS: "linux-x86_64,macos-aarch64,windows-x86_64"
+  RUSTC_WRAPPER: ""
+  CARGO_BUILD_RUSTC_WRAPPER: ""
 
 jobs:
   read_version:
