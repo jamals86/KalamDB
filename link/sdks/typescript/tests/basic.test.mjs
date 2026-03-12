@@ -17,7 +17,7 @@ const __dirname = dirname(__filename);
 const sdkPath = join(__dirname, '..');
 
 // WASM output directory (wasm-pack places files here)
-const wasmOutPath = join(sdkPath, '.wasm-out');
+const wasmOutPath = join(sdkPath, 'wasm');
 
 async function runTests() {
   console.log('🧪 Running Basic WASM Module Tests\n');

@@ -13,15 +13,14 @@ import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   SERVER_URL,
-  ADMIN_USER,
-  ADMIN_PASS,
   connectJwtClient,
   uniqueName,
   ensureNamespace,
   dropTable,
+  jwtAuthProvider,
   sleep,
 } from '../helpers.mjs';
-import { createClient, Auth } from '../../../dist/src/index.js';
+import { createClient } from '../../../dist/src/index.js';
 
 async function waitFor(predicate, timeoutMs = 10_000, intervalMs = 100) {
   const start = Date.now();
@@ -145,7 +144,7 @@ describe('Reconnect & Resume', { timeout: 120_000 }, () => {
 
     const c = createClient({
       url: SERVER_URL,
-      authProvider: async () => Auth.basic(ADMIN_USER, ADMIN_PASS),
+      authProvider: jwtAuthProvider(),
       wsLazyConnect: false,
       onConnect: () => events.push('connect'),
       onDisconnect: (reason) => events.push(`disconnect:${reason?.message || 'manual'}`),
@@ -192,7 +191,7 @@ describe('Reconnect & Resume', { timeout: 120_000 }, () => {
 
     const c = createClient({
       url: SERVER_URL,
-      authProvider: async () => Auth.basic(ADMIN_USER, ADMIN_PASS),
+      authProvider: jwtAuthProvider(),
       wsLazyConnect: false,
       onError: (err) => errors.push(err),
     });

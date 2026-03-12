@@ -6,13 +6,13 @@ on:
       platforms:
         description: "Comma-separated platforms (like --platforms). Ignored if all_platforms=true"
         required: false
-        default: "linux-x86_64,macos-aarch64,windows-x86_64,linux-aarch64"
+        default: "linux-x86_64,macos-aarch64,linux-aarch64"
 
       all_platforms:
         description: "Build all platforms (like --all-platforms)"
         type: boolean
         required: false
-        default: true
+        default: false
 
       github_release:
         description: "Publish GitHub Release"
@@ -61,7 +61,7 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUST_VERSION: "1.92.0"
-  DEFAULT_PLATFORMS: "linux-x86_64,macos-aarch64,windows-x86_64"
+  DEFAULT_PLATFORMS: "linux-x86_64,macos-aarch64,linux-aarch64"
   RUSTC_WRAPPER: ""
   CARGO_BUILD_RUSTC_WRAPPER: ""
 
@@ -1406,7 +1406,7 @@ jobs:
           done
           echo "❌ Timed out"; cat ts-sdk-server.log; exit 1
 
-      - name: Run TypeScript SDK tests
+      - name: Run TypeScript SDK tests (offline + serial e2e)
         shell: bash
         working-directory: link/sdks/typescript
         env:
@@ -1416,6 +1416,8 @@ jobs:
         run: |
           set -euo pipefail
           npm install --no-audit --no-fund
+          # test.sh builds the SDK, runs the offline Node suite, then runs the
+          # live e2e files serially to avoid auth rate-limit flakes in CI.
           chmod +x ./test.sh
           ./test.sh
 

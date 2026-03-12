@@ -14,6 +14,8 @@ export const SERVER_URL = process.env.KALAMDB_URL || 'http://localhost:8080';
 export const ADMIN_USER = process.env.KALAMDB_USER || 'root';
 export const ADMIN_PASS = process.env.KALAMDB_PASSWORD || 'kalamdb123';
 
+let sharedJwtPromise = null;
+
 /** Generate a unique name for test isolation (namespace or table). */
 export function uniqueName(prefix) {
   const ts = Date.now();
@@ -21,16 +23,45 @@ export function uniqueName(prefix) {
   return `${prefix}_${ts}_${rand}`;
 }
 
+async function fetchSharedJwt() {
+  const bootstrapClient = createClient({
+    url: SERVER_URL,
+    authProvider: async () => Auth.basic(ADMIN_USER, ADMIN_PASS),
+  });
+
+  try {
+    const loginResp = await bootstrapClient.login();
+    return loginResp.access_token;
+  } finally {
+    await bootstrapClient.disconnect().catch(() => {});
+  }
+}
+
+export async function getSharedJwt() {
+  if (!sharedJwtPromise) {
+    sharedJwtPromise = fetchSharedJwt().catch((error) => {
+      sharedJwtPromise = null;
+      throw error;
+    });
+  }
+
+  return sharedJwtPromise;
+}
+
+export function jwtAuthProvider() {
+  return async () => Auth.jwt(await getSharedJwt());
+}
+
 /**
  * Create a client with eager WebSocket connection enabled.
  *
- * Uses basic credentials via authProvider; the SDK exchanges them for JWT
- * automatically before the WebSocket handshake.
+ * Uses a shared JWT authProvider so the e2e suite does not hammer the login
+ * endpoint when many eager clients are created.
  */
 export async function connectJwtClient() {
   const client = createClient({
     url: SERVER_URL,
-    authProvider: async () => Auth.basic(ADMIN_USER, ADMIN_PASS),
+    authProvider: jwtAuthProvider(),
     wsLazyConnect: false,
   });
   await client.initialize();
@@ -38,27 +69,13 @@ export async function connectJwtClient() {
 }
 
 /**
- * Create a client with authProvider using a cached JWT obtained via login.
+ * Create a client with authProvider using the shared cached JWT.
  */
 export async function connectWithAuthProvider() {
-  let cachedToken = null;
-
   const client = createClient({
     url: SERVER_URL,
     wsLazyConnect: false,
-    authProvider: async () => {
-      if (!cachedToken) {
-        // Bootstrap: use basic auth to log in and obtain a JWT.
-        const bootstrapClient = createClient({
-          url: SERVER_URL,
-          authProvider: async () => Auth.basic(ADMIN_USER, ADMIN_PASS),
-        });
-        const loginResp = await bootstrapClient.login();
-        cachedToken = loginResp.access_token;
-        await bootstrapClient.disconnect();
-      }
-      return Auth.jwt(cachedToken);
-    },
+    authProvider: jwtAuthProvider(),
   });
   await client.initialize();
   return client;

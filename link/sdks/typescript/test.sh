@@ -23,7 +23,15 @@ npm run build
 # ── Unit tests (offline, no server required) ───────────────────────────
 echo ""
 echo "🔬 Running unit tests (no server)..."
-NO_SERVER=true node --test tests/basic.test.mjs tests/normalize.test.mjs tests/agent-runtime.test.mjs 2>&1 || true
+NO_SERVER=true node --test \
+  tests/basic.test.mjs \
+  tests/normalize.test.mjs \
+  tests/auth-provider-retry.test.mjs \
+  tests/agent-runtime.test.mjs \
+  tests/cell-value.test.mjs \
+  tests/single-socket-subscriptions.test.mjs \
+  tests/readme-examples.test.mjs \
+  tests/sdk-runtime-coverage.test.mjs
 
 # ── E2E tests (require running KalamDB server) ────────────────────────
 echo ""
@@ -32,7 +40,7 @@ if curl -sf "$KALAMDB_URL/health" > /dev/null 2>&1; then
   echo "✅ Server is reachable"
   echo ""
   echo "🧪 Running e2e tests..."
-  node --test \
+  node --test --test-concurrency=1 \
     tests/e2e/auth/auth.test.mjs \
     tests/e2e/query/query.test.mjs \
     tests/e2e/query/dml-helpers.test.mjs \

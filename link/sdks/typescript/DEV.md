@@ -50,7 +50,7 @@ The full `build` script runs these steps in order:
 | 3 | `build:ts` | Compile TypeScript → `dist/` |
 | 4 | `build:copy-wasm` | Copy WASM artifacts into `dist/wasm/` |
 
-Intermediate WASM output lands in `.wasm-out/` (gitignored). Compiled output is in `dist/`.
+Intermediate WASM output lands in `wasm/` (gitignored from publish via `files`). Compiled output is in `dist/`.
 
 ## Running Tests
 
@@ -62,8 +62,17 @@ Does not require a running server:
 npm test
 ```
 
-Runs `tests/basic.test.mjs`, `tests/normalize.test.mjs`, and `tests/agent-runtime.test.mjs`
-with `NO_SERVER=true`.
+Runs a full local build first, then executes the offline Node test suite with
+`NO_SERVER=true`:
+
+- `tests/basic.test.mjs`
+- `tests/normalize.test.mjs`
+- `tests/auth-provider-retry.test.mjs`
+- `tests/agent-runtime.test.mjs`
+- `tests/cell-value.test.mjs`
+- `tests/single-socket-subscriptions.test.mjs`
+- `tests/readme-examples.test.mjs`
+- `tests/sdk-runtime-coverage.test.mjs`
 
 ### Agent runtime tests only
 
@@ -71,15 +80,44 @@ with `NO_SERVER=true`.
 npm run test:agent-runtime
 ```
 
-### Live server integration tests
+### Full SDK test run
+
+Requires a running KalamDB instance. This is the same path used by the release
+workflow:
+
+```bash
+./test.sh
+```
+
+`test.sh` does three things in order:
+
+1. Builds the SDK.
+2. Runs the offline suite above.
+3. Runs the live e2e suite serially with `node --test --test-concurrency=1`.
+
+The e2e files are:
+
+- `tests/e2e/auth/auth.test.mjs`
+- `tests/e2e/query/query.test.mjs`
+- `tests/e2e/query/dml-helpers.test.mjs`
+- `tests/e2e/ddl/ddl.test.mjs`
+- `tests/e2e/lifecycle/lifecycle.test.mjs`
+- `tests/e2e/subscription/subscription.test.mjs`
+- `tests/e2e/reconnect/reconnect.test.mjs`
+
+Serial execution is intentional in CI because the suite creates many eager
+WebSocket clients; running the files one-by-one avoids spurious auth rate-limit
+failures on shared runners.
+
+### Running individual live test files
 
 Requires a running KalamDB instance. Set connection env vars before running:
 
 ```bash
-KALAM_URL=http://localhost:8080 \
-KALAM_USER=admin \
-KALAM_PASS=kalamdb123 \
-node --test tests/integration.test.mjs
+KALAMDB_URL=http://localhost:8080 \
+KALAMDB_USER=root \
+KALAMDB_PASSWORD=kalamdb123 \
+node --test --test-concurrency=1 tests/e2e/reconnect/reconnect.test.mjs
 ```
 
 ## Low-Level WASM Entrypoint
@@ -123,4 +161,4 @@ npm publish --dry-run
 | `link/src/wasm/` | WASM entry points (`#[wasm_bindgen]` annotations) |
 | `link/sdks/typescript/src/` | TypeScript API layer (`client.ts`, `auth.ts`, etc.) |
 | `link/sdks/typescript/dist/` | Compiled output (gitignored) |
-| `link/sdks/typescript/.wasm-out/` | wasm-pack output (gitignored) |
+| `link/sdks/typescript/wasm/` | wasm-pack output |
