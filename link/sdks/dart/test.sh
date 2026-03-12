@@ -8,7 +8,7 @@ cd "$SCRIPT_DIR"
 
 # ── Configuration ──────────────────────────────────────────────────────
 export KALAMDB_URL="${KALAMDB_URL:-${KALAM_URL:-http://localhost:8080}}"
-export KALAMDB_USER="${KALAMDB_USER:-${KALAM_USER:-admin}}"
+export KALAMDB_USER="${KALAMDB_USER:-${KALAM_USER:-root}}"
 export KALAMDB_PASSWORD="${KALAMDB_PASSWORD:-${KALAM_PASS:-kalamdb123}}"
 export KALAM_URL="${KALAM_URL:-$KALAMDB_URL}"
 export KALAM_USER="${KALAM_USER:-$KALAMDB_USER}"

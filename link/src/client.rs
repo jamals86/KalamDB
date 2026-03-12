@@ -232,7 +232,7 @@ impl KalamLinkClient {
             let conn_guard = self.connection.lock().await;
             if let Some(ref conn) = *conn_guard {
                 let options = config.options.unwrap_or_default();
-                let (event_rx, generation) =
+                let (event_rx, generation, resume_from) =
                     conn.subscribe(config.id.clone(), config.sql, options).await?;
                 let unsub_tx = conn.unsubscribe_tx();
                 return Ok(SubscriptionManager::from_shared(
@@ -240,6 +240,7 @@ impl KalamLinkClient {
                     event_rx,
                     unsub_tx,
                     generation,
+                    resume_from,
                     &self.timeouts,
                 ));
             }

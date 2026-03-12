@@ -22,6 +22,8 @@ cd "$SCRIPT_DIR/../.."
 
 # Build WASM using wasm-pack (output to wasm/)
 echo "📦 Compiling Rust to WASM..."
+export RUSTC_WRAPPER=""
+export CARGO_BUILD_RUSTC_WRAPPER=""
 wasm-pack build \
   --target web \
   --out-dir sdks/typescript/wasm \

@@ -122,7 +122,7 @@ This is expected! After `cargo clean`, sccache has no cache to use. The second b
 
 ### CI/CD Build Issues
 
-The project uses sccache in GitHub Actions for all platforms. See `.github/workflows/` for configuration.
+GitHub Actions disables the repo-level `sccache` wrapper because hosted runners may not have `sccache` installed. CI workflows override `RUSTC_WRAPPER` and `CARGO_BUILD_RUSTC_WRAPPER` to empty values.
 
 ---
 

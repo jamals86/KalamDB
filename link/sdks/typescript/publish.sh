@@ -123,11 +123,11 @@ else
   fi
 fi
 
-# ─── Update package.json version ─────────────────────────────────────────────
-echo ""
-echo "📝 Updating package.json version to $VERSION..."
-npm version "$VERSION" --no-git-tag-version --allow-same-version
-echo "   $(grep '"version"' package.json | head -n1 | xargs)"
+# # ─── Update package.json version ─────────────────────────────────────────────
+# echo ""
+# echo "📝 Updating package.json version to $VERSION..."
+# npm version "$VERSION" --no-git-tag-version --allow-same-version
+# echo "   $(grep '"version"' package.json | head -n1 | xargs)"
 
 # ─── Determine npm dist-tag for pre-release versions ─────────────────────────
 # npm requires --tag for pre-release versions (anything with a hyphen)

@@ -4,13 +4,12 @@
  * Run: node --test tests/e2e/lifecycle/lifecycle.test.mjs
  */
 
-import { test, describe, after } from 'node:test';
+import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   SERVER_URL,
-  ADMIN_USER,
-  ADMIN_PASS,
   connectJwtClient,
+  jwtAuthProvider,
   sleep,
 } from '../helpers.mjs';
 import { createClient, Auth } from '../../../dist/src/index.js';
@@ -50,7 +49,7 @@ describe('Client Lifecycle', { timeout: 30_000 }, () => {
   test('disableCompression: true still connects and queries', async () => {
     const client = createClient({
       url: SERVER_URL,
-      authProvider: async () => Auth.basic(ADMIN_USER, ADMIN_PASS),
+      authProvider: jwtAuthProvider(),
       disableCompression: true,
       wsLazyConnect: false,
     });
@@ -70,7 +69,7 @@ describe('Client Lifecycle', { timeout: 30_000 }, () => {
   test('wsLazyConnect: true keeps query-only usage disconnected', async () => {
     const client = createClient({
       url: SERVER_URL,
-      authProvider: async () => Auth.basic(ADMIN_USER, ADMIN_PASS),
+      authProvider: jwtAuthProvider(),
       wsLazyConnect: true,
     });
 
@@ -93,7 +92,7 @@ describe('Client Lifecycle', { timeout: 30_000 }, () => {
 
     const client = createClient({
       url: SERVER_URL,
-      authProvider: async () => Auth.basic(ADMIN_USER, ADMIN_PASS),
+      authProvider: jwtAuthProvider(),
       wsLazyConnect: false,
       onConnect: () => {
         connectFired = true;
@@ -113,7 +112,7 @@ describe('Client Lifecycle', { timeout: 30_000 }, () => {
   test('calling initialize() twice is safe', async () => {
     const client = createClient({
       url: SERVER_URL,
-      authProvider: async () => Auth.basic(ADMIN_USER, ADMIN_PASS),
+      authProvider: jwtAuthProvider(),
       wsLazyConnect: false,
     });
 

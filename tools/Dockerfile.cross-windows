@@ -23,6 +23,14 @@ RUN apt-get update && \
     update-alternatives --install /usr/bin/llvm-config llvm-config /usr/bin/llvm-config-16 100 && \
     rm -rf llvm.sh
 
+# Register clang-16 (already installed above) as the default host cc/c++ compiler.
+# usearch 2.x bundles simsimd which generates AVX-512 FP16 intrinsics (_mm512_mask3_fmadd_ph etc.)
+# that require clang 14+ or GCC 12+.  The base image (Ubuntu 20.04) ships GCC 9 which lacks
+# these intrinsics; installing gcc-12 from the default repos fails with exit code 100 (not found).
+# clang-16 is already present from the LLVM step above and fully supports these intrinsics.
+RUN update-alternatives --install /usr/bin/cc  cc  /usr/bin/clang-16   120 && \
+    update-alternatives --install /usr/bin/c++ c++ /usr/bin/clang++-16 120
+
 # Node.js/npm not needed for cross-compilation (UI is pre-built in CI)
 # wasm-pack not needed for cross-compilation (SDK is pre-built in CI)
 
@@ -33,6 +41,10 @@ ENV LIBCLANG_PATH=/usr/lib/llvm-16/lib
 ENV LLVM_CONFIG_PATH=/usr/bin/llvm-config-16
 ENV CLANG_PATH=/usr/bin/clang-16
 ENV LIBCLANG_STATIC=0
+
+# Provide a no-op sccache wrapper so the repo-level Cargo config works in CI cross images.
+RUN printf '#!/bin/sh\nexec "$@"\n' > /usr/local/bin/sccache && \
+    chmod +x /usr/local/bin/sccache
 
 # Static linking for libstdc++ and libgcc to avoid DLL dependencies on Windows
 # This ensures the binary runs on any Windows machine without needing MinGW installed

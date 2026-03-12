@@ -1,7 +1,7 @@
 {
   "name": "kalam-link",
   "type": "module",
-  "version": "0.4.1-beta",
+  "version": "0.4.1-beta.2",
   "description": "WebAssembly-compatible KalamDB client library with TypeScript support",
   "license": "Apache-2.0",
   "author": "KalamDB Team",
@@ -33,21 +33,21 @@
   "sideEffects": false,
   "scripts": {
     "clean": "node -e \"const fs=require('fs');const p=require('path');const rm=d=>{try{fs.rmSync(d,{recursive:true,force:true})}catch{}};rm('dist');rm('wasm')\"",
-    "build:wasm": "node -e \"const {execSync}=require('child_process');process.chdir('../..');const env={...process.env,CARGO_ENCODED_RUSTFLAGS:'',RUSTFLAGS:'',CARGO_TARGET_DIR:'sdks/typescript/.wasm-target',CARGO_HOME:'sdks/typescript/.wasm-cargo-home'};execSync('wasm-pack build --target web --out-dir sdks/typescript/wasm --features wasm --no-default-features',{stdio:'inherit',env})\"",
+    "build:wasm": "node -e \"const {execSync}=require('child_process');process.chdir('../..');const env={...process.env,CARGO_ENCODED_RUSTFLAGS:'',RUSTFLAGS:'',RUSTC_WRAPPER:'',CARGO_BUILD_RUSTC_WRAPPER:'',CARGO_TARGET_DIR:'sdks/typescript/.wasm-target',CARGO_HOME:'sdks/typescript/.wasm-cargo-home'};execSync('wasm-pack build --target web --out-dir sdks/typescript/wasm --features wasm --no-default-features',{stdio:'inherit',env})\"",
     "build:fix-types": "node -e \"const fs=require('fs');const p=require('path');const dts=p.join('wasm','kalam_link.d.ts');let c=fs.readFileSync(dts,'utf8');if(!c.includes('type JsonValue')){c='type JsonValue=null|boolean|number|string|JsonValue[]|{[key:string]:JsonValue};\\n'+c;fs.writeFileSync(dts,c)}\"",
     "build:ts": "tsc",
     "build:copy-wasm": "node -e \"const fs=require('fs');const p=require('path');fs.mkdirSync('dist/wasm',{recursive:true});fs.readdirSync('wasm').filter(f=>!f.includes('package.json')&&!f.includes('.gitignore')).forEach(f=>fs.copyFileSync(p.join('wasm',f),p.join('dist/wasm',f)))\"",
     "build": "npm run clean && npm run build:wasm && npm run build:fix-types && npm run build:ts && npm run build:copy-wasm",
-    "test": "npm run build:ts && NO_SERVER=true node --test tests/basic.test.mjs tests/normalize.test.mjs tests/auth-provider-retry.test.mjs tests/agent-runtime.test.mjs tests/cell-value.test.mjs tests/single-socket-subscriptions.test.mjs tests/readme-examples.test.mjs tests/sdk-runtime-coverage.test.mjs",
+    "test": "npm run build && NO_SERVER=true node --test tests/basic.test.mjs tests/normalize.test.mjs tests/auth-provider-retry.test.mjs tests/agent-runtime.test.mjs tests/cell-value.test.mjs tests/single-socket-subscriptions.test.mjs tests/readme-examples.test.mjs tests/sdk-runtime-coverage.test.mjs",
     "test:agent-runtime": "npm run build:ts && node --test tests/agent-runtime.test.mjs",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "ws": "^8.18.3"
+    "ws": "^8.19.0"
   },
   "devDependencies": {
-    "@types/node": "^25.3.5",
-    "typescript": "^5.3.0"
+    "@types/node": "^25.4.0",
+    "typescript": "^5.9.3"
   },
   "keywords": [
     "kalamdb",
