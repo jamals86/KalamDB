@@ -8,10 +8,15 @@ cd "$SCRIPT_DIR"
 
 # ── Configuration ──────────────────────────────────────────────────────
 export KALAMDB_URL="${KALAMDB_URL:-http://localhost:8080}"
-export KALAMDB_USER="${KALAMDB_USER:-admin}"
+export KALAMDB_USER="${KALAMDB_USER:-root}"
 export KALAMDB_PASSWORD="${KALAMDB_PASSWORD:-kalamdb123}"
 
 # ── Build SDK ──────────────────────────────────────────────────────────
+if [[ ! -d node_modules ]]; then
+  echo "📥 Installing npm dependencies..."
+  npm install --no-audit --no-fund
+fi
+
 echo "📦 Building SDK..."
 npm run build
 

@@ -1390,9 +1390,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          export KALAMDB_ROOT_PASSWORD="kalamdb123"
           cp backend/server.example.toml server.toml
-          sed -i 's|rocksdb_path = "./data/rocksdb"|rocksdb_path = "./test-data/rocksdb"|g' server.toml
-          sed -i 's|default_storage_path = "./data/storage"|default_storage_path = "./test-data/storage"|g' server.toml
+          sed -i 's|data_path = "./data"|data_path = "./test-data"|g' server.toml
           sed -i 's|logs_path = "./logs"|logs_path = "./test-data/logs"|g' server.toml
           sed -i 's|jwt_secret = ".*"|jwt_secret = "sdk-test-secret-key-minimum-32-characters-long"|g' server.toml
           mkdir -p test-data/rocksdb test-data/storage test-data/logs
@@ -1411,10 +1411,11 @@ jobs:
         working-directory: link/sdks/typescript
         env:
           KALAMDB_URL: "http://localhost:8080"
-          KALAMDB_USER: "admin"
+          KALAMDB_USER: "root"
           KALAMDB_PASSWORD: "kalamdb123"
         run: |
           set -euo pipefail
+          npm install --no-audit --no-fund
           chmod +x ./test.sh
           ./test.sh
 
@@ -1475,9 +1476,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          export KALAMDB_ROOT_PASSWORD="kalamdb123"
           cp backend/server.example.toml server.toml
-          sed -i 's|rocksdb_path = "./data/rocksdb"|rocksdb_path = "./test-data/rocksdb"|g' server.toml
-          sed -i 's|default_storage_path = "./data/storage"|default_storage_path = "./test-data/storage"|g' server.toml
+          sed -i 's|data_path = "./data"|data_path = "./test-data"|g' server.toml
           sed -i 's|logs_path = "./logs"|logs_path = "./test-data/logs"|g' server.toml
           sed -i 's|jwt_secret = ".*"|jwt_secret = "sdk-test-secret-key-minimum-32-characters-long"|g' server.toml
           mkdir -p test-data/rocksdb test-data/storage test-data/logs
@@ -1496,7 +1497,7 @@ jobs:
         working-directory: link/sdks/dart
         env:
           KALAM_URL: "http://localhost:8080"
-          KALAM_USER: "admin"
+          KALAM_USER: "root"
           KALAM_PASS: "kalamdb123"
         run: |
           set -euo pipefail
