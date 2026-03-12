@@ -247,7 +247,7 @@ jobs:
 
   build_cli_linux_x86_64:
     name: Build CLI Linux x86_64
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     needs: read_version
 
     steps:
@@ -263,7 +263,7 @@ jobs:
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: cli-linux-x86_64-ubuntu-22-04
+          shared-key: cli-linux-x86_64-ubuntu-24-04
           cache-on-failure: true
 
       - name: Install system deps
@@ -431,7 +431,7 @@ jobs:
 
   build_linux_x86_64:
     name: Build Server Linux x86_64
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     needs: [build_ui, read_version]
     env:
       PLATFORMS_INPUT: ${{ github.event.inputs.platforms }}
@@ -485,7 +485,7 @@ jobs:
         if: ${{ steps.vars.outputs.build_linux == 'true' }}
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: server-linux-x86_64-ubuntu-22-04
+          shared-key: server-linux-x86_64-ubuntu-24-04
           cache-on-failure: true
 
       - name: Install system deps

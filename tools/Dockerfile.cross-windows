@@ -23,6 +23,16 @@ RUN apt-get update && \
     update-alternatives --install /usr/bin/llvm-config llvm-config /usr/bin/llvm-config-16 100 && \
     rm -rf llvm.sh
 
+# Install GCC 12 for host-side C/C++ compilation.
+# usearch 2.x bundles simsimd which generates AVX-512 FP16 code (_mm512_mask3_fmadd_ph etc.)
+# that requires GCC 12+ to compile, even on older base images.
+RUN apt-get update && \
+    apt-get install -y gcc-12 g++-12 && \
+    update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-12 120 && \
+    update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-12 120 && \
+    update-alternatives --install /usr/bin/cc  cc  /usr/bin/gcc-12 120 && \
+    update-alternatives --install /usr/bin/c++ c++ /usr/bin/g++-12 120
+
 # Node.js/npm not needed for cross-compilation (UI is pre-built in CI)
 # wasm-pack not needed for cross-compilation (SDK is pre-built in CI)
 
