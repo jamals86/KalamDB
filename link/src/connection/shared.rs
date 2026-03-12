@@ -95,32 +95,111 @@ fn subscription_start_ready(event: &ChangeEvent) -> bool {
     )
 }
 
-fn filter_replayed_initial_rows(event: ChangeEvent, resume_from: Option<SeqId>) -> ChangeEvent {
+fn filter_replayed_rows(event: ChangeEvent, resume_from: Option<SeqId>) -> Option<ChangeEvent> {
+    let Some(from) = resume_from else {
+        return Some(event);
+    };
+
     match event {
         ChangeEvent::InitialDataBatch {
             subscription_id,
             mut rows,
             batch_control,
         } => {
-            if let Some(from) = resume_from {
-                let removed = seq_tracking::retain_rows_after(&mut rows, from);
-                if removed > 0 {
-                    log::debug!(
-                        "[kalam-link] [{}] Filtered {} stale initial row(s) at from={}",
-                        subscription_id,
-                        removed,
-                        from
-                    );
-                }
+            let removed = seq_tracking::retain_rows_after(&mut rows, from);
+            if removed > 0 {
+                log::debug!(
+                    "[kalam-link] [{}] Filtered {} stale initial row(s) at from={}",
+                    subscription_id,
+                    removed,
+                    from
+                );
             }
 
-            ChangeEvent::InitialDataBatch {
+            Some(ChangeEvent::InitialDataBatch {
                 subscription_id,
                 rows,
                 batch_control,
+            })
+        },
+        ChangeEvent::Insert {
+            subscription_id,
+            mut rows,
+        } => {
+            let removed = seq_tracking::retain_rows_after(&mut rows, from);
+            if removed > 0 {
+                log::debug!(
+                    "[kalam-link] [{}] Filtered {} stale insert row(s) at from={}",
+                    subscription_id,
+                    removed,
+                    from
+                );
+            }
+            if rows.is_empty() {
+                None
+            } else {
+                Some(ChangeEvent::Insert { subscription_id, rows })
             }
         },
-        _ => event,
+        ChangeEvent::Update {
+            subscription_id,
+            mut rows,
+            mut old_rows,
+        } => {
+            let removed_new = seq_tracking::retain_rows_after(&mut rows, from);
+            let removed_old = seq_tracking::retain_rows_after(&mut old_rows, from);
+            let removed = removed_new.max(removed_old);
+            if removed > 0 {
+                log::debug!(
+                    "[kalam-link] [{}] Filtered {} stale update row(s) at from={}",
+                    subscription_id,
+                    removed,
+                    from
+                );
+            }
+            if rows.is_empty() && old_rows.is_empty() {
+                None
+            } else {
+                Some(ChangeEvent::Update {
+                    subscription_id,
+                    rows,
+                    old_rows,
+                })
+            }
+        },
+        ChangeEvent::Delete {
+            subscription_id,
+            mut old_rows,
+        } => {
+            let removed = seq_tracking::retain_rows_after(&mut old_rows, from);
+            if removed > 0 {
+                log::debug!(
+                    "[kalam-link] [{}] Filtered {} stale delete row(s) at from={}",
+                    subscription_id,
+                    removed,
+                    from
+                );
+            }
+            if old_rows.is_empty() {
+                None
+            } else {
+                Some(ChangeEvent::Delete {
+                    subscription_id,
+                    old_rows,
+                })
+            }
+        },
+        _ => Some(event),
+    }
+}
+
+fn resolve_subscription_key(sub_id: &str, subs: &HashMap<String, SubEntry>) -> Option<String> {
+    if subs.contains_key(sub_id) {
+        Some(sub_id.to_string())
+    } else {
+        subs.keys()
+            .find(|client_id| sub_id.ends_with(client_id.as_str()))
+            .cloned()
     }
 }
 
@@ -133,7 +212,7 @@ enum ConnCmd {
         sql: String,
         options: SubscriptionOptions,
         event_tx: mpsc::Sender<Result<ChangeEvent>>,
-        result_tx: oneshot::Sender<Result<u64>>,
+        result_tx: oneshot::Sender<Result<(u64, Option<SeqId>)>>,
     },
     Unsubscribe {
         id: String,
@@ -152,10 +231,12 @@ struct SubEntry {
     options: SubscriptionOptions,
     event_tx: mpsc::Sender<Result<ChangeEvent>>,
     last_seq_id: Option<SeqId>,
+    batch_seq_id: Option<SeqId>,
+    is_loading: bool,
     generation: u64,
     created_at_ms: u64,
     last_event_time_ms: Option<u64>,
-    pending_result_tx: Option<oneshot::Sender<Result<u64>>>,
+    pending_result_tx: Option<oneshot::Sender<Result<(u64, Option<SeqId>)>>>,
 }
 
 // ── SharedConnection (public handle) ────────────────────────────────────────
@@ -239,7 +320,7 @@ impl SharedConnection {
         id: String,
         sql: String,
         options: SubscriptionOptions,
-    ) -> Result<(mpsc::Receiver<Result<ChangeEvent>>, u64)> {
+    ) -> Result<(mpsc::Receiver<Result<ChangeEvent>>, u64, Option<SeqId>)> {
         let (event_tx, event_rx) = mpsc::channel(DEFAULT_EVENT_CHANNEL_CAPACITY);
         let (result_tx, result_rx) = oneshot::channel();
 
@@ -256,13 +337,13 @@ impl SharedConnection {
                 KalamLinkError::WebSocketError("Connection task is not running".to_string())
             })?;
 
-        let generation = result_rx.await.map_err(|_| {
+        let (generation, resume_from) = result_rx.await.map_err(|_| {
             KalamLinkError::WebSocketError(
                 "Connection task died before confirming subscribe".to_string(),
             )
         })??;
 
-        Ok((event_rx, generation))
+        Ok((event_rx, generation, resume_from))
     }
 
     pub async fn unsubscribe(&self, id: &str) -> Result<()> {
@@ -441,30 +522,61 @@ async fn route_event(
     seq_id_cache: &mut HashMap<String, SeqId>,
     _event_handlers: &EventHandlers,
 ) {
-    let sub_id = match event.subscription_id() {
+    let incoming_sub_id = match event.subscription_id() {
         Some(id) => id.to_string(),
         None => return,
     };
-    let resume_from = subs.get(&sub_id).and_then(|entry| entry.options.from);
-    let event = filter_replayed_initial_rows(event, resume_from);
+    let matched_key = resolve_subscription_key(&incoming_sub_id, subs);
+    let resume_from = matched_key
+        .as_ref()
+        .and_then(|key| subs.get(key))
+        .and_then(|entry| entry.options.from);
+    let Some(event) = filter_replayed_rows(event, resume_from) else {
+        return;
+    };
 
     if let ChangeEvent::InitialDataBatch {
         ref batch_control, ..
-    }
-    | ChangeEvent::Ack {
-        ref batch_control, ..
     } = event
     {
-        if let Some(seq_id) = batch_control.last_seq_id {
-            if let Some(entry) = subs.get_mut(&sub_id) {
-                entry.last_seq_id = Some(seq_id);
+        if let Some(key) = matched_key.as_ref() {
+            if let Some(entry) = subs.get_mut(key) {
+                if let Some(seq_id) = batch_control.last_seq_id {
+                    entry.batch_seq_id = Some(seq_id);
+                }
+                entry.is_loading = batch_control.status != crate::models::BatchStatus::Ready;
                 entry.last_event_time_ms = Some(now_ms());
             }
         }
         if batch_control.has_more {
-            let last_seq = subs.get(&sub_id).and_then(|e| e.last_seq_id);
-            if let Err(e) = send_next_batch_request(ws, &sub_id, last_seq).await {
-                log::warn!("Failed to send NextBatch for {}: {}", sub_id, e);
+            let last_seq = matched_key
+                .as_ref()
+                .and_then(|key| subs.get(key))
+                .and_then(|entry| entry.batch_seq_id.or(entry.last_seq_id));
+            if let Err(e) = send_next_batch_request(ws, &incoming_sub_id, last_seq).await {
+                log::warn!("Failed to send NextBatch for {}: {}", incoming_sub_id, e);
+            }
+        }
+    } else if let ChangeEvent::Ack {
+        ref batch_control, ..
+    } = event
+    {
+        if let Some(key) = matched_key.as_ref() {
+            if let Some(entry) = subs.get_mut(key) {
+                if let Some(seq_id) = batch_control.last_seq_id {
+                    entry.batch_seq_id = Some(seq_id);
+                }
+                entry.is_loading = batch_control.status != crate::models::BatchStatus::Ready;
+                entry.last_event_time_ms = Some(now_ms());
+            }
+        }
+        if batch_control.has_more {
+            let last_seq = matched_key
+                .as_ref()
+                .and_then(|key| subs.get(key))
+                .and_then(|entry| entry.batch_seq_id.or(entry.last_seq_id));
+            if let Err(e) = send_next_batch_request(ws, &incoming_sub_id, last_seq).await {
+                log::warn!("Failed to send NextBatch for {}: {}", incoming_sub_id, e);
             }
         }
     }
@@ -475,25 +587,27 @@ async fn route_event(
     // replayed on reconnect.
     match &event {
         ChangeEvent::Insert { ref rows, .. }
-        | ChangeEvent::Update { ref rows, .. }
-        | ChangeEvent::InitialDataBatch { ref rows, .. } => {
-            if let Some(entry) = subs.get_mut(&sub_id) {
-                seq_tracking::track_rows(&mut entry.last_seq_id, rows);
+        | ChangeEvent::Update { ref rows, .. } => {
+            if let Some(key) = matched_key.as_ref() {
+                if let Some(entry) = subs.get_mut(key) {
+                    if !entry.is_loading {
+                        seq_tracking::track_rows(&mut entry.last_seq_id, rows);
+                    }
+                }
             }
         },
+        ChangeEvent::InitialDataBatch { .. } => {},
         ChangeEvent::Delete { ref old_rows, .. } => {
-            if let Some(entry) = subs.get_mut(&sub_id) {
-                seq_tracking::track_rows(&mut entry.last_seq_id, old_rows);
+            if let Some(key) = matched_key.as_ref() {
+                if let Some(entry) = subs.get_mut(key) {
+                    if !entry.is_loading {
+                        seq_tracking::track_rows(&mut entry.last_seq_id, old_rows);
+                    }
+                }
             }
         },
         _ => {},
     }
-
-    let matched_key = if subs.contains_key(&sub_id) {
-        Some(sub_id.clone())
-    } else {
-        subs.keys().find(|cid| sub_id.ends_with(cid.as_str())).cloned()
-    };
 
     if let Some(key) = matched_key {
         let mut remove_after_send = false;
@@ -504,7 +618,7 @@ async fn route_event(
             match &event {
                 _ if subscription_start_ready(&event) => {
                     if let Some(result_tx) = entry.pending_result_tx.take() {
-                        let _ = result_tx.send(Ok(entry.generation));
+                        let _ = result_tx.send(Ok((entry.generation, entry.options.from)));
                     }
                 },
                 ChangeEvent::Error { code, message, .. } => {
@@ -520,7 +634,7 @@ async fn route_event(
             }
 
             if !remove_after_send && entry.event_tx.send(Ok(event)).await.is_err() {
-                log::debug!("Subscription {} receiver dropped", sub_id);
+                log::debug!("Subscription {} receiver dropped", incoming_sub_id);
             }
         }
 
@@ -532,7 +646,7 @@ async fn route_event(
             }
         }
     } else {
-        log::debug!("No subscription found for id: {}", sub_id);
+        log::debug!("No subscription found for id: {}", incoming_sub_id);
     }
 }
 
@@ -699,14 +813,16 @@ async fn connection_task(
                                     sql,
                                     options,
                                     event_tx,
-                                    last_seq_id: inherited_seq,
+                                    last_seq_id: effective_from,
+                                    batch_seq_id: None,
+                                    is_loading: true,
                                     generation: gen,
                                     created_at_ms: now_ms(),
                                     last_event_time_ms: None,
                                     pending_result_tx: Some(result_tx),
                                 });
                             } else {
-                                let _ = result_tx.send(result.map(|()| gen));
+                                let _ = result_tx.send(result.map(|()| (gen, effective_from)));
                             }
                         },
                         Some(ConnCmd::Unsubscribe { id, generation }) => {
@@ -958,7 +1074,9 @@ async fn connection_task(
                                 next_generation += 1;
                                 subs.insert(id, SubEntry {
                                     sql, options, event_tx,
-                                    last_seq_id: inherited_seq,
+                                    last_seq_id: effective_from,
+                                    batch_seq_id: None,
+                                    is_loading: true,
                                     generation: gen,
                                     created_at_ms: now_ms(),
                                     last_event_time_ms: None,

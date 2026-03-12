@@ -239,32 +239,101 @@ impl SubscriptionManager {
         }
     }
 
-    fn filter_replayed_initial_rows(&self, event: ChangeEvent) -> ChangeEvent {
+    fn filter_replayed_rows(&self, event: ChangeEvent) -> Option<ChangeEvent> {
+        let Some(from) = self.resume_from else {
+            return Some(event);
+        };
+
         match event {
             ChangeEvent::InitialDataBatch {
                 subscription_id,
                 mut rows,
                 batch_control,
             } => {
-                if let Some(from) = self.resume_from {
-                    let removed = seq_tracking::retain_rows_after(&mut rows, from);
-                    if removed > 0 {
-                        log::debug!(
-                            "[kalam-link] [{}] Filtered {} stale initial row(s) at from={}",
-                            subscription_id,
-                            removed,
-                            from
-                        );
-                    }
+                let removed = seq_tracking::retain_rows_after(&mut rows, from);
+                if removed > 0 {
+                    log::debug!(
+                        "[kalam-link] [{}] Filtered {} stale initial row(s) at from={}",
+                        subscription_id,
+                        removed,
+                        from
+                    );
                 }
 
-                ChangeEvent::InitialDataBatch {
+                Some(ChangeEvent::InitialDataBatch {
                     subscription_id,
                     rows,
                     batch_control,
+                })
+            },
+            ChangeEvent::Insert {
+                subscription_id,
+                mut rows,
+            } => {
+                let removed = seq_tracking::retain_rows_after(&mut rows, from);
+                if removed > 0 {
+                    log::debug!(
+                        "[kalam-link] [{}] Filtered {} stale insert row(s) at from={}",
+                        subscription_id,
+                        removed,
+                        from
+                    );
+                }
+                if rows.is_empty() {
+                    None
+                } else {
+                    Some(ChangeEvent::Insert { subscription_id, rows })
                 }
             },
-            _ => event,
+            ChangeEvent::Update {
+                subscription_id,
+                mut rows,
+                mut old_rows,
+            } => {
+                let removed_new = seq_tracking::retain_rows_after(&mut rows, from);
+                let removed_old = seq_tracking::retain_rows_after(&mut old_rows, from);
+                let removed = removed_new.max(removed_old);
+                if removed > 0 {
+                    log::debug!(
+                        "[kalam-link] [{}] Filtered {} stale update row(s) at from={}",
+                        subscription_id,
+                        removed,
+                        from
+                    );
+                }
+                if rows.is_empty() && old_rows.is_empty() {
+                    None
+                } else {
+                    Some(ChangeEvent::Update {
+                        subscription_id,
+                        rows,
+                        old_rows,
+                    })
+                }
+            },
+            ChangeEvent::Delete {
+                subscription_id,
+                mut old_rows,
+            } => {
+                let removed = seq_tracking::retain_rows_after(&mut old_rows, from);
+                if removed > 0 {
+                    log::debug!(
+                        "[kalam-link] [{}] Filtered {} stale delete row(s) at from={}",
+                        subscription_id,
+                        removed,
+                        from
+                    );
+                }
+                if old_rows.is_empty() {
+                    None
+                } else {
+                    Some(ChangeEvent::Delete {
+                        subscription_id,
+                        old_rows,
+                    })
+                }
+            },
+            _ => Some(event),
         }
     }
 
@@ -277,7 +346,9 @@ impl SubscriptionManager {
     /// Buffer incoming events: hold live changes while initial data is loading,
     /// then flush them in order once the snapshot is complete.
     fn apply_buffering(&mut self, event: ChangeEvent) {
-        let event = self.filter_replayed_initial_rows(event);
+        let Some(event) = self.filter_replayed_rows(event) else {
+            return;
+        };
 
         match event {
             ChangeEvent::Ack {

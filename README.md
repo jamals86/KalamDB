@@ -2,15 +2,28 @@
   <img src="docs/images/kalamdb_logo.png" alt="KalamDB logo" width="260" />
 </p>
 
-[![Rust](https://img.shields.io/badge/rust-1.92%2B-orange.svg)](https://www.rust-lang.org/)
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
-[![CI](https://github.com/jamals86/KalamDB/actions/workflows/ci.yml/badge.svg)](https://github.com/jamals86/KalamDB/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/jamals86/KalamDB/main/.github/badges/tests.json)](https://github.com/jamals86/KalamDB/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/jamals86/KalamDB?display_name=tag)](https://github.com/jamals86/KalamDB/releases)
-[![Docker Pulls](https://img.shields.io/docker/pulls/jamals86/kalamdb)](https://hub.docker.com/r/jamals86/kalamdb)
+<p align="center">
+  <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/rust-1.92%2B-orange.svg" alt="Rust" /></a>
+  <a href="https://www.apache.org/licenses/LICENSE-2.0"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License" /></a>
+  <a href="https://github.com/jamals86/KalamDB/actions/workflows/ci.yml"><img src="https://github.com/jamals86/KalamDB/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://github.com/jamals86/KalamDB/actions/workflows/ci.yml"><img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/jamals86/KalamDB/main/.github/badges/tests.json" alt="Tests" /></a>
+  <a href="https://github.com/jamals86/KalamDB/releases"><img src="https://img.shields.io/github/v/release/jamals86/KalamDB?display_name=tag" alt="Release" /></a>
+  <a href="https://hub.docker.com/r/jamals86/kalamdb"><img src="https://img.shields.io/docker/pulls/jamals86/kalamdb" alt="Docker Pulls" /></a>
+</p>
+
+<p align="center"><strong>SDKs</strong></p>
+
+<p align="center">
+  <a href="https://github.com/jamals86/KalamDB/actions/workflows/release.yml"><img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/jamals86/KalamDB/main/.github/badges/sdk-typescript-tests.json" alt="TypeScript SDK Tests" /></a>
+  <a href="https://github.com/jamals86/KalamDB/actions/workflows/release.yml"><img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/jamals86/KalamDB/main/.github/badges/sdk-dart-tests.json" alt="Dart SDK Tests" /></a>
+  <a href="https://www.npmjs.com/package/kalam-link"><img src="https://img.shields.io/npm/v/kalam-link?label=typescript%20sdk" alt="TypeScript SDK" /></a>
+  <a href="https://pub.dev/packages/kalam_link"><img src="https://img.shields.io/pub/v/kalam_link?label=dart%20sdk" alt="Dart SDK" /></a>
+</p>
 
 KalamDB is a SQL-first realtime state database for AI agents, chat products, and multi-tenant SaaS.
 It combines SQL execution, live subscriptions, pub/sub streams, and hot/cold storage in one Rust runtime.
+
+Supported SDKs: [TypeScript/JavaScript](https://www.npmjs.com/package/kalam-link) and [Dart/Flutter](https://pub.dev/packages/kalam_link).
 
 > Frontend clients can execute SQL directly against KalamDB. This is not only a backend database layer.
 
@@ -26,13 +39,15 @@ This is what lets chat UIs and agent apps read/write state directly and receive 
 
 ## Why KalamDB
 
-- SQL-first developer model with realtime primitives.
-- Per-user isolation by default for tenant boundaries and privacy.
-- Built-in live subscriptions over WebSocket.
-- Topics + pub/sub streams with consumer groups.
-- Hot/cold architecture: RocksDB (active writes) + Parquet/object storage (history and analytics).
-- Multi-Raft clustering for replication and failover.
-- Production tooling: Admin UI (SQL Studio + live streams), `kalam` CLI, official TypeScript SDK.
+- Frontend-direct SQL and realtime subscriptions, so web and mobile apps can read, write, and stay in sync without a separate sync layer.
+- Multi-tenant isolation by default, with the same SQL returning user-scoped data safely across frontend and backend clients.
+- Built-in authentication and authorization with Basic auth, JWT, OAuth 2.0 (Google Workspace, GitHub, Azure AD), and RBAC.
+- Unified application primitives: SQL tables, live queries, pub/sub topics, consumer groups, and file attachments in one runtime.
+- Hybrid storage engine tuned for product workloads: RocksDB for fast active writes, Parquet for compressed historical storage and analytics.
+- Portable object storage support across filesystem, S3, GCS, and Azure backends.
+- Vector embeddings and vector search workflows for semantic retrieval, agent memory, and AI-powered product features.
+- Distributed clustering with Multi-Raft replication and failover for resilient production deployments.
+- First-party tooling for operators and app teams: Admin UI, `kalam` CLI, and official TypeScript and Dart SDKs.
 
 ## 60-Second Quick Start (Docker)
 

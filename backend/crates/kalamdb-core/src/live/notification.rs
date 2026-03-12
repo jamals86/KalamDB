@@ -62,10 +62,17 @@ fn apply_projections<'a>(row: &'a Row, projections: &Option<Arc<Vec<String>>>) -
     match projections {
         None => Cow::Borrowed(row),
         Some(cols) => {
-            let filtered_values: BTreeMap<String, ScalarValue> = cols
+            let mut filtered_values: BTreeMap<String, ScalarValue> = cols
                 .iter()
                 .filter_map(|col| row.values.get(col).map(|v| (col.clone(), v.clone())))
                 .collect();
+
+            if let Some(seq_value) = row.values.get(SystemColumnNames::SEQ) {
+                filtered_values
+                    .entry(SystemColumnNames::SEQ.to_string())
+                    .or_insert_with(|| seq_value.clone());
+            }
+
             Cow::Owned(Row::new(filtered_values))
         },
     }
@@ -720,19 +727,39 @@ impl NotificationService {
                     //   (avoids ScalarValue→JSON re-conversion)
                     let subscriber_row_json = match &handle.projections {
                         None => (*row_json).clone(),
-                        Some(cols) => cols
-                            .iter()
-                            .filter_map(|col| row_json.get(col).map(|v| (col.clone(), v.clone())))
-                            .collect(),
+                        Some(cols) => {
+                            let mut projected: std::collections::HashMap<_, _> = cols
+                                .iter()
+                                .filter_map(|col| {
+                                    row_json.get(col).map(|v| (col.clone(), v.clone()))
+                                })
+                                .collect();
+                            if let Some(seq_value) = row_json.get(SystemColumnNames::SEQ) {
+                                projected
+                                    .entry(SystemColumnNames::SEQ.to_string())
+                                    .or_insert_with(|| seq_value.clone());
+                            }
+                            projected
+                        },
                     };
 
                     let subscriber_old_json =
                         old_json.as_ref().map(|oj| match &handle.projections {
                             None => (**oj).clone(),
-                            Some(cols) => cols
-                                .iter()
-                                .filter_map(|col| oj.get(col).map(|v| (col.clone(), v.clone())))
-                                .collect(),
+                            Some(cols) => {
+                                let mut projected: std::collections::HashMap<_, _> = cols
+                                    .iter()
+                                    .filter_map(|col| {
+                                        oj.get(col).map(|v| (col.clone(), v.clone()))
+                                    })
+                                    .collect();
+                                if let Some(seq_value) = oj.get(SystemColumnNames::SEQ) {
+                                    projected
+                                        .entry(SystemColumnNames::SEQ.to_string())
+                                        .or_insert_with(|| seq_value.clone());
+                                }
+                                projected
+                            },
                         });
 
                     // Build notification with per-subscriber subscription_id
@@ -952,12 +979,62 @@ mod tests {
                 assert_eq!(payload.len(), 1);
                 assert!(payload[0].contains_key("id"));
                 assert!(!payload[0].contains_key("body"));
-                assert!(!payload[0].contains_key(SystemColumnNames::SEQ));
+                assert!(payload[0].contains_key(SystemColumnNames::SEQ));
             },
             _ => panic!("expected change notification"),
         }
 
         assert!(rx_skip.try_recv().is_err(), "filtered subscriber should not receive");
+    }
+
+    #[tokio::test]
+    async fn test_notify_forwarded_user_table_projection_keeps_seq() {
+        let registry = ConnectionsManager::new(
+            NodeId::new(1),
+            Duration::from_secs(30),
+            Duration::from_secs(10),
+            Duration::from_secs(5),
+        );
+        let service = NotificationService::new(Arc::clone(&registry));
+
+        let user_id = UserId::new("user-proj");
+        let table_id = make_table_id("default", "events");
+        let conn_id = ConnectionId::new("c-user-1");
+        let live_id = LiveQueryId::new(user_id.clone(), conn_id.clone(), "sub_user".to_string());
+
+        let (tx, mut rx) = mpsc::channel(8);
+        let flow = Arc::new(SubscriptionFlowControl::new());
+        flow.mark_initial_complete();
+
+        registry.index_subscription(
+            &user_id,
+            &conn_id,
+            live_id,
+            table_id.clone(),
+            make_shared_handle(Arc::new(tx), flow, None, Some(vec!["id"])),
+        );
+
+        let change = ChangeNotification::insert(table_id.clone(), make_row(42, "hello", 42));
+        service.notify_forwarded(user_id, table_id, change).await;
+
+        let delivered = rx.recv().await.expect("projected subscriber gets message");
+        match delivered.as_ref() {
+            Notification::Change {
+                subscription_id,
+                rows,
+                old_values,
+                ..
+            } => {
+                assert_eq!(subscription_id, "sub_user");
+                assert!(old_values.is_none());
+                let payload = rows.as_ref().expect("rows present for insert");
+                assert_eq!(payload.len(), 1);
+                assert!(payload[0].contains_key("id"));
+                assert!(!payload[0].contains_key("body"));
+                assert!(payload[0].contains_key(SystemColumnNames::SEQ));
+            },
+            _ => panic!("expected change notification"),
+        }
     }
 
     #[tokio::test]

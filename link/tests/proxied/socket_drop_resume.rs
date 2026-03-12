@@ -73,6 +73,7 @@ async fn test_shared_connection_auto_reconnects_after_socket_drop_and_resumes() 
 
     let mut pre_seen = Vec::<String>::new();
     let mut observed_seq = None;
+    let mut last_pre_event = None;
     for _ in 0..12 {
         if pre_seen.iter().any(|id| id == pre_id) {
             break;
@@ -80,6 +81,7 @@ async fn test_shared_connection_auto_reconnects_after_socket_drop_and_resumes() 
 
         match timeout(Duration::from_millis(1200), sub.next()).await {
             Ok(Some(Ok(ev))) => {
+                last_pre_event = Some(format!("{:?}", ev));
                 collect_ids_and_track_seq(
                     &ev,
                     &mut pre_seen,
@@ -99,6 +101,12 @@ async fn test_shared_connection_auto_reconnects_after_socket_drop_and_resumes() 
         "pre row should be observed before drop"
     );
     let resume_from = query_max_seq(&writer, &table).await;
+    assert_eq!(
+        observed_seq,
+        Some(resume_from),
+        "pre-drop live insert should expose _seq to the client before checking shared state; last event: {:?}",
+        last_pre_event
+    );
     let subs = client.subscriptions().await;
     let tracked_seq = subs
         .iter()

@@ -76,7 +76,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Read version and set outputs
         id: version
@@ -105,7 +105,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -113,7 +113,7 @@ jobs:
           toolchain: ${{ env.RUST_VERSION }}
 
       - name: Setup Node 20
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 20
 
@@ -180,7 +180,7 @@ jobs:
           cp target/license/THIRD_PARTY_LICENSES.md "dist/$VERSION/THIRD_PARTY_LICENSES.md"
 
       - name: Upload license artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: dist-licenses
           path: |
@@ -195,7 +195,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -210,7 +210,7 @@ jobs:
           cache-on-failure: true
 
       - name: Setup Node 20
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 20
 
@@ -239,7 +239,7 @@ jobs:
           npm run build
 
       - name: Upload UI dist
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ui-dist
           path: ui/dist/
@@ -252,7 +252,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -296,7 +296,7 @@ jobs:
           (cd "dist/$VERSION" && tar -czf "$CLI_OUT.tar.gz" "$CLI_OUT")
 
       - name: Upload CLI artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: dist-cli-linux-x86_64
           path: dist/${{ needs.read_version.outputs.version }}/*.tar.gz
@@ -309,7 +309,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -367,7 +367,7 @@ jobs:
           (cd "dist/$VERSION" && zip -q "${CLI_OUT%.exe}.zip" "$CLI_OUT" *.dll 2>/dev/null || zip -q "${CLI_OUT%.exe}.zip" "$CLI_OUT")
 
       - name: Upload CLI artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: dist-cli-windows-x86_64
           path: dist/${{ needs.read_version.outputs.version }}/*.zip
@@ -380,7 +380,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -423,7 +423,7 @@ jobs:
           (cd "dist/$VERSION" && tar -czf "$CLI_OUT.tar.gz" "$CLI_OUT")
 
       - name: Upload CLI artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: dist-cli-macos-arm
           path: dist/${{ needs.read_version.outputs.version }}/*.tar.gz
@@ -439,7 +439,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Determine platforms
         id: vars
@@ -527,7 +527,7 @@ jobs:
 
       - name: Upload artifacts
         if: ${{ steps.vars.outputs.build_linux == 'true' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: dist-linux-x86_64
           path: dist/${{ needs.read_version.outputs.version }}/*
@@ -543,7 +543,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set build flags
         id: vars
@@ -616,7 +616,7 @@ jobs:
 
       - name: Upload artifacts
         if: ${{ steps.vars.outputs.build_linux_arm == 'true' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: dist-linux-aarch64
           path: dist/${{ needs.read_version.outputs.version }}/*
@@ -629,7 +629,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -672,7 +672,7 @@ jobs:
           (cd "dist/$VERSION" && tar -czf "$CLI_OUT.tar.gz" "$CLI_OUT")
 
       - name: Upload CLI artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: dist-cli-linux-aarch64
           path: dist/${{ needs.read_version.outputs.version }}/*.tar.gz
@@ -688,7 +688,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Determine platforms
         id: vars
@@ -789,7 +789,7 @@ jobs:
 
       - name: Upload artifacts
         if: ${{ steps.vars.outputs.build_windows == 'true' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: dist-windows-x86_64
           path: dist/${{ needs.read_version.outputs.version }}/*
@@ -805,7 +805,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Determine platforms
         id: vars
@@ -930,7 +930,7 @@ jobs:
 
       - name: Upload artifacts (macos arm)
         if: ${{ steps.vars.outputs.build_macos == 'true' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: dist-macos-arm
           path: dist/${{ needs.read_version.outputs.version }}/*
@@ -950,7 +950,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Download server binary
         uses: actions/download-artifact@v4
@@ -1060,7 +1060,7 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: smoke-test-results
           path: |
@@ -1101,9 +1101,9 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
-      - name: Update README latest release
+      - name: Update README release metadata
         shell: bash
         run: |
           set -euo pipefail
@@ -1114,15 +1114,34 @@ jobs:
 
           sed -i "s/^\*\*Latest release:\*\* .*/**Latest release:** ${TAG}/" README.md
 
-          if git diff --quiet; then
-            echo "README already up to date"
+          mkdir -p .github/badges
+          cat > .github/badges/sdk-typescript-tests.json <<EOF
+          {
+            "schemaVersion": 1,
+            "label": "typescript sdk tests",
+            "message": "${{ needs.sdk_tests_typescript.outputs.message }}",
+            "color": "${{ needs.sdk_tests_typescript.outputs.color }}"
+          }
+          EOF
+
+          cat > .github/badges/sdk-dart-tests.json <<EOF
+          {
+            "schemaVersion": 1,
+            "label": "dart sdk tests",
+            "message": "${{ needs.sdk_tests_dart.outputs.message }}",
+            "color": "${{ needs.sdk_tests_dart.outputs.color }}"
+          }
+          EOF
+
+          if git diff --quiet -- README.md .github/badges/sdk-typescript-tests.json .github/badges/sdk-dart-tests.json; then
+            echo "README and SDK badges already up to date"
             exit 0
           fi
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add README.md
-          git commit -m "docs: update latest release"
+          git add README.md .github/badges/sdk-typescript-tests.json .github/badges/sdk-dart-tests.json
+          git commit -m "docs: update release metadata"
           git push origin main
 
       - name: Download all artifacts
@@ -1180,7 +1199,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set Docker repo
         id: vars
@@ -1334,11 +1353,17 @@ jobs:
     needs:
       - build_linux_x86_64
       - read_version
+    outputs:
+      total: ${{ steps.parse_typescript_badge.outputs.total }}
+      passed: ${{ steps.parse_typescript_badge.outputs.passed }}
+      failed: ${{ steps.parse_typescript_badge.outputs.failed }}
+      message: ${{ steps.parse_typescript_badge.outputs.message }}
+      color: ${{ steps.parse_typescript_badge.outputs.color }}
     continue-on-error: true
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Download server binary
         uses: actions/download-artifact@v4
@@ -1366,7 +1391,7 @@ jobs:
           cache-on-failure: true
 
       - name: Setup Node 20
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 20
 
@@ -1407,6 +1432,8 @@ jobs:
           echo "❌ Timed out"; cat ts-sdk-server.log; exit 1
 
       - name: Run TypeScript SDK tests (offline + serial e2e)
+        id: run_typescript_tests
+        continue-on-error: true
         shell: bash
         working-directory: link/sdks/typescript
         env:
@@ -1419,7 +1446,46 @@ jobs:
           # test.sh builds the SDK, runs the offline Node suite, then runs the
           # live e2e files serially to avoid auth rate-limit flakes in CI.
           chmod +x ./test.sh
-          ./test.sh
+          ./test.sh 2>&1 | tee ../../../ts-sdk-test-output.txt
+
+      - name: Parse TypeScript SDK test counts
+        if: always()
+        id: parse_typescript_badge
+        shell: bash
+        env:
+          STEP_OUTCOME: ${{ steps.run_typescript_tests.outcome }}
+        run: |
+          set -euo pipefail
+          python3 <<'PYTHON'
+          import os
+          import re
+          from pathlib import Path
+
+          output_path = Path("ts-sdk-test-output.txt")
+          text = output_path.read_text(encoding="utf-8", errors="replace") if output_path.exists() else ""
+
+          total = sum(int(value) for value in re.findall(r"^# tests (\d+)$", text, flags=re.MULTILINE))
+          passed = sum(int(value) for value in re.findall(r"^# pass (\d+)$", text, flags=re.MULTILINE))
+          failed = sum(int(value) for value in re.findall(r"^# fail (\d+)$", text, flags=re.MULTILINE))
+          outcome = os.environ.get("STEP_OUTCOME", "failure")
+
+          if total == 0 and outcome == "success":
+              message = "passed"
+              color = "brightgreen"
+          elif total == 0:
+              message = "failed"
+              color = "red"
+          else:
+              message = f"{passed}/{total} passed" if failed == 0 and outcome == "success" else f"{passed}/{total} passed, {failed} failed"
+              color = "brightgreen" if failed == 0 and outcome == "success" else "red"
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+              handle.write(f"total={total}\n")
+              handle.write(f"passed={passed}\n")
+              handle.write(f"failed={failed}\n")
+              handle.write(f"message={message}\n")
+              handle.write(f"color={color}\n")
+          PYTHON
 
       - name: Stop server
         if: always()
@@ -1429,7 +1495,7 @@ jobs:
 
       - name: Upload server log
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ts-sdk-server-log
           path: ts-sdk-server.log
@@ -1441,11 +1507,17 @@ jobs:
     needs:
       - build_linux_x86_64
       - read_version
+    outputs:
+      total: ${{ steps.parse_dart_badge.outputs.total }}
+      passed: ${{ steps.parse_dart_badge.outputs.passed }}
+      failed: ${{ steps.parse_dart_badge.outputs.failed }}
+      message: ${{ steps.parse_dart_badge.outputs.message }}
+      color: ${{ steps.parse_dart_badge.outputs.color }}
     continue-on-error: true
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Download server binary
         uses: actions/download-artifact@v4
@@ -1495,6 +1567,8 @@ jobs:
           echo "❌ Timed out"; cat dart-sdk-server.log; exit 1
 
       - name: Run Dart SDK tests
+        id: run_dart_tests
+        continue-on-error: true
         shell: bash
         working-directory: link/sdks/dart
         env:
@@ -1503,8 +1577,96 @@ jobs:
           KALAM_PASS: "kalamdb123"
         run: |
           set -euo pipefail
-          chmod +x ./test.sh
-          ./test.sh
+          flutter pub get
+
+          BRIDGE_DIR="$PWD/../../kalam-link-dart"
+          (
+            cd "$BRIDGE_DIR"
+            CARGO_TARGET_DIR="$BRIDGE_DIR/target" cargo build --release
+          )
+
+          flutter analyze
+
+          flutter test --machine test/models_test.dart | tee ../../../dart-sdk-models-machine.jsonl
+
+          export KALAM_INTEGRATION_TEST=1
+          flutter test --machine \
+            test/e2e/auth/auth_test.dart \
+            test/e2e/query/query_test.dart \
+            test/e2e/ddl/ddl_test.dart \
+            test/e2e/lifecycle/lifecycle_test.dart \
+            test/e2e/health/health_test.dart \
+            test/e2e/subscription/subscription_test.dart | tee ../../../dart-sdk-e2e-machine.jsonl
+
+      - name: Parse Dart SDK test counts
+        if: always()
+        id: parse_dart_badge
+        shell: bash
+        env:
+          STEP_OUTCOME: ${{ steps.run_dart_tests.outcome }}
+        run: |
+          set -euo pipefail
+          python3 <<'PYTHON'
+          import json
+          import os
+          from pathlib import Path
+
+          hidden = {}
+          total = 0
+          passed = 0
+          failed = 0
+
+          for path_str in ("dart-sdk-models-machine.jsonl", "dart-sdk-e2e-machine.jsonl"):
+              path = Path(path_str)
+              if not path.exists():
+                  continue
+
+              for raw_line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+                  line = raw_line.strip()
+                  if not line:
+                      continue
+
+                  try:
+                      event = json.loads(line)
+                  except json.JSONDecodeError:
+                      continue
+
+                  event_type = event.get("type")
+                  if event_type == "testStart":
+                      test_info = event.get("test", {})
+                      test_id = test_info.get("id")
+                      if test_id is not None:
+                          hidden[test_id] = bool(test_info.get("hidden", False))
+                  elif event_type == "testDone":
+                      test_id = event.get("testID")
+                      if hidden.get(test_id, False):
+                          continue
+
+                      total += 1
+                      result = event.get("result")
+                      if result == "success":
+                          passed += 1
+                      elif result in {"failure", "error"}:
+                          failed += 1
+
+          outcome = os.environ.get("STEP_OUTCOME", "failure")
+          if total == 0 and outcome == "success":
+              message = "passed"
+              color = "brightgreen"
+          elif total == 0:
+            message = "failed"
+            color = "red"
+          else:
+            message = f"{passed}/{total} passed" if failed == 0 and outcome == "success" else f"{passed}/{total} passed, {failed} failed"
+            color = "brightgreen" if failed == 0 and outcome == "success" else "red"
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+            handle.write(f"total={total}\n")
+            handle.write(f"passed={passed}\n")
+            handle.write(f"failed={failed}\n")
+            handle.write(f"message={message}\n")
+            handle.write(f"color={color}\n")
+          PYTHON
 
       - name: Stop server
         if: always()
@@ -1514,7 +1676,7 @@ jobs:
 
       - name: Upload server log
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: dart-sdk-server-log
           path: dart-sdk-server.log
@@ -1531,10 +1693,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
@@ -1582,7 +1744,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
