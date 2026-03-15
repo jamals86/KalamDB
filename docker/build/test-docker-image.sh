@@ -105,7 +105,7 @@ main() {
     
     # Test 3: Check binary existence
     log_info "Test 3: Checking binaries inside container..."
-    docker exec "$CONTAINER_NAME" /bin/sh -c "test -x /usr/local/bin/kalamdb-server" &>/dev/null
+    docker exec "$CONTAINER_NAME" /usr/local/bin/busybox sh -c "test -x /usr/local/bin/kalamdb-server" &>/dev/null
     if [ $? -eq 0 ]; then
         log_info "✓ Server binary exists and is executable"
     else
