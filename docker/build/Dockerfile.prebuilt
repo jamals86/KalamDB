@@ -17,7 +17,32 @@ COPY backend/server.example.toml /runtime/config/server.toml
 RUN sed -i 's|data_path = "\./data"|data_path = "/data"|g' /runtime/config/server.toml
 
 # Distroless runtime keeps the final image smaller and reduces the attack surface.
-FROM gcr.io/distroless/cc-debian12:nonroot
+# Debian 13 provides a newer glibc that matches the release-built Linux binaries.
+FROM gcr.io/distroless/cc-debian13:nonroot
+
+ARG OCI_IMAGE_TITLE="KalamDB"
+ARG OCI_IMAGE_DESCRIPTION="SQL-first realtime state database for AI agents, chat products, and multi-tenant SaaS"
+ARG OCI_IMAGE_URL="https://kalamdb.org"
+ARG OCI_IMAGE_SOURCE="https://github.com/jamals86/KalamDB"
+ARG OCI_IMAGE_DOCUMENTATION="https://kalamdb.org/docs"
+ARG OCI_IMAGE_VENDOR="KalamDB"
+ARG OCI_IMAGE_AUTHORS="Jamal Saad"
+ARG OCI_IMAGE_LICENSES="Apache-2.0"
+ARG OCI_IMAGE_VERSION="dev"
+ARG OCI_IMAGE_REVISION="unknown"
+ARG OCI_IMAGE_CREATED="unknown"
+
+LABEL org.opencontainers.image.title="${OCI_IMAGE_TITLE}" \
+    org.opencontainers.image.description="${OCI_IMAGE_DESCRIPTION}" \
+    org.opencontainers.image.url="${OCI_IMAGE_URL}" \
+    org.opencontainers.image.source="${OCI_IMAGE_SOURCE}" \
+    org.opencontainers.image.documentation="${OCI_IMAGE_DOCUMENTATION}" \
+    org.opencontainers.image.vendor="${OCI_IMAGE_VENDOR}" \
+    org.opencontainers.image.authors="${OCI_IMAGE_AUTHORS}" \
+    org.opencontainers.image.licenses="${OCI_IMAGE_LICENSES}" \
+    org.opencontainers.image.version="${OCI_IMAGE_VERSION}" \
+    org.opencontainers.image.revision="${OCI_IMAGE_REVISION}" \
+    org.opencontainers.image.created="${OCI_IMAGE_CREATED}"
 
 # Copy pre-built binaries from build context (provided via --build-context binaries=...)
 # The build context should contain kalamdb-server and kalam binaries

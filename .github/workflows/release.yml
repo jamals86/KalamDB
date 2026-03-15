@@ -1208,6 +1208,8 @@ jobs:
           set -euo pipefail
           VERSION="${{ needs.read_version.outputs.version }}"
           DOCKER_REPO="${DOCKER_REPO_INPUT:-}"
+          DOCKER_IMAGE_SOURCE="https://github.com/${{ github.repository }}"
+          DOCKER_IMAGE_CREATED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           if [[ -z "$DOCKER_REPO" ]]; then
             DOCKER_REPO="jamals86/kalamdb"
           fi
@@ -1220,6 +1222,8 @@ jobs:
           DOCKER_VERSION_COMMIT_TAG="${VERSION}-h${SHORT_SHA}"
           echo "docker_repo=$DOCKER_REPO" >> "$GITHUB_OUTPUT"
           echo "docker_version_commit_tag=$DOCKER_VERSION_COMMIT_TAG" >> "$GITHUB_OUTPUT"
+          echo "docker_image_source=$DOCKER_IMAGE_SOURCE" >> "$GITHUB_OUTPUT"
+          echo "docker_image_created=$DOCKER_IMAGE_CREATED" >> "$GITHUB_OUTPUT"
 
       - name: Download pre-built artifacts (x86_64)
         uses: actions/download-artifact@v4
@@ -1302,6 +1306,16 @@ jobs:
           platforms: linux/amd64
           build-contexts: |
             binaries=binaries-amd64
+          build-args: |
+            OCI_IMAGE_VERSION=${{ needs.read_version.outputs.version }}
+            OCI_IMAGE_REVISION=${{ github.sha }}
+            OCI_IMAGE_CREATED=${{ steps.vars.outputs.docker_image_created }}
+            OCI_IMAGE_SOURCE=${{ steps.vars.outputs.docker_image_source }}
+            OCI_IMAGE_URL=https://kalamdb.org
+            OCI_IMAGE_DOCUMENTATION=https://kalamdb.org/docs
+            OCI_IMAGE_AUTHORS=Jamal Saad
+            OCI_IMAGE_VENDOR=KalamDB
+            OCI_IMAGE_LICENSES=Apache-2.0
           tags: |
             ${{ steps.vars.outputs.docker_repo }}:${{ needs.read_version.outputs.version }}-amd64
 
@@ -1328,6 +1342,16 @@ jobs:
           platforms: linux/arm64
           build-contexts: |
             binaries=binaries-arm64
+          build-args: |
+            OCI_IMAGE_VERSION=${{ needs.read_version.outputs.version }}
+            OCI_IMAGE_REVISION=${{ github.sha }}
+            OCI_IMAGE_CREATED=${{ steps.vars.outputs.docker_image_created }}
+            OCI_IMAGE_SOURCE=${{ steps.vars.outputs.docker_image_source }}
+            OCI_IMAGE_URL=https://kalamdb.org
+            OCI_IMAGE_DOCUMENTATION=https://kalamdb.org/docs
+            OCI_IMAGE_AUTHORS=Jamal Saad
+            OCI_IMAGE_VENDOR=KalamDB
+            OCI_IMAGE_LICENSES=Apache-2.0
           tags: |
             ${{ steps.vars.outputs.docker_repo }}:${{ needs.read_version.outputs.version }}-arm64
 
