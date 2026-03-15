@@ -1206,11 +1206,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          VERSION="${{ needs.read_version.outputs.version }}"
           DOCKER_REPO="${DOCKER_REPO_INPUT:-}"
           if [[ -z "$DOCKER_REPO" ]]; then
             DOCKER_REPO="jamals86/kalamdb"
           fi
+          SHORT_SHA="${GITHUB_SHA:-}"
+          if [[ -n "$SHORT_SHA" ]]; then
+            SHORT_SHA="${SHORT_SHA:0:7}"
+          else
+            SHORT_SHA="$(git rev-parse --short=7 HEAD)"
+          fi
+          DOCKER_VERSION_COMMIT_TAG="${VERSION}-h${SHORT_SHA}"
           echo "docker_repo=$DOCKER_REPO" >> "$GITHUB_OUTPUT"
+          echo "docker_version_commit_tag=$DOCKER_VERSION_COMMIT_TAG" >> "$GITHUB_OUTPUT"
 
       - name: Download pre-built artifacts (x86_64)
         uses: actions/download-artifact@v4
@@ -1328,9 +1337,15 @@ jobs:
           set -euo pipefail
           REPO="${{ steps.vars.outputs.docker_repo }}"
           VERSION="${{ needs.read_version.outputs.version }}"
+          VERSION_COMMIT_TAG="${{ steps.vars.outputs.docker_version_commit_tag }}"
 
           # Create manifest for versioned tag
           docker buildx imagetools create -t "${REPO}:${VERSION}" \
+            "${REPO}:${VERSION}-amd64" \
+            "${REPO}:${VERSION}-arm64"
+
+          # Create manifest for version + commit tag
+          docker buildx imagetools create -t "${REPO}:${VERSION_COMMIT_TAG}" \
             "${REPO}:${VERSION}-amd64" \
             "${REPO}:${VERSION}-arm64"
 
@@ -1339,7 +1354,7 @@ jobs:
             "${REPO}:${VERSION}-amd64" \
             "${REPO}:${VERSION}-arm64"
 
-          echo "✅ Multi-arch manifest created for ${REPO}:${VERSION} and ${REPO}:latest"
+          echo "✅ Multi-arch manifest created for ${REPO}:${VERSION}, ${REPO}:${VERSION_COMMIT_TAG}, and ${REPO}:latest"
 
   # ═══════════════════════════════════════════════════════════════════════════
   # INTEGRATION TESTS - Smoke + TypeScript SDK + Dart SDK against Docker image

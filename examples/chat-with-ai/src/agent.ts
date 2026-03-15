@@ -13,7 +13,7 @@ const STREAM_DELAY_MS = 80;
 const STREAM_CHUNK_SIZE = 18;
 
 const TOPIC_NAME = 'chat_demo.ai_inbox';
-const CONSUMER_GROUP = 'chat-ai-agent';
+const CONSUMER_GROUP = process.env.KALAMDB_GROUP ?? 'chat-ai-agent';
 const CONSUMER_START = 'earliest';
 
 type StartAgentOptions = {
@@ -46,10 +46,6 @@ function sqlLiteral(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
 }
 
-function buildExecuteAsUser(targetUsername: string, statement: string): string {
-  return `EXECUTE AS USER '${assertValidUsername(targetUsername)}' (${statement})`;
-}
-
 async function emitEvent(
   client: ReturnType<typeof createClient>,
   room: string,
@@ -64,8 +60,7 @@ async function emitEvent(
     `VALUES (${sqlLiteral(responseId)}, ${sqlLiteral(room)}, ${sqlLiteral(senderUsername)}, ${sqlLiteral(stage)}, ${sqlLiteral(preview)}, ${sqlLiteral(message)})`,
   ].join(' ');
 
-  //TODO: We can use client.executeAsUser instead
-  await client.query(buildExecuteAsUser(senderUsername, statement));
+  await client.executeAsUser(statement, assertValidUsername(senderUsername));
 }
 
 async function insertAssistantMessage(
@@ -79,7 +74,7 @@ async function insertAssistantMessage(
     `VALUES (${sqlLiteral(room)}, 'assistant', 'KalamDB Copilot', ${sqlLiteral(senderUsername)}, ${sqlLiteral(reply)})`,
   ].join(' ');
 
-  await client.query(buildExecuteAsUser(senderUsername, statement));
+  await client.executeAsUser(statement, assertValidUsername(senderUsername));
 }
 
 export function buildReply(content: string): string {
