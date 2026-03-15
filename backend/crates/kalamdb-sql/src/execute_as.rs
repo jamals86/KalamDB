@@ -53,10 +53,8 @@ pub fn extract_inner_sql(sql: &str) -> Option<String> {
         return None;
     }
 
-    // Find the opening parenthesis that wraps the inner SQL
     let open_paren = trimmed.find('(')?;
-    // Find the matching closing parenthesis (last ')' in the string)
-    let close_paren = trimmed.rfind(')')?;
+    let close_paren = find_matching_close_paren(trimmed, open_paren)?;
     if close_paren <= open_paren + 1 {
         return None;
     }
@@ -67,6 +65,87 @@ pub fn extract_inner_sql(sql: &str) -> Option<String> {
     }
 
     Some(inner.to_string())
+}
+
+fn parse_single_quoted(input: &str) -> Result<(String, &str), String> {
+    let mut value = String::new();
+    let mut chars = input.char_indices().peekable();
+
+    if !input.starts_with('\'') {
+        return Err("Expected single-quoted string".to_string());
+    }
+
+    chars.next();
+
+    while let Some((idx, ch)) = chars.next() {
+        if ch != '\'' {
+            value.push(ch);
+            continue;
+        }
+
+        if matches!(chars.peek(), Some((_, '\''))) {
+            chars.next();
+            value.push('\'');
+            continue;
+        }
+
+        return Ok((value, &input[idx + 1..]));
+    }
+
+    Err("EXECUTE AS USER username quote was not closed".to_string())
+}
+
+fn find_matching_close_paren(input: &str, open_idx: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut in_single_quote = false;
+    let mut in_double_quote = false;
+    let mut chars = input.char_indices().peekable();
+
+    while let Some((idx, ch)) = chars.next() {
+        if idx < open_idx {
+            continue;
+        }
+
+        if in_single_quote {
+            if ch == '\'' {
+                if matches!(chars.peek(), Some((_, '\''))) {
+                    chars.next();
+                } else {
+                    in_single_quote = false;
+                }
+            }
+            continue;
+        }
+
+        if in_double_quote {
+            if ch == '"' {
+                if matches!(chars.peek(), Some((_, '"'))) {
+                    chars.next();
+                } else {
+                    in_double_quote = false;
+                }
+            }
+            continue;
+        }
+
+        match ch {
+            '\'' => in_single_quote = true,
+            '"' => in_double_quote = true,
+            '(' => depth += 1,
+            ')' => {
+                if depth == 0 {
+                    return None;
+                }
+                depth -= 1;
+                if depth == 0 {
+                    return Some(idx);
+                }
+            },
+            _ => {},
+        }
+    }
+
+    None
 }
 
 /// Fully parse an `EXECUTE AS USER` envelope, extracting the username and the
@@ -96,17 +175,13 @@ pub fn parse_execute_as(statement: &str) -> Result<Option<ExecuteAsEnvelope>, St
     let after_prefix = trimmed[EXECUTE_AS_PREFIX_LEN..].trim_start();
 
     // --- Username extraction (quoted or bare) ---
-    let (username, rest) = if after_prefix.starts_with('\'') {
-        // Quoted: EXECUTE AS USER 'some name' (...)
-        let after_quote = &after_prefix[1..];
-        let end_quote = after_quote
-            .find('\'')
-            .ok_or_else(|| "EXECUTE AS USER username quote was not closed".to_string())?;
-        let uname = after_quote[..end_quote].trim();
+    let (username, rest): (String, &str) = if after_prefix.starts_with('\'') {
+        let (parsed_username, rest) = parse_single_quoted(after_prefix)?;
+        let uname = parsed_username.trim();
         if uname.is_empty() {
             return Err("EXECUTE AS USER username cannot be empty".to_string());
         }
-        (uname, after_quote[end_quote + 1..].trim_start())
+        (uname.to_string(), rest.trim_start())
     } else {
         // Bare: EXECUTE AS USER alice (...)
         // Username extends until whitespace or '('.
@@ -117,7 +192,7 @@ pub fn parse_execute_as(statement: &str) -> Result<Option<ExecuteAsEnvelope>, St
         if uname.is_empty() {
             return Err("EXECUTE AS USER username cannot be empty".to_string());
         }
-        (uname, after_prefix[end..].trim_start())
+        (uname.to_string(), after_prefix[end..].trim_start())
     };
 
     // --- Parenthesised SQL body ---
@@ -125,26 +200,8 @@ pub fn parse_execute_as(statement: &str) -> Result<Option<ExecuteAsEnvelope>, St
         return Err("EXECUTE AS USER must wrap SQL in parentheses".to_string());
     }
 
-    let mut depth = 0usize;
-    let mut close_idx = None;
-    for (idx, ch) in rest.char_indices() {
-        match ch {
-            '(' => depth += 1,
-            ')' => {
-                if depth == 0 {
-                    return Err("EXECUTE AS USER contains unbalanced parentheses".to_string());
-                }
-                depth -= 1;
-                if depth == 0 {
-                    close_idx = Some(idx);
-                    break;
-                }
-            },
-            _ => {},
-        }
-    }
-
-    let close_idx = close_idx.ok_or_else(|| "EXECUTE AS USER missing closing ')'".to_string())?;
+    let close_idx = find_matching_close_paren(rest, 0)
+        .ok_or_else(|| "EXECUTE AS USER missing closing ')'".to_string())?;
     let inner_sql = rest[1..close_idx].trim();
     if inner_sql.is_empty() {
         return Err("EXECUTE AS USER requires a non-empty inner SQL statement".to_string());
@@ -162,7 +219,7 @@ pub fn parse_execute_as(statement: &str) -> Result<Option<ExecuteAsEnvelope>, St
     }
 
     Ok(Some(ExecuteAsEnvelope {
-        username: username.to_string(),
+        username,
         inner_sql: inner_statements[0].trim().to_string(),
     }))
 }
@@ -261,6 +318,44 @@ mod tests {
 
         assert_eq!(result.username, "bob");
         assert_eq!(result.inner_sql, "INSERT INTO default.t VALUES (1)");
+    }
+
+    #[test]
+    fn parse_escaped_quote_in_username() {
+        let result = parse_execute_as(
+            "EXECUTE AS USER 'alice''o' (INSERT INTO default.t VALUES (1))",
+        )
+        .expect("should parse")
+        .expect("should be an envelope");
+
+        assert_eq!(result.username, "alice'o");
+        assert_eq!(result.inner_sql, "INSERT INTO default.t VALUES (1)");
+    }
+
+    #[test]
+    fn parse_inner_sql_with_parenthesis_in_string_literal() {
+        let result = parse_execute_as(
+            "EXECUTE AS USER 'alice' (INSERT INTO default.t VALUES ('hello (', 'done'))",
+        )
+        .expect("should parse")
+        .expect("should be an envelope");
+
+        assert_eq!(result.username, "alice");
+        assert_eq!(
+            result.inner_sql,
+            "INSERT INTO default.t VALUES ('hello (', 'done')"
+        );
+    }
+
+    #[test]
+    fn extract_inner_sql_ignores_parenthesis_in_string_literal() {
+        let inner = extract_inner_sql(
+            "EXECUTE AS USER 'alice' (INSERT INTO default.t VALUES ('hello (', 'done'))",
+        );
+        assert_eq!(
+            inner.as_deref(),
+            Some("INSERT INTO default.t VALUES ('hello (', 'done')")
+        );
     }
 
     #[test]

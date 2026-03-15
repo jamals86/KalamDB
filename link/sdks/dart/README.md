@@ -6,7 +6,7 @@ Official Dart and Flutter SDK for [KalamDB](https://kalamdb.org).
 
 KalamDB is a SQL-first realtime database. The current Dart SDK focuses on the app-facing core: runtime init, authenticated queries, typed row access, live SQL subscriptions, connection lifecycle hooks, login/token refresh, and health checks.
 
-→ **[kalamdb.org](https://kalamdb.org)** · [Docs](https://kalamdb.org/docs) · [Dart setup](https://kalamdb.org/docs/sdk/dart/setup) · [Authentication](https://kalamdb.org/docs/sdk/dart/auth) · [Subscriptions](https://kalamdb.org/docs/sdk/dart/subscriptions) · [GitHub](https://github.com/jamals86/KalamDB)
+→ **[kalamdb.org](https://kalamdb.org)** · [Docs](https://kalamdb.org/docs) · [Dart setup](https://kalamdb.org/docs/sdk/dart/setup) · [Authentication](https://kalamdb.org/docs/sdk/dart/auth) · [Auth-aware client](https://kalamdb.org/docs/sdk/dart/auth-aware-client) · [Subscriptions](https://kalamdb.org/docs/sdk/dart/subscriptions) · [GitHub](https://github.com/jamals86/KalamDB)
 
 ## Features
 
@@ -111,6 +111,8 @@ void main() async {
 ```
 
 Only `init()` belongs before `runApp()`. Avoid awaiting `KalamClient.connect()` during app boot. Even with `wsLazyConnect` enabled by default, `connect()` can still do auth-related async work that delays first render.
+
+For a production-friendly Flutter pattern that reacts to auth and app-session changes, see: [https://kalamdb.org/docs/sdk/dart/auth-aware-client](https://kalamdb.org/docs/sdk/dart/auth-aware-client)
 
 ## Connecting
 

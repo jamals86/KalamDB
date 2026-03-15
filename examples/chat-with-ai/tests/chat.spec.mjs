@@ -173,3 +173,66 @@ test('a tab that joins mid-stream catches the active draft and final reply', asy
   await expect(pageOne.getByTestId('chat-thread')).toContainText('AI reply: KalamDB stored', { timeout: 20000 });
   await expect(pageTwo.getByTestId('chat-thread')).toContainText('AI reply: KalamDB stored', { timeout: 20000 });
 });
+
+test('a third tab that joins mid-stream keeps receiving later streams without a refresh', async ({ browser, baseURL }) => {
+  const firstMessage = `multi-tab first ${'x'.repeat(800)} ${Date.now()}`;
+  const secondMessage = `multi-tab second ${Date.now()}`;
+  const context = await browser.newContext();
+  const pageOne = await context.newPage();
+  const pageTwo = await context.newPage();
+
+  await pageOne.goto(baseURL);
+  await pageTwo.goto(baseURL);
+
+  await expect(pageOne.getByTestId('chat-status')).toContainText('Live');
+  await expect(pageTwo.getByTestId('chat-status')).toContainText('Live');
+
+  await pageOne.getByLabel('Message').fill(firstMessage);
+  await pageOne.getByRole('button', { name: 'Send through KalamDB' }).click();
+
+  await expect(pageOne.getByTestId('stream-preview')).toContainText('AI reply:', { timeout: 15000 });
+  await expect(pageTwo.getByTestId('stream-preview')).toContainText('AI reply:', { timeout: 15000 });
+
+  const pageThree = await context.newPage();
+  await pageThree.goto(baseURL);
+  await expect(pageThree.getByTestId('chat-status')).toContainText('Live');
+  await expect(pageThree.getByTestId('chat-thread')).toContainText(firstMessage, { timeout: 15000 });
+  await expect(pageThree.getByTestId('stream-preview')).toContainText('AI reply:', { timeout: 15000 });
+
+  await expect(pageOne.getByTestId('chat-thread')).toContainText('AI reply: KalamDB stored', { timeout: 20000 });
+  await expect(pageTwo.getByTestId('chat-thread')).toContainText('AI reply: KalamDB stored', { timeout: 20000 });
+  await expect(pageThree.getByTestId('chat-thread')).toContainText('AI reply: KalamDB stored', { timeout: 20000 });
+
+  await pageOne.getByLabel('Message').fill(secondMessage);
+  await pageOne.getByRole('button', { name: 'Send through KalamDB' }).click();
+
+  await expect(pageTwo.getByTestId('chat-thread')).toContainText(secondMessage, { timeout: 15000 });
+  await expect(pageThree.getByTestId('chat-thread')).toContainText(secondMessage, { timeout: 15000 });
+  await expect(pageTwo.getByTestId('stream-preview')).toContainText('AI reply:', { timeout: 15000 });
+  await expect(pageThree.getByTestId('stream-preview')).toContainText('AI reply:', { timeout: 15000 });
+  await expect(pageTwo.getByTestId('chat-thread')).toContainText('AI reply: KalamDB stored', { timeout: 20000 });
+  await expect(pageThree.getByTestId('chat-thread')).toContainText('AI reply: KalamDB stored', { timeout: 20000 });
+});
+
+test('streaming still works when the user message contains an unmatched parenthesis', async ({ browser, baseURL }) => {
+  const uniqueMessage = `manual repro ( ${Date.now()}`;
+  const context = await browser.newContext();
+  const pageOne = await context.newPage();
+  const pageTwo = await context.newPage();
+
+  await pageOne.goto(baseURL);
+  await pageTwo.goto(baseURL);
+
+  await expect(pageOne.getByTestId('chat-status')).toContainText('Live');
+  await expect(pageTwo.getByTestId('chat-status')).toContainText('Live');
+
+  await pageOne.getByLabel('Message').fill(uniqueMessage);
+  await pageOne.getByRole('button', { name: 'Send through KalamDB' }).click();
+
+  await expect(pageOne.getByTestId('chat-thread')).toContainText(uniqueMessage, { timeout: 15000 });
+  await expect(pageTwo.getByTestId('chat-thread')).toContainText(uniqueMessage, { timeout: 15000 });
+  await expect(pageOne.getByTestId('stream-preview')).toContainText('AI reply:', { timeout: 15000 });
+  await expect(pageTwo.getByTestId('stream-preview')).toContainText('AI reply:', { timeout: 15000 });
+  await expect(pageOne.getByTestId('chat-thread')).toContainText('AI reply: KalamDB stored', { timeout: 20000 });
+  await expect(pageTwo.getByTestId('chat-thread')).toContainText('AI reply: KalamDB stored', { timeout: 20000 });
+});

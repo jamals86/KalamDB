@@ -1,8 +1,6 @@
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use kalam_link::{ChangeEvent, SubscriptionConfig};
 
@@ -63,9 +61,6 @@ impl Benchmark for SubscribeChangeLatencyBench {
                 .await?;
             tokio::time::sleep(Duration::from_millis(25)).await;
 
-            let change_received = Arc::new(AtomicU32::new(0));
-            let counter = change_received.clone();
-
             let sub_id = format!("latency_{}", iteration);
             let sql = format!("SELECT * FROM {}.change_latency", ns);
             let sub_config = SubscriptionConfig::new(sub_id, sql);
@@ -96,32 +91,10 @@ impl Benchmark for SubscribeChangeLatencyBench {
                 }
             }
 
-            // Spawn a listener task for change events
-            let listen_handle = tokio::spawn(async move {
-                let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-                loop {
-                    let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-                    if remaining.is_zero() {
-                        break;
-                    }
-                    match tokio::time::timeout(remaining, sub.next()).await {
-                        Ok(Some(Ok(event))) => {
-                            if matches!(event, ChangeEvent::Insert { .. }) {
-                                counter.fetch_add(1, Ordering::SeqCst);
-                            }
-                        },
-                        _ => break,
-                    }
-                }
-                // Gracefully close the subscription (sends Unsubscribe + WS Close frame)
-                let _ = sub.close().await;
-            });
-
             // Brief yield to ensure subscription is fully registered
             tokio::time::sleep(Duration::from_millis(10)).await;
 
             let write_id = 500_000 + iteration;
-            let _start = Instant::now();
 
             client
                 .sql_ok(&format!(
@@ -130,24 +103,34 @@ impl Benchmark for SubscribeChangeLatencyBench {
                 ))
                 .await?;
 
-            // Wait for the change to arrive
-            let poll_deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-            loop {
-                if change_received.load(Ordering::SeqCst) > 0 {
-                    break;
+            let change = tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    match sub.next().await {
+                        Some(Ok(ChangeEvent::Insert { .. })) => break Ok::<(), String>(()),
+                        Some(Ok(ChangeEvent::Error { message, .. })) => {
+                            break Err(format!("Server error: {}", message));
+                        },
+                        Some(Ok(_)) => continue,
+                        Some(Err(error)) => {
+                            break Err(format!("Subscription stream error: {}", error));
+                        },
+                        None => {
+                            break Err("Subscription ended before change notification arrived".to_string());
+                        },
+                    }
                 }
-                if tokio::time::Instant::now() >= poll_deadline {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(10)).await;
+            })
+            .await;
+
+            let close_result = sub.close().await;
+            if let Err(error) = close_result {
+                return Err(format!("Failed to close subscription: {}", error));
             }
 
-            // Wait for the listener task to finish (bounded by its 5s deadline)
-            // instead of aborting, so it can close the WebSocket gracefully
-            let _ = tokio::time::timeout(Duration::from_secs(6), listen_handle).await;
-
-            if change_received.load(Ordering::SeqCst) == 0 {
-                return Err("Change notification not received within 5s".to_string());
+            match change {
+                Ok(Ok(())) => {},
+                Ok(Err(error)) => return Err(error),
+                Err(_) => return Err("Change notification not received within 5s".to_string()),
             }
 
             Ok(())
