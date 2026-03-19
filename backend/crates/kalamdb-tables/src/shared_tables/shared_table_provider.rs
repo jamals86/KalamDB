@@ -882,15 +882,36 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         // Check only the latest hot version for each PK. Tombstoned latest
         // versions are reusable and should not fail the insert.
         if !pk_values_to_check.is_empty() {
-            for (pk_str, pk_value) in &pk_values_to_check {
-                if let Some((_row_id, row)) = self.latest_hot_pk_entry(pk_value).await? {
-                    if !row._deleted {
-                        return Err(KalamDbError::AlreadyExists(format!(
-                            "Primary key violation: value '{}' already exists in column '{}'",
-                            pk_str, pk_name
-                        )));
+            // Single spawn_blocking for ALL hot PK checks (avoids N round-trips)
+            let pk_prefixes: Vec<(String, Vec<u8>)> = pk_values_to_check
+                .iter()
+                .map(|(pk_str, pk_value)| {
+                    (pk_str.clone(), self.pk_index.build_prefix_for_pk(pk_value))
+                })
+                .collect();
+
+            let store = self.store.clone();
+            let hot_duplicate = tokio::task::spawn_blocking(move || -> Result<Option<String>, KalamDbError> {
+                for (pk_str, prefix) in &pk_prefixes {
+                    if let Some((_row_id, row)) = store
+                        .get_latest_by_index_prefix(0, prefix)
+                        .map_err(|e| KalamDbError::InvalidOperation(format!("PK index scan failed: {}", e)))?
+                    {
+                        if !row._deleted {
+                            return Ok(Some(pk_str.clone()));
+                        }
                     }
                 }
+                Ok(None)
+            })
+            .await
+            .map_err(|e| KalamDbError::InvalidOperation(format!("spawn_blocking error: {}", e)))??;
+
+            if let Some(dup_pk) = hot_duplicate {
+                return Err(KalamDbError::AlreadyExists(format!(
+                    "Primary key violation: value '{}' already exists in column '{}'",
+                    dup_pk, pk_name
+                )));
             }
 
             // OPTIMIZED: Batch cold storage check - O(files) instead of O(files × N)
@@ -935,36 +956,41 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
             });
         }
 
-        // Batch-encode all rows with FlatBufferBuilder reuse, then write atomically.
-        let encode_input: Vec<(
-            kalamdb_commons::ids::SeqId,
-            bool,
-            &kalamdb_commons::models::rows::Row,
-        )> = shared_rows.iter().map(|r| (r._seq, r._deleted, &r.fields)).collect();
-        let encoded_values =
-            kalamdb_commons::serialization::row_codec::batch_encode_shared_table_rows(
-                &encode_input,
-            )
-            .map_err(|e| {
-                KalamDbError::InvalidOperation(format!(
-                    "Failed to batch encode shared table rows: {}",
-                    e
-                ))
-            })?;
-
         // Combine keys + entities for index key extraction
         let entries: Vec<(SharedTableRowId, SharedTableRow)> =
             row_keys.iter().copied().zip(shared_rows.into_iter()).collect();
 
-        self.store
-            .insert_batch_preencoded_async(entries.clone(), encoded_values)
-            .await
-            .map_err(|e| {
-                KalamDbError::InvalidOperation(format!(
-                    "Failed to batch insert shared table rows: {}",
-                    e
-                ))
-            })?;
+        // Encode + write in single spawn_blocking (avoids separate encode + write hops)
+        let store = self.store.clone();
+        let entries_for_write = entries.clone();
+
+        tokio::task::spawn_blocking(move || -> Result<(), KalamDbError> {
+            let encode_input: Vec<(
+                kalamdb_commons::ids::SeqId,
+                bool,
+                &kalamdb_commons::models::rows::Row,
+            )> = entries_for_write.iter().map(|(_, r)| (r._seq, r._deleted, &r.fields)).collect();
+            let encoded_values =
+                kalamdb_commons::serialization::row_codec::batch_encode_shared_table_rows(
+                    &encode_input,
+                )
+                .map_err(|e| {
+                    KalamDbError::InvalidOperation(format!(
+                        "Failed to batch encode shared table rows: {}",
+                        e
+                    ))
+                })?;
+            store
+                .insert_batch_preencoded(&entries_for_write, encoded_values)
+                .map_err(|e| {
+                    KalamDbError::InvalidOperation(format!(
+                        "Failed to batch insert shared table rows: {}",
+                        e
+                    ))
+                })
+        })
+        .await
+        .map_err(|e| KalamDbError::InvalidOperation(format!("spawn_blocking error: {}", e)))??;
 
         if let Err(e) = self.stage_vector_upsert_batch(&entries).await {
             log::warn!(

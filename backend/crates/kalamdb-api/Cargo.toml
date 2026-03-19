@@ -68,14 +68,18 @@ base64 = { workspace = true }
 # Compression
 flate2 = { workspace = true }
 
-# Embedded UI assets
-rust-embed = { workspace = true }
+# Embedded UI assets (behind "embedded-ui" feature)
+rust-embed = { workspace = true, optional = true }
 mime_guess = { workspace = true }
 
 # Concurrency
 dashmap = { workspace = true }
 moka = { workspace = true }
 parking_lot = { workspace = true }
+
+[features]
+default = ["embedded-ui"]
+embedded-ui = ["rust-embed"]
 
 [build-dependencies]
 chrono = { workspace = true }

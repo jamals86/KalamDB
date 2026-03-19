@@ -605,9 +605,18 @@ pub async fn run(
             .configure(routes::configure);
 
         // Add UI routes - prefer embedded, fallback to filesystem path
+        #[cfg(feature = "embedded-ui")]
         if kalamdb_api::routes::is_embedded_ui_available() {
             app = app.configure(kalamdb_api::routes::configure_embedded_ui_routes);
         } else if let Some(ref path) = ui_path {
+            let path: String = path.clone();
+            app = app.configure(move |cfg| {
+                kalamdb_api::routes::configure_ui_routes(cfg, &path);
+            });
+        }
+
+        #[cfg(not(feature = "embedded-ui"))]
+        if let Some(ref path) = ui_path {
             let path: String = path.clone();
             app = app.configure(move |cfg| {
                 kalamdb_api::routes::configure_ui_routes(cfg, &path);
@@ -829,9 +838,18 @@ pub async fn run_for_tests(
             .app_data(web::Data::new(auth_settings.clone()))
             .configure(routes::configure);
 
+        #[cfg(feature = "embedded-ui")]
         if kalamdb_api::routes::is_embedded_ui_available() {
             app = app.configure(kalamdb_api::routes::configure_embedded_ui_routes);
         } else if let Some(ref path) = ui_path {
+            let path: String = path.clone();
+            app = app.configure(move |cfg| {
+                kalamdb_api::routes::configure_ui_routes(cfg, &path);
+            });
+        }
+
+        #[cfg(not(feature = "embedded-ui"))]
+        if let Some(ref path) = ui_path {
             let path: String = path.clone();
             app = app.configure(move |cfg| {
                 kalamdb_api::routes::configure_ui_routes(cfg, &path);

@@ -322,8 +322,10 @@ impl JobExecutor for FlushExecutor {
         "FlushExecutor"
     }
 
-    /// Pre-validate: skip flush job creation when the table has no data in RocksDB.
+    /// Pre-validate: skip flush job creation when the table has insufficient data in RocksDB.
     ///
+    /// When `flush_threshold` is set, checks that the table has at least that many rows
+    /// before proceeding. Otherwise, just checks for any data at all.
     /// This avoids creating unnecessary jobs (and the associated Raft overhead) for
     /// tables that have already been flushed or that have no buffered writes.
     async fn pre_validate(
@@ -339,6 +341,9 @@ impl JobExecutor for FlushExecutor {
             None => return Ok(false),
         };
 
+        // Minimum rows needed: flush_threshold or 1 (just check for any data)
+        let min_rows = params.flush_threshold.unwrap_or(1) as usize;
+
         // Only check for User and Shared tables
         match table_def.table_type {
             TableType::User => {
@@ -348,12 +353,12 @@ impl JobExecutor for FlushExecutor {
                     {
                         let store = provider.store();
                         let partition = store.partition();
-                        let has_data = store
+                        let has_enough = store
                             .backend()
-                            .scan(&partition, None, None, Some(1))
-                            .map(|mut iter| iter.next().is_some())
+                            .scan(&partition, None, None, Some(min_rows))
+                            .map(|iter| iter.count() >= min_rows)
                             .unwrap_or(true); // on error, assume data exists
-                        return Ok(has_data);
+                        return Ok(has_enough);
                     }
                 }
                 Ok(false)
@@ -366,12 +371,12 @@ impl JobExecutor for FlushExecutor {
                     {
                         let store = provider.store();
                         let partition = store.partition();
-                        let has_data = store
+                        let has_enough = store
                             .backend()
-                            .scan(&partition, None, None, Some(1))
-                            .map(|mut iter| iter.next().is_some())
+                            .scan(&partition, None, None, Some(min_rows))
+                            .map(|iter| iter.count() >= min_rows)
                             .unwrap_or(true);
-                        return Ok(has_data);
+                        return Ok(has_enough);
                     }
                 }
                 Ok(false)

@@ -19,12 +19,14 @@ impl FlushScheduler {
     ///
     /// * System tables are skipped (cannot be flushed).
     /// * Stream tables are skipped (not yet implemented in FlushExecutor).
+    /// * Tables with no flush_policy are skipped (hot-only / no cold storage).
     /// * Idempotency keys prevent duplicate concurrent flush jobs.
     pub async fn check_and_schedule(
         app_context: &Arc<AppContext>,
         jobs_manager: &JobsManager,
     ) -> Result<(), KalamDbError> {
         let manifest_service = app_context.manifest_service();
+        let default_row_limit = app_context.config().flush.default_row_limit as u64;
 
         let pending_iter = manifest_service
             .pending_manifest_ids_iter()
@@ -69,12 +71,28 @@ impl FlushScheduler {
                 TableType::System | TableType::Stream => continue,
             }
 
+            // Respect flush_policy: skip tables with no policy (hot-only)
+            let flush_policy = table_def.table_options.flush_policy();
+            if flush_policy.is_none() {
+                log::trace!(
+                    "FlushScheduler: skipping {} (no flush_policy, hot-only)",
+                    table_id
+                );
+                continue;
+            }
+
             tables_checked += 1;
+
+            // Extract per-table row limit from policy, fall back to config default
+            let flush_threshold = flush_policy
+                .and_then(|p| p.get_row_limit())
+                .map(|r| r as u64)
+                .unwrap_or(default_row_limit);
 
             let params = FlushParams {
                 table_id: table_id.clone(),
                 table_type: table_def.table_type,
-                flush_threshold: None,
+                flush_threshold: Some(flush_threshold),
             };
 
             // Hourly idempotency key prevents duplicate flush jobs
