@@ -3664,6 +3664,89 @@ dependencies = [
 ]
 
 [[package]]
+name = "kalam-pg-api"
+version = "0.4.1-beta"
+dependencies = [
+ "arrow",
+ "async-trait",
+ "datafusion",
+ "kalam-pg-common",
+ "kalamdb-commons",
+ "serde",
+]
+
+[[package]]
+name = "kalam-pg-client"
+version = "0.4.1-beta"
+dependencies = [
+ "kalam-pg-api",
+ "kalam-pg-common",
+]
+
+[[package]]
+name = "kalam-pg-common"
+version = "0.4.1-beta"
+dependencies = [
+ "datafusion",
+ "kalamdb-commons",
+ "serde",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "kalam-pg-embedded"
+version = "0.4.1-beta"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "datafusion",
+ "kalam-pg-api",
+ "kalam-pg-common",
+ "kalamdb-commons",
+ "kalamdb-configs",
+ "kalamdb-core",
+ "kalamdb-store",
+ "kalamdb-system",
+ "kalamdb-tables",
+ "ntest",
+ "serde",
+ "tokio",
+]
+
+[[package]]
+name = "kalam-pg-extension"
+version = "0.4.1-beta"
+dependencies = [
+ "kalam-pg-api",
+ "kalam-pg-client",
+ "kalam-pg-common",
+ "kalam-pg-embedded",
+ "kalam-pg-fdw",
+ "kalamdb-core",
+]
+
+[[package]]
+name = "kalam-pg-fdw"
+version = "0.4.1-beta"
+dependencies = [
+ "datafusion",
+ "kalam-pg-api",
+ "kalam-pg-common",
+ "kalam-pg-types",
+ "kalamdb-commons",
+]
+
+[[package]]
+name = "kalam-pg-types"
+version = "0.4.1-beta"
+dependencies = [
+ "arrow",
+ "datafusion",
+ "kalam-pg-common",
+ "kalamdb-commons",
+]
+
+[[package]]
 name = "kalamdb-api"
 version = "0.4.1-beta"
 dependencies = [

@@ -1,0 +1,12 @@
+[package]
+name = "kalam-pg-client"
+version = { workspace = true }
+edition = { workspace = true }
+authors = { workspace = true }
+license = { workspace = true }
+repository = { workspace = true }
+
+[dependencies]
+kalam-pg-api = { path = "../kalam-pg-api" }
+kalam-pg-common = { path = "../kalam-pg-common" }
+

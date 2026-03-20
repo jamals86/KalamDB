@@ -1,0 +1,14 @@
+[package]
+name = "kalam-pg-fdw"
+version = { workspace = true }
+edition = { workspace = true }
+authors = { workspace = true }
+license = { workspace = true }
+repository = { workspace = true }
+
+[dependencies]
+datafusion = { workspace = true }
+kalam-pg-api = { path = "../kalam-pg-api" }
+kalam-pg-common = { path = "../kalam-pg-common" }
+kalam-pg-types = { path = "../kalam-pg-types" }
+kalamdb-commons = { workspace = true }

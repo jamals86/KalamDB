@@ -1,0 +1,26 @@
+[package]
+name = "kalam-pg-embedded"
+version = { workspace = true }
+edition = { workspace = true }
+authors = { workspace = true }
+license = { workspace = true }
+repository = { workspace = true }
+
+[dependencies]
+async-trait = { workspace = true }
+datafusion = { workspace = true }
+serde = { workspace = true }
+kalam-pg-api = { path = "../kalam-pg-api" }
+kalam-pg-common = { path = "../kalam-pg-common" }
+kalamdb-commons = { workspace = true }
+kalamdb-tables = { workspace = true }
+kalamdb-core = { path = "../../../backend/crates/kalamdb-core" }
+tokio = { workspace = true }
+
+[dev-dependencies]
+chrono = { workspace = true }
+kalamdb-configs = { workspace = true }
+kalamdb-core = { path = "../../../backend/crates/kalamdb-core" }
+kalamdb-store = { path = "../../../backend/crates/kalamdb-store" }
+kalamdb-system = { path = "../../../backend/crates/kalamdb-system" }
+ntest = { workspace = true }

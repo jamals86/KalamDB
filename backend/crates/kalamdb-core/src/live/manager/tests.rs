@@ -64,6 +64,7 @@ async fn create_test_manager() -> (Arc<ConnectionsManager>, LiveQueryManager, Te
             max_rows_per_user: 256, // Default per-user retention limit
             shard_router: ShardRouter::default_config(),
             ttl_seconds: Some(60),
+            storage_mode: kalamdb_tables::StreamTableStorageMode::File,
         },
     ));
 

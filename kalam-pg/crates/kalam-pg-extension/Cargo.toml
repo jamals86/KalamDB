@@ -1,0 +1,20 @@
+[package]
+name = "kalam-pg-extension"
+version = { workspace = true }
+edition = { workspace = true }
+authors = { workspace = true }
+license = { workspace = true }
+repository = { workspace = true }
+
+[features]
+default = ["embedded"]
+embedded = ["dep:kalam-pg-embedded", "dep:kalamdb-core"]
+remote = ["dep:kalam-pg-client"]
+
+[dependencies]
+kalam-pg-api = { path = "../kalam-pg-api" }
+kalam-pg-client = { path = "../kalam-pg-client", optional = true }
+kalam-pg-common = { path = "../kalam-pg-common" }
+kalam-pg-embedded = { path = "../kalam-pg-embedded", optional = true }
+kalam-pg-fdw = { path = "../kalam-pg-fdw" }
+kalamdb-core = { path = "../../../backend/crates/kalamdb-core", optional = true }

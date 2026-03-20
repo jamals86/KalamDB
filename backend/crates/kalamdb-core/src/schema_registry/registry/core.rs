@@ -673,6 +673,7 @@ impl SchemaRegistry {
                         max_rows_per_user: 256, // Default per-user retention limit
                         shard_router: ShardRouter::default_config(),
                         ttl_seconds: Some(ttl_seconds),
+                        storage_mode: kalamdb_tables::StreamTableStorageMode::File,
                     },
                 ));
 
