@@ -61,6 +61,7 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUST_VERSION: "1.92.0"
+  WASM_PACK_VERSION: "0.14.0"
   DEFAULT_PLATFORMS: "linux-x86_64,macos-aarch64,linux-aarch64"
   RUSTC_WRAPPER: ""
   CARGO_BUILD_RUSTC_WRAPPER: ""
@@ -218,8 +219,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          curl -fsSL --retry 5 --retry-delay 2 --retry-connrefused \
-            https://rustwasm.github.io/wasm-pack/installer/init.sh | sh
+          cargo install wasm-pack --version "$WASM_PACK_VERSION" --locked
           wasm-pack --version
 
       - name: Build SDK (kalam-link)
@@ -1454,8 +1454,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          curl -fsSL --retry 5 --retry-delay 2 --retry-connrefused \
-            https://rustwasm.github.io/wasm-pack/installer/init.sh | sh
+          cargo install wasm-pack --version "$WASM_PACK_VERSION" --locked
+          wasm-pack --version
 
       - name: Prepare server binary
         shell: bash
@@ -1770,7 +1770,9 @@ jobs:
       - name: Install wasm-pack
         shell: bash
         run: |
-          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+          set -euo pipefail
+          cargo install wasm-pack --version "$WASM_PACK_VERSION" --locked
+          wasm-pack --version
 
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2

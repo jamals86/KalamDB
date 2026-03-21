@@ -278,7 +278,6 @@ build_web() {
     --out-name kalam_link_dart \
     --no-opt \
     --profile release-dist \
-    -- \
     --features wasm \
     --no-default-features) || {
     fail "Web WASM build failed"; return 1

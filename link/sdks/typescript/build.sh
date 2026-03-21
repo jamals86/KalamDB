@@ -29,7 +29,6 @@ wasm-pack build \
         --out-dir sdks/typescript/wasm \
         --no-opt \
         --profile release-dist \
-        -- \
         --features wasm \
         --no-default-features
 
