@@ -523,10 +523,10 @@ The implementation must follow these rules:
 Use a workspace such as:
 
 ```text
-kalam-pg/
+pg/
 ├── Cargo.toml
 ├── crates/
-│   ├── kalam-pg-extension/      # pgrx entrypoint, SQL bindings, FDW callbacks
+│   ├── pg/                      # pgrx entrypoint, SQL bindings, FDW callbacks
 │   ├── kalam-pg-fdw/            # FDW planning/scanning/modification logic
 │   ├── kalam-pg-api/            # transport-agnostic backend traits + request/response models
 │   ├── kalam-pg-types/          # datatype mapping: Postgres <-> Arrow <-> Kalam

@@ -51,9 +51,9 @@ Remote session metadata was added to the shared PostgreSQL API/request layer.
 
 Implemented files:
 
-* `kalam-pg/crates/kalam-pg-api/src/session.rs`
-* `kalam-pg/crates/kalam-pg-api/src/request.rs`
-* `kalam-pg/crates/kalam-pg-api/tests/request_validation.rs`
+* `pg/crates/kalam-pg-api/src/session.rs`
+* `pg/crates/kalam-pg-api/src/request.rs`
+* `pg/crates/kalam-pg-api/tests/request_validation.rs`
 
 What exists now:
 
@@ -93,8 +93,8 @@ The extension session settings layer now captures PostgreSQL current schema.
 
 Implemented files:
 
-* `kalam-pg/crates/kalam-pg-extension/src/session_settings.rs`
-* `kalam-pg/crates/kalam-pg-extension/tests/session_settings.rs`
+* `pg/src/session_settings.rs`
+* `pg/tests/session_settings.rs`
 
 What exists now:
 
@@ -107,9 +107,9 @@ The FDW/common config layer now recognizes remote server connection settings.
 
 Implemented files:
 
-* `kalam-pg/crates/kalam-pg-common/src/config.rs`
-* `kalam-pg/crates/kalam-pg-fdw/src/server_options.rs`
-* `kalam-pg/crates/kalam-pg-fdw/tests/options.rs`
+* `pg/crates/kalam-pg-common/src/config.rs`
+* `pg/crates/kalam-pg-fdw/src/server_options.rs`
+* `pg/crates/kalam-pg-fdw/tests/options.rs`
 
 What exists now:
 
@@ -148,9 +148,9 @@ Important limitation:
 
 Implemented files:
 
-* `kalam-pg/crates/kalam-pg-client/src/lib.rs`
-* `kalam-pg/crates/kalam-pg-client/Cargo.toml`
-* `kalam-pg/crates/kalam-pg-client/tests/connectivity.rs`
+* `pg/crates/kalam-pg-client/src/lib.rs`
+* `pg/crates/kalam-pg-client/Cargo.toml`
+* `pg/crates/kalam-pg-client/tests/connectivity.rs`
 
 What exists now:
 
@@ -268,9 +268,9 @@ The FDW/common extension side still needs to:
 
 Likely files to inspect next:
 
-* `kalam-pg/crates/kalam-pg-extension/src/executor_factory.rs`
-* `kalam-pg/crates/kalam-pg-fdw/src/*`
-* any mode-selection / execution wiring in `kalam-pg-extension`
+* `pg/src/remote_executor.rs`
+* `pg/crates/kalam-pg-fdw/src/*`
+* any mode-selection / execution wiring in `pg`
 
 ### 2. Add real remote scan RPCs
 
@@ -372,11 +372,11 @@ Backend remote bridge and shared server mount:
 
 Extension/shared client side:
 
-* `kalam-pg/crates/kalam-pg-client/src/lib.rs`
-* `kalam-pg/crates/kalam-pg-api/src/session.rs`
-* `kalam-pg/crates/kalam-pg-api/src/request.rs`
-* `kalam-pg/crates/kalam-pg-extension/src/session_settings.rs`
-* `kalam-pg/crates/kalam-pg-fdw/src/server_options.rs`
+* `pg/crates/kalam-pg-client/src/lib.rs`
+* `pg/crates/kalam-pg-api/src/session.rs`
+* `pg/crates/kalam-pg-api/src/request.rs`
+* `pg/src/session_settings.rs`
+* `pg/crates/kalam-pg-fdw/src/server_options.rs`
 
 Core direct DML reuse path:
 

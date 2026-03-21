@@ -501,33 +501,43 @@ sql_plan_cache_max_entries = 1000
 sql_plan_cache_ttl_seconds = 900
 
 # ============================================================================
-# Cluster Configuration (Multi-Node Raft Replication)
+# RPC TLS / mTLS Configuration
 # ============================================================================
-# Enable distributed clustering with Raft consensus for strong consistency.
-# When enabled, the server runs as part of a multi-node cluster.
-# When disabled (default), the server runs in standalone mode with no overhead.
-
-# IMPORTANT: All nodes in a cluster MUST have:
-# - Matching cluster_id values
-# - The same members list
-# - Matching sharding configuration
-# - Unique node_id values
-
-# ============================================================================
-# Cluster Configuration - Multi-Node Raft Replication (v0.2.0)
-# ============================================================================
-# Enable distributed clustering with Raft consensus for strong consistency.
-# When [cluster] section is present, the server runs as part of a multi-node cluster.
-# When absent (default), the server runs in standalone mode with no overhead.
+# Secures the shared gRPC listener used by Raft replication, cluster RPCs,
+# and the PostgreSQL extension.
 #
-# IMPORTANT: All nodes in a cluster MUST have:
-# - Matching cluster_id values
-# - The same peers list (with this node's entry removed)
-# - Matching sharding configuration (user_shards, shared_shards)
-# - Unique node_id values
+# Both cluster nodes and PG extension clients present a certificate signed by
+# the same CA. The server identifies the caller from the certificate CN:
+#   kalamdb-node-{node_id}  → cluster node
+#   kalamdb-pg-{name}       → PG extension client
 #
-# Node with node_id=1 automatically becomes the bootstrap node.
-# No explicit bootstrap flag needed - cluster auto-initializes.
+# All cert values accept EITHER a file path OR an inline PEM string.
+# Inline detection: if the value starts with "-----BEGIN", it is used directly.
+# Otherwise the value is treated as a file path and read from disk.
+
+# [rpc_tls]
+# enabled = true
+# # CA cert — validates ALL incoming client certs (cluster nodes + PG extension)
+# ca_cert = "/etc/kalamdb/certs/ca.pem"
+# # This server's identity cert and key
+# server_cert = "/etc/kalamdb/certs/node1.pem"
+# server_key  = "/etc/kalamdb/certs/node1.key"
+# # Require clients to present a cert (full mTLS). Set false for server-only TLS.
+# require_client_cert = true
+
+# ============================================================================
+# Cluster Configuration — Multi-Node Raft Replication
+# ============================================================================
+# When [cluster] is present the server joins a distributed cluster.
+# When absent (default) the server runs standalone with no clustering overhead.
+#
+# All nodes in a cluster MUST have:
+#   - Matching cluster_id values
+#   - The same peers list (this node omitted)
+#   - Matching sharding configuration (user_shards, shared_shards)
+#   - Unique node_id values
+#
+# Node with node_id=1 is the bootstrap node (no explicit flag needed).
 
 # [cluster]
 # # Unique cluster identifier - all nodes must share this
@@ -545,11 +555,7 @@ sql_plan_cache_ttl_seconds = 900
 # #
 # # Optional mTLS for inter-node gRPC (Raft + cluster RPC)
 # # When enabled, all three paths are required.
-# # [cluster.rpc_tls]
-# # enabled = true
-# # ca_cert_path = "/etc/kalamdb/certs/cluster-ca.pem"
-# # node_cert_path = "/etc/kalamdb/certs/node1.pem"
-# # node_key_path = "/etc/kalamdb/certs/node1.key"
+# # Note: TLS for this node's identity lives in the top-level [rpc_tls] section, not here.
 # 
 # # Number of user data shards (default: 8)
 # # MEMORY OPTIMIZATION: Reduced from 32 (saves ~5-8 MB)

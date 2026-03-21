@@ -5,7 +5,8 @@
 This specification is complemented by the following focused documents:
 
 * [Priority Shift and Scope Status](./priority-shift.md)
-* [Code Organization Plan](./reorganization-plan.md)
+* [Code Organization Plan (current)](./reorganization-plan-v2.md)
+* [Code Organization Plan (superseded)](./reorganization-plan.md)
 * [Transactional FDW Semantics](./transactional-fdw.md)
 * [Direct EntityStore DML Path](./direct-entitystore-dml.md)
 * [Implementation Status and Agent Handoff](./implementation-status-handoff.md)
@@ -13,21 +14,15 @@ This specification is complemented by the following focused documents:
 
 ## 1. Decision Summary
 
-The PostgreSQL extension work is now **remote-first**.
+The PostgreSQL extension operates in **remote-only mode**.
 
-The primary target is:
+The target is:
 
 * a PostgreSQL extension built with `pgrx`
 * an FDW surface inside PostgreSQL
 * typed RPC communication to an external KalamDB server
 
-Embedded mode is no longer the primary track. It remains in the specification only as a **temporary compatibility/experimental mode** while remote mode is designed and implemented. Embedded mode may be removed entirely in a future revision.
-
-This folder should therefore be read with the following priority order:
-
-1. remote mode is the product target
-2. shared contracts should be designed so embedded mode can keep working temporarily
-3. no new requirement should force the architecture to optimize for embedded-first decisions
+Embedded mode has been fully removed from the codebase. All `kalam-pg-embedded` code, `#[cfg(feature = "embedded")]` guards, and embedded-specific SQL functions have been deleted.
 
 No previously written design detail should be treated as discarded unless explicitly contradicted. Earlier work that explored dual-mode and embedded-heavy options is preserved in [legacy-dual-mode-reference.md](/Users/jamal/git/KalamDB/specs/026-postgres-extension/legacy-dual-mode-reference.md) as historical reference.
 
@@ -57,13 +52,11 @@ This allows:
 
 * PostgreSQL to remain the SQL planner for cross-source joins
 * KalamDB to stay responsible for its own typed execution, storage, and security rules
-* transport stability across remote mode and any temporary embedded compatibility layer
+* transport stability for the remote execution model
 
-## 3. Execution Modes
+## 3. Execution Mode
 
-### 3.1 Primary mode: remote
-
-Remote mode is the only mode that should drive current design choices.
+### Remote mode
 
 ```text
            +-------------------+       typed RPC       +--------------------+
@@ -85,27 +78,6 @@ In this mode:
 * the FDW extracts projections, filters, limits, and mutation payloads
 * KalamDB receives typed requests over RPC
 * KalamDB executes against its normal runtime and storage stack
-
-### 3.2 Temporary mode: embedded
-
-Embedded mode stays documented only to avoid breaking current progress. It is not the main spec target anymore.
-
-```text
-           +---------------------------------------------+
-           | PostgreSQL + Kalam FDW (temporary embedded) |
-           |                                             |
-           | FDW -> shared request layer -> in-process   |
-           | Kalam executor                              |
-           +---------------------------------------------+
-```
-
-Rules for embedded mode from this point onward:
-
-* it must reuse the same typed request/response contracts as remote mode where practical
-* it should not introduce new first-class requirements that complicate remote mode
-* it should be treated as transitional and removable
-
-If a design tradeoff appears between remote clarity and embedded convenience, the spec should prefer the remote design unless there is a strong compatibility reason not to.
 
 ## 4. High-Level Architecture
 
@@ -170,17 +142,12 @@ The preferred layering is:
 * `kalamdb-server` registers the `kalamdb-pg` service during startup rather than embedding the behavior directly in its core lifecycle logic
 * `kalamdb-pg` should reuse existing core write primitives such as the applier / direct DML executor path where they fit, instead of creating a duplicate mutation engine
 
-### 4.3 Shared boundary for temporary embedded support
+### 4.3 Request contract design
 
-If embedded mode remains during the transition, it should call the same logical request service in-process.
-
-That means:
-
-* the extension-facing contract is shared
-* remote mode uses transport serialization
-* embedded mode uses an in-process adapter
-
-This keeps remote mode as the architectural center while avoiding duplicated semantics during the transition period.
+The FDW communicates with KalamDB through typed requests over gRPC.
+The extension-facing contract uses typed request/response structs
+(`ScanRequest`, `InsertRequest`, etc.) that the remote executor serializes
+for transport to the KalamDB server.
 
 ## 5. PostgreSQL FDW Surface
 
@@ -217,8 +184,6 @@ The first remote implementation should keep this surface small:
 * port
 * authentication token or equivalent remote credential source
 
-Embedded-only server options should be treated as temporary compatibility configuration and should not shape the long-term public interface.
-
 ### 5.3 Foreign table definition
 
 Example:
@@ -251,8 +216,6 @@ The intended remote-first flow is:
 6. Remote mode sends that request to KalamDB over RPC.
 7. KalamDB executes through typed internal services and returns Arrow-compatible results or mutation outcomes.
 8. The FDW converts results into PostgreSQL tuples.
-
-For temporary embedded compatibility, step 4 becomes an in-process call to the same logical service boundary.
 
 ### 6.1 Session behavior
 
@@ -291,8 +254,6 @@ For the first end-to-end server mount, it is acceptable to bootstrap this shared
 * remote FDW mutations
 * typed request/response contracts
 * transaction-aware design for remote mode
-* compatibility notes for temporary embedded reuse
-* preservation of earlier dual-mode design details as reference/history
 
 ### Explicitly de-prioritized now
 

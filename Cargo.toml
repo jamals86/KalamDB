@@ -1,13 +1,12 @@
 [workspace]
 resolver = "2"
 members = [
-    "kalam-pg/crates/kalam-pg-common",
-    "kalam-pg/crates/kalam-pg-api",
-    "kalam-pg/crates/kalam-pg-embedded",
-    "kalam-pg/crates/kalam-pg-fdw",
-    "kalam-pg/crates/kalam-pg-extension",
-    "kalam-pg/crates/kalam-pg-types",
-    "kalam-pg/crates/kalam-pg-client",
+    "pg",
+    "pg/crates/kalam-pg-common",
+    "pg/crates/kalam-pg-api",
+    "pg/crates/kalam-pg-fdw",
+    "pg/crates/kalam-pg-types",
+    "pg/crates/kalam-pg-client",
     "backend/crates/kalamdb-macros",
     "backend/crates/kalamdb-commons",
     "backend/crates/kalamdb-configs",
@@ -38,7 +37,7 @@ members = [
 exclude = ["benchv2"]
 
 [workspace.package]
-version = "0.4.1-beta"
+version = "0.4.2-dev"
 edition = "2021"
 rust-version = "1.92"
 authors = ["KalamDB Team"]

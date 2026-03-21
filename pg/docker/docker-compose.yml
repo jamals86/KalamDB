@@ -1,0 +1,41 @@
+# KalamDB PostgreSQL Extension — Docker Compose
+#
+# Remote-only PostgreSQL setup for the pg_kalam extension.
+#
+# Usage:
+#   1. Start KalamDB on the host:
+#      cd backend && cargo run
+#   2. Build Linux extension artifacts:
+#      ./pg/docker/build.sh --artifacts
+#   3. Start PostgreSQL:
+#      cd pg/docker && docker compose up -d
+#   4. Run tests:
+#      ./test.sh
+
+services:
+  kalamdb-pg:
+    image: postgres:16-bookworm
+    container_name: kalamdb-pg
+    entrypoint: ["/usr/local/bin/kalam-pg-entrypoint.sh"]
+    ports:
+      - "${KALAMDB_PG_PORT:-5433}:5432"
+    environment:
+      POSTGRES_USER: kalamdb
+      POSTGRES_PASSWORD: kalamdb123
+      POSTGRES_DB: kalamdb
+    volumes:
+      - ./entrypoint.sh:/usr/local/bin/kalam-pg-entrypoint.sh:ro
+      - ./artifacts:/kalam-ext:ro
+      - ./init.sql:/docker-entrypoint-initdb.d/01-kalam-init.sql:ro
+      - kalamdb_pg_data:/var/lib/postgresql/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kalamdb -d kalamdb"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  kalamdb_pg_data:
+    driver: local

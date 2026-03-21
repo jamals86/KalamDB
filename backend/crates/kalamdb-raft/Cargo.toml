@@ -50,8 +50,8 @@ parking_lot = { workspace = true }
 hostname = { workspace = true }
 
 [dev-dependencies]
-kalam-pg-client = { path = "../../../kalam-pg/crates/kalam-pg-client" }
-kalam-pg-common = { path = "../../../kalam-pg/crates/kalam-pg-common" }
+kalam-pg-client = { path = "../../../pg/crates/kalam-pg-client" }
+kalam-pg-common = { path = "../../../pg/crates/kalam-pg-common" }
 kalamdb-pg = { path = "../kalamdb-pg" }
 ntest = { workspace = true }
 tempfile = { workspace = true }

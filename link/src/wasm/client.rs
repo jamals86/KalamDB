@@ -84,8 +84,10 @@ use super::validation::{
 #[wasm_bindgen]
 pub struct KalamClient {
     url: String,
-    /// Authentication provider (Basic, JWT, or None)
-    auth: WasmAuthProvider,
+    /// Authentication provider (Basic, JWT, or None).
+    /// Wrapped in Rc<RefCell<>> for interior mutability so that auto-refresh
+    /// on TOKEN_EXPIRED can update credentials from `&self` methods.
+    auth: Rc<RefCell<WasmAuthProvider>>,
     ws: Rc<RefCell<Option<WebSocket>>>,
     /// Subscription state including callbacks and last seq_id for resumption
     subscription_state: Rc<RefCell<HashMap<String, SubscriptionState>>>,
@@ -175,7 +177,7 @@ impl KalamClient {
     fn new_with_auth(url: String, auth: WasmAuthProvider) -> KalamClient {
         KalamClient {
             url,
-            auth,
+            auth: Rc::new(RefCell::new(auth)),
             ws: Rc::new(RefCell::new(None)),
             subscription_state: Rc::new(RefCell::new(HashMap::new())),
             connection_options: Rc::new(RefCell::new(ConnectionOptions::default())),
@@ -641,7 +643,7 @@ impl KalamClient {
     /// Returns one of: "basic", "jwt", or "none"
     #[wasm_bindgen(js_name = getAuthType)]
     pub fn get_auth_type(&self) -> String {
-        match &self.auth {
+        match &*self.auth.borrow() {
             WasmAuthProvider::Basic { .. } => "basic".to_string(),
             WasmAuthProvider::Jwt { .. } => "jwt".to_string(),
             WasmAuthProvider::None => "none".to_string(),
@@ -881,7 +883,7 @@ impl KalamClient {
                 }
             }
         } else {
-            self.auth.clone()
+            self.auth.borrow().clone()
         };
 
         if matches!(resolved_auth, WasmAuthProvider::Basic { .. }) {
@@ -1602,7 +1604,7 @@ impl KalamClient {
     /// await client.connect(); // Now uses JWT for WebSocket
     /// ```
     pub async fn login(&mut self) -> Result<JsValue, JsValue> {
-        let (username, password) = match &self.auth {
+        let (username, password) = match &*self.auth.borrow() {
             WasmAuthProvider::Basic { username, password } => (username.clone(), password.clone()),
             _ => {
                 return Err(JsValue::from_str(
@@ -1611,42 +1613,10 @@ impl KalamClient {
             },
         };
 
-        let opts = RequestInit::new();
-        opts.set_method("POST");
-        opts.set_mode(RequestMode::Cors);
-
-        let headers = Headers::new()?;
-        headers.set("Content-Type", "application/json")?;
-        opts.set_headers(&headers);
-
-        let body = serde_json::json!({
-            "username": username,
-            "password": password,
-        });
-        opts.set_body(&JsValue::from_str(&body.to_string()));
-
-        let url = format!("{}/v1/api/auth/login", self.url);
-        let request = Request::new_with_str_and_init(&url, &opts)?;
-
-        let resp_value = JsFuture::from(super::helpers::fetch_request(&request)).await?;
-        let resp: Response = resp_value.dyn_into()?;
-
-        if !resp.ok() {
-            let text = JsFuture::from(resp.text()?).await?;
-            let error_msg = text
-                .as_string()
-                .unwrap_or_else(|| format!("Login failed: HTTP {}", resp.status()));
-            return Err(JsValue::from_str(&error_msg));
-        }
-
-        let json = JsFuture::from(resp.text()?).await?;
-        let json_str = json.as_string().unwrap_or_default();
-
-        let login_response: crate::models::LoginResponse = serde_json::from_str(&json_str)
-            .map_err(|e| JsValue::from_str(&format!("Failed to parse login response: {}", e)))?;
+        let login_response = self.perform_basic_login(&username, &password).await?;
 
         // Switch to JWT auth
-        self.auth = WasmAuthProvider::Jwt {
+        *self.auth.borrow_mut() = WasmAuthProvider::Jwt {
             token: login_response.access_token.clone(),
         };
 
@@ -1710,7 +1680,7 @@ impl KalamClient {
             .map_err(|e| JsValue::from_str(&format!("Failed to parse refresh response: {}", e)))?;
 
         // Update to new JWT
-        self.auth = WasmAuthProvider::Jwt {
+        *self.auth.borrow_mut() = WasmAuthProvider::Jwt {
             token: login_response.access_token.clone(),
         };
 
@@ -1751,7 +1721,7 @@ impl KalamClient {
 
         let headers = Headers::new()?;
         headers.set("Content-Type", "application/json")?;
-        if let Some(auth_header) = self.auth.to_http_header() {
+        if let Some(auth_header) = self.auth.borrow().to_http_header() {
             headers.set("Authorization", &auth_header)?;
         }
         opts.set_headers(&headers);
@@ -1878,7 +1848,7 @@ impl KalamClient {
 
         let headers = Headers::new()?;
         headers.set("Content-Type", "application/json")?;
-        if let Some(auth_header) = self.auth.to_http_header() {
+        if let Some(auth_header) = self.auth.borrow().to_http_header() {
             headers.set("Authorization", &auth_header)?;
         }
         opts.set_headers(&headers);
@@ -1921,12 +1891,40 @@ impl KalamClient {
     }
 
     /// Internal: Execute SQL via HTTP POST to /v1/api/sql (T063F)
+    ///
+    /// On TOKEN_EXPIRED, the method resolves fresh credentials from the
+    /// auth_provider_cb (if set) or re-uses stored basic-auth to login,
+    /// then retries the request exactly once.
     async fn execute_sql_internal(
         &self,
         sql: &str,
         params: Option<Vec<serde_json::Value>>,
     ) -> Result<String, JsValue> {
-        // T063F: Implement HTTP fetch for SQL queries with authentication
+        let result = self.execute_sql_http(sql, &params).await?;
+
+        // Check for TOKEN_EXPIRED and auto-refresh once.
+        if let Ok(query_resp) =
+            serde_json::from_str::<crate::query::models::QueryResponse>(&result)
+        {
+            if query_resp.is_token_expired() {
+                console_log(
+                    "KalamClient: TOKEN_EXPIRED detected — reauthenticating and retrying query",
+                );
+                self.reauthenticate_for_http().await?;
+                return self.execute_sql_http(sql, &params).await;
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Low-level HTTP POST to /v1/api/sql.  Returns the raw JSON response
+    /// string with `named_rows` populated.
+    async fn execute_sql_http(
+        &self,
+        sql: &str,
+        params: &Option<Vec<serde_json::Value>>,
+    ) -> Result<String, JsValue> {
         let opts = RequestInit::new();
         opts.set_method("POST");
         opts.set_mode(RequestMode::Cors);
@@ -1936,7 +1934,7 @@ impl KalamClient {
         headers.set("Content-Type", "application/json")?;
 
         // Add Authorization header if we have authentication
-        if let Some(auth_header) = self.auth.to_http_header() {
+        if let Some(auth_header) = self.auth.borrow().to_http_header() {
             headers.set("Authorization", &auth_header)?;
         }
         opts.set_headers(&headers);
@@ -1944,7 +1942,7 @@ impl KalamClient {
         // Set body
         let body = QueryRequest {
             sql: sql.to_string(),
-            params,
+            params: params.clone(),
             namespace_id: None,
         };
         let body_str = serde_json::to_string(&body)
@@ -1985,6 +1983,110 @@ impl KalamClient {
         }
     }
 
+    /// Resolve fresh credentials from authProvider callback or stored basic
+    /// credentials, obtain a JWT, and update `self.auth`.
+    async fn reauthenticate_for_http(&self) -> Result<(), JsValue> {
+        // Try the dynamic auth provider callback first (set by TS/Dart SDK).
+        if let Some(cb) = self.auth_provider_cb.borrow().as_ref() {
+            let result = JsFuture::from(js_sys::Promise::resolve(
+                &cb.call0(&JsValue::NULL)
+                    .map_err(|e| JsValue::from_str(&format!("authProvider threw: {:?}", e)))?,
+            ))
+            .await?;
+
+            if result.is_null() || result.is_undefined() {
+                *self.auth.borrow_mut() = WasmAuthProvider::None;
+                console_log("KalamClient: authProvider returned no credentials");
+                return Ok(());
+            }
+
+            let jwt_obj = js_sys::Reflect::get(&result, &"jwt".into()).ok();
+            if let Some(jwt) = jwt_obj.filter(|v| !v.is_undefined() && !v.is_null()) {
+                let token = js_sys::Reflect::get(&jwt, &"token".into())
+                    .ok()
+                    .and_then(|v| v.as_string())
+                    .ok_or_else(|| {
+                        JsValue::from_str(
+                            "authProvider result must have shape { jwt: { token: string } }",
+                        )
+                    })?;
+                *self.auth.borrow_mut() = WasmAuthProvider::Jwt { token };
+                console_log("KalamClient: Reauthenticated via authProvider (JWT)");
+                return Ok(());
+            }
+
+            // authProvider returned an object without jwt — clear auth
+            *self.auth.borrow_mut() = WasmAuthProvider::None;
+            console_log("KalamClient: authProvider returned no JWT credentials");
+            return Ok(());
+        }
+
+        // Fallback: if we have stored basic credentials, perform a login.
+        let basic = {
+            let auth = self.auth.borrow();
+            match &*auth {
+                WasmAuthProvider::Basic { username, password } => {
+                    Some((username.clone(), password.clone()))
+                },
+                _ => None,
+            }
+        };
+
+        if let Some((username, password)) = basic {
+            let login_resp = self.perform_basic_login(&username, &password).await?;
+            *self.auth.borrow_mut() = WasmAuthProvider::Jwt {
+                token: login_resp.access_token,
+            };
+            console_log("KalamClient: Reauthenticated via basic login");
+            return Ok(());
+        }
+
+        Err(JsValue::from_str(
+            "Cannot reauthenticate: no authProvider callback or basic credentials available",
+        ))
+    }
+
+    /// Perform HTTP POST to /v1/api/auth/login and return the parsed response.
+    async fn perform_basic_login(
+        &self,
+        username: &str,
+        password: &str,
+    ) -> Result<crate::models::LoginResponse, JsValue> {
+        let opts = RequestInit::new();
+        opts.set_method("POST");
+        opts.set_mode(RequestMode::Cors);
+
+        let headers = Headers::new()?;
+        headers.set("Content-Type", "application/json")?;
+        opts.set_headers(&headers);
+
+        let body = serde_json::json!({
+            "username": username,
+            "password": password,
+        });
+        opts.set_body(&JsValue::from_str(&body.to_string()));
+
+        let url = format!("{}/v1/api/auth/login", self.url);
+        let request = Request::new_with_str_and_init(&url, &opts)?;
+
+        let resp_value = JsFuture::from(super::helpers::fetch_request(&request)).await?;
+        let resp: Response = resp_value.dyn_into()?;
+
+        if !resp.ok() {
+            let text = JsFuture::from(resp.text()?).await?;
+            let error_msg = text
+                .as_string()
+                .unwrap_or_else(|| format!("Login failed: HTTP {}", resp.status()));
+            return Err(JsValue::from_str(&error_msg));
+        }
+
+        let json = JsFuture::from(resp.text()?).await?;
+        let json_str = json.as_string().unwrap_or_default();
+
+        serde_json::from_str(&json_str)
+            .map_err(|e| JsValue::from_str(&format!("Failed to parse login response: {}", e)))
+    }
+
     /// Set up auto-reconnection handler for the WebSocket
     fn setup_auto_reconnect(&self, ws: &WebSocket) {
         install_auto_reconnect_listener(
@@ -1996,7 +2098,7 @@ impl KalamClient {
             Rc::clone(&self.ws),
             Rc::clone(&self.ping_interval_id),
             self.url.clone(),
-            self.auth.clone(),
+            self.auth.borrow().clone(),
             Rc::clone(&self.auth_provider_cb),
             Rc::clone(&self.on_connect_cb),
             Rc::clone(&self.on_disconnect_cb),

@@ -1,4 +1,6 @@
-# PostgreSQL Extension Reorganization Plan
+# PostgreSQL Extension Reorganization Plan (SUPERSEDED)
+
+> **This document has been superseded by [reorganization-plan-v2.md](./reorganization-plan-v2.md).** Kept for historical reference only.
 
 ## Date
 
@@ -406,7 +408,7 @@ Do not use it this way:
 
 ### A. Shared PG-facing contracts
 
-Keep in `kalam-pg/*`:
+Keep in `pg/` and `pg/crates/*`:
 
 * `kalam-pg-api`
 * `kalam-pg-common`

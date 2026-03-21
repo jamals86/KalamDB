@@ -31,10 +31,10 @@ Expected: matches in the updated remote-first spec docs.
 ### Task 2: Add remote-mode shared request/session fields in `kalam-pg-api`
 
 **Files:**
-- Modify: `kalam-pg/crates/kalam-pg-api/src/request.rs`
-- Modify: `kalam-pg/crates/kalam-pg-api/src/session.rs`
-- Modify: `kalam-pg/crates/kalam-pg-api/src/traits.rs`
-- Test: `kalam-pg/crates/kalam-pg-api/tests/request_validation.rs`
+- Modify: `pg/crates/kalam-pg-api/src/request.rs`
+- Modify: `pg/crates/kalam-pg-api/src/session.rs`
+- Modify: `pg/crates/kalam-pg-api/src/traits.rs`
+- Test: `pg/crates/kalam-pg-api/tests/request_validation.rs`
 
 **Step 1: Write failing tests for remote session metadata**
 
@@ -138,12 +138,12 @@ Expected: PASS.
 ### Task 5: Implement `kalam-pg-client` remote executor
 
 **Files:**
-- Modify: `kalam-pg/crates/kalam-pg-client/Cargo.toml`
-- Modify: `kalam-pg/crates/kalam-pg-client/src/lib.rs`
-- Create: `kalam-pg/crates/kalam-pg-client/src/client.rs`
-- Create: `kalam-pg/crates/kalam-pg-client/src/executor.rs`
-- Create: `kalam-pg/crates/kalam-pg-client/src/proto.rs`
-- Test: `kalam-pg/crates/kalam-pg-client/tests/client.rs`
+- Modify: `pg/crates/kalam-pg-client/Cargo.toml`
+- Modify: `pg/crates/kalam-pg-client/src/lib.rs`
+- Create: `pg/crates/kalam-pg-client/src/client.rs`
+- Create: `pg/crates/kalam-pg-client/src/executor.rs`
+- Create: `pg/crates/kalam-pg-client/src/proto.rs`
+- Test: `pg/crates/kalam-pg-client/tests/client.rs`
 
 **Step 1: Write failing tests for remote client behavior**
 
@@ -175,14 +175,13 @@ Expected: PASS.
 ### Task 6: Wire remote executor into the PostgreSQL extension
 
 **Files:**
-- Modify: `kalam-pg/crates/kalam-pg-extension/src/executor_factory.rs`
-- Create: `kalam-pg/crates/kalam-pg-extension/src/remote_executor_factory.rs`
-- Modify: `kalam-pg/crates/kalam-pg-extension/src/lib.rs`
-- Modify: `kalam-pg/crates/kalam-pg-extension/src/session_settings.rs`
-- Modify: `kalam-pg/crates/kalam-pg-fdw/src/server_options.rs`
-- Modify: `kalam-pg/crates/kalam-pg-fdw/src/request_planner.rs`
-- Test: `kalam-pg/crates/kalam-pg-extension/tests/session_settings.rs`
-- Test: `kalam-pg/crates/kalam-pg-fdw/tests/request_planner.rs`
+- Modify: `pg/src/remote_executor.rs`
+- Modify: `pg/src/lib.rs`
+- Modify: `pg/src/session_settings.rs`
+- Modify: `pg/crates/kalam-pg-fdw/src/server_options.rs`
+- Modify: `pg/crates/kalam-pg-fdw/src/request_planner.rs`
+- Test: `pg/tests/session_settings.rs`
+- Test: `pg/crates/kalam-pg-fdw/tests/request_planner.rs`
 
 **Step 1: Write failing tests for remote configuration/session propagation**
 
@@ -218,8 +217,8 @@ Expected: PASS.
 - Modify: `backend/crates/kalamdb-pg/src/service.rs`
 - Create: `backend/crates/kalamdb-pg/src/mutation_service.rs`
 - Create: `backend/crates/kalamdb-pg/tests/mutation_service.rs`
-- Modify: `kalam-pg/crates/kalam-pg-client/src/executor.rs`
-- Test: `kalam-pg/crates/kalam-pg-client/tests/client.rs`
+- Modify: `pg/crates/kalam-pg-client/src/executor.rs`
+- Test: `pg/crates/kalam-pg-client/tests/client.rs`
 
 **Step 1: Write failing tests for insert/update/delete without SQL reparse**
 
