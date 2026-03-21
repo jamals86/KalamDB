@@ -273,11 +273,12 @@ build_web() {
   mkdir -p "$WEB_OUT_DIR"
 
   (cd "$LINK_CRATE_DIR" && RUSTC_WRAPPER="" wasm-pack build \
-    --profile release-dist \
-    --no-opt \
     --target web \
     --out-dir "$WEB_OUT_DIR" \
     --out-name kalam_link_dart \
+    --no-opt \
+    --profile release-dist \
+    -- \
     --features wasm \
     --no-default-features) || {
     fail "Web WASM build failed"; return 1

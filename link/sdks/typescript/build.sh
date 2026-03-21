@@ -25,12 +25,13 @@ echo "📦 Compiling Rust to WASM..."
 export RUSTC_WRAPPER=""
 export CARGO_BUILD_RUSTC_WRAPPER=""
 wasm-pack build \
-    --profile release-dist \
-    --no-opt \
-  --target web \
-  --out-dir sdks/typescript/wasm \
-  --features wasm \
-  --no-default-features
+        --target web \
+        --out-dir sdks/typescript/wasm \
+        --no-opt \
+        --profile release-dist \
+        -- \
+        --features wasm \
+        --no-default-features
 
 if command -v wasm-opt >/dev/null 2>&1; then
     echo "🗜️ Optimizing WASM with wasm-opt..."

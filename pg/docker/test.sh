@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 # ==========================================================================
-# KalamDB PostgreSQL Extension — Remote Docker Test Runner
+# KalamDB PostgreSQL Extension — Docker Test Runner
 # ==========================================================================
 #
-# End-to-end test for the remote-mode FDW extension connecting to a
-# KalamDB server running on the host machine.
+# End-to-end test for the pg_kalam FDW extension running in docker-compose.
+# Both KalamDB and PostgreSQL run as compose services.
 #
 # Prerequisites:
-#   1. KalamDB server running on the host (cd backend && cargo run)
-#   2. Linux extension artifacts built: ./pg/docker/build.sh --artifacts
-#   3. PostgreSQL container running: cd pg/docker && docker compose up -d
+#   1. Build the extension image:
+#      ./pg/docker/build.sh
+#   2. Start compose services:
+#      cd pg/docker && docker compose up -d
 #
 # Environment variables:
 #   PGHOST           — PostgreSQL host     (default: localhost)
@@ -17,7 +18,7 @@
 #   PGUSER           — PostgreSQL user     (default: kalamdb)
 #   PGPASSWORD       — PostgreSQL password (default: kalamdb123)
 #   PGDATABASE       — PostgreSQL database (default: kalamdb)
-#   KALAMDB_API_URL  — KalamDB HTTP API    (default: http://localhost:8080)
+#   KALAMDB_API_URL  — KalamDB HTTP API    (default: http://localhost:8088)
 #   KALAMDB_PASSWORD — Admin password      (default: kalamdb123)
 # ==========================================================================
 set -euo pipefail
@@ -30,7 +31,7 @@ export PGUSER="${PGUSER:-kalamdb}"
 export PGPASSWORD="${PGPASSWORD:-kalamdb123}"
 export PGDATABASE="${PGDATABASE:-kalamdb}"
 
-KALAMDB_API_URL="${KALAMDB_API_URL:-http://localhost:8080}"
+KALAMDB_API_URL="${KALAMDB_API_URL:-http://localhost:8088}"
 KALAMDB_PASSWORD="${KALAMDB_PASSWORD:-kalamdb123}"
 
 if [ -x "$HOME/.pgrx/16.13/pgrx-install/bin/pg_isready" ]; then
@@ -46,7 +47,7 @@ else
 fi
 
 echo "========================================"
-echo " KalamDB PG Extension — Remote Test"
+echo " KalamDB PG Extension — Docker Test"
 echo "========================================"
 echo " PG Host:     $PGHOST:$PGPORT"
 echo " PG Database: $PGDATABASE"
@@ -132,5 +133,5 @@ PAGER=cat "$PSQL_BIN" -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" \
 
 echo ""
 echo "========================================"
-echo " All remote tests passed!"
+echo " All tests passed!"
 echo "========================================"
