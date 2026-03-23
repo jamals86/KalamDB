@@ -960,11 +960,15 @@ jobs:
             .
 
           # Compile extension inside the Bookworm container
-          mkdir -p artifacts
+          mkdir -p artifacts .cargo/pg-extension-x86/registry .cargo/pg-extension-x86/git .cargo/pg-extension-x86/target
           docker run --rm \
             -v "$PWD:/src:ro" \
             -v "$PWD/artifacts:/artifacts" \
+            -v "$PWD/.cargo/pg-extension-x86/registry:/usr/local/cargo/registry" \
+            -v "$PWD/.cargo/pg-extension-x86/git:/usr/local/cargo/git" \
+            -v "$PWD/.cargo/pg-extension-x86/target:/target-cache" \
             -e CARGO_INCREMENTAL=0 \
+            -e CARGO_TARGET_DIR=/target-cache \
             -e RUSTFLAGS="-Cdebuginfo=0" \
             pg-kalam-builder-x86 \
             bash -c '
@@ -1049,11 +1053,15 @@ jobs:
             .
 
           # Compile extension inside the ARM64 container
-          mkdir -p artifacts
+          mkdir -p artifacts .cargo/pg-extension-arm64/registry .cargo/pg-extension-arm64/git .cargo/pg-extension-arm64/target
           docker run --rm --platform linux/arm64 \
             -v "$PWD:/src:ro" \
             -v "$PWD/artifacts:/artifacts" \
+            -v "$PWD/.cargo/pg-extension-arm64/registry:/usr/local/cargo/registry" \
+            -v "$PWD/.cargo/pg-extension-arm64/git:/usr/local/cargo/git" \
+            -v "$PWD/.cargo/pg-extension-arm64/target:/target-cache" \
             -e CARGO_INCREMENTAL=0 \
+            -e CARGO_TARGET_DIR=/target-cache \
             -e RUSTFLAGS="-Cdebuginfo=0" \
             pg-kalam-builder-arm64 \
             bash -c '
