@@ -4,6 +4,7 @@
 //! as the underlying storage engine. It maps the generic partition concept to
 //! RocksDB column families.
 
+use crate::cf_tuning::apply_cf_settings;
 use crate::storage_trait::{Operation, Partition, Result, StorageBackend, StorageError};
 use kalamdb_configs::RocksDbSettings;
 use rocksdb::{BoundColumnFamily, Cache, IteratorMode, Options, PrefixRange, WriteOptions, DB};
@@ -339,8 +340,7 @@ impl StorageBackend for RocksDBBackend {
         // Create new column family
         // Note: With multi-threaded-cf feature, create_cf takes &self and handles locking internally
         let mut opts = Options::default();
-        opts.set_write_buffer_size(self.settings.write_buffer_size);
-        opts.set_max_write_buffer_number(self.settings.max_write_buffers);
+        apply_cf_settings(&mut opts, &self.settings, partition.name());
         // MEMORY OPTIMIZATION: Do NOT call optimize_for_point_lookup() per-CF.
         // It switches the memtable to a hash-based representation which has
         // significantly higher fixed memory overhead per column family.

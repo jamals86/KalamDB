@@ -48,21 +48,30 @@ shared_tables_template = "{namespace}/{tableName}"
 user_tables_template = "{namespace}/{tableName}/{userId}"
 
 [storage.rocksdb]
-# Write buffer size per column family in bytes (default: 512KB)
-# Lower values reduce memory with many column families
-# Formula: memory ~= write_buffer_size × max_write_buffers × num_column_families
-write_buffer_size = 524288
+# Block cache size for reads in bytes (default: 2MB)
+block_cache_size = 2097152
 
-# Maximum number of write buffers (default: 2)
-# Allows writes to continue while buffers are being flushed
+max_background_jobs = 4
+
+[storage.rocksdb.cf_profiles.system_meta]
+write_buffer_size = 32768
 max_write_buffers = 2
 
-# Block cache size for reads in bytes (default: 4MB)
-# Shared LRU cache across all column families
-block_cache_size = 4194304
+[storage.rocksdb.cf_profiles.system_index]
+write_buffer_size = 32768
+max_write_buffers = 2
 
-# Maximum number of background compaction/flush jobs (default: 4)
-max_background_jobs = 4
+[storage.rocksdb.cf_profiles.hot_data]
+write_buffer_size = 131072
+max_write_buffers = 2
+
+[storage.rocksdb.cf_profiles.hot_index]
+write_buffer_size = 65536
+max_write_buffers = 2
+
+[storage.rocksdb.cf_profiles.raft]
+write_buffer_size = 262144
+max_write_buffers = 2
 
 [datafusion]
 # Memory limit for query execution in bytes (default: 64MB)
@@ -321,9 +330,9 @@ max_parameters = 50
 # Prevents memory exhaustion from individual large parameters
 max_parameter_size_bytes = 524288
 
-# Maximum number of cached SQL logical plans (default: 1000)
+# Maximum number of cached SQL logical plans (default: 200)
 # Bound memory used by SQL plan cache
-sql_plan_cache_max_entries = 1000
+sql_plan_cache_max_entries = 200
 
 # Time-to-idle TTL for SQL cached plans in seconds (default: 900 = 15 minutes)
 # Unused plans are evicted automatically after this idle period

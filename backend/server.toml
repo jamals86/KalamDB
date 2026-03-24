@@ -14,10 +14,9 @@ host = "0.0.0.0"
 port = 8080
 
 # Number of worker threads (0 = number of CPU cores)
-# INCREASED FOR TEST LOAD: More workers handle concurrent test connections
-# macOS has limited ephemeral ports (~16K), so more workers help process
-# connections faster, reducing TIME_WAIT port exhaustion
-workers = 24
+# Each worker adds ~2 MB idle RSS. For development, 4 workers is sufficient.
+# For production, 0 (auto) uses all CPU cores.
+workers = 0
 
 # Enable HTTP/2 protocol support (default: true)
 # When true, server uses automatic HTTP/1.1 and HTTP/2 cleartext (h2c) negotiation
@@ -51,24 +50,32 @@ shared_tables_template = "{namespace}/{tableName}"
 user_tables_template = "{namespace}/{tableName}/{userId}"
 
 [storage.rocksdb]
-# Write buffer size per column family in bytes (default: 512KB)
-# Lower values reduce memory with many column families
-# Formula: memory ~= write_buffer_size × max_write_buffers × num_column_families
-# MEMORY OPTIMIZATION: Reduced from 2MB to 512KB (saves ~100MB+ with many CFs)
-write_buffer_size = 524288
-
-# Maximum number of write buffers (default: 2)
-# Allows writes to continue while buffers are being flushed
-# MEMORY OPTIMIZATION: Reduced from 6 to 2 (saves ~4x memory per CF)
-max_write_buffers = 2
-
-# Block cache size for reads in bytes (default: 4MB)
+# Block cache size for reads in bytes (default: 2MB)
 # Shared LRU cache across all column families
-# MEMORY OPTIMIZATION: Reduced from 16MB to 4MB for idle server
-block_cache_size = 4194304
+block_cache_size = 2097152
 
 # Maximum number of background compaction/flush jobs (default: 4)
 max_background_jobs = 4
+
+[storage.rocksdb.cf_profiles.system_meta]
+write_buffer_size = 32768
+max_write_buffers = 2
+
+[storage.rocksdb.cf_profiles.system_index]
+write_buffer_size = 32768
+max_write_buffers = 2
+
+[storage.rocksdb.cf_profiles.hot_data]
+write_buffer_size = 131072
+max_write_buffers = 2
+
+[storage.rocksdb.cf_profiles.hot_index]
+write_buffer_size = 65536
+max_write_buffers = 2
+
+[storage.rocksdb.cf_profiles.raft]
+write_buffer_size = 262144
+max_write_buffers = 2
 
 [datafusion]
 # Memory limit for query execution in bytes (default: 64MB)
@@ -271,8 +278,8 @@ ban_duration_seconds = 300
 # Set to false to completely disable rate limiting (NOT recommended for production)
 enable_connection_protection = true
 
-# Maximum cached entries for rate limiting state (default: 100,000)
-cache_max_entries = 100000
+# Maximum cached entries for rate limiting state (default: 1,000)
+cache_max_entries = 1000
 
 # Time-to-idle for cached entries in seconds (default: 600 = 10 minutes)
 cache_ttl_seconds = 600

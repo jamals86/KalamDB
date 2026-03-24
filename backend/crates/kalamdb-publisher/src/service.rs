@@ -125,11 +125,11 @@ pub struct TopicPublisherService {
 impl TopicPublisherService {
     /// Create a new TopicPublisherService with stores backed by the given storage.
     pub fn new(storage_backend: Arc<dyn StorageBackend>) -> Self {
-        // Ensure global partitions for topic messages and offsets exist.
+        // Ensure the topic message partition exists.
+        // Consumer offsets live in system.topic_offsets (system_topic_offsets CF),
+        // so creating a separate topic_offsets CF here only adds permanent idle overhead.
         let messages_partition = Partition::new("topic_messages");
-        let offsets_partition = Partition::new("topic_offsets");
         let _ = storage_backend.create_partition(&messages_partition);
-        let _ = storage_backend.create_partition(&offsets_partition);
 
         let message_store =
             Arc::new(TopicMessageStore::new(storage_backend.clone(), messages_partition));

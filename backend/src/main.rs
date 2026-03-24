@@ -97,6 +97,15 @@ fn validate_startup_ports(config: &ServerConfig) -> Result<()> {
 #[global_allocator]
 static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
+// Tune jemalloc to return freed memory to the OS quickly.
+// dirty_decay_ms:1000  — purge dirty pages after 1 s (default 10 s)
+// muzzy_decay_ms:1000  — purge muzzy pages after 1 s (default 10 s)
+// background_thread:true — let jemalloc purge asynchronously
+#[cfg(all(feature = "jemalloc", not(target_env = "msvc")))]
+#[allow(non_upper_case_globals)]
+#[unsafe(export_name = "malloc_conf")]
+static malloc_conf: &[u8] = b"background_thread:true,dirty_decay_ms:1000,muzzy_decay_ms:1000\0";
+
 /// Raise the process file-descriptor limit to the OS hard maximum.
 /// This is critical for benchmarks and production workloads that open many
 /// RocksDB files, Parquet segments, and WebSocket connections simultaneously.

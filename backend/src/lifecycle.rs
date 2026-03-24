@@ -23,6 +23,19 @@ use std::net::{SocketAddr, TcpListener};
 use std::sync::Arc;
 use tracing_actix_web::{RootSpanBuilder, TracingLogger};
 
+/// Resolve the effective number of actix-web worker threads.
+///
+/// When `configured == 0` (auto), uses `num_cpus` but caps at 8 to avoid
+/// excessive idle RSS on high-core-count dev machines (~2 MB per worker).
+/// For production with >8 cores, set `workers` explicitly in server.toml.
+fn effective_workers(configured: usize) -> usize {
+    if configured == 0 {
+        num_cpus::get().min(8)
+    } else {
+        configured
+    }
+}
+
 /// Custom root span builder that forces `parent: None` on every request span.
 ///
 /// The default `TracingLogger` inherits whatever span is "current" on the
@@ -409,11 +422,7 @@ pub async fn run(
     // Log server configuration for debugging
     debug!(
         "Server config: workers={}, max_connections={}, backlog={}, blocking_threads={}, body_limit={}MB",
-        if config.server.workers == 0 {
-            num_cpus::get()
-        } else {
-            config.server.workers
-        },
+        effective_workers(config.server.workers),
         config.performance.max_connections,
         config.performance.backlog,
         config.performance.worker_max_blocking_threads,
@@ -543,11 +552,7 @@ pub async fn run(
     );
 
     let server = server
-    .workers(if config.server.workers == 0 {
-        num_cpus::get()
-    } else {
-        config.server.workers
-    })
+    .workers(effective_workers(config.server.workers))
     // Per-worker max concurrent connections (default: 25000)
     .max_connections(config.performance.max_connections)
     // Blocking thread pool size per worker for RocksDB and CPU-intensive ops
@@ -754,11 +759,7 @@ pub async fn run_for_tests(
 
     let server = server
         .listen(listener)?
-        .workers(if config.server.workers == 0 {
-            num_cpus::get()
-        } else {
-            config.server.workers
-        })
+        .workers(effective_workers(config.server.workers))
         .max_connections(config.performance.max_connections)
         .worker_max_blocking_threads(config.performance.worker_max_blocking_threads)
         .keep_alive(std::time::Duration::from_secs(config.performance.keepalive_timeout))
@@ -853,11 +854,7 @@ pub async fn run_detached(
     };
 
     let server = server
-        .workers(if config.server.workers == 0 {
-            num_cpus::get()
-        } else {
-            config.server.workers
-        })
+        .workers(effective_workers(config.server.workers))
         .max_connections(config.performance.max_connections)
         .worker_max_blocking_threads(config.performance.worker_max_blocking_threads)
         .keep_alive(std::time::Duration::from_secs(config.performance.keepalive_timeout))

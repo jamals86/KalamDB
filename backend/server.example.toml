@@ -57,26 +57,39 @@ connect_timeout_secs = 10
 
 
 [storage.rocksdb]
-# Write buffer size per column family in bytes (default: 512KB)
-# MEMORY OPTIMIZATION: Reduced from 2MB for lower idle memory footprint
-# Formula: memory ≈ write_buffer_size × max_write_buffers × num_column_families
-# Lower values reduce memory with many column families
-# Example: 50 CFs × 512KB × 2 buffers = 50MB vs 50 CFs × 2MB × 2 = 200MB
-write_buffer_size = 524288
-
-# Maximum number of write buffers (default: 2)
-# Allows writes to continue while buffers are being flushed
-max_write_buffers = 2
-
-# Block cache size for reads in bytes (default: 4MB)
-# MEMORY OPTIMIZATION: Reduced from 256MB to 4MB
+# Block cache size for reads in bytes (default: 2MB)
 # IMPORTANT: This cache is SHARED across ALL column families
 # Adding more column families does NOT increase memory proportionally
-# Example: 100 CFs × 4MB cache = still only 4MB total (not 400MB)
-block_cache_size = 4194304
+block_cache_size = 2097152
 
 # Maximum number of background compaction/flush jobs (default: 4)
 max_background_jobs = 4
+
+[storage.rocksdb.cf_profiles.system_meta]
+# Low-write system metadata tables and compatibility partitions.
+write_buffer_size = 32768
+max_write_buffers = 2
+
+[storage.rocksdb.cf_profiles.system_index]
+# Secondary indexes for system tables.
+write_buffer_size = 32768
+max_write_buffers = 2
+
+[storage.rocksdb.cf_profiles.hot_data]
+# User/shared/stream data CFs and topic message payloads.
+# These stay warmer because they sit on the main read/write path.
+write_buffer_size = 131072
+max_write_buffers = 2
+
+[storage.rocksdb.cf_profiles.hot_index]
+# PK indexes and vector PK indexes. These are latency-sensitive, but smaller than data CFs.
+write_buffer_size = 65536
+max_write_buffers = 2
+
+[storage.rocksdb.cf_profiles.raft]
+# The single raft_data CF is append-heavy and benefits from a larger memtable.
+write_buffer_size = 262144
+max_write_buffers = 2
 
 [datafusion]
 # Memory limit for query execution in bytes (default: 64MB)
@@ -223,10 +236,10 @@ max_connections = 25000
 # Industry standards: Nginx (511), Apache (511), Caddy (1024), Actix (2048)
 backlog = 4096
 
-# Max blocking threads per worker for CPU-intensive operations (default: 512)
+# Max blocking threads per worker for CPU-intensive operations (default: 64)
 # Used for RocksDB I/O and synchronous operations
 # Increase for high-concurrency workloads or test environments
-worker_max_blocking_threads = 512
+worker_max_blocking_threads = 64
 
 # Client request timeout in seconds (default: 5)
 # Time allowed for client to send complete request headers
@@ -284,8 +297,10 @@ ban_duration_seconds = 300
 # Set to false to completely disable rate limiting (NOT recommended for production)
 enable_connection_protection = true
 
-# Maximum cached entries for rate limiting state (default: 100,000)
-cache_max_entries = 100000
+# Maximum cached entries for rate limiting state (default: 1,000)
+# MEMORY OPTIMIZATION: Reduced from 100k. Moka internal bookkeeping scales
+# with max_capacity. 1k handles typical mobile-app deployments.
+cache_max_entries = 1000
 
 # Time-to-idle for cached entries in seconds (default: 600 = 10 minutes)
 cache_ttl_seconds = 600
@@ -495,9 +510,9 @@ max_parameters = 50
 # Prevents memory exhaustion from individual large parameters
 max_parameter_size_bytes = 524288
 
-# Maximum number of cached SQL logical plans (default: 1000)
+# Maximum number of cached SQL logical plans (default: 200)
 # Bound memory used by SQL plan cache
-sql_plan_cache_max_entries = 1000
+sql_plan_cache_max_entries = 200
 
 # Time-to-idle TTL for SQL cached plans in seconds (default: 900 = 15 minutes)
 # Unused plans are evicted automatically after this idle period

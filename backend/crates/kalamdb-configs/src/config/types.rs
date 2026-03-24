@@ -291,18 +291,62 @@ impl StorageSettings {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RocksDbCfProfileSettings {
+    /// Write buffer size per column family in bytes.
+    pub write_buffer_size: usize,
+
+    /// Maximum number of memtables RocksDB may keep per CF before stalling.
+    pub max_write_buffers: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RocksDbCfProfilesSettings {
+    /// System metadata tables and compatibility partitions.
+    #[serde(default = "default_rocksdb_system_meta_profile")]
+    pub system_meta: RocksDbCfProfileSettings,
+
+    /// Secondary indexes for system tables.
+    #[serde(default = "default_rocksdb_system_index_profile")]
+    pub system_index: RocksDbCfProfileSettings,
+
+    /// User/shared/stream data partitions and topic message payloads.
+    #[serde(default = "default_rocksdb_hot_data_profile")]
+    pub hot_data: RocksDbCfProfileSettings,
+
+    /// PK and vector indexes on user-facing tables.
+    #[serde(default = "default_rocksdb_hot_index_profile")]
+    pub hot_index: RocksDbCfProfileSettings,
+
+    /// Raft log/state partition.
+    #[serde(default = "default_rocksdb_raft_profile")]
+    pub raft: RocksDbCfProfileSettings,
+}
+
+impl Default for RocksDbCfProfileSettings {
+    fn default() -> Self {
+        default_rocksdb_hot_index_profile()
+    }
+}
+
+impl Default for RocksDbCfProfilesSettings {
+    fn default() -> Self {
+        Self {
+            system_meta: default_rocksdb_system_meta_profile(),
+            system_index: default_rocksdb_system_index_profile(),
+            hot_data: default_rocksdb_hot_data_profile(),
+            hot_index: default_rocksdb_hot_index_profile(),
+            raft: default_rocksdb_raft_profile(),
+        }
+    }
+}
+
 /// RocksDB-specific settings (MEMORY OPTIMIZED DEFAULTS)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RocksDbSettings {
-    /// Write buffer size per column family in bytes (default: 2MB)
-    /// Reduced from 64MB for lower memory footprint
-    #[serde(default = "default_rocksdb_write_buffer_size")]
-    pub write_buffer_size: usize,
-
-    /// Maximum number of write buffers (default: 2)
-    /// Reduced from 3 for lower memory usage
-    #[serde(default = "default_rocksdb_max_write_buffers")]
-    pub max_write_buffers: i32,
+    /// Per-profile tuning for different categories of column families.
+    #[serde(default)]
+    pub cf_profiles: RocksDbCfProfilesSettings,
 
     /// Block cache size for reads in bytes (default: 4MB, SHARED across all CFs)
     /// Reduced from 256MB. This cache is shared, so adding CFs doesn't multiply memory.
@@ -341,8 +385,7 @@ pub struct RocksDbSettings {
 impl Default for RocksDbSettings {
     fn default() -> Self {
         Self {
-            write_buffer_size: default_rocksdb_write_buffer_size(),
-            max_write_buffers: default_rocksdb_max_write_buffers(),
+            cf_profiles: RocksDbCfProfilesSettings::default(),
             block_cache_size: default_rocksdb_block_cache_size(),
             max_background_jobs: default_rocksdb_max_background_jobs(),
             max_open_files: default_rocksdb_max_open_files(),
