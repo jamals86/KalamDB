@@ -133,10 +133,7 @@ function createWireLogEntry(
     `WS ${direction.toUpperCase()} · ${messageType}`,
     "info",
     asUser,
-    {
-      raw: rawMessage,
-      parsed,
-    },
+    parsed ?? rawMessage,
   );
 }
 
