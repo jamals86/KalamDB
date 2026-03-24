@@ -5,9 +5,9 @@
 use crate::fdw_options::parse_options;
 use crate::fdw_state::KalamModifyState;
 use crate::pg_to_kalam::datum_to_scalar;
+use crate::relation_table_options::resolve_table_options_for_relation;
 use kalam_pg_api::{DeleteRequest, InsertRequest, TenantContext, UpdateRequest};
 use kalam_pg_common::{KalamPgError, DELETED_COLUMN, SEQ_COLUMN, USER_ID_COLUMN};
-use kalam_pg_fdw::TableOptions;
 use kalamdb_commons::models::rows::Row;
 use kalamdb_commons::models::UserId;
 use pgrx::pg_guard;
@@ -199,7 +199,7 @@ unsafe fn begin_foreign_modify_impl(rinfo: *mut pg_sys::ResultRelInfo) -> Result
     let relid = (*relation).rd_id;
     let ft = pg_sys::GetForeignTable(relid);
     let options = parse_options((*ft).options);
-    let table_options = TableOptions::parse(&options)?;
+    let table_options = resolve_table_options_for_relation(relation, &options)?;
 
     let tupdesc = (*relation).rd_att;
     let natts = (*tupdesc).natts as usize;

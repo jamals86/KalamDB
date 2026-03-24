@@ -800,13 +800,21 @@ export class KalamDBClient {
       body: formData,
     });
 
-    const result = await response.json();
+    const result = (await response.json()) as QueryResponse;
+
+    // Auto-refresh on TOKEN_EXPIRED: re-login and refresh auth for next requests.
+    // Multipart uploads can't be replayed so we don't retry, but we refresh auth
+    // so subsequent requests succeed.
+    if (result.status === 'error' && result.error?.code === 'TOKEN_EXPIRED') {
+      this.log(LogLevel.Warn, 'auth', 'TOKEN_EXPIRED on file upload — refreshing credentials');
+      await this.reauthenticateFromAuthProvider();
+    }
 
     if (!response.ok && result.status !== 'success') {
       throw new Error(result.error?.message || `Upload failed: ${response.status}`);
     }
 
-    return result as QueryResponse;
+    return result;
   }
 
   /* ---------------------------------------------------------------- */
@@ -1628,6 +1636,26 @@ export class KalamDBClient {
   private async ensureJwtForBasicAuth(): Promise<void> {
     if (this.auth.type === 'basic') {
       await this.login();
+    }
+  }
+
+  /**
+   * Re-resolve credentials from the authProvider and update internal auth state.
+   * Used to recover from TOKEN_EXPIRED in code paths that bypass the WASM client
+   * (e.g. queryWithFiles which uses fetch() directly).
+   */
+  private async reauthenticateFromAuthProvider(): Promise<void> {
+    try {
+      const result = await this.resolveWasmAuthProvider();
+      if (result?.jwt?.token) {
+        this.auth = { type: 'jwt', token: result.jwt.token };
+        if (this.wasmClient) {
+          this.wasmClient = WasmClient.withJwt(this.url, result.jwt.token);
+          this.attachWasmClientState();
+        }
+      }
+    } catch (error) {
+      this.log(LogLevel.Warn, 'auth', `Failed to reauthenticate: ${error}`);
     }
   }
 

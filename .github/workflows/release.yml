@@ -972,6 +972,7 @@ jobs:
             -e CARGO_INCREMENTAL=0 \
             -e CARGO_TARGET_DIR=/target-cache \
             -e RUSTFLAGS="-Cdebuginfo=0" \
+            -e PG_EXTENSION_FLAVOR \
             pg-kalam-builder-x86 \
             bash -c '
               cd /src && \

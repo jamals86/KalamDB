@@ -6,6 +6,7 @@
 
 use std::sync::OnceLock;
 use std::time::Duration;
+use std::process::Command;
 
 use reqwest::Client;
 use serde_json::Value;
@@ -360,6 +361,55 @@ pub async fn timed_query(client: &tokio_postgres::Client, sql: &str) -> (Vec<tok
     let rows = client.query(sql, &[]).await.expect("timed_query");
     let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
     (rows, elapsed_ms)
+}
+
+pub fn kalamdb_pid() -> u32 {
+    let output = Command::new("lsof")
+        .args(["-nP", "-iTCP:8080", "-sTCP:LISTEN", "-t"])
+        .output()
+        .expect("run lsof for KalamDB pid");
+    assert!(
+        output.status.success(),
+        "failed to resolve KalamDB pid via lsof: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("parse lsof pid output");
+    stdout
+        .lines()
+        .find_map(|line| line.trim().parse::<u32>().ok())
+        .expect("find KalamDB pid listening on 8080")
+}
+
+pub fn process_rss_kb(pid: u32) -> u64 {
+    let output = Command::new("ps")
+        .args(["-o", "rss=", "-p", &pid.to_string()])
+        .output()
+        .expect("run ps for rss");
+    assert!(
+        output.status.success(),
+        "failed to read rss for pid {pid}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("parse ps rss output");
+    stdout
+        .trim()
+        .parse::<u64>()
+        .expect("parse rss value")
+}
+
+pub async fn sample_process_peak_rss_kb(
+    pid: u32,
+    sample_interval_ms: u64,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> u64 {
+    use std::sync::atomic::Ordering;
+
+    let mut peak = process_rss_kb(pid);
+    while !stop.load(Ordering::Relaxed) {
+        tokio::time::sleep(Duration::from_millis(sample_interval_ms)).await;
+        peak = peak.max(process_rss_kb(pid));
+    }
+    peak.max(process_rss_kb(pid))
 }
 
 async fn ensure_schema_exists(client: &tokio_postgres::Client, schema: &str) {

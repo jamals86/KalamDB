@@ -24,7 +24,6 @@ const mockUnsubscribe = vi.fn();
 
 let liveCallback: ((message: Record<string, unknown>) => void) | null = null;
 let clientDisconnectCallback: ((reason: Record<string, unknown>) => void) | null = null;
-let clientErrorCallback: ((error: Record<string, unknown>) => void) | null = null;
 let clientReceiveCallback: ((message: string) => void) | null = null;
 let clientSendCallback: ((message: string) => void) | null = null;
 
@@ -161,7 +160,6 @@ describe("SqlStudio page", () => {
     );
     liveCallback = null;
     clientDisconnectCallback = null;
-    clientErrorCallback = null;
     clientReceiveCallback = null;
     clientSendCallback = null;
     mockUseAuth.mockReset();
@@ -208,9 +206,7 @@ describe("SqlStudio page", () => {
     mockSetClientDisconnectListener.mockImplementation((callback?: (reason: Record<string, unknown>) => void) => {
       clientDisconnectCallback = callback ?? null;
     });
-    mockSetClientErrorListener.mockImplementation((callback?: (error: Record<string, unknown>) => void) => {
-      clientErrorCallback = callback ?? null;
-    });
+    mockSetClientErrorListener.mockImplementation(() => {});
     mockSetClientReceiveListener.mockImplementation((callback?: (message: string) => void) => {
       clientReceiveCallback = callback ?? null;
     });

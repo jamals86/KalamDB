@@ -46,7 +46,7 @@ These statements must be executed by KalamDB's own SQL engine, not treated as pg
 
 - No persistent HTTP transaction token is added in this phase.
 - No savepoints or nested transactions.
-- No DDL inside explicit transaction blocks.
+- No DDL inside explicit transaction blocks — `CREATE TABLE`, `DROP TABLE`, `ALTER TABLE`, and other DDL statements are explicitly rejected with a clear error when issued inside a `BEGIN`/`COMMIT` block (see Research Decision 16). DDL operations modify system tables and the schema registry which don't support rollback semantics.
 
 ## Example Request
 

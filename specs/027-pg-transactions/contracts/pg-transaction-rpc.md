@@ -84,8 +84,9 @@ Define the externally visible behavior of the existing pg RPC transaction lifecy
 ## PostgreSQL Lifecycle Alignment
 
 - pg_kalam continues to bind remote transaction finalization to PostgreSQL transaction callbacks.
-- Remote durable commit should occur only on PostgreSQL `PreCommit` or equivalent final commit event.
+- Remote durable commit occurs at PostgreSQL `XACT_EVENT_COMMIT` (the existing hook point in `fdw_xact.rs`), NOT at `PRE_COMMIT`. This means the PostgreSQL WAL commit record has already been flushed before the KalamDB remote commit fires. If the remote commit fails at this point, PostgreSQL has already committed — this is the standard FDW best-effort finalization pattern. See Research Decision 8.
 - PostgreSQL `Abort` or backend/session close must discard pending state for the canonical transaction ID without durable apply.
+- DDL statements (`CREATE TABLE`, `DROP TABLE`, `ALTER TABLE`) are rejected inside explicit transactions on the pg RPC path, matching the KalamDB SQL batch behavior (see Research Decision 16).
 
 ## Compatibility Requirements
 

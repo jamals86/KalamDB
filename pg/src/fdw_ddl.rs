@@ -84,7 +84,7 @@ unsafe extern "C-unwind" fn pg_kalam_process_utility(
 }
 
 /// Call the previous ProcessUtility hook or `standard_ProcessUtility`.
-unsafe fn call_prev(
+fn call_prev(
     pstmt: *mut pg_sys::PlannedStmt,
     query_string: *const std::ffi::c_char,
     read_only_tree: bool,
@@ -94,10 +94,21 @@ unsafe fn call_prev(
     dest: *mut pg_sys::DestReceiver,
     qc: *mut pg_sys::QueryCompletion,
 ) {
-    if let Some(prev) = PREV_PROCESS_UTILITY {
-        prev(pstmt, query_string, read_only_tree, context, params, query_env, dest, qc);
-    } else {
-        pg_sys::standard_ProcessUtility(pstmt, query_string, read_only_tree, context, params, query_env, dest, qc);
+    unsafe {
+        if let Some(prev) = PREV_PROCESS_UTILITY {
+            prev(pstmt, query_string, read_only_tree, context, params, query_env, dest, qc);
+        } else {
+            pg_sys::standard_ProcessUtility(
+                pstmt,
+                query_string,
+                read_only_tree,
+                context,
+                params,
+                query_env,
+                dest,
+                qc,
+            );
+        }
     }
 }
 
@@ -533,16 +544,16 @@ fn pg_oid_to_kalam_type(type_oid: pg_sys::Oid, type_mod: i32) -> String {
 }
 
 /// Check if a server name maps to a foreign server that uses our FDW.
-unsafe fn is_kalam_server(server_name: &str) -> bool {
+fn is_kalam_server(server_name: &str) -> bool {
     if server_name.is_empty() {
         return false;
     }
     let c_name = std::ffi::CString::new(server_name).unwrap_or_default();
-    let server = pg_sys::GetForeignServerByName(c_name.as_ptr(), true);
+    let server = unsafe { pg_sys::GetForeignServerByName(c_name.as_ptr(), true) };
     if server.is_null() {
         return false;
     }
-    let fdw = pg_sys::GetForeignDataWrapper((*server).fdwid);
+    let fdw = unsafe { pg_sys::GetForeignDataWrapper((*server).fdwid) };
     if fdw.is_null() {
         return false;
     }
@@ -550,20 +561,20 @@ unsafe fn is_kalam_server(server_name: &str) -> bool {
 }
 
 /// Check if a ForeignDataWrapper is our `pg_kalam` FDW.
-unsafe fn is_kalam_fdw_name(fdw: *mut pg_sys::ForeignDataWrapper) -> bool {
-    if fdw.is_null() || (*fdw).fdwname.is_null() {
+fn is_kalam_fdw_name(fdw: *mut pg_sys::ForeignDataWrapper) -> bool {
+    if fdw.is_null() || unsafe { (*fdw).fdwname.is_null() } {
         return false;
     }
-    let fdw_name = CStr::from_ptr((*fdw).fdwname).to_string_lossy();
+    let fdw_name = unsafe { CStr::from_ptr((*fdw).fdwname) }.to_string_lossy();
     fdw_name == "pg_kalam"
 }
 
 /// Read a C string pointer into a Rust String. Returns empty string for null.
-unsafe fn read_cstr(ptr: *const std::ffi::c_char) -> String {
+fn read_cstr(ptr: *const std::ffi::c_char) -> String {
     if ptr.is_null() {
         String::new()
     } else {
-        CStr::from_ptr(ptr).to_string_lossy().into_owned()
+        unsafe { CStr::from_ptr(ptr) }.to_string_lossy().into_owned()
     }
 }
 
@@ -591,20 +602,20 @@ fn quote_ident(name: &str) -> String {
 /// Execute a SQL statement on the remote KalamDB backend.
 ///
 /// Bootstraps the remote connection from the given server name if not already initialized.
-unsafe fn execute_remote_sql(sql: &str, server_name: &str) -> Result<String, KalamPgError> {
+fn execute_remote_sql(sql: &str, server_name: &str) -> Result<String, KalamPgError> {
     let state = match get_remote_extension_state() {
         Some(s) => s,
         None => {
             // Bootstrap connection from the foreign server's options.
             let c_name = std::ffi::CString::new(server_name).unwrap_or_default();
-            let server = pg_sys::GetForeignServerByName(c_name.as_ptr(), true);
+            let server = unsafe { pg_sys::GetForeignServerByName(c_name.as_ptr(), true) };
             if server.is_null() {
                 return Err(KalamPgError::Execution(format!(
                     "foreign server '{}' not found",
                     server_name
                 )));
             }
-            let server_options = parse_options((*server).options);
+            let server_options = parse_options(unsafe { (*server).options });
             let parsed_server = ServerOptions::parse(&server_options)?;
             let remote_config = parsed_server.remote.ok_or_else(|| {
                 KalamPgError::Validation(

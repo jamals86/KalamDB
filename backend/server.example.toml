@@ -79,22 +79,25 @@ block_cache_size = 4194304
 max_background_jobs = 4
 
 [datafusion]
-# Memory limit for query execution in bytes (default: 256MB)
-# Queries exceeding this limit will be terminated
-memory_limit = 268435456
+# Memory limit for query execution in bytes (default: 64MB)
+# KalamDB is optimised for mobile/OLTP workloads, not heavy analytics.
+# 64 MB is sufficient for key-based lookups and small aggregates.
+# Queries that exceed this limit are terminated immediately.
+memory_limit = 67108864
 
-# Number of parallel threads for query execution (default: number of CPU cores)
-# Set to 0 to auto-detect CPU count
-query_parallelism = 0
+# Number of parallel threads for query execution (default: 2)
+# Low fixed value: mobile app queries are short-lived key lookups;
+# high parallelism just increases context-switch overhead.
+# Set to 0 to auto-detect CPU count (not recommended for shared servers).
+query_parallelism = 2
 
-# Maximum number of partitions per query (default: 8)
-# Higher values increase parallelism but use more resources
-max_partitions = 8
+# Maximum number of partitions per query (default: 4)
+# Caps concurrent partition scans; reduces memory and CPU burst per query.
+max_partitions = 4
 
-# Batch size for record processing (default: 2048 rows)
-# MEMORY OPTIMIZATION: Reduced from 8192 for lower memory usage
-# Lower batch size reduces memory pressure during query execution
-batch_size = 2048
+# Batch size for record processing (default: 1024 rows)
+# Smaller batches limit peak arrow allocation per operator.
+batch_size = 1024
 
 [flush]
 # Default row limit for flush policies (default: 10000 rows)

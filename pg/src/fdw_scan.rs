@@ -4,8 +4,8 @@
 use crate::arrow_to_pg::arrow_value_to_datum;
 use crate::fdw_options::parse_options;
 use crate::fdw_state::KalamScanState;
+use crate::relation_table_options::resolve_table_options_for_relation;
 use kalam_pg_common::{KalamPgError, DELETED_COLUMN, SEQ_COLUMN, USER_ID_COLUMN};
-use kalam_pg_fdw::TableOptions;
 use pgrx::pg_guard;
 use pgrx::pg_sys;
 use std::ffi::CStr;
@@ -17,10 +17,11 @@ pub unsafe extern "C-unwind" fn get_foreign_rel_size(
     baserel: *mut pg_sys::RelOptInfo,
     foreigntableid: pg_sys::Oid,
 ) {
-    // Parse table options to validate early
+    // Validate only the options that cannot be derived from the relation itself.
     let ft = pg_sys::GetForeignTable(foreigntableid);
     let options = parse_options((*ft).options);
-    if let Err(e) = TableOptions::parse(&options) {
+    if !options.contains_key("table_type") {
+        let e = KalamPgError::Validation("table option 'table_type' is required".to_string());
         pgrx::error!("pg_kalam: {}", e);
     }
 
@@ -210,7 +211,7 @@ unsafe fn begin_foreign_scan_impl(node: *mut pg_sys::ForeignScanState) -> Result
     let relid = (*relation).rd_id;
     let ft = pg_sys::GetForeignTable(relid);
     let options = parse_options((*ft).options);
-    let table_options = TableOptions::parse(&options)?;
+    let table_options = resolve_table_options_for_relation(relation, &options)?;
 
     // Flush any pending writes for this table before scanning (read-your-writes)
     crate::write_buffer::flush_table(&table_options.table_id)?;
@@ -270,6 +271,7 @@ unsafe fn begin_foreign_scan_impl(node: *mut pg_sys::ForeignScanState) -> Result
         filters: Vec::new(),
         limit: None,
     };
+    request.validate()?;
 
     let response = runtime.block_on(async { executor.scan(request).await })?;
 

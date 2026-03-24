@@ -1799,27 +1799,51 @@ impl KalamClient {
     /// On TOKEN_EXPIRED, the method resolves fresh credentials from the
     /// auth_provider_cb (if set) or re-uses stored basic-auth to login,
     /// then retries the request exactly once.
+    ///
+    /// TOKEN_EXPIRED may arrive as either:
+    ///   (a) HTTP 200 with `{"status":"error","error":{"code":"TOKEN_EXPIRED",...}}`
+    ///   (b) HTTP 401 with the same JSON body (wasm_fetch returns Err)
     async fn execute_sql_internal(
         &self,
         sql: &str,
         params: Option<Vec<serde_json::Value>>,
     ) -> Result<String, JsValue> {
-        let result = self.execute_sql_http(sql, &params).await?;
+        let result = self.execute_sql_http(sql, &params).await;
 
-        // Check for TOKEN_EXPIRED and auto-refresh once.
-        if let Ok(query_resp) =
-            serde_json::from_str::<crate::query::models::QueryResponse>(&result)
-        {
-            if query_resp.is_token_expired() {
-                console_log(
-                    "KalamClient: TOKEN_EXPIRED detected — reauthenticating and retrying query",
-                );
-                self.reauthenticate_for_http().await?;
-                return self.execute_sql_http(sql, &params).await;
-            }
+        match result {
+            Ok(result_str) => {
+                // Case (a): HTTP 200 with TOKEN_EXPIRED in the JSON body.
+                if let Ok(query_resp) =
+                    serde_json::from_str::<crate::query::models::QueryResponse>(&result_str)
+                {
+                    if query_resp.is_token_expired() {
+                        console_log(
+                            "KalamClient: TOKEN_EXPIRED detected — reauthenticating and retrying query",
+                        );
+                        self.reauthenticate_for_http().await?;
+                        return self.execute_sql_http(sql, &params).await;
+                    }
+                }
+                Ok(result_str)
+            },
+            Err(err) => {
+                // Case (b): HTTP 401 — wasm_fetch returned the JSON body as an Err string.
+                if let Some(err_str) = err.as_string() {
+                    if let Ok(query_resp) =
+                        serde_json::from_str::<crate::query::models::QueryResponse>(&err_str)
+                    {
+                        if query_resp.is_token_expired() {
+                            console_log(
+                                "KalamClient: TOKEN_EXPIRED detected in HTTP error — reauthenticating and retrying query",
+                            );
+                            self.reauthenticate_for_http().await?;
+                            return self.execute_sql_http(sql, &params).await;
+                        }
+                    }
+                }
+                Err(err)
+            },
         }
-
-        Ok(result)
     }
 
     /// Low-level HTTP POST to /v1/api/sql.  Returns the raw JSON response

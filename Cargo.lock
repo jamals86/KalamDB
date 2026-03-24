@@ -4039,7 +4039,6 @@ version = "0.4.2-dev"
 dependencies = [
  "anyhow",
  "ipnet",
- "num_cpus",
  "openraft",
  "serde",
  "toml",

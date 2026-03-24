@@ -432,6 +432,7 @@ async fn e2e_ddl_non_kalam_server_ignored() {
 // =========================================================================
 
 #[tokio::test]
+#[ntest::timeout(7000)]
 async fn e2e_ddl_create_table_mirrors_columns_identically() {
     let env = DdlTestEnv::global().await;
     let pg = env.pg_connect().await;
@@ -487,4 +488,56 @@ async fn e2e_ddl_create_table_mirrors_columns_identically() {
     pg.batch_execute(&format!("DROP FOREIGN TABLE IF EXISTS {table};"))
         .await
         .ok();
+}
+
+// =========================================================================
+// Test 11: Current schema maps directly to the KalamDB namespace
+// =========================================================================
+
+#[tokio::test]
+#[ntest::timeout(7000)]
+async fn e2e_ddl_current_schema_maps_to_namespace_without_namespace_option() {
+    let env = DdlTestEnv::global().await;
+    let pg = env.pg_connect().await;
+
+    let ns = unique_name("schema_ns");
+    let table = unique_name("schema_mirror");
+
+    pg.batch_execute(&format!(
+        "CREATE SCHEMA IF NOT EXISTS {ns};
+         SET search_path TO {ns};
+         CREATE FOREIGN TABLE {table} (
+             id TEXT,
+             title TEXT,
+             value INTEGER
+         ) SERVER kalam_server
+         OPTIONS (table_type 'shared');"
+    ))
+    .await
+    .expect("create foreign table using current schema");
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    assert!(
+        env.kalamdb_table_exists(&ns, &table).await,
+        "KalamDB table {ns}.{table} should exist when search_path targets {ns}"
+    );
+
+    let pg_rows = pg
+        .query(
+            "SELECT table_schema
+             FROM information_schema.tables
+             WHERE table_schema = $1 AND table_name = $2",
+            &[&ns, &table],
+        )
+        .await
+        .expect("query postgres schema mapping");
+    assert_eq!(pg_rows.len(), 1, "PostgreSQL table should be created in schema {ns}");
+
+    pg.batch_execute(&format!(
+        "RESET search_path;
+         DROP FOREIGN TABLE IF EXISTS {ns}.{table};
+         DROP SCHEMA IF EXISTS {ns} CASCADE;"
+    ))
+    .await
+    .ok();
 }

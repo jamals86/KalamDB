@@ -16,7 +16,7 @@ pub unsafe extern "C-unwind" fn import_foreign_schema(
     }
 }
 
-unsafe fn import_foreign_schema_impl(
+fn import_foreign_schema_impl(
     _stmt: *mut pg_sys::ImportForeignSchemaStmt,
     _server_oid: pg_sys::Oid,
 ) -> Result<*mut pg_sys::List, kalam_pg_common::KalamPgError> {

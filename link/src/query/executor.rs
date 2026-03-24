@@ -392,6 +392,16 @@ impl QueryExecutor {
 
         if status.is_client_error() {
             let status_code = status.as_u16();
+
+            // If the body is a valid QueryResponse with TOKEN_EXPIRED, return
+            // it as Ok so the caller's auto-refresh retry logic can handle it.
+            if let Ok(query_response) = serde_json::from_str::<QueryResponse>(&error_text) {
+                if query_response.is_token_expired() {
+                    debug!("[LINK_HTTP] TOKEN_EXPIRED returned with HTTP {}", status_code);
+                    return Ok(query_response);
+                }
+            }
+
             warn!(
                 "[LINK_HTTP] Authentication/client error: status={} message=\"{}\"",
                 status, error_text

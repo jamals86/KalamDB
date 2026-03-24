@@ -14,12 +14,25 @@
 mod e2e_common;
 
 use e2e_common::*;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
+fn unique_name(prefix: &str) -> String {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    format!("{prefix}_{ts}_{n}")
+}
 
 // =========================================================================
 // Perf 1: Batch INSERT throughput — 10 000 rows in a single multi-VALUES
 // =========================================================================
 
 #[tokio::test]
+#[ntest::timeout(50000)]
 async fn e2e_perf_batch_insert_10k() {
     let env = TestEnv::global().await;
     let pg = env.pg_connect().await;
@@ -273,6 +286,7 @@ async fn e2e_perf_scan_5k() {
 // =========================================================================
 
 #[tokio::test]
+#[ntest::timeout(18000)]
 async fn e2e_perf_point_select() {
     let env = TestEnv::global().await;
     let pg = env.pg_connect().await;
@@ -565,4 +579,89 @@ async fn e2e_perf_cross_verify_latency() {
 
     // Cleanup
     bulk_delete_all(&pg, "e2e.perf_xv", "id").await;
+}
+
+// =========================================================================
+// Perf 9: Local memory stability under sustained batch insert + full scan
+// =========================================================================
+
+#[tokio::test]
+#[ntest::timeout(32000)]
+async fn e2e_perf_local_memory_stays_bounded_under_batch_insert_and_scan() {
+    let env = TestEnv::global().await;
+    let pg = env.pg_connect().await;
+    let table = unique_name("perf_mem");
+    let qualified_table = format!("e2e.{table}");
+    let pid = kalamdb_pid();
+    let baseline_rss_kb = process_rss_kb(pid);
+
+    create_shared_foreign_table(&pg, &table, "id TEXT, payload TEXT, value INTEGER").await;
+    bulk_delete_all(&pg, &qualified_table, "id").await;
+
+    const TOTAL: usize = 8_000;
+    const BATCH: usize = 1_000;
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let sampler_stop = Arc::clone(&stop);
+    let sampler = tokio::spawn(async move {
+        sample_process_peak_rss_kb(pid, 100, sampler_stop).await
+    });
+
+    let start = std::time::Instant::now();
+    for b in 0..(TOTAL / BATCH) {
+        let mut values = Vec::with_capacity(BATCH);
+        for i in 0..BATCH {
+            let idx = b * BATCH + i;
+            values.push(format!("('mem-{idx}', 'payload-{idx}', {idx})"));
+        }
+        let sql = format!(
+            "INSERT INTO {qualified_table} (id, payload, value) VALUES {}",
+            values.join(", ")
+        );
+        pg.batch_execute(&sql).await.expect("memory test batch insert");
+    }
+
+    let (_rows, scan_ms) = timed_query(
+        &pg,
+        &format!("SELECT id, payload, value FROM {qualified_table}"),
+    )
+    .await;
+    let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
+
+    bulk_delete_all(&pg, &qualified_table, "id").await;
+    tokio::time::sleep(std::time::Duration::from_millis(750)).await;
+
+    stop.store(true, Ordering::Relaxed);
+    let peak_rss_kb = sampler.await.expect("join rss sampler");
+    let final_rss_kb = process_rss_kb(pid);
+    let peak_delta_kb = peak_rss_kb.saturating_sub(baseline_rss_kb);
+    let final_delta_kb = final_rss_kb.saturating_sub(baseline_rss_kb);
+
+    eprintln!(
+        "[PERF] Memory stability {TOTAL} rows: total {elapsed_ms:.1}ms, scan {scan_ms:.1}ms, baseline {} KB, peak {} KB, final {} KB, peak delta {} KB, final delta {} KB",
+        baseline_rss_kb,
+        peak_rss_kb,
+        final_rss_kb,
+        peak_delta_kb,
+        final_delta_kb
+    );
+
+    assert!(
+        elapsed_ms < 20_000.0,
+        "batch insert + scan workload took {elapsed_ms:.0}ms — expected < 20000ms"
+    );
+    assert!(
+        scan_ms < 10_000.0,
+        "memory test scan took {scan_ms:.0}ms — expected < 10000ms"
+    );
+    assert!(
+        peak_delta_kb < 256 * 1024,
+        "KalamDB RSS peak grew by {} MB — expected < 256 MB",
+        peak_delta_kb / 1024
+    );
+    assert!(
+        final_delta_kb < 96 * 1024,
+        "KalamDB RSS retained {} MB after cleanup — expected < 96 MB",
+        final_delta_kb / 1024
+    );
 }

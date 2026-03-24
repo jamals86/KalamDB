@@ -15,6 +15,7 @@ mod fdw_scan;
 mod fdw_state;
 mod fdw_xact;
 mod pg_to_kalam;
+mod relation_table_options;
 mod write_buffer;
 
 pub use session_settings::SessionSettings;

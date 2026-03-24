@@ -1,5 +1,3 @@
-use num_cpus;
-
 // Default value functions
 pub fn default_workers() -> usize {
     0
@@ -119,19 +117,19 @@ pub fn default_max_header_size() -> usize {
 
 // DataFusion defaults
 pub fn default_datafusion_memory_limit() -> usize {
-    256 * 1024 * 1024 // 256MB (lower idle footprint)
+    64 * 1024 * 1024 // 64MB — sufficient for mobile/OLTP queries; rejects runaway analytics
 }
 
 pub fn default_datafusion_parallelism() -> usize {
-    num_cpus::get()
+    2 // Fixed low concurrency: mobile app queries are key-based, not analytical
 }
 
 pub fn default_datafusion_max_partitions() -> usize {
-    8
+    4 // Reduced from 8; limits parallel partition scans per query
 }
 
 pub fn default_datafusion_batch_size() -> usize {
-    2048 // Reduced from 8192 for lower memory usage
+    1024 // Reduced from 2048; lower peak memory per batch
 }
 
 // Flush defaults

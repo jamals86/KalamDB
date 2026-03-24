@@ -53,14 +53,17 @@ fn postgres_error_text(error: &tokio_postgres::Error) -> String {
 async fn e2e_bulk_insert_delete_shared_table() {
     let env = TestEnv::global().await;
     let pg = env.pg_connect().await;
+    let table = unique_name("items");
+    let qualified_table = format!("e2e.{table}");
 
     // --- setup foreign table ---
     create_shared_foreign_table(
         &pg,
-        "items",
+        &table,
         "id TEXT, title TEXT, value INTEGER",
     )
     .await;
+    delete_all(&pg, &qualified_table, "id").await;
 
     // --- insert 5 000 rows in batches of 500 ---
     const TOTAL: i64 = 5_000;
@@ -72,21 +75,21 @@ async fn e2e_bulk_insert_delete_shared_table() {
             values.push(format!("('bulk-{i}', 'Item {i}', {i})"));
         }
         let sql = format!(
-            "INSERT INTO e2e.items (id, title, value) VALUES {}",
+            "INSERT INTO {qualified_table} (id, title, value) VALUES {}",
             values.join(", ")
         );
         pg.batch_execute(&sql).await.expect("batch insert");
     }
 
     // --- verify count ---
-    let count = count_rows(&pg, "e2e.items", None).await;
+    let count = count_rows(&pg, &qualified_table, None).await;
     assert_eq!(count, TOTAL, "expected {TOTAL} rows after bulk insert");
 
     // --- delete all rows ---
-    delete_all(&pg, "e2e.items", "id").await;
+    delete_all(&pg, &qualified_table, "id").await;
 
     // --- verify empty ---
-    let count_after = count_rows(&pg, "e2e.items", None).await;
+    let count_after = count_rows(&pg, &qualified_table, None).await;
     assert_eq!(count_after, 0, "expected 0 rows after delete-all");
 }
 
@@ -98,31 +101,35 @@ async fn e2e_bulk_insert_delete_shared_table() {
 async fn e2e_insert_update_shared_table() {
     let env = TestEnv::global().await;
     let pg = env.pg_connect().await;
+    let table = unique_name("items");
+    let qualified_table = format!("e2e.{table}");
 
     // --- setup foreign table ---
     create_shared_foreign_table(
         &pg,
-        "items",
+        &table,
         "id TEXT, title TEXT, value INTEGER",
     )
     .await;
 
     // Clean up any leftover rows from a previous run.
-    delete_all(&pg, "e2e.items", "id").await;
+    delete_all(&pg, &qualified_table, "id").await;
 
     // --- insert 5 rows ---
     pg.batch_execute(
-        "INSERT INTO e2e.items (id, title, value) VALUES \
-         ('u1', 'Alpha', 10), \
-         ('u2', 'Beta',  20), \
-         ('u3', 'Gamma', 30), \
-         ('u4', 'Delta', 40), \
-         ('u5', 'Epsilon', 50);"
+        &format!(
+            "INSERT INTO {qualified_table} (id, title, value) VALUES \
+             ('u1', 'Alpha', 10), \
+             ('u2', 'Beta',  20), \
+             ('u3', 'Gamma', 30), \
+             ('u4', 'Delta', 40), \
+             ('u5', 'Epsilon', 50);"
+        )
     )
     .await
     .expect("insert 5 rows");
 
-    let count = count_rows(&pg, "e2e.items", None).await;
+    let count = count_rows(&pg, &qualified_table, None).await;
     assert_eq!(count, 5, "expected 5 rows after insert");
 
     // --- update each row ---
@@ -134,7 +141,7 @@ async fn e2e_insert_update_shared_table() {
         ("u5", "Epsilon-Updated", 150),
     ] {
         pg.execute(
-            "UPDATE e2e.items SET title = $1, value = $2 WHERE id = $3",
+            &format!("UPDATE {qualified_table} SET title = $1, value = $2 WHERE id = $3"),
             &[&new_title, &new_value, &id],
         )
         .await
@@ -144,7 +151,7 @@ async fn e2e_insert_update_shared_table() {
     // --- verify updates ---
     let rows = pg
         .query(
-            "SELECT id, title, value FROM e2e.items ORDER BY id",
+            &format!("SELECT id, title, value FROM {qualified_table} ORDER BY id"),
             &[],
         )
         .await
@@ -170,7 +177,7 @@ async fn e2e_insert_update_shared_table() {
     }
 
     // --- cleanup ---
-    delete_all(&pg, "e2e.items", "id").await;
+    delete_all(&pg, &qualified_table, "id").await;
 }
 
 // =========================================================================
@@ -180,12 +187,14 @@ async fn e2e_insert_update_shared_table() {
 #[tokio::test]
 async fn e2e_user_table_isolation() {
     let env = TestEnv::global().await;
+    let table = unique_name("profiles");
+    let qualified_table = format!("e2e.{table}");
 
     // -- user A session --
     let pg_a = env.pg_connect().await;
     create_user_foreign_table(
         &pg_a,
-        "profiles",
+        &table,
         "id TEXT, name TEXT, age INTEGER, _userid TEXT, _seq BIGINT, _deleted BOOLEAN",
     )
     .await;
@@ -196,36 +205,36 @@ async fn e2e_user_table_isolation() {
     set_user_id(&pg_b, "user-b").await;
 
     // Clean up
-    delete_all(&pg_a, "e2e.profiles", "id").await;
-    delete_all(&pg_b, "e2e.profiles", "id").await;
+    delete_all(&pg_a, &qualified_table, "id").await;
+    delete_all(&pg_b, &qualified_table, "id").await;
 
     // Insert rows as user A
-    pg_a.batch_execute(
-        "INSERT INTO e2e.profiles (id, name, age) VALUES \
+    pg_a.batch_execute(&format!(
+        "INSERT INTO {qualified_table} (id, name, age) VALUES \
          ('a1', 'Alice', 30), ('a2', 'Ada', 25);"
-    )
+    ))
     .await
     .expect("user-a insert");
 
     // Insert rows as user B
-    pg_b.batch_execute(
-        "INSERT INTO e2e.profiles (id, name, age) VALUES \
+    pg_b.batch_execute(&format!(
+        "INSERT INTO {qualified_table} (id, name, age) VALUES \
          ('b1', 'Bob', 40), ('b2', 'Blake', 35), ('b3', 'Bea', 28);"
-    )
+    ))
     .await
     .expect("user-b insert");
 
     // user A sees only 2 rows
-    let count_a = count_rows(&pg_a, "e2e.profiles", None).await;
+    let count_a = count_rows(&pg_a, &qualified_table, None).await;
     assert_eq!(count_a, 2, "user-a should see 2 rows");
 
     // user B sees only 3 rows
-    let count_b = count_rows(&pg_b, "e2e.profiles", None).await;
+    let count_b = count_rows(&pg_b, &qualified_table, None).await;
     assert_eq!(count_b, 3, "user-b should see 3 rows");
 
     // Cleanup
-    delete_all(&pg_a, "e2e.profiles", "id").await;
-    delete_all(&pg_b, "e2e.profiles", "id").await;
+    delete_all(&pg_a, &qualified_table, "id").await;
+    delete_all(&pg_b, &qualified_table, "id").await;
 }
 
 // =========================================================================
@@ -236,24 +245,30 @@ async fn e2e_user_table_isolation() {
 async fn e2e_cross_verify_fdw_to_rest() {
     let env = TestEnv::global().await;
     let pg = env.pg_connect().await;
+    let table = unique_name("items");
+    let qualified_table = format!("e2e.{table}");
 
     create_shared_foreign_table(
         &pg,
-        "items",
+        &table,
         "id TEXT, title TEXT, value INTEGER",
     )
     .await;
 
     // Insert via FDW
     pg.batch_execute(
-        "INSERT INTO e2e.items (id, title, value) VALUES ('xv-rest', 'CrossVerify', 999);"
+        &format!(
+            "INSERT INTO {qualified_table} (id, title, value) VALUES ('xv-rest', 'CrossVerify', 999);"
+        )
     )
     .await
     .expect("cross-verify insert");
 
     // Read via KalamDB REST
     let result = env
-        .kalamdb_sql("SELECT id, title, value FROM e2e.items WHERE id = 'xv-rest'")
+        .kalamdb_sql(&format!(
+            "SELECT id, title, value FROM {qualified_table} WHERE id = 'xv-rest'"
+        ))
         .await;
     let result_str = serde_json::to_string(&result).unwrap_or_default();
     assert!(
@@ -263,7 +278,7 @@ async fn e2e_cross_verify_fdw_to_rest() {
 
     // Cleanup
     pg.execute(
-        "DELETE FROM e2e.items WHERE id = $1",
+        &format!("DELETE FROM {qualified_table} WHERE id = $1"),
         &[&"xv-rest"],
     )
     .await
@@ -275,22 +290,25 @@ async fn e2e_cross_verify_fdw_to_rest() {
 // =========================================================================
 
 #[tokio::test]
+#[ntest::timeout(7000)]
 async fn e2e_duplicate_primary_key_insert_fails() {
     let env = TestEnv::global().await;
     let pg = env.pg_connect().await;
+    let table = unique_name("profiles");
+    let qualified_table = format!("e2e.{table}");
 
     create_user_foreign_table(
         &pg,
-        "profiles",
+        &table,
         "id TEXT, name TEXT, age INTEGER, _userid TEXT, _seq BIGINT, _deleted BOOLEAN",
     )
     .await;
     set_user_id(&pg, "dup-user").await;
 
-    delete_all(&pg, "e2e.profiles", "id").await;
+    delete_all(&pg, &qualified_table, "id").await;
 
     pg.execute(
-        "INSERT INTO e2e.profiles (id, name, age) VALUES ($1, $2, $3)",
+        &format!("INSERT INTO {qualified_table} (id, name, age) VALUES ($1, $2, $3)"),
         &[&"dup-1", &"Alice", &30_i32],
     )
     .await
@@ -298,7 +316,7 @@ async fn e2e_duplicate_primary_key_insert_fails() {
 
     let err = pg
         .execute(
-            "INSERT INTO e2e.profiles (id, name, age) VALUES ($1, $2, $3)",
+            &format!("INSERT INTO {qualified_table} (id, name, age) VALUES ($1, $2, $3)"),
             &[&"dup-1", &"Alice 2", &31_i32],
         )
         .await
@@ -313,7 +331,7 @@ async fn e2e_duplicate_primary_key_insert_fails() {
         "unexpected duplicate key error: {message}"
     );
 
-    let count = count_rows(&pg, "e2e.profiles", Some("id = 'dup-1'")) .await;
+    let count = count_rows(&pg, &qualified_table, Some("id = 'dup-1'")).await;
     assert_eq!(count, 1, "first insert should remain committed after duplicate failure");
 }
 
@@ -322,31 +340,37 @@ async fn e2e_duplicate_primary_key_insert_fails() {
 // =========================================================================
 
 #[tokio::test]
+#[ntest::timeout(7000)]
 async fn e2e_insert_without_backing_kalamdb_table_fails() {
     let env = TestEnv::global().await;
     let pg = env.pg_connect().await;
+    let table = unique_name("missing_profiles");
 
     pg.batch_execute(
-        "CREATE SCHEMA IF NOT EXISTS app; \
-         DROP FOREIGN TABLE IF EXISTS app.missing_profiles; \
-         CREATE FOREIGN TABLE app.missing_profiles ( \
-             id TEXT, \
-             name TEXT, \
-             age INTEGER, \
-             _userid TEXT, \
-             _seq BIGINT, \
-             _deleted BOOLEAN \
-         ) SERVER kalam_server \
-         OPTIONS (namespace 'app', \"table\" 'missing_profiles', table_type 'user');",
+        &format!(
+            "CREATE SCHEMA IF NOT EXISTS app; \
+             DROP FOREIGN TABLE IF EXISTS app.{table}; \
+             CREATE FOREIGN TABLE app.{table} ( \
+                 id TEXT, \
+                 name TEXT, \
+                 age INTEGER, \
+                 _userid TEXT, \
+                 _seq BIGINT, \
+                 _deleted BOOLEAN \
+             ) SERVER kalam_server \
+             OPTIONS (namespace 'app', \"table\" '{table}', table_type 'user');"
+        ),
     )
     .await
     .expect("create local-only foreign table");
+    env.kalamdb_sql(&format!("DROP USER TABLE IF EXISTS app.{table}"))
+        .await;
 
     set_user_id(&pg, "user-1").await;
 
     let err = pg
         .execute(
-            "INSERT INTO app.missing_profiles (id, name, age) VALUES ($1, $2, $3)",
+            &format!("INSERT INTO app.{table} (id, name, age) VALUES ($1, $2, $3)"),
             &[&"p1", &"Alice", &30_i32],
         )
         .await
@@ -366,6 +390,7 @@ async fn e2e_insert_without_backing_kalamdb_table_fails() {
 // =========================================================================
 
 #[tokio::test]
+#[ntest::timeout(7000)]
 async fn e2e_dml_changes_are_visible_in_kalamdb() {
     let env = TestEnv::global().await;
     let pg = env.pg_connect().await;
@@ -436,6 +461,7 @@ async fn e2e_dml_changes_are_visible_in_kalamdb() {
 // =========================================================================
 
 #[tokio::test]
+#[ntest::timeout(7000)]
 async fn e2e_select_filters_and_postgres_join_work() {
     let env = TestEnv::global().await;
     let pg = env.pg_connect().await;
@@ -502,6 +528,7 @@ async fn e2e_select_filters_and_postgres_join_work() {
 // =========================================================================
 
 #[tokio::test]
+#[ntest::timeout(7000)]
 async fn e2e_user_table_scan_without_user_id_fails_clearly() {
     let env = TestEnv::global().await;
     let table = unique_name("profiles_missing_uid");
@@ -541,6 +568,7 @@ async fn e2e_user_table_scan_without_user_id_fails_clearly() {
 // =========================================================================
 
 #[tokio::test]
+#[ntest::timeout(7000)]
 async fn e2e_offline_kalamdb_server_reports_connection_error() {
     let env = TestEnv::global().await;
     let pg = env.pg_connect().await;
@@ -585,4 +613,65 @@ async fn e2e_offline_kalamdb_server_reports_connection_error() {
     pg.batch_execute(&format!("DROP SERVER IF EXISTS {server_name} CASCADE;"))
         .await
         .ok();
+}
+
+// =========================================================================
+// Test 11: search_path-driven schema mirroring works without namespace option
+// =========================================================================
+
+#[tokio::test]
+#[ntest::timeout(7000)]
+async fn e2e_search_path_schema_mirror_works_without_namespace_option() {
+    let env = TestEnv::global().await;
+    let pg = env.pg_connect().await;
+    let schema = unique_name("search_ns");
+    let table = unique_name("search_items");
+
+    pg.batch_execute(&format!(
+        "CREATE SCHEMA IF NOT EXISTS {schema};
+         SET search_path TO {schema};
+         CREATE FOREIGN TABLE {table} (
+             id TEXT,
+             title TEXT,
+             value INTEGER
+         ) SERVER kalam_server
+         OPTIONS (table_type 'shared');"
+    ))
+    .await
+    .expect("create mirrored foreign table via search_path");
+
+    pg.execute(
+        &format!("INSERT INTO {schema}.{table} (id, title, value) VALUES ($1, $2, $3)"),
+        &[&"spath-1", &"From search_path", &7_i32],
+    )
+    .await
+    .expect("insert through schema-mirrored foreign table");
+
+    let rows = pg
+        .query(
+            &format!("SELECT id, title, value FROM {schema}.{table} WHERE id = $1"),
+            &[&"spath-1"],
+        )
+        .await
+        .expect("select through schema-mirrored foreign table");
+    assert_eq!(rows.len(), 1, "expected one mirrored row through PostgreSQL");
+
+    let result = env
+        .kalamdb_sql(&format!(
+            "SELECT id, title, value FROM {schema}.{table} WHERE id = 'spath-1'"
+        ))
+        .await;
+    let result_text = serde_json::to_string(&result).unwrap_or_default();
+    assert!(
+        result_text.contains("spath-1") && result_text.contains("From search_path"),
+        "search_path-mirrored foreign table should write into KalamDB namespace {schema}: {result_text}"
+    );
+
+    pg.batch_execute(&format!(
+        "RESET search_path;
+         DROP FOREIGN TABLE IF EXISTS {schema}.{table};
+         DROP SCHEMA IF EXISTS {schema} CASCADE;"
+    ))
+    .await
+    .ok();
 }
