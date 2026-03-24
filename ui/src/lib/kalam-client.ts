@@ -25,6 +25,7 @@ import {
   type SubscriptionOptions,
   type Unsubscribe,
 } from 'kalam-link';
+import { getBackendOrigin } from "./backend-url";
 
 let client: KalamDBClient | null = null;
 let currentToken: string | null = null;
@@ -75,15 +76,12 @@ async function queueLifecycle<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 /**
- * Get the backend URL
- * In development, Vite runs on port 5173 but backend is on 8080
- * In production, both are served from the same origin
+ * Get the backend URL.
+ * Use VITE_API_URL when provided, otherwise default to localhost in development
+ * and the current origin in production.
  */
 function getBackendUrl(): string {
-  if (import.meta.env.DEV) {
-    return 'http://localhost:8080';
-  }
-  return window.location.origin;
+  return getBackendOrigin();
 }
 
 /**
