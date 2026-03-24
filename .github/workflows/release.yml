@@ -982,9 +982,11 @@ jobs:
                 --no-default-features \
                 --profile release-pg \
                 -F ${PG_EXTENSION_FLAVOR} && \
-                cp "$(/usr/bin/pg_config --pkglibdir)/pg_kalam.so" /artifacts/ && \
-                cp "$(/usr/bin/pg_config --sharedir)/extension/pg_kalam.control" /artifacts/ && \
-                cp "$(/usr/bin/pg_config --sharedir)/extension/pg_kalam--*.sql" /artifacts/
+                LIBDIR="$(/usr/bin/pg_config --pkglibdir)" && \
+                SQLDIR="$(/usr/bin/pg_config --sharedir)/extension" && \
+                cp "$LIBDIR/pg_kalam.so" /artifacts/ && \
+                cp "$SQLDIR/pg_kalam.control" /artifacts/ && \
+                cp "$SQLDIR"/pg_kalam--*.sql /artifacts/
             '
 
       - name: Package extension artifacts
