@@ -517,7 +517,12 @@ pub struct PerformanceSettings {
     /// Increase for high-traffic servers
     #[serde(default = "default_backlog")]
     pub backlog: u32,
-    /// Max blocking threads per worker for CPU-intensive operations (default: 512 / workers)
+    /// Number of tokio runtime worker threads (default: 0 = auto, uses num_cpus capped at 4)
+    /// Lower values reduce idle RSS from thread stacks (~2MB per thread).
+    /// Set to 0 for auto-detection, or an explicit count for Docker/constrained environments.
+    #[serde(default)]
+    pub tokio_worker_threads: usize,
+    /// Max blocking threads per worker for CPU-intensive operations (default: 32)
     /// Used for RocksDB and other synchronous operations
     #[serde(default = "default_worker_max_blocking_threads")]
     pub worker_max_blocking_threads: usize,
@@ -631,6 +636,12 @@ pub struct RetentionSettings {
     /// Default retention hours for soft-deleted rows (default: 168 hours = 7 days)
     #[serde(default = "default_deleted_retention_hours")]
     pub default_deleted_retention_hours: i32,
+
+    /// Enable periodic dba.stats collection (default: true)
+    /// When false, the background stats recorder is not started, saving memory
+    /// and CPU in resource-constrained environments (e.g. Docker containers).
+    #[serde(default = "default_true")]
+    pub enable_dba_stats: bool,
 
     /// Number of days to preserve dba.stats samples (default: 7 days)
     /// Set to 0 to disable automatic cleanup.
@@ -988,6 +999,7 @@ impl Default for RetentionSettings {
     fn default() -> Self {
         Self {
             default_deleted_retention_hours: default_deleted_retention_hours(),
+            enable_dba_stats: true,
             dba_stats_retention_days: default_dba_stats_retention_days(),
         }
     }
@@ -1100,6 +1112,7 @@ impl Default for ServerConfig {
                 keepalive_timeout: 75,
                 max_connections: 25000,
                 backlog: default_backlog(),
+                tokio_worker_threads: 0,
                 worker_max_blocking_threads: default_worker_max_blocking_threads(),
                 client_request_timeout: default_client_request_timeout(),
                 client_disconnect_timeout: default_client_disconnect_timeout(),

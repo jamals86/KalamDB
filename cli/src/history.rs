@@ -115,7 +115,7 @@ pub fn should_persist_command(command: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+mod home_dir_tests {
     use super::*;
 
     #[test]

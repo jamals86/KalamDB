@@ -30,6 +30,7 @@ NO_CLEANUP=false
 export KALAMDB_IMAGE="${KALAMDB_IMAGE:-}"
 export KALAMDB_PG_IMAGE="${KALAMDB_PG_IMAGE:-kalamdb-pg:latest}"
 NEXTEST_FILTER="test(e2e)"
+USE_NO_FAIL_FAST=false
 
 # ── Argument parsing ───────────────────────────────────────────────────────
 usage() {
@@ -44,6 +45,8 @@ while [[ $# -gt 0 ]]; do
         --pg-image)         KALAMDB_PG_IMAGE="$2"; export KALAMDB_PG_IMAGE; shift ;;
         --no-cleanup)       NO_CLEANUP=true ;;
         --filter)           NEXTEST_FILTER="$2"; shift ;;
+        --no-fail-fast)     USE_NO_FAIL_FAST=true ;;
+        --fail-fast)        USE_NO_FAIL_FAST=false ;;
         -h|--help)          usage; exit 0 ;;
         *)                  echo "Unknown option: $1"; exit 1 ;;
     esac
@@ -151,7 +154,7 @@ ok "Docker daemon reachable"
 
 # ── Step 5: Run e2e tests ─────────────────────────────────────────────────
 step "Running e2e tests ..."
-echo "    Command: cargo nextest run -p kalam-pg-extension --features e2e -E '$NEXTEST_FILTER'"
+echo "    Command: cargo nextest run -p kalam-pg-extension --features e2e -E '$NEXTEST_FILTER'$( $USE_NO_FAIL_FAST && printf ' --no-fail-fast' )"
 echo "    The first test will start the Docker Compose stack automatically."
 echo ""
 
@@ -165,7 +168,7 @@ cargo nextest run \
     --features e2e \
     -E "$NEXTEST_FILTER" \
     --test-threads 1 \
-    --no-fail-fast \
+    $( $USE_NO_FAIL_FAST && printf '%s ' '--no-fail-fast' )
     2>&1
 
 # If we reach here, all tests passed (set -euo pipefail would have exited otherwise)

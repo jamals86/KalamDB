@@ -59,7 +59,7 @@ anyhow = "1.0.102"
 log = "0.4.29"
 
 # Async runtime
-tokio = { version = "1.49.0", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "io-util", "io-std", "net", "signal"] }
+tokio = { version = "1.49.0", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "io-util", "io-std", "net", "signal", "parking_lot"] }
 tokio-stream = { version = "0.1", features = ["net"] }
 
 # HTTP client (with HTTP/2 support) - using rustls-tls for cross-compilation compatibility
@@ -120,7 +120,7 @@ rustyline = { version = "17.0.2" }
 
 # System
 num_cpus = "1.16"
-sysinfo = "0.38.4"
+sysinfo = { version = "0.38.4", default-features = false, features = ["system", "disk"] }
 hostname = "0.4"
 
 # Testing
@@ -237,12 +237,13 @@ inherits = "release"
 opt-level = "z"       # Optimize for size (most aggressive)
 lto = true            # Full LTO (slower link, best dead-code elimination)
 
-# Custom profile for Docker builds (less memory-intensive for cross-compilation)
-# Uses thin LTO instead of full LTO to reduce memory usage during linking
+# Custom profile for Docker builds (smallest usable binary for containers)
+# Uses full LTO for maximum dead-code elimination to reduce loaded code pages.
 # Use with: cargo build --profile docker
 [profile.docker]
 inherits = "release"
 opt-level = "z"       # Optimize for size (most aggressive)
+lto = true             # Full LTO: best dead-code elimination for minimal RSS
 
 # Custom profile for PostgreSQL extension builds (smallest possible .so)
 # Uses size optimization + full LTO + panic=unwind (required by pgrx)

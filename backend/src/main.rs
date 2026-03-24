@@ -13,6 +13,7 @@ use kalamdb_server::lifecycle::{bootstrap, run};
 use log::info;
 use std::collections::HashSet;
 use std::net::{SocketAddr, TcpListener, ToSocketAddrs};
+use std::path::{Path, PathBuf};
 
 fn resolve_bind_addrs(addr: &str, label: &str) -> Result<HashSet<SocketAddr>> {
     let addrs: Vec<SocketAddr> = addr
@@ -136,22 +137,12 @@ fn raise_fd_limit() {
     }
 }
 
-// Use tokio::main instead of actix_web::main to avoid early tracing initialization
-#[tokio::main]
-async fn main() -> Result<()> {
-    // Raise file-descriptor limit BEFORE any I/O (RocksDB, Parquet, sockets).
-    #[cfg(unix)]
-    raise_fd_limit();
-
-    let main_start = std::time::Instant::now();
-
-    // Normal server startup
-    // Use first CLI argument as config path; otherwise prefer server.toml in cwd, then next to binary
-    let config_path = if let Some(arg_path) = std::env::args().nth(1) {
-        std::path::PathBuf::from(arg_path)
+fn resolve_config_path() -> PathBuf {
+    if let Some(arg_path) = std::env::args().nth(1) {
+        PathBuf::from(arg_path)
     } else {
         let cwd_path = std::env::current_dir()
-            .unwrap_or_else(|_| std::path::PathBuf::from("."))
+            .unwrap_or_else(|_| PathBuf::from("."))
             .join("server.toml");
         if cwd_path.exists() {
             cwd_path
@@ -159,23 +150,25 @@ async fn main() -> Result<()> {
             let exe_dir = std::env::current_exe()
                 .ok()
                 .and_then(|path| path.parent().map(|dir| dir.to_path_buf()))
-                .unwrap_or_else(|| std::path::PathBuf::from("."));
+                .unwrap_or_else(|| PathBuf::from("."));
             exe_dir.join("server.toml")
         }
-    };
+    }
+}
 
+fn load_server_config(config_path: &Path) -> ServerConfig {
     if !config_path.exists() {
         eprintln!("❌ FATAL: Config file not found: {}", config_path.display());
         eprintln!("❌ Server cannot start without valid configuration");
         std::process::exit(1);
     }
 
-    let mut config = match ServerConfig::from_file(&config_path) {
+    let mut config = match ServerConfig::from_file(config_path) {
         Ok(cfg) => {
             eprintln!(
                 "✅ Loaded config from: {}",
-                std::fs::canonicalize(&config_path)
-                    .unwrap_or_else(|_| config_path.clone())
+                std::fs::canonicalize(config_path)
+                    .unwrap_or_else(|_| config_path.to_path_buf())
                     .display()
             );
             cfg
@@ -204,6 +197,44 @@ async fn main() -> Result<()> {
         eprintln!("❌ Server cannot start until both HTTP and Raft RPC ports are available");
         std::process::exit(1);
     }
+
+    config
+}
+
+fn resolve_tokio_worker_threads(config: &ServerConfig) -> usize {
+    std::env::var("KALAMDB_TOKIO_WORKER_THREADS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .or_else(|| {
+            (config.performance.tokio_worker_threads > 0)
+                .then_some(config.performance.tokio_worker_threads)
+        })
+        .unwrap_or_else(|| num_cpus::get().min(4))
+}
+
+// Build the tokio runtime manually so we can honour KALAMDB_TOKIO_WORKER_THREADS
+// or `performance.tokio_worker_threads` from server.toml and reduce idle RSS
+// from over-provisioned thread stacks on high-core-count hosts / Docker.
+fn main() -> Result<()> {
+    // Raise file-descriptor limit BEFORE any I/O (RocksDB, Parquet, sockets).
+    #[cfg(unix)]
+    raise_fd_limit();
+
+    let config = load_server_config(&resolve_config_path());
+    let worker_threads = resolve_tokio_worker_threads(&config);
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(worker_threads)
+        .enable_all()
+        .build()
+        .expect("Failed to build tokio runtime");
+
+    runtime.block_on(async_main(config))
+}
+
+async fn async_main(config: ServerConfig) -> Result<()> {
+    let main_start = std::time::Instant::now();
 
     // ========================================================================
     // JWT CONFIG INITIALIZATION

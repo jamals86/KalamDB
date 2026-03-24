@@ -16,6 +16,12 @@ mod e2e_ddl_common;
 
 use e2e_ddl_common::DdlTestEnv;
 
+async fn ensure_schema_exists(pg: &tokio_postgres::Client, schema: &str) {
+    pg.batch_execute(&format!("CREATE SCHEMA IF NOT EXISTS {schema};"))
+        .await
+        .expect("CREATE SCHEMA");
+}
+
 // =========================================================================
 // Helper: unique table name per test to avoid collisions
 // =========================================================================
@@ -42,10 +48,10 @@ async fn e2e_ddl_create_shared_table() {
 
     let ns = "ddl_test";
     let table = unique_name("shared_tbl");
+    ensure_schema_exists(&pg, ns).await;
 
-    // CREATE FOREIGN TABLE with OPTIONS pointing at our namespace/table
     let sql = format!(
-        "CREATE FOREIGN TABLE {table} (
+        "CREATE FOREIGN TABLE {ns}.{table} (
             id TEXT,
             title TEXT,
             value INTEGER
@@ -71,7 +77,7 @@ async fn e2e_ddl_create_shared_table() {
     assert!(cols.contains(&"value".to_string()), "should have 'value' column");
 
     // Cleanup: drop foreign table (also propagates DROP to KalamDB)
-    pg.batch_execute(&format!("DROP FOREIGN TABLE IF EXISTS {table};"))
+    pg.batch_execute(&format!("DROP FOREIGN TABLE IF EXISTS {ns}.{table};"))
         .await
         .ok();
 }
@@ -87,9 +93,10 @@ async fn e2e_ddl_create_user_table() {
 
     let ns = "ddl_test";
     let table = unique_name("user_tbl");
+    ensure_schema_exists(&pg, ns).await;
 
     let sql = format!(
-        "CREATE FOREIGN TABLE {table} (
+        "CREATE FOREIGN TABLE {ns}.{table} (
             id TEXT,
             name TEXT,
             age INTEGER,
@@ -114,7 +121,7 @@ async fn e2e_ddl_create_user_table() {
     assert!(cols.contains(&"name".to_string()), "should have 'name' column");
     assert!(cols.contains(&"age".to_string()), "should have 'age' column");
 
-    pg.batch_execute(&format!("DROP FOREIGN TABLE IF EXISTS {table};"))
+    pg.batch_execute(&format!("DROP FOREIGN TABLE IF EXISTS {ns}.{table};"))
         .await
         .ok();
 }
@@ -130,10 +137,11 @@ async fn e2e_ddl_alter_add_column() {
 
     let ns = "ddl_test";
     let table = unique_name("alter_add");
+    ensure_schema_exists(&pg, ns).await;
 
     // Create table first
     let sql = format!(
-        "CREATE FOREIGN TABLE {table} (
+        "CREATE FOREIGN TABLE {ns}.{table} (
             id TEXT,
             name TEXT
         ) SERVER kalam_server
@@ -148,7 +156,7 @@ async fn e2e_ddl_alter_add_column() {
     assert!(cols_before.contains(&"name".to_string()));
 
     // ALTER: add a new column
-    let alter_sql = format!("ALTER FOREIGN TABLE {table} ADD COLUMN score INTEGER;");
+    let alter_sql = format!("ALTER FOREIGN TABLE {ns}.{table} ADD COLUMN score INTEGER;");
     pg.batch_execute(&alter_sql).await.expect("ALTER ADD COLUMN");
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
@@ -160,7 +168,7 @@ async fn e2e_ddl_alter_add_column() {
         "KalamDB should have 'score' column after ALTER ADD COLUMN"
     );
 
-    pg.batch_execute(&format!("DROP FOREIGN TABLE IF EXISTS {table};"))
+    pg.batch_execute(&format!("DROP FOREIGN TABLE IF EXISTS {ns}.{table};"))
         .await
         .ok();
 }
@@ -176,10 +184,11 @@ async fn e2e_ddl_alter_drop_column() {
 
     let ns = "ddl_test";
     let table = unique_name("alter_drop");
+    ensure_schema_exists(&pg, ns).await;
 
     // Create table with 3 columns
     let sql = format!(
-        "CREATE FOREIGN TABLE {table} (
+        "CREATE FOREIGN TABLE {ns}.{table} (
             id TEXT,
             name TEXT,
             description TEXT
@@ -194,7 +203,7 @@ async fn e2e_ddl_alter_drop_column() {
     assert!(cols_before.contains(&"description".to_string()));
 
     // ALTER: drop the 'description' column
-    let alter_sql = format!("ALTER FOREIGN TABLE {table} DROP COLUMN description;");
+    let alter_sql = format!("ALTER FOREIGN TABLE {ns}.{table} DROP COLUMN description;");
     pg.batch_execute(&alter_sql).await.expect("ALTER DROP COLUMN");
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
@@ -205,7 +214,7 @@ async fn e2e_ddl_alter_drop_column() {
         "KalamDB should NOT have 'description' column after ALTER DROP COLUMN"
     );
 
-    pg.batch_execute(&format!("DROP FOREIGN TABLE IF EXISTS {table};"))
+    pg.batch_execute(&format!("DROP FOREIGN TABLE IF EXISTS {ns}.{table};"))
         .await
         .ok();
 }
@@ -221,10 +230,11 @@ async fn e2e_ddl_drop_table() {
 
     let ns = "ddl_test";
     let table = unique_name("drop_tbl");
+    ensure_schema_exists(&pg, ns).await;
 
     // Create
     let sql = format!(
-        "CREATE FOREIGN TABLE {table} (
+        "CREATE FOREIGN TABLE {ns}.{table} (
             id TEXT,
             data TEXT
         ) SERVER kalam_server
@@ -238,7 +248,7 @@ async fn e2e_ddl_drop_table() {
     );
 
     // DROP
-    let drop_sql = format!("DROP FOREIGN TABLE {table};");
+    let drop_sql = format!("DROP FOREIGN TABLE {ns}.{table};");
     pg.batch_execute(&drop_sql).await.expect("DROP FOREIGN TABLE");
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
@@ -279,10 +289,11 @@ async fn e2e_ddl_full_lifecycle() {
 
     let ns = "ddl_test";
     let table = unique_name("lifecycle");
+    ensure_schema_exists(&pg, ns).await;
 
     // 1. CREATE
     let create_sql = format!(
-        "CREATE FOREIGN TABLE {table} (
+        "CREATE FOREIGN TABLE {ns}.{table} (
             id TEXT,
             name TEXT
         ) SERVER kalam_server
@@ -294,14 +305,14 @@ async fn e2e_ddl_full_lifecycle() {
 
     // 2. INSERT data via the FDW
     pg.batch_execute(&format!(
-        "INSERT INTO {table} (id, name) VALUES ('k1', 'Alice'), ('k2', 'Bob');"
+        "INSERT INTO {ns}.{table} (id, name) VALUES ('k1', 'Alice'), ('k2', 'Bob');"
     ))
     .await
     .expect("INSERT");
 
     // 3. Verify data is readable
     let rows = pg
-        .query(&format!("SELECT id, name FROM {table} ORDER BY id"), &[])
+        .query(&format!("SELECT id, name FROM {ns}.{table} ORDER BY id"), &[])
         .await
         .expect("SELECT");
     assert_eq!(rows.len(), 2, "should have 2 rows");
@@ -310,7 +321,7 @@ async fn e2e_ddl_full_lifecycle() {
 
     // 4. ALTER ADD COLUMN
     pg.batch_execute(&format!(
-        "ALTER FOREIGN TABLE {table} ADD COLUMN email TEXT;"
+        "ALTER FOREIGN TABLE {ns}.{table} ADD COLUMN email TEXT;"
     ))
     .await
     .expect("ALTER ADD");
@@ -323,7 +334,7 @@ async fn e2e_ddl_full_lifecycle() {
     );
 
     // 5. DROP
-    pg.batch_execute(&format!("DROP FOREIGN TABLE {table};"))
+    pg.batch_execute(&format!("DROP FOREIGN TABLE {ns}.{table};"))
         .await
         .expect("DROP");
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -439,9 +450,10 @@ async fn e2e_ddl_create_table_mirrors_columns_identically() {
 
     let ns = "ddl_test";
     let table = unique_name("mirror_cols");
+    ensure_schema_exists(&pg, ns).await;
 
     let sql = format!(
-        "CREATE FOREIGN TABLE {table} (
+        "CREATE FOREIGN TABLE {ns}.{table} (
             id TEXT,
             title TEXT,
             value INTEGER,
@@ -458,9 +470,9 @@ async fn e2e_ddl_create_table_mirrors_columns_identically() {
         .query(
             "SELECT column_name
              FROM information_schema.columns
-             WHERE table_schema = 'public' AND table_name = $1
+             WHERE table_schema = $1 AND table_name = $2
              ORDER BY ordinal_position",
-            &[&table],
+            &[&ns, &table],
         )
         .await
         .expect("query postgres mirrored columns");
@@ -485,7 +497,53 @@ async fn e2e_ddl_create_table_mirrors_columns_identically() {
         "KalamDB should only add known internal columns beyond the PostgreSQL schema: {kalam_columns:?}"
     );
 
-    pg.batch_execute(&format!("DROP FOREIGN TABLE IF EXISTS {table};"))
+    pg.batch_execute(&format!("DROP FOREIGN TABLE IF EXISTS {ns}.{table};"))
+        .await
+        .ok();
+}
+
+// =========================================================================
+// Test 12: Column constraints/defaults are preserved in mirrored CREATE TABLE
+// =========================================================================
+
+#[tokio::test]
+#[ntest::timeout(7000)]
+async fn e2e_ddl_preserves_primary_key_not_null_and_defaults() {
+    let env = DdlTestEnv::global().await;
+    let pg = env.pg_connect().await;
+
+    let ns = unique_name("ddl_constraints");
+    let table = unique_name("shared_tbl");
+    ensure_schema_exists(&pg, &ns).await;
+
+    pg.batch_execute(&format!(
+        "CREATE FOREIGN TABLE {ns}.{table} (
+            id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
+            title TEXT NOT NULL,
+            value INTEGER,
+            created TIMESTAMP DEFAULT NOW()
+         ) SERVER kalam_server
+         OPTIONS (table_type 'shared');"
+    ))
+    .await
+    .expect("create mirrored constrained foreign table");
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    let describe = env.kalamdb_sql(&format!("DESCRIBE {ns}.{table}")).await;
+    let describe_text = serde_json::to_string(&describe).unwrap_or_default();
+
+    assert!(
+        describe_text.contains("\"id\"")
+            && describe_text.contains("SNOWFLAKE_ID()")
+            && describe_text.contains("title")
+            && describe_text.contains("NOW()"),
+        "DESCRIBE should expose mirrored defaults and constrained columns: {describe_text}"
+    );
+
+    pg.batch_execute(&format!("DROP FOREIGN TABLE IF EXISTS {ns}.{table};"))
+        .await
+        .ok();
+    pg.batch_execute(&format!("DROP SCHEMA IF EXISTS {ns} CASCADE;"))
         .await
         .ok();
 }
@@ -540,4 +598,199 @@ async fn e2e_ddl_current_schema_maps_to_namespace_without_namespace_option() {
     ))
     .await
     .ok();
+}
+
+// =========================================================================
+// Test 13: ALTER ADD COLUMN preserves NOT NULL and DEFAULT on mirrored schema
+// =========================================================================
+
+#[tokio::test]
+#[ntest::timeout(7000)]
+async fn e2e_ddl_alter_add_column_preserves_not_null_and_default() {
+    let env = DdlTestEnv::global().await;
+    let pg = env.pg_connect().await;
+
+    let ns = unique_name("ddl_addopts");
+    let table = unique_name("items");
+    ensure_schema_exists(&pg, &ns).await;
+
+    pg.batch_execute(&format!(
+        "CREATE FOREIGN TABLE {ns}.{table} (
+            id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
+            title TEXT NOT NULL
+         ) SERVER kalam_server
+         OPTIONS (table_type 'shared');"
+    ))
+    .await
+    .expect("create base foreign table");
+
+    pg.batch_execute(&format!(
+        "ALTER FOREIGN TABLE {ns}.{table} ADD COLUMN status TEXT NOT NULL DEFAULT 'pending';"
+    ))
+    .await
+    .expect("alter add column with default and not null");
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    env.kalamdb_sql(&format!(
+        "INSERT INTO {ns}.{table} (id, title) VALUES (SNOWFLAKE_ID(), 'hello add column')"
+    ))
+    .await;
+
+    let result = env
+        .kalamdb_sql(&format!(
+            "SELECT status FROM {ns}.{table} WHERE title = 'hello add column'"
+        ))
+        .await;
+    let result_text = serde_json::to_string(&result).unwrap_or_default();
+    assert!(
+        result_text.contains("pending"),
+        "ALTER ADD COLUMN default should be applied on the mirrored KalamDB table: {result_text}"
+    );
+
+    pg.batch_execute(&format!("DROP FOREIGN TABLE IF EXISTS {ns}.{table};"))
+        .await
+        .ok();
+    pg.batch_execute(&format!("DROP SCHEMA IF EXISTS {ns} CASCADE;"))
+        .await
+        .ok();
+}
+
+// =========================================================================
+// Test 14: ALTER COLUMN SET/DROP NOT NULL mirrors to KalamDB
+// =========================================================================
+
+#[tokio::test]
+#[ntest::timeout(7000)]
+async fn e2e_ddl_alter_column_set_and_drop_not_null() {
+    let env = DdlTestEnv::global().await;
+    let pg = env.pg_connect().await;
+
+    let ns = unique_name("ddl_nullable");
+    let table = unique_name("items");
+    ensure_schema_exists(&pg, &ns).await;
+
+    pg.batch_execute(&format!(
+        "CREATE FOREIGN TABLE {ns}.{table} (
+            id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
+            title TEXT
+         ) SERVER kalam_server
+         OPTIONS (table_type 'shared');"
+    ))
+    .await
+    .expect("create base table for nullability alter");
+
+    pg.batch_execute(&format!(
+        "ALTER FOREIGN TABLE {ns}.{table} ALTER COLUMN title SET NOT NULL;"
+    ))
+    .await
+    .expect("set not null");
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    let insert_error = env
+        .kalamdb_sql_maybe(&format!(
+            "INSERT INTO {ns}.{table} (id, title) VALUES (SNOWFLAKE_ID(), NULL)"
+        ))
+        .await
+        .expect_err("remote insert with NULL title should fail after SET NOT NULL");
+    assert!(
+        insert_error.contains("null") || insert_error.contains("NOT NULL"),
+        "SET NOT NULL should reject NULL inserts remotely: {insert_error}"
+    );
+
+    pg.batch_execute(&format!(
+        "ALTER FOREIGN TABLE {ns}.{table} ALTER COLUMN title DROP NOT NULL;"
+    ))
+    .await
+    .expect("drop not null");
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    env.kalamdb_sql(&format!(
+        "INSERT INTO {ns}.{table} (id, title) VALUES (SNOWFLAKE_ID(), NULL)"
+    ))
+    .await;
+
+    pg.batch_execute(&format!("DROP FOREIGN TABLE IF EXISTS {ns}.{table};"))
+        .await
+        .ok();
+    pg.batch_execute(&format!("DROP SCHEMA IF EXISTS {ns} CASCADE;"))
+        .await
+        .ok();
+}
+
+// =========================================================================
+// Test 15: ALTER COLUMN SET/DROP DEFAULT mirrors to KalamDB
+// =========================================================================
+
+#[tokio::test]
+#[ntest::timeout(7000)]
+async fn e2e_ddl_alter_column_set_and_drop_default() {
+    let env = DdlTestEnv::global().await;
+    let pg = env.pg_connect().await;
+
+    let ns = unique_name("ddl_defaults");
+    let table = unique_name("items");
+    ensure_schema_exists(&pg, &ns).await;
+
+    pg.batch_execute(&format!(
+        "CREATE FOREIGN TABLE {ns}.{table} (
+            id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
+            status TEXT
+         ) SERVER kalam_server
+         OPTIONS (table_type 'shared');"
+    ))
+    .await
+    .expect("create base table for default alter");
+
+    pg.batch_execute(&format!(
+        "ALTER FOREIGN TABLE {ns}.{table} ALTER COLUMN status SET DEFAULT 'pending';"
+    ))
+    .await
+    .expect("set default");
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    env.kalamdb_sql(&format!(
+        "INSERT INTO {ns}.{table} (id) VALUES (SNOWFLAKE_ID())"
+    ))
+    .await;
+
+    let with_default = env
+        .kalamdb_sql(&format!(
+            "SELECT status FROM {ns}.{table} WHERE status = 'pending'"
+        ))
+        .await;
+    let with_default_text = serde_json::to_string(&with_default).unwrap_or_default();
+    assert!(
+        with_default_text.contains("pending"),
+        "SET DEFAULT should be visible on mirrored remote inserts: {with_default_text}"
+    );
+
+    pg.batch_execute(&format!(
+        "ALTER FOREIGN TABLE {ns}.{table} ALTER COLUMN status DROP DEFAULT;"
+    ))
+    .await
+    .expect("drop default");
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    env.kalamdb_sql(&format!(
+        "INSERT INTO {ns}.{table} (id) VALUES (SNOWFLAKE_ID())"
+    ))
+    .await;
+
+    let without_default = env
+        .kalamdb_sql(&format!(
+            "SELECT COUNT(*) AS pending_count FROM {ns}.{table} WHERE status = 'pending'"
+        ))
+        .await;
+    let without_default_text = serde_json::to_string(&without_default).unwrap_or_default();
+    assert!(
+        without_default_text.contains("pending_count") && !without_default_text.contains("2"),
+        "DROP DEFAULT should stop populating the previous default value: {without_default_text}"
+    );
+
+    pg.batch_execute(&format!("DROP FOREIGN TABLE IF EXISTS {ns}.{table};"))
+        .await
+        .ok();
+    pg.batch_execute(&format!("DROP SCHEMA IF EXISTS {ns} CASCADE;"))
+        .await
+        .ok();
 }

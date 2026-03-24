@@ -6,6 +6,10 @@ authors = { workspace = true }
 license = { workspace = true }
 repository = { workspace = true }
 
+[[test]]
+name = "import_foreign_schema"
+required-features = ["import-foreign-schema"]
+
 [features]
 default = []
 import-foreign-schema = ["dep:kalam-pg-types", "kalamdb-commons/table-definition"]

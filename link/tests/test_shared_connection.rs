@@ -348,14 +348,20 @@ async fn test_shared_live_rows_subscription_materializes_snapshots() {
         },
     };
 
-    let table = "default.shared_live_rows_test";
-    ensure_table(&client, table).await;
+    let suffix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let table = format!("default.shared_live_rows_test_{}", suffix);
+    ensure_table(&client, &table).await;
     let _ = client.execute_query(&format!("DELETE FROM {}", table), None, None, None).await;
 
     client.connect().await.expect("connect");
 
-    let config =
-        SubscriptionConfig::new("shared-live-rows-test", &format!("SELECT * FROM {}", table));
+    let config = SubscriptionConfig::new(
+        format!("shared-live-rows-test-{}", suffix),
+        format!("SELECT * FROM {}", table),
+    );
     let mut sub = client
         .live_query_rows_with_config(
             config,

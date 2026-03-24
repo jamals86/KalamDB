@@ -9,7 +9,6 @@ use crate::fdw_options::parse_options;
 use crate::remote_state::get_remote_extension_state;
 use kalam_pg_common::KalamPgError;
 use kalam_pg_fdw::ServerOptions;
-use kalam_pg_fdw::TableOptions;
 use kalamdb_commons::TableType;
 use pgrx::pg_sys;
 use std::ffi::CStr;
@@ -51,17 +50,22 @@ unsafe extern "C-unwind" fn pg_kalam_process_utility(
 
     match tag {
         pg_sys::NodeTag::T_CreateForeignTableStmt => {
+            let statement_sql = extract_statement_sql(pstmt, query_string);
             // Let PostgreSQL create the foreign table first (so catalog entries exist).
             call_prev(pstmt, query_string, read_only_tree, context, params, query_env, dest, qc);
             // Then propagate to KalamDB.
-            handle_create_foreign_table(utility_stmt as *mut pg_sys::CreateForeignTableStmt);
+            handle_create_foreign_table(
+                utility_stmt as *mut pg_sys::CreateForeignTableStmt,
+                &statement_sql,
+            );
         }
         pg_sys::NodeTag::T_AlterTableStmt => {
             let alter_stmt = utility_stmt as *mut pg_sys::AlterTableStmt;
             if (*alter_stmt).objtype == pg_sys::ObjectType::OBJECT_FOREIGN_TABLE {
+                let statement_sql = extract_statement_sql(pstmt, query_string);
                 // Let PostgreSQL alter the foreign table first.
                 call_prev(pstmt, query_string, read_only_tree, context, params, query_env, dest, qc);
-                handle_alter_foreign_table(alter_stmt);
+                handle_alter_foreign_table(alter_stmt, &statement_sql);
             } else {
                 call_prev(pstmt, query_string, read_only_tree, context, params, query_env, dest, qc);
             }
@@ -116,69 +120,46 @@ fn call_prev(
 // CREATE FOREIGN TABLE → CREATE NAMESPACE IF NOT EXISTS + CREATE TABLE
 // ---------------------------------------------------------------------------
 
-unsafe fn handle_create_foreign_table(stmt: *mut pg_sys::CreateForeignTableStmt) {
+unsafe fn handle_create_foreign_table(
+    stmt: *mut pg_sys::CreateForeignTableStmt,
+    statement_sql: &str,
+) {
     // Only handle tables belonging to our FDW (check server → fdw name)
     let server_name = read_cstr((*stmt).servername);
     if !is_kalam_server(&server_name) {
         return;
     }
 
-    // Try to parse explicit FDW OPTIONS (namespace, table, table_type).
-    // If OPTIONS are missing, fall back to deriving from the schema-qualified name.
     let ft_options = parse_options((*stmt).options);
-    let (namespace, table_name, table_type) = match TableOptions::parse(&ft_options) {
-        Ok(opts) => (
-            opts.table_id.namespace_id().as_str().to_string(),
-            opts.table_id.table_name().as_str().to_string(),
-            opts.table_type,
-        ),
-        Err(_) => {
-            // Derive from schema.table name in the CREATE statement
-            let base = &(*stmt).base;
-            let rv = base.relation;
-            if rv.is_null() {
-                pgrx::warning!("pg_kalam DDL: cannot determine table name");
-                return;
-            }
-            let schema = read_cstr((*rv).schemaname);
-            let relname = read_cstr((*rv).relname);
-            if schema.is_empty() || relname.is_empty() {
-                pgrx::warning!(
-                    "pg_kalam DDL: schema-qualified name required (e.g. CREATE FOREIGN TABLE myns.mytable ...) \
-                     or provide OPTIONS (namespace '...', \"table\" '...', table_type '...')"
-                );
-                return;
-            }
-            // Default to SHARED when no explicit table_type option
-            let tt = ft_options
-                .get("table_type")
-                .and_then(|s| TableType::from_str(s).ok())
-                .unwrap_or(TableType::Shared);
-            (schema, relname, tt)
-        }
+    let table_type = ft_options
+        .get("table_type")
+        .and_then(|value| TableType::from_str(value).ok())
+        .unwrap_or(TableType::Shared);
+
+    let base = &(*stmt).base;
+    let rv = base.relation;
+    let Some((namespace, table_name)) = resolve_relation_identity_from_range_var(rv) else {
+        pgrx::warning!("pg_kalam DDL: cannot determine mirrored schema/table name");
+        return;
     };
 
     let table_type_keyword = table_type_to_keyword(table_type);
 
-    // Extract columns from the CreateStmt base
-    let base = &(*stmt).base;
-    let columns = extract_columns_from_table_elts(base.tableElts);
-    if columns.is_empty() {
+    let column_defs = match extract_remote_column_definitions(statement_sql) {
+        Ok(definitions) if !definitions.is_empty() => definitions,
+        Ok(_) => {
+            pgrx::warning!("pg_kalam DDL: no user columns found in CREATE FOREIGN TABLE");
+            return;
+        }
+        Err(error) => {
+            pgrx::error!("pg_kalam DDL: failed to parse CREATE FOREIGN TABLE: {}", error);
+        }
+    };
+
+    if column_defs.is_empty() {
         pgrx::warning!("pg_kalam DDL: no columns found in CREATE FOREIGN TABLE");
         return;
     }
-
-    // Build the column definitions for KalamDB SQL
-    let col_defs: Vec<String> = columns
-        .iter()
-        .map(|c| {
-            if c.is_primary_key {
-                format!("{} {} PRIMARY KEY", quote_ident(&c.name), c.kalam_type)
-            } else {
-                format!("{} {}", quote_ident(&c.name), c.kalam_type)
-            }
-        })
-        .collect();
 
     // Build SQL statements
     let create_ns_sql = format!(
@@ -190,7 +171,7 @@ unsafe fn handle_create_foreign_table(stmt: *mut pg_sys::CreateForeignTableStmt)
         table_type_keyword,
         quote_ident(&namespace),
         quote_ident(&table_name),
-        col_defs.join(", ")
+        column_defs.join(", ")
     );
 
     // Send to KalamDB
@@ -208,7 +189,7 @@ unsafe fn handle_create_foreign_table(stmt: *mut pg_sys::CreateForeignTableStmt)
 // ALTER FOREIGN TABLE → ALTER TABLE ADD/DROP COLUMN
 // ---------------------------------------------------------------------------
 
-unsafe fn handle_alter_foreign_table(stmt: *mut pg_sys::AlterTableStmt) {
+unsafe fn handle_alter_foreign_table(stmt: *mut pg_sys::AlterTableStmt, statement_sql: &str) {
     // Resolve the table OID from the RangeVar
     let rel = (*stmt).relation;
     if rel.is_null() {
@@ -244,76 +225,56 @@ unsafe fn handle_alter_foreign_table(stmt: *mut pg_sys::AlterTableStmt) {
 
     let server_name = read_cstr((*server).servername);
 
-    // Parse table options; fall back to schema.relname from the ALTER statement
-    let ft_options = parse_options((*ft).options);
-    let (namespace, table_name) = match TableOptions::parse(&ft_options) {
-        Ok(opts) => (
-            opts.table_id.namespace_id().as_str().to_string(),
-            opts.table_id.table_name().as_str().to_string(),
-        ),
-        Err(_) => {
-            // Fall back to schema/relname from the RangeVar
-            let schema = read_cstr((*rel).schemaname);
-            let relname = read_cstr((*rel).relname);
-            if schema.is_empty() || relname.is_empty() {
-                return;
-            }
-            (schema, relname)
-        }
+    let Some((namespace, table_name)) = resolve_relation_identity(relid) else {
+        return;
     };
 
-    // Iterate over ALTER commands
     let cmds = (*stmt).cmds;
     if cmds.is_null() {
         return;
     }
-    let len = (*cmds).length as usize;
-    for i in 0..len {
-        let cell = (*cmds).elements.add(i);
-        let cmd = (*cell).ptr_value as *mut pg_sys::AlterTableCmd;
-        if cmd.is_null() {
-            continue;
+    if (*cmds).length != 1 {
+        pgrx::warning!("pg_kalam DDL: only single ALTER FOREIGN TABLE operations are mirrored");
+        return;
+    }
+
+    let clause = match extract_alter_operation_clause(statement_sql) {
+        Ok(clause) => clause,
+        Err(error) => {
+            pgrx::warning!("pg_kalam DDL: failed to parse ALTER FOREIGN TABLE clause: {}", error);
+            return;
         }
+    };
 
-        match (*cmd).subtype {
-            pg_sys::AlterTableType::AT_AddColumn => {
-                // cmd.def is a ColumnDef
-                let col_def = (*cmd).def as *mut pg_sys::ColumnDef;
-                if col_def.is_null() {
-                    continue;
-                }
-                let col_name = read_cstr((*col_def).colname);
-                let kalam_type = resolve_type_name((*col_def).typeName);
+    let cell = (*cmds).elements.add(0);
+    let cmd = (*cell).ptr_value as *mut pg_sys::AlterTableCmd;
+    if cmd.is_null() {
+        return;
+    }
 
-                let sql = format!(
-                    "ALTER TABLE {}.{} ADD COLUMN {} {}",
-                    quote_ident(&namespace),
-                    quote_ident(&table_name),
-                    quote_ident(&col_name),
-                    kalam_type
+    match (*cmd).subtype {
+        pg_sys::AlterTableType::AT_AddColumn
+        | pg_sys::AlterTableType::AT_DropColumn
+        | pg_sys::AlterTableType::AT_SetNotNull
+        | pg_sys::AlterTableType::AT_DropNotNull
+        | pg_sys::AlterTableType::AT_ColumnDefault => {
+            let sql = format!(
+                "ALTER TABLE {}.{} {}",
+                quote_ident(&namespace),
+                quote_ident(&table_name),
+                clause
+            );
+            if let Err(error) = execute_remote_sql(&sql, &server_name) {
+                pgrx::error!(
+                    "pg_kalam DDL: failed to mirror ALTER TABLE for {}.{}: {}",
+                    namespace,
+                    table_name,
+                    error
                 );
-
-                if let Err(e) = execute_remote_sql(&sql, &server_name) {
-                    pgrx::error!("pg_kalam DDL: failed to add column '{}': {}", col_name, e);
-                }
             }
-            pg_sys::AlterTableType::AT_DropColumn => {
-                let col_name = read_cstr((*cmd).name);
-
-                let sql = format!(
-                    "ALTER TABLE {}.{} DROP COLUMN {}",
-                    quote_ident(&namespace),
-                    quote_ident(&table_name),
-                    quote_ident(&col_name)
-                );
-
-                if let Err(e) = execute_remote_sql(&sql, &server_name) {
-                    pgrx::error!("pg_kalam DDL: failed to drop column '{}': {}", col_name, e);
-                }
-            }
-            _ => {
-                // Other ALTER operations are not propagated to KalamDB.
-            }
+        }
+        _ => {
+            // Other ALTER operations are not propagated to KalamDB.
         }
     }
 }
@@ -382,26 +343,13 @@ unsafe fn collect_drop_targets(drop_stmt: *mut pg_sys::DropStmt) -> Vec<DropTarg
         }
 
         let ft_options = parse_options((*ft).options);
-        let (namespace, table_name, table_type) = match TableOptions::parse(&ft_options) {
-            Ok(opts) => (
-                opts.table_id.namespace_id().as_str().to_string(),
-                opts.table_id.table_name().as_str().to_string(),
-                opts.table_type,
-            ),
-            Err(_) => {
-                // Fall back to schema/relname from the RangeVar
-                let schema = read_cstr((*rv).schemaname);
-                let relname = read_cstr((*rv).relname);
-                if schema.is_empty() || relname.is_empty() {
-                    continue;
-                }
-                let tt = ft_options
-                    .get("table_type")
-                    .and_then(|s| TableType::from_str(s).ok())
-                    .unwrap_or(TableType::Shared);
-                (schema, relname, tt)
-            }
+        let Some((namespace, table_name)) = resolve_relation_identity(relid) else {
+            continue;
         };
+        let table_type = ft_options
+            .get("table_type")
+            .and_then(|value| TableType::from_str(value).ok())
+            .unwrap_or(TableType::Shared);
 
         let srv_name = read_cstr((*server).servername);
         targets.push(DropTarget {
@@ -434,114 +382,6 @@ unsafe fn handle_drop_foreign_tables(targets: &[DropTarget]) {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/// Column info extracted from PostgreSQL DDL.
-struct ColumnInfo {
-    name: String,
-    kalam_type: String,
-    is_primary_key: bool,
-}
-
-/// Extract column definitions from the `tableElts` list of a CreateStmt.
-///
-/// The first non-internal column is assumed to be the primary key,
-/// matching the convention used by the FDW modify path.
-unsafe fn extract_columns_from_table_elts(table_elts: *mut pg_sys::List) -> Vec<ColumnInfo> {
-    let mut columns = Vec::new();
-    if table_elts.is_null() {
-        return columns;
-    }
-
-    let mut found_pk = false;
-    let len = (*table_elts).length as usize;
-    for i in 0..len {
-        let cell = (*table_elts).elements.add(i);
-        let node = (*cell).ptr_value as *mut pg_sys::Node;
-        if node.is_null() {
-            continue;
-        }
-
-        if (*node).type_ == pg_sys::NodeTag::T_ColumnDef {
-            let col = node as *mut pg_sys::ColumnDef;
-            let name = read_cstr((*col).colname);
-
-            // Skip internal columns that KalamDB adds automatically
-            if name == "_userid" || name == "_seq" || name == "_deleted" {
-                continue;
-            }
-
-            let kalam_type = resolve_type_name((*col).typeName);
-
-            // First non-internal column is the primary key (matches FDW modify convention)
-            let is_primary_key = !found_pk;
-            if is_primary_key {
-                found_pk = true;
-            }
-
-            columns.push(ColumnInfo {
-                name,
-                kalam_type,
-                is_primary_key,
-            });
-        }
-    }
-    columns
-}
-
-/// Resolve a PostgreSQL TypeName to a KalamDB SQL type string.
-unsafe fn resolve_type_name(type_name: *mut pg_sys::TypeName) -> String {
-    if type_name.is_null() {
-        return "TEXT".to_string();
-    }
-
-    // Use PostgreSQL's type resolution to get the OID
-    let mut type_oid: pg_sys::Oid = pg_sys::InvalidOid;
-    let mut type_mod: i32 = -1;
-    pg_sys::typenameTypeIdAndMod(std::ptr::null_mut(), type_name, &mut type_oid, &mut type_mod);
-
-    pg_oid_to_kalam_type(type_oid, type_mod)
-}
-
-/// Map a PostgreSQL type OID to a KalamDB SQL type name.
-fn pg_oid_to_kalam_type(type_oid: pg_sys::Oid, type_mod: i32) -> String {
-    match type_oid {
-        pg_sys::BOOLOID => "BOOLEAN".to_string(),
-        pg_sys::INT2OID => "SMALLINT".to_string(),
-        pg_sys::INT4OID => "INTEGER".to_string(),
-        pg_sys::INT8OID => "BIGINT".to_string(),
-        pg_sys::FLOAT4OID => "REAL".to_string(),
-        pg_sys::FLOAT8OID => "DOUBLE PRECISION".to_string(),
-        pg_sys::TEXTOID | pg_sys::VARCHAROID | pg_sys::BPCHAROID => "TEXT".to_string(),
-        pg_sys::BYTEAOID => "BYTEA".to_string(),
-        pg_sys::DATEOID => "DATE".to_string(),
-        pg_sys::TIMEOID => "TIME".to_string(),
-        pg_sys::TIMESTAMPOID => "TIMESTAMP".to_string(),
-        pg_sys::TIMESTAMPTZOID => "TIMESTAMPTZ".to_string(),
-        pg_sys::UUIDOID => "UUID".to_string(),
-        pg_sys::JSONBOID | pg_sys::JSONOID => "JSONB".to_string(),
-        pg_sys::NUMERICOID => {
-            // Extract precision/scale from typemod
-            if type_mod >= 0 {
-                let precision = ((type_mod - 4) >> 16) & 0xFFFF;
-                let scale = (type_mod - 4) & 0xFFFF;
-                format!("NUMERIC({}, {})", precision, scale)
-            } else {
-                "NUMERIC(38, 10)".to_string()
-            }
-        }
-        _ => {
-            // Fallback: use PostgreSQL's format_type_be for the name
-            let cstr = unsafe { pg_sys::format_type_be(type_oid) };
-            if !cstr.is_null() {
-                let name = unsafe { CStr::from_ptr(cstr) }.to_string_lossy().into_owned();
-                unsafe { pg_sys::pfree(cstr as *mut std::ffi::c_void) };
-                name.to_uppercase()
-            } else {
-                "TEXT".to_string()
-            }
-        }
-    }
-}
 
 /// Check if a server name maps to a foreign server that uses our FDW.
 fn is_kalam_server(server_name: &str) -> bool {
@@ -578,6 +418,330 @@ fn read_cstr(ptr: *const std::ffi::c_char) -> String {
     }
 }
 
+fn extract_statement_sql(
+    pstmt: *mut pg_sys::PlannedStmt,
+    query_string: *const std::ffi::c_char,
+) -> String {
+    let full_sql = read_cstr(query_string);
+    if pstmt.is_null() || full_sql.is_empty() {
+        return full_sql;
+    }
+
+    let start = unsafe { (*pstmt).stmt_location };
+    let len = unsafe { (*pstmt).stmt_len };
+    if start < 0 {
+        return full_sql;
+    }
+
+    let start = start as usize;
+    if start >= full_sql.len() {
+        return full_sql;
+    }
+
+    if len > 0 {
+        let end = start.saturating_add(len as usize).min(full_sql.len());
+        return full_sql[start..end].trim().to_string();
+    }
+
+    full_sql[start..].trim().to_string()
+}
+
+fn extract_remote_column_definitions(statement_sql: &str) -> Result<Vec<String>, KalamPgError> {
+    let (open_idx, close_idx) = find_column_list_bounds(statement_sql).ok_or_else(|| {
+        KalamPgError::Validation(
+            "could not locate CREATE FOREIGN TABLE column definitions".to_string(),
+        )
+    })?;
+
+    let block = &statement_sql[open_idx + 1..close_idx];
+    Ok(split_top_level_sql_list(block)
+        .into_iter()
+        .filter(|entry| !entry.trim().is_empty())
+        .filter(|entry| !is_internal_column_entry(entry))
+        .collect())
+}
+
+fn extract_alter_operation_clause(statement_sql: &str) -> Result<String, KalamPgError> {
+    let sql = statement_sql.trim().trim_end_matches(';').trim();
+    let mut index = 0usize;
+    consume_sql_keyword(sql, &mut index, "ALTER")?;
+    let _ = consume_sql_keyword_optional(sql, &mut index, "FOREIGN");
+    consume_sql_keyword(sql, &mut index, "TABLE")?;
+    consume_qualified_identifier(sql, &mut index)?;
+
+    let clause = sql[index..].trim();
+    if clause.is_empty() {
+        Err(KalamPgError::Validation(
+            "could not locate ALTER TABLE operation clause".to_string(),
+        ))
+    } else {
+        Ok(clause.to_string())
+    }
+}
+
+fn find_column_list_bounds(sql: &str) -> Option<(usize, usize)> {
+    let mut start_idx = None;
+    let mut depth = 0usize;
+    let mut in_single_quote = false;
+    let mut in_double_quote = false;
+    let bytes = sql.as_bytes();
+    let mut idx = 0usize;
+
+    while idx < bytes.len() {
+        let ch = bytes[idx] as char;
+        match ch {
+            '\'' if !in_double_quote => {
+                if in_single_quote && bytes.get(idx + 1) == Some(&b'\'') {
+                    idx += 1;
+                } else {
+                    in_single_quote = !in_single_quote;
+                }
+            }
+            '"' if !in_single_quote => {
+                if in_double_quote && bytes.get(idx + 1) == Some(&b'"') {
+                    idx += 1;
+                } else {
+                    in_double_quote = !in_double_quote;
+                }
+            }
+            '(' if !in_single_quote && !in_double_quote => {
+                if start_idx.is_none() {
+                    start_idx = Some(idx);
+                }
+                depth += 1;
+            }
+            ')' if !in_single_quote && !in_double_quote => {
+                if depth == 0 {
+                    return None;
+                }
+                depth -= 1;
+                if depth == 0 {
+                    return start_idx.map(|start| (start, idx));
+                }
+            }
+            _ => {}
+        }
+        idx += 1;
+    }
+
+    None
+}
+
+fn split_top_level_sql_list(input: &str) -> Vec<String> {
+    let mut entries = Vec::new();
+    let mut start = 0usize;
+    let mut depth = 0usize;
+    let mut in_single_quote = false;
+    let mut in_double_quote = false;
+    let bytes = input.as_bytes();
+    let mut idx = 0usize;
+
+    while idx < bytes.len() {
+        let ch = bytes[idx] as char;
+        match ch {
+            '\'' if !in_double_quote => {
+                if in_single_quote && bytes.get(idx + 1) == Some(&b'\'') {
+                    idx += 1;
+                } else {
+                    in_single_quote = !in_single_quote;
+                }
+            }
+            '"' if !in_single_quote => {
+                if in_double_quote && bytes.get(idx + 1) == Some(&b'"') {
+                    idx += 1;
+                } else {
+                    in_double_quote = !in_double_quote;
+                }
+            }
+            '(' if !in_single_quote && !in_double_quote => depth += 1,
+            ')' if !in_single_quote && !in_double_quote && depth > 0 => depth -= 1,
+            ',' if !in_single_quote && !in_double_quote && depth == 0 => {
+                let entry = input[start..idx].trim();
+                if !entry.is_empty() {
+                    entries.push(entry.to_string());
+                }
+                start = idx + 1;
+            }
+            _ => {}
+        }
+        idx += 1;
+    }
+
+    let tail = input[start..].trim();
+    if !tail.is_empty() {
+        entries.push(tail.to_string());
+    }
+
+    entries
+}
+
+fn is_internal_column_entry(entry: &str) -> bool {
+    first_sql_identifier(entry)
+        .map(|identifier| matches!(identifier.as_str(), "_userid" | "_seq" | "_deleted"))
+        .unwrap_or(false)
+}
+
+fn first_sql_identifier(entry: &str) -> Option<String> {
+    let trimmed = entry.trim_start();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let upper = trimmed.to_ascii_uppercase();
+    if upper.starts_with("PRIMARY ")
+        || upper.starts_with("CONSTRAINT ")
+        || upper.starts_with("UNIQUE ")
+        || upper.starts_with("CHECK ")
+        || upper.starts_with("FOREIGN ")
+    {
+        return None;
+    }
+
+    if let Some(rest) = trimmed.strip_prefix('"') {
+        let end = rest.find('"')?;
+        return Some(rest[..end].to_ascii_lowercase());
+    }
+
+    let end = trimmed
+        .char_indices()
+        .find_map(|(idx, ch)| {
+            if ch.is_ascii_alphanumeric() || ch == '_' {
+                None
+            } else {
+                Some(idx)
+            }
+        })
+        .unwrap_or(trimmed.len());
+    let identifier = trimmed[..end].trim();
+    if identifier.is_empty() {
+        None
+    } else {
+        Some(identifier.to_ascii_lowercase())
+    }
+}
+
+fn consume_sql_keyword(sql: &str, index: &mut usize, keyword: &str) -> Result<(), KalamPgError> {
+    skip_sql_whitespace(sql, index);
+    let remaining = &sql[*index..];
+    if remaining.len() < keyword.len() {
+        return Err(KalamPgError::Validation(format!(
+            "expected '{}' in SQL clause",
+            keyword
+        )));
+    }
+    let candidate = &remaining[..keyword.len()];
+    if !candidate.eq_ignore_ascii_case(keyword) {
+        return Err(KalamPgError::Validation(format!(
+            "expected '{}' in SQL clause",
+            keyword
+        )));
+    }
+    *index += keyword.len();
+    Ok(())
+}
+
+fn consume_sql_keyword_optional(sql: &str, index: &mut usize, keyword: &str) -> bool {
+    let original = *index;
+    if consume_sql_keyword(sql, index, keyword).is_ok() {
+        true
+    } else {
+        *index = original;
+        false
+    }
+}
+
+fn consume_qualified_identifier(sql: &str, index: &mut usize) -> Result<(), KalamPgError> {
+    skip_sql_whitespace(sql, index);
+    consume_identifier_part(sql, index)?;
+    loop {
+        skip_sql_whitespace(sql, index);
+        if sql[*index..].starts_with('.') {
+            *index += 1;
+            consume_identifier_part(sql, index)?;
+        } else {
+            return Ok(());
+        }
+    }
+}
+
+fn consume_identifier_part(sql: &str, index: &mut usize) -> Result<(), KalamPgError> {
+    skip_sql_whitespace(sql, index);
+    let remaining = &sql[*index..];
+    if remaining.is_empty() {
+        return Err(KalamPgError::Validation(
+            "expected identifier in SQL clause".to_string(),
+        ));
+    }
+
+    if let Some(rest) = remaining.strip_prefix('"') {
+        let end = rest.find('"').ok_or_else(|| {
+            KalamPgError::Validation("unterminated quoted identifier in SQL clause".to_string())
+        })?;
+        *index += end + 2;
+        return Ok(());
+    }
+
+    let ident_len = remaining
+        .chars()
+        .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
+        .count();
+    if ident_len == 0 {
+        return Err(KalamPgError::Validation(
+            "expected identifier in SQL clause".to_string(),
+        ));
+    }
+    *index += ident_len;
+    Ok(())
+}
+
+fn skip_sql_whitespace(sql: &str, index: &mut usize) {
+    *index += sql[*index..]
+        .chars()
+        .take_while(|ch| ch.is_whitespace())
+        .map(char::len_utf8)
+        .sum::<usize>();
+}
+
+unsafe fn resolve_relation_identity_from_range_var(
+    rv: *mut pg_sys::RangeVar,
+) -> Option<(String, String)> {
+    if rv.is_null() {
+        return None;
+    }
+
+    let relid = pg_sys::RangeVarGetRelidExtended(
+        rv,
+        pg_sys::AccessShareLock as i32,
+        pg_sys::RVROption::RVR_MISSING_OK as u32,
+        None,
+        std::ptr::null_mut(),
+    );
+    if relid == pg_sys::InvalidOid {
+        return None;
+    }
+
+    resolve_relation_identity(relid)
+}
+
+unsafe fn resolve_relation_identity(relid: pg_sys::Oid) -> Option<(String, String)> {
+    if relid == pg_sys::InvalidOid {
+        return None;
+    }
+
+    let namespace_oid = pg_sys::get_rel_namespace(relid);
+    if namespace_oid == pg_sys::InvalidOid {
+        return None;
+    }
+
+    let namespace = read_cstr(pg_sys::get_namespace_name(namespace_oid));
+    let table_name = read_cstr(pg_sys::get_rel_name(relid));
+    if namespace.is_empty() || table_name.is_empty() {
+        None
+    } else {
+        Some((namespace, table_name))
+    }
+}
+
 /// Convert a KalamDB TableType to the SQL keyword.
 fn table_type_to_keyword(tt: TableType) -> &'static str {
     match tt {
@@ -597,6 +761,75 @@ fn quote_ident(name: &str) -> String {
     // KalamDB rejects double-quoted identifiers in CREATE/ALTER/DROP.
     // Only simple alphanumeric+underscore names are valid, so pass as-is.
     name.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_remote_column_definitions_preserves_constraints_and_defaults() {
+        let sql = r#"
+            CREATE FOREIGN TABLE app.shared_tbl_2 (
+                id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
+                title TEXT NOT NULL,
+                value INTEGER,
+                created TIMESTAMP DEFAULT NOW()
+            ) SERVER kalam_server
+            OPTIONS (table_type 'shared');
+        "#;
+
+        let defs = extract_remote_column_definitions(sql).expect("extract definitions");
+        assert_eq!(defs.len(), 4);
+        assert_eq!(defs[0], "id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID()");
+        assert_eq!(defs[1], "title TEXT NOT NULL");
+        assert_eq!(defs[3], "created TIMESTAMP DEFAULT NOW()");
+    }
+
+    #[test]
+    fn extract_remote_column_definitions_skips_internal_columns_only() {
+        let sql = r#"
+            CREATE FOREIGN TABLE e2e.users (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                _userid TEXT,
+                _seq BIGINT,
+                _deleted BOOLEAN,
+                CONSTRAINT users_name_check CHECK (char_length(name) > 0)
+            ) SERVER kalam_server
+            OPTIONS (table_type 'user');
+        "#;
+
+        let defs = extract_remote_column_definitions(sql).expect("extract definitions");
+        assert_eq!(defs.len(), 3);
+        assert_eq!(defs[0], "id TEXT PRIMARY KEY");
+        assert_eq!(defs[1], "name TEXT NOT NULL");
+        assert!(defs[2].starts_with("CONSTRAINT users_name_check CHECK"));
+    }
+
+    #[test]
+    fn split_top_level_sql_list_handles_nested_parentheses() {
+        let entries = split_top_level_sql_list(
+            "id BIGINT DEFAULT SNOWFLAKE_ID(), amount NUMERIC(10, 2), created TIMESTAMP DEFAULT NOW()",
+        );
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[1], "amount NUMERIC(10, 2)");
+    }
+
+    #[test]
+    fn extract_alter_operation_clause_preserves_default_and_not_null() {
+        let clause = extract_alter_operation_clause(
+            "ALTER FOREIGN TABLE app.items ALTER COLUMN title SET DEFAULT 'pending';",
+        )
+        .expect("extract alter clause");
+        assert_eq!(clause, "ALTER COLUMN title SET DEFAULT 'pending'");
+
+        let clause = extract_alter_operation_clause(
+            "ALTER FOREIGN TABLE app.items ADD COLUMN status TEXT NOT NULL DEFAULT 'pending';",
+        )
+        .expect("extract add-column clause");
+        assert_eq!(clause, "ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'");
+    }
 }
 
 /// Execute a SQL statement on the remote KalamDB backend.

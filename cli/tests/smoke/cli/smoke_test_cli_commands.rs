@@ -60,10 +60,12 @@ fn smoke_cli_list_tables_command() {
     ))
     .expect("Failed to create table");
 
-    // Query information_schema.tables (this is what \dt does)
-    let result = execute_sql_as_root_via_client(
-        "SELECT table_schema, table_name FROM information_schema.tables WHERE table_schema NOT IN ('system', 'information_schema') ORDER BY table_schema, table_name"
-    ).expect("Failed to list tables");
+    // Query system.tables with a narrow filter (this is what \dt uses internally).
+    let result = execute_sql_as_root_via_client(&format!(
+        "SELECT namespace_id AS namespace, table_name, table_type FROM system.tables WHERE namespace_id = '{}' AND table_name = '{}'",
+        namespace, table
+    ))
+    .expect("Failed to list tables");
 
     // Verify our table shows up
     assert!(

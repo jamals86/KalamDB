@@ -436,9 +436,9 @@ Parquet Querying Limitation: After flush, data is removed from RocksDB but queri
 ├────────────────────────────────────────────────────────────┤
 │  Test Type              │  Rows   │  Time    │  Rate       │
 ├────────────────────────────────────────────────────────────┤
-│  Single-row inserts     │    200  │    0.09s │    2288.5/s  │
-│  Batched (100/batch)    │   2000  │    0.04s │   51687.4/s  │
-│  Parallel (10 threads)  │   1000  │    0.09s │   11409.2/s  │
+│  Single-row inserts     │    200  │    0.09s │    2288.5/s │
+│  Batched (100/batch)    │   2000  │    0.04s │   51687.4/s │
+│  Parallel (10 threads)  │   1000  │    0.09s │   11409.2/s │
 └────────────────────────────────────────────────────────────┘
 
 ┌────────────────────────────────────────────────────────────┐
@@ -446,9 +446,9 @@ Parquet Querying Limitation: After flush, data is removed from RocksDB but queri
 ├────────────────────────────────────────────────────────────┤
 │  Test Type              │  Rows   │  Time    │  Rate       │
 ├────────────────────────────────────────────────────────────┤
-│  Single-row inserts     │    200  │    0.30s │     675.8/s  │
-│  Batched (100/batch)    │   2000  │    0.04s │   45610.3/s  │
-│  Parallel (10 threads)  │      1  │    0.47s │       2.1/s  │
+│  Single-row inserts     │    200  │    0.30s │     675.8/s │
+│  Batched (100/batch)    │   2000  │    0.04s │   45610.3/s │
+│  Parallel (10 threads)  │      1  │    0.47s │       2.1/s │
 └────────────────────────────────────────────────────────────┘
 
 14) [MEDIUM] In the cli add a command to kill a live query by its live id
@@ -806,26 +806,6 @@ Tasks To Repo:
 1) [HIGH] Add ci/cd pipelines to the new repo
 2) [MEDIUM] Add code coverage to the new repo
 
-
-
-│                    BENCHMARK RESULTS                       │
-├────────────────────────────────────────────────────────────┤
-│  Test Type              │  Rows   │  Time    │  Rate       │
-├────────────────────────────────────────────────────────────┤
-│  Single-row inserts     │    200  │    0.13s │    1532.5/s │
-│  Batched (100/batch)    │   2000  │    1.84s │    1088.3/s │
-│  Parallel (10 threads)  │   1000  │    0.26s │    3878.1/s │
-└────────────────────────────────────────────────────────────┘
-
-┌────────────────────────────────────────────────────────────┐
-│                    BENCHMARK RESULTS                       │
-├────────────────────────────────────────────────────────────┤
-│  Test Type              │  Rows   │  Time    │  Rate       │
-├────────────────────────────────────────────────────────────┤
-│  Single-row inserts     │    200  │    0.14s │    1445.0/s │
-│  Batched (100/batch)    │   2000  │    1.63s │    1229.0/s │
-│  Parallel (10 threads)  │   1000  │    0.20s │    5119.9/s │
-└────────────────────────────────────────────────────────────┘
 
 ┌────────────────────────────────────────────────────────────┐
 │                    BENCHMARK RESULTS                       │

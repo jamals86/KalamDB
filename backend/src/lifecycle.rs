@@ -134,8 +134,12 @@ pub async fn prepare_components(
     let users_provider_for_init = app_context.system_tables().users();
     create_default_system_user(users_provider_for_init.clone(), config.auth.root_password.clone())
         .await?;
-    if let Err(error) = start_stats_recorder(app_context.clone()).await {
-        log::error!("Failed to start DBA stats recorder: {}", error);
+    if config.retention.enable_dba_stats {
+        if let Err(error) = start_stats_recorder(app_context.clone()).await {
+            log::error!("Failed to start DBA stats recorder: {}", error);
+        }
+    } else {
+        log::info!("DBA stats recorder disabled via config (retention.enable_dba_stats = false)");
     }
 
     Ok(ApplicationComponents {

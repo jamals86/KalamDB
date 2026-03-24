@@ -79,6 +79,12 @@ impl DdlTestEnv {
 
     /// Execute a SQL statement on KalamDB via its HTTP API.
     pub async fn kalamdb_sql(&self, sql: &str) -> Value {
+        self.kalamdb_sql_maybe(sql)
+            .await
+            .unwrap_or_else(|error| panic!("KalamDB SQL failed: {error}\n  SQL: {sql}"))
+    }
+
+    pub async fn kalamdb_sql_maybe(&self, sql: &str) -> Result<Value, String> {
         let url = format!("http://127.0.0.1:{KALAMDB_HTTP_PORT}/v1/api/sql");
         let body = serde_json::json!({ "sql": sql });
         let resp = self
@@ -91,11 +97,10 @@ impl DdlTestEnv {
             .expect("KalamDB SQL request");
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
-        assert!(
-            status.is_success(),
-            "KalamDB SQL failed ({status}): {text}\n  SQL: {sql}"
-        );
-        serde_json::from_str(&text).unwrap_or(Value::Null)
+        if !status.is_success() {
+            return Err(format!("({status}): {text}"));
+        }
+        Ok(serde_json::from_str(&text).unwrap_or(Value::Null))
     }
 
     /// Check if a table exists in KalamDB by querying it.

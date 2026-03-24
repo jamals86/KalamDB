@@ -130,6 +130,11 @@ check_interval_seconds = 60
 # Rows with _deleted=true will be kept in Parquet files for this duration
 default_deleted_retention_hours = 168
 
+# Enable periodic dba.stats collection (default: true)
+# Set to false to disable the background stats recorder, saving memory and CPU
+# in resource-constrained environments (e.g. Docker containers).
+enable_dba_stats = false
+
 # Number of days to preserve samples in dba.stats (default: 7 days)
 # Set to 0 to disable automatic cleanup of historical DBA metrics
 dba_stats_retention_days = 7
@@ -236,10 +241,16 @@ max_connections = 25000
 # Industry standards: Nginx (511), Apache (511), Caddy (1024), Actix (2048)
 backlog = 4096
 
-# Max blocking threads per worker for CPU-intensive operations (default: 64)
+# Max blocking threads per worker for CPU-intensive operations (default: 32)
 # Used for RocksDB I/O and synchronous operations
 # Increase for high-concurrency workloads or test environments
-worker_max_blocking_threads = 64
+worker_max_blocking_threads = 32
+
+# Number of tokio runtime worker threads (default: 0 = auto, num_cpus capped at 4)
+# Lower values reduce idle RSS from thread stacks (~2MB per thread).
+# Set to 0 for auto-detection, or an explicit count for Docker/constrained environments.
+# Can also be overridden via KALAMDB_TOKIO_WORKER_THREADS env var.
+tokio_worker_threads = 0
 
 # Client request timeout in seconds (default: 5)
 # Time allowed for client to send complete request headers

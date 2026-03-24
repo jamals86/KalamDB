@@ -100,7 +100,7 @@ pub fn default_backlog() -> u32 {
 }
 
 pub fn default_worker_max_blocking_threads() -> usize {
-    64 // Max blocking threads per worker; 512 was over-provisioned for mobile workloads
+    32 // Max blocking threads per worker; reduced from 64 to lower idle RSS
 }
 
 pub fn default_client_request_timeout() -> u64 {

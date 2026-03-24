@@ -133,6 +133,7 @@ backend/crates/
 - Use `cargo nextest run` for all test executions unless explicitly told otherwise.
 - For CLI e2e tests: run `cargo nextest run --features e2e-tests` **without** `--no-fail-fast`, capture output to a file, then fix failures one-by-one by running only the failing test(s). Re-run the full suite after fixes.
 - For e2e test runs, do NOT pass `--no-fail-fast`. Run normally, fix the first failure, re-run until it passes, then move to the next failing issue.
+- To verify the full core repo test matrix, start the KalamDB server first and then run `./scripts/test-all.sh` from the repo root. This script runs the Rust workspace tests, the feature-gated FDW import test, PostgreSQL extension e2e tests, the TypeScript SDK tests, the admin UI tests, and the Dart SDK tests.
 - For performance-focused tests, benchmarks, and perf e2e cases, capture and report the runtime for each relevant test in seconds in the final update.
 - Always add `#[ntest::timeout(time)]` to every async test where `time` is the **actual observed runtime** × 1.5 (to cover slower machines).
    - Example: if a test took 40s, set `#[ntest::timeout(60000)]`.
@@ -143,6 +144,7 @@ backend/crates/
 - Backend build: `cd backend && cargo build`
 - Backend run (default config): `cd backend && cargo run` (server on `http://127.0.0.1:8080`)
 - Backend run (explicit binary): `cd backend && cargo run --bin kalamdb-server`
+- Full test sweep: `cd /path/to/KalamDB && ./scripts/test-all.sh` (start the backend server first)
 - Backend config bootstrap: `cd backend && cp server.example.toml server.toml`
 - Create API key user: `cd backend && cargo run --bin kalamdb-server -- create-user --name "demo-user" --role "user"`
 - Backend config via env vars: `KALAMDB_SERVER_PORT=9000 KALAMDB_LOG_LEVEL=debug cargo run`

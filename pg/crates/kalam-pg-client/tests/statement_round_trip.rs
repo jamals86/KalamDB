@@ -64,6 +64,10 @@ impl OperationExecutor for MockExecutor {
     async fn execute_delete(&self, _request: DeleteRequest) -> Result<MutationResult, Status> {
         Ok(MutationResult { affected_rows: 1 })
     }
+
+    async fn execute_sql(&self, sql: &str) -> Result<String, Status> {
+        Ok(format!("executed: {sql}"))
+    }
 }
 
 // ---------------------------------------------------------------------------

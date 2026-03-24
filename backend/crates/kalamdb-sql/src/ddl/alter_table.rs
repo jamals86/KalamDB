@@ -13,12 +13,13 @@ use crate::parser::utils::parse_sql_statements;
 use crate::compatibility::map_sql_type_to_kalam;
 use kalamdb_commons::models::datatypes::KalamDataType;
 use kalamdb_commons::models::{NamespaceId, TableAccess, TableName};
+use kalamdb_commons::schemas::ColumnDefault;
 use kalamdb_system::VectorMetric;
 use once_cell::sync::Lazy;
 use regex::{Captures, Regex};
 use sqlparser::ast::{
-    AlterTableOperation, ColumnDef, ColumnOption, ColumnOptionDef, DropBehavior, Expr, Ident,
-    ObjectName, SqlOption, Statement, Value,
+    AlterColumnOperation, AlterTableOperation, ColumnDef, ColumnOption, ColumnOptionDef,
+    DropBehavior, Expr, Ident, ObjectName, SqlOption, Statement, Value,
 };
 use sqlparser::dialect::GenericDialect;
 
@@ -30,7 +31,7 @@ pub enum ColumnOperation {
         column_name: String,
         data_type: KalamDataType,
         nullable: bool,
-        default_value: Option<String>,
+        default_value: Option<ColumnDefault>,
     },
     /// Drop an existing column
     Drop { column_name: String },
@@ -40,6 +41,18 @@ pub enum ColumnOperation {
         new_data_type: KalamDataType,
         nullable: Option<bool>,
     },
+    /// Set or drop nullable state on an existing column.
+    SetNullable {
+        column_name: String,
+        nullable: bool,
+    },
+    /// Set a column default expression.
+    SetDefault {
+        column_name: String,
+        default_value: ColumnDefault,
+    },
+    /// Drop a column default expression.
+    DropDefault { column_name: String },
     /// Rename an existing column (metadata only)
     Rename {
         old_column_name: String,
@@ -263,6 +276,9 @@ fn convert_operation(operation: &AlterTableOperation) -> DdlResult<ColumnOperati
             }
             build_modify_column_operation(col_name, data_type, options)
         },
+        AlterTableOperation::AlterColumn { column_name, op } => {
+            build_alter_column_operation(column_name, op)
+        },
         AlterTableOperation::RenameColumn {
             old_column_name,
             new_column_name,
@@ -329,6 +345,33 @@ fn build_modify_column_operation(
     })
 }
 
+fn build_alter_column_operation(
+    column_name: &Ident,
+    operation: &AlterColumnOperation,
+) -> DdlResult<ColumnOperation> {
+    match operation {
+        AlterColumnOperation::SetNotNull => Ok(ColumnOperation::SetNullable {
+            column_name: column_name.value.clone(),
+            nullable: false,
+        }),
+        AlterColumnOperation::DropNotNull => Ok(ColumnOperation::SetNullable {
+            column_name: column_name.value.clone(),
+            nullable: true,
+        }),
+        AlterColumnOperation::SetDefault { value } => Ok(ColumnOperation::SetDefault {
+            column_name: column_name.value.clone(),
+            default_value: expr_to_column_default(value),
+        }),
+        AlterColumnOperation::DropDefault => Ok(ColumnOperation::DropDefault {
+            column_name: column_name.value.clone(),
+        }),
+        AlterColumnOperation::SetDataType { .. }
+        | AlterColumnOperation::AddGenerated { .. } => {
+            Err("Unsupported ALTER COLUMN operation".to_string())
+        }
+    }
+}
+
 fn build_set_access_level_operation(table_properties: &[SqlOption]) -> DdlResult<ColumnOperation> {
     for option in table_properties {
         if let Some(access_level) = extract_access_level(option)? {
@@ -341,7 +384,7 @@ fn build_set_access_level_operation(table_properties: &[SqlOption]) -> DdlResult
 fn extract_column_options(
     options: &[ColumnOptionDef],
     default_nullable: bool,
-) -> (bool, Option<String>) {
+) -> (bool, Option<ColumnDefault>) {
     let mut nullable = default_nullable;
     let mut default_value = None;
 
@@ -350,7 +393,7 @@ fn extract_column_options(
             ColumnOption::NotNull => nullable = false,
             ColumnOption::Null => nullable = true,
             ColumnOption::Default(expr) => {
-                default_value = Some(expr_to_literal(expr));
+                default_value = Some(expr_to_column_default(expr));
             },
             _ => {},
         }
@@ -363,6 +406,82 @@ fn expr_to_literal(expr: &Expr) -> String {
     match expr {
         Expr::Value(value) => value_to_string(&value.value),
         _ => expr.to_string(),
+    }
+}
+
+fn expr_to_column_default(expr: &Expr) -> ColumnDefault {
+    match expr {
+        Expr::Function(func) => {
+            let name = func.name.to_string().to_uppercase();
+            match name.as_str() {
+                "NOW" | "CURRENT_TIMESTAMP" | "SNOWFLAKE_ID" | "UUID_V7" | "ULID"
+                | "CURRENT_USER" => ColumnDefault::function(&name, vec![]),
+                _ => ColumnDefault::literal(serde_json::Value::String(func.to_string())),
+            }
+        }
+        Expr::Value(value) => match &value.value {
+            Value::Number(number, _) => {
+                if let Ok(int_value) = number.parse::<i64>() {
+                    ColumnDefault::literal(serde_json::Value::Number(int_value.into()))
+                } else if let Ok(float_value) = number.parse::<f64>() {
+                    ColumnDefault::literal(serde_json::json!(float_value))
+                } else {
+                    ColumnDefault::literal(serde_json::Value::String(number.clone()))
+                }
+            }
+            Value::SingleQuotedString(string_value)
+            | Value::DoubleQuotedString(string_value)
+            | Value::TripleSingleQuotedString(string_value)
+            | Value::TripleDoubleQuotedString(string_value)
+            | Value::SingleQuotedByteStringLiteral(string_value)
+            | Value::DoubleQuotedByteStringLiteral(string_value)
+            | Value::TripleSingleQuotedByteStringLiteral(string_value)
+            | Value::TripleDoubleQuotedByteStringLiteral(string_value)
+            | Value::SingleQuotedRawStringLiteral(string_value)
+            | Value::DoubleQuotedRawStringLiteral(string_value)
+            | Value::TripleSingleQuotedRawStringLiteral(string_value)
+            | Value::TripleDoubleQuotedRawStringLiteral(string_value)
+            | Value::EscapedStringLiteral(string_value)
+            | Value::UnicodeStringLiteral(string_value)
+            | Value::NationalStringLiteral(string_value)
+            | Value::HexStringLiteral(string_value) => {
+                ColumnDefault::literal(serde_json::Value::String(string_value.clone()))
+            }
+            Value::DollarQuotedString(string_value) => {
+                ColumnDefault::literal(serde_json::Value::String(string_value.value.clone()))
+            }
+            Value::QuoteDelimitedStringLiteral(string_value)
+            | Value::NationalQuoteDelimitedStringLiteral(string_value) => {
+                ColumnDefault::literal(serde_json::Value::String(string_value.value.clone()))
+            }
+            Value::Boolean(boolean_value) => {
+                ColumnDefault::literal(serde_json::Value::Bool(*boolean_value))
+            }
+            Value::Null => ColumnDefault::literal(serde_json::Value::Null),
+            Value::Placeholder(value) => {
+                ColumnDefault::literal(serde_json::Value::String(value.clone()))
+            }
+        },
+        Expr::Identifier(identifier) => {
+            let normalized = identifier.value.to_uppercase();
+            match normalized.as_str() {
+                "CURRENT_TIMESTAMP" => ColumnDefault::function("NOW", vec![]),
+                "CURRENT_USER" => ColumnDefault::function("CURRENT_USER", vec![]),
+                "NULL" => ColumnDefault::literal(serde_json::Value::Null),
+                _ => ColumnDefault::literal(serde_json::Value::String(identifier.value.clone())),
+            }
+        }
+        _ => {
+            let literal = expr.to_string();
+            let normalized = literal.to_uppercase();
+            if normalized == "NULL" {
+                ColumnDefault::literal(serde_json::Value::Null)
+            } else if normalized == "CURRENT_TIMESTAMP" || normalized == "NOW()" {
+                ColumnDefault::function("NOW", vec![])
+            } else {
+                ColumnDefault::literal(serde_json::Value::String(literal.trim_matches('\'').to_string()))
+            }
+        }
     }
 }
 
@@ -482,9 +601,81 @@ mod tests {
                 ..
             } => {
                 assert_eq!(column_name, "age");
-                assert_eq!(default_value, Some("0".to_string()));
+                assert_eq!(default_value, Some(ColumnDefault::literal(serde_json::json!(0))));
             },
             _ => panic!("Expected Add operation"),
+        }
+    }
+
+    #[test]
+    fn test_parse_alter_column_set_not_null() {
+        let stmt = AlterTableStatement::parse(
+            "ALTER TABLE messages ALTER COLUMN age SET NOT NULL",
+            &test_namespace(),
+        )
+        .unwrap();
+
+        match stmt.operation {
+            ColumnOperation::SetNullable {
+                column_name,
+                nullable,
+            } => {
+                assert_eq!(column_name, "age");
+                assert!(!nullable);
+            }
+            _ => panic!("Expected SetNullable operation"),
+        }
+    }
+
+    #[test]
+    fn test_parse_alter_column_drop_not_null() {
+        let stmt = AlterTableStatement::parse(
+            "ALTER TABLE messages ALTER COLUMN age DROP NOT NULL",
+            &test_namespace(),
+        )
+        .unwrap();
+
+        match stmt.operation {
+            ColumnOperation::SetNullable { nullable, .. } => {
+                assert!(nullable);
+            }
+            _ => panic!("Expected SetNullable operation"),
+        }
+    }
+
+    #[test]
+    fn test_parse_alter_column_set_default() {
+        let stmt = AlterTableStatement::parse(
+            "ALTER TABLE messages ALTER COLUMN created_at SET DEFAULT NOW()",
+            &test_namespace(),
+        )
+        .unwrap();
+
+        match stmt.operation {
+            ColumnOperation::SetDefault {
+                column_name,
+                default_value,
+            } => {
+                assert_eq!(column_name, "created_at");
+                assert_eq!(default_value, ColumnDefault::function("NOW", vec![]));
+            }
+            _ => panic!("Expected SetDefault operation"),
+        }
+    }
+
+    #[test]
+    fn test_parse_alter_column_drop_default() {
+        let stmt = AlterTableStatement::parse(
+            "ALTER TABLE messages ALTER COLUMN created_at DROP DEFAULT",
+            &test_namespace(),
+        )
+        .unwrap();
+
+        match stmt.operation {
+            ColumnOperation::DropDefault { column_name } => {
+                assert_eq!(column_name, "created_at");
+            }
+            _ => panic!("Expected DropDefault operation"),
         }
     }
 

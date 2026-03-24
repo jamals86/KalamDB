@@ -28,10 +28,6 @@ workers = 0
 # - Server push support (for future features)
 enable_http2 = true
 
-# API version (default: "v1")
-# Controls the versioned endpoint prefix (e.g., /v1/api/sql)
-api_version = "v1"
-
 [storage]
 # Base data directory for all KalamDB storage
 # Subdirectories are automatically created:
@@ -54,8 +50,8 @@ user_tables_template = "{namespace}/{tableName}/{userId}"
 # Shared LRU cache across all column families
 block_cache_size = 2097152
 
-# Maximum number of background compaction/flush jobs (default: 4)
-max_background_jobs = 4
+# Maximum number of background compaction/flush jobs.
+max_background_jobs = 2
 
 [storage.rocksdb.cf_profiles.system_meta]
 write_buffer_size = 32768
@@ -87,7 +83,7 @@ memory_limit = 67108864
 query_parallelism = 2
 
 # Maximum number of partitions per query (default: 4)
-max_partitions = 4
+max_partitions = 2
 
 # Batch size for record processing (default: 1024 rows)
 batch_size = 1024
@@ -115,6 +111,11 @@ check_interval_seconds = 60
 # Default retention hours for soft-deleted rows (default: 168 hours = 7 days)
 # Rows with _deleted=true will be kept in Parquet files for this duration
 default_deleted_retention_hours = 168
+
+# Enable periodic dba.stats collection (default: true)
+# Set to false to disable the background stats recorder, saving memory and CPU
+# in resource-constrained environments (e.g. Docker containers).
+enable_dba_stats = false
 
 # Number of days to preserve samples in dba.stats (default: 7 days)
 # Set to 0 to disable automatic cleanup of historical DBA metrics
@@ -164,7 +165,7 @@ default_query_limit = 50
 
 [logging]
 # Log level: error, warn, info, debug, trace (default: info)
-level = "debug"
+level = "info"
 
 # Directory for all log files (default: "./logs")
 # Server will create app.log, slow.log, and other log files in this directory
@@ -184,7 +185,7 @@ slow_query_threshold_ms = 1000
 
 [logging.otlp]
 # Export tracing spans to Jaeger OTLP receiver
-enabled = true
+enabled = false
 # Jaeger gRPC OTLP endpoint
 endpoint = "http://127.0.0.1:4317"
 # Protocol: "grpc" or "http"
@@ -511,7 +512,7 @@ user_shards = 8
 # #   max_snapshots_to_keep = 1   # Keep only the most recent snapshot (minimal disk usage)
 # #   max_snapshots_to_keep = 3   # Keep last 3 snapshots (balanced approach)
 # #   max_snapshots_to_keep = 0   # Keep all snapshots (useful for backup/recovery)
-# max_snapshots_to_keep = 3
+max_snapshots_to_keep = 1
 # 
 # # Timeout in milliseconds to wait for learner catchup during cluster membership changes
 # # (default: 5000ms = 5 seconds)
