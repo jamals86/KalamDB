@@ -172,7 +172,6 @@ fn register_and_auth_connection(
         .unwrap();
     let connection_state = registration.state;
     connection_state
-        .write()
         .mark_authenticated(user_id.clone(), kalamdb_commons::models::Role::User);
     registry.on_authenticated(&connection_id, user_id);
     connection_state

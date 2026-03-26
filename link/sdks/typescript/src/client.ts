@@ -393,7 +393,7 @@ export class KalamDBClient {
         // Always forward the effective ping interval so the TS and WASM
         // defaults cannot silently drift apart.
         this.log(LogLevel.Debug, 'connection', `Setting ping interval to ${this.pingIntervalMs}ms`);
-        this.wasmClient.setPingInterval(this.pingIntervalMs);
+        this.wasmClient.setPingInterval?.(this.pingIntervalMs);
 
         await this.wasmClient.connect();
         this.log(LogLevel.Info, 'connection', `Connected to ${this.url} successfully`);

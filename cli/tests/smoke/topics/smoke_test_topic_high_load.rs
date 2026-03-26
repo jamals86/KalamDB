@@ -1397,6 +1397,7 @@ async fn test_topic_ack_failure_recovery_no_message_loss_with_latency() {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct EventInfo {
     table: String,
     op: TopicOp,

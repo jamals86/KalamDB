@@ -454,6 +454,7 @@ mod tests {
     };
     use kalamdb_commons::{NamespaceId, TableName};
 
+    #[allow(dead_code)]
     fn create_test_table_def(pk_default: ColumnDefault) -> TableDefinition {
         TableDefinition {
             namespace_id: NamespaceId::new("test"),

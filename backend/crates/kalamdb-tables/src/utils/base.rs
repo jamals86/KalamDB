@@ -246,8 +246,8 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     /// * `updates` - Row object with column updates
     ///
     /// # Returns
-    /// New storage key (new SeqId for versioning)
-    async fn update(&self, user_id: &UserId, key: &K, updates: Row) -> Result<K, KalamDbError>;
+    /// `Ok(Some(key))` if the row was updated, `Ok(None)` if the row was unchanged (no-op).
+    async fn update(&self, user_id: &UserId, key: &K, updates: Row) -> Result<Option<K>, KalamDbError>;
 
     /// Delete a row by key (appends tombstone with _deleted=true)
     ///
@@ -258,7 +258,8 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     /// * `key` - Storage key identifying the row
     async fn delete(&self, user_id: &UserId, key: &K) -> Result<(), KalamDbError>;
 
-    /// Update multiple rows in a batch (default implementation)
+    /// Update multiple rows in a batch (default implementation).
+    /// Returns only the keys that were actually modified (skips no-op updates).
     async fn update_batch(
         &self,
         user_id: &UserId,
@@ -266,7 +267,9 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     ) -> Result<Vec<K>, KalamDbError> {
         let mut results = Vec::with_capacity(updates.len());
         for (key, update) in updates {
-            results.push(BaseTableProvider::update(self, user_id, &key, update).await?);
+            if let Some(k) = BaseTableProvider::update(self, user_id, &key, update).await? {
+                results.push(k);
+            }
         }
         Ok(results)
     }
@@ -319,13 +322,13 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     /// * `updates` - Row object with column updates
     ///
     /// # Returns
-    /// New storage key (new SeqId for versioning)
+    /// `Ok(Some(key))` if the row was updated, `Ok(None)` if the row was unchanged (no-op).
     async fn update_by_pk_value(
         &self,
         user_id: &UserId,
         pk_value: &str,
         updates: Row,
-    ) -> Result<K, KalamDbError>;
+    ) -> Result<Option<K>, KalamDbError>;
 
     /// Update a row by searching for matching ID field value
     async fn update_by_id_field(
@@ -333,7 +336,7 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
         user_id: &UserId,
         id_value: &str,
         updates: Row,
-    ) -> Result<K, KalamDbError> {
+    ) -> Result<Option<K>, KalamDbError> {
         // Directly update by PK value - no need to find key first, then load row to extract PK
         self.update_by_pk_value(user_id, id_value, updates).await
     }

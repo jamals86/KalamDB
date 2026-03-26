@@ -74,7 +74,7 @@ async fn authenticate_with_request(
     registry: &Arc<ConnectionsManager>,
     user_repo: &Arc<dyn UserRepository>,
 ) -> Result<(), String> {
-    let connection_id = connection_state.read().connection_id().clone();
+    let connection_id = connection_state.connection_id().clone();
 
     // Get username for logging (before authentication attempt)
     let username_for_log = extract_username_for_audit(&auth_request);
@@ -105,7 +105,6 @@ async fn authenticate_with_request(
         tracing::Span::current().record("role", format!("{:?}", auth_result.role).as_str());
 
         connection_state
-            .write()
             .mark_authenticated(auth_result.user_id.clone(), auth_result.role);
         registry.on_authenticated(&connection_id, auth_result.user_id.clone());
 

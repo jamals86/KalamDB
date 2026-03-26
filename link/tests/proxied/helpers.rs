@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::common;
 use kalam_link::auth::AuthProvider;
 use kalam_link::seq_tracking::{extract_max_seq, row_seq};

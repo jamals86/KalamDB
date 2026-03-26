@@ -228,7 +228,7 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         user_id: &UserId,
         _key: &StreamTableRowId,
         updates: Row,
-    ) -> Result<StreamTableRowId, KalamDbError> {
+    ) -> Result<Option<StreamTableRowId>, KalamDbError> {
         // TODO: Implement full UPDATE logic for stream tables
         // 1. Scan in-memory hot storage (no Parquet)
         // 2. Find row by key (user-scoped)
@@ -236,7 +236,7 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         // 4. Append new version
 
         // Placeholder: Just append as new version (incomplete implementation)
-        self.insert(user_id, updates).await
+        self.insert(user_id, updates).await.map(Some)
     }
 
     async fn update_by_pk_value(
@@ -244,10 +244,10 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         user_id: &UserId,
         _pk_value: &str,
         updates: Row,
-    ) -> Result<StreamTableRowId, KalamDbError> {
+    ) -> Result<Option<StreamTableRowId>, KalamDbError> {
         // TODO: Implement full UPDATE logic for stream tables
         // Stream tables are typically append-only, so UPDATE just inserts a new event
-        self.insert(user_id, updates).await
+        self.insert(user_id, updates).await.map(Some)
     }
 
     async fn delete(&self, user_id: &UserId, key: &StreamTableRowId) -> Result<(), KalamDbError> {

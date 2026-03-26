@@ -1,7 +1,6 @@
 use crate::error::KalamDbError;
 use crate::schema_registry::SchemaRegistry;
 use crate::sql::{ExecutionContext, ExecutionResult};
-use datafusion::scalar::ScalarValue;
 use kalamdb_commons::models::rows::row::Row;
 use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::TableAccess;
@@ -12,11 +11,12 @@ use kalamdb_session::{
 };
 use kalamdb_tables::KalamTableProvider;
 use sqlparser::ast::{
-    Assignment, AssignmentTarget, BinaryOperator, Delete, Expr, ObjectNamePart, Statement,
-    TableFactor, TableWithJoins, UnaryOperator, Update, Value,
+    Assignment, AssignmentTarget, BinaryOperator, Expr, ObjectNamePart, Statement,
 };
 use std::collections::BTreeMap;
 use std::sync::Arc;
+
+use super::helpers::ast_parsing::{self, expr_to_scalar, strip_nested_expr};
 
 fn log_fast_path_skip(op: &str, reason: &str) {
     tracing::debug!(operation = op, reason, "sql.fast_path_skip");
@@ -30,49 +30,10 @@ pub async fn try_fast_update(
     prepared_table_type: Option<TableType>,
 ) -> Result<Option<ExecutionResult>, KalamDbError> {
     let update = match statement {
-        Statement::Update(update) => update.clone(),
+        Statement::Update(update) => update,
         _ => return Ok(None),
     };
 
-    try_fast_update_from_ast(
-        update,
-        exec_ctx,
-        schema_registry,
-        prepared_table_id,
-        prepared_table_type,
-    )
-    .await
-}
-
-pub async fn try_fast_delete(
-    statement: &Statement,
-    exec_ctx: &ExecutionContext,
-    schema_registry: &Arc<SchemaRegistry>,
-    prepared_table_id: Option<&TableId>,
-    prepared_table_type: Option<TableType>,
-) -> Result<Option<ExecutionResult>, KalamDbError> {
-    let delete = match statement {
-        Statement::Delete(delete) => delete.clone(),
-        _ => return Ok(None),
-    };
-
-    try_fast_delete_from_ast(
-        delete,
-        exec_ctx,
-        schema_registry,
-        prepared_table_id,
-        prepared_table_type,
-    )
-    .await
-}
-
-async fn try_fast_update_from_ast(
-    update: Update,
-    exec_ctx: &ExecutionContext,
-    schema_registry: &Arc<SchemaRegistry>,
-    prepared_table_id: Option<&TableId>,
-    prepared_table_type: Option<TableType>,
-) -> Result<Option<ExecutionResult>, KalamDbError> {
     if update.from.is_some()
         || update.returning.is_some()
         || update.or.is_some()
@@ -84,7 +45,7 @@ async fn try_fast_update_from_ast(
 
     let table_id = match prepared_table_id {
         Some(id) => id.clone(),
-        None => match extract_table_id_from_table_with_joins(
+        None => match ast_parsing::extract_table_id_from_table_with_joins(
             &update.table,
             exec_ctx.default_namespace().as_str(),
         ) {
@@ -160,13 +121,18 @@ async fn try_fast_update_from_ast(
     }))
 }
 
-async fn try_fast_delete_from_ast(
-    delete: Delete,
+pub async fn try_fast_delete(
+    statement: &Statement,
     exec_ctx: &ExecutionContext,
     schema_registry: &Arc<SchemaRegistry>,
     prepared_table_id: Option<&TableId>,
     prepared_table_type: Option<TableType>,
 ) -> Result<Option<ExecutionResult>, KalamDbError> {
+    let delete = match statement {
+        Statement::Delete(delete) => delete,
+        _ => return Ok(None),
+    };
+
     if delete.using.is_some()
         || delete.returning.is_some()
         || !delete.order_by.is_empty()
@@ -180,7 +146,10 @@ async fn try_fast_delete_from_ast(
     let table_id = match prepared_table_id {
         Some(id) => id.clone(),
         None => {
-            match extract_table_id_from_delete(&delete, exec_ctx.default_namespace().as_str()) {
+            match ast_parsing::extract_table_id_from_delete(
+                delete,
+                exec_ctx.default_namespace().as_str(),
+            ) {
                 Some(id) => id,
                 None => {
                     log_fast_path_skip("delete", "unsupported_table_reference");
@@ -266,47 +235,6 @@ fn check_fast_path_write_access(
     }
 }
 
-fn extract_table_id_from_delete(delete: &Delete, default_namespace: &str) -> Option<TableId> {
-    let table = match &delete.from {
-        sqlparser::ast::FromTable::WithFromKeyword(tables)
-        | sqlparser::ast::FromTable::WithoutKeyword(tables) => tables.first()?,
-    };
-    if match &delete.from {
-        sqlparser::ast::FromTable::WithFromKeyword(tables)
-        | sqlparser::ast::FromTable::WithoutKeyword(tables) => tables.len() != 1,
-    } {
-        return None;
-    }
-    extract_table_id_from_table_with_joins(table, default_namespace)
-}
-
-fn extract_table_id_from_table_with_joins(
-    table: &TableWithJoins,
-    default_namespace: &str,
-) -> Option<TableId> {
-    if !table.joins.is_empty() {
-        return None;
-    }
-
-    let parts: Vec<String> = match &table.relation {
-        TableFactor::Table { name, .. } => name
-            .0
-            .iter()
-            .filter_map(|part| match part {
-                ObjectNamePart::Identifier(ident) => Some(ident.value.clone()),
-                _ => None,
-            })
-            .collect(),
-        _ => return None,
-    };
-
-    match parts.len() {
-        1 => Some(TableId::from_strings(default_namespace, &parts[0])),
-        2 => Some(TableId::from_strings(&parts[0], &parts[1])),
-        _ => None,
-    }
-}
-
 fn extract_pk_literal(selection: Option<&Expr>, pk_column: &str) -> Option<String> {
     let expr = match selection {
         Some(expr) => strip_nested_expr(expr),
@@ -328,13 +256,6 @@ fn extract_pk_literal(selection: Option<&Expr>, pk_column: &str) -> Option<Strin
     }
 
     None
-}
-
-fn strip_nested_expr(expr: &Expr) -> &Expr {
-    match expr {
-        Expr::Nested(inner) => strip_nested_expr(inner),
-        _ => expr,
-    }
 }
 
 fn expr_column_name(expr: &Expr) -> Option<String> {
@@ -375,51 +296,6 @@ fn object_name_last_ident(name: &sqlparser::ast::ObjectName) -> Result<String, &
             _ => None,
         })
         .ok_or("unsupported identifier")
-}
-
-fn expr_to_scalar(expr: &Expr) -> Result<ScalarValue, &'static str> {
-    match expr {
-        Expr::Value(val) => sql_value_to_scalar(&val.value),
-        Expr::UnaryOp {
-            op: UnaryOperator::Minus,
-            expr,
-        } => match strip_nested_expr(expr.as_ref()) {
-            Expr::Value(val) => match &val.value {
-                Value::Number(n, _) => {
-                    if let Ok(i) = n.parse::<i64>() {
-                        Ok(ScalarValue::Int64(Some(-i)))
-                    } else if let Ok(f) = n.parse::<f64>() {
-                        Ok(ScalarValue::Float64(Some(-f)))
-                    } else {
-                        Err("unsupported numeric literal")
-                    }
-                },
-                _ => Err("unsupported unary literal"),
-            },
-            _ => Err("unsupported unary expression"),
-        },
-        _ => Err("unsupported expression"),
-    }
-}
-
-fn sql_value_to_scalar(value: &Value) -> Result<ScalarValue, &'static str> {
-    match value {
-        Value::SingleQuotedString(s) | Value::DoubleQuotedString(s) => {
-            Ok(ScalarValue::Utf8(Some(s.clone())))
-        },
-        Value::Number(n, _) => {
-            if let Ok(i) = n.parse::<i64>() {
-                Ok(ScalarValue::Int64(Some(i)))
-            } else if let Ok(f) = n.parse::<f64>() {
-                Ok(ScalarValue::Float64(Some(f)))
-            } else {
-                Err("unsupported numeric literal")
-            }
-        },
-        Value::Boolean(b) => Ok(ScalarValue::Boolean(Some(*b))),
-        Value::Null => Ok(ScalarValue::Null),
-        _ => Err("unsupported literal"),
-    }
 }
 
 #[cfg(test)]

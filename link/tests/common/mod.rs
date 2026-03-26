@@ -1,6 +1,7 @@
+#![allow(dead_code)]
+
 pub mod tcp_proxy;
 
-use base64::Engine;
 use kalamdb_configs::ServerConfig;
 use kalamdb_server::lifecycle::RunningTestHttpServer;
 use reqwest::Client;

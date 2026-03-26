@@ -17,8 +17,6 @@ use crate::common::*;
 use assert_cmd::Command;
 use std::time::Duration;
 
-const TEST_TIMEOUT: Duration = Duration::from_secs(10);
-
 /// Test that root user can create namespaces
 #[tokio::test]
 async fn test_root_can_create_namespace() {

@@ -29,7 +29,7 @@ use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
 use datafusion::physical_plan::{ExecutionPlan, Statistics};
 use datafusion::scalar::ScalarValue;
 
-use kalamdb_commons::conversions::arrow_json_conversion::coerce_rows;
+use kalamdb_commons::conversions::arrow_json_conversion::{coerce_rows, coerce_updates};
 use kalamdb_commons::ids::{SeqId, UserTableRowId};
 use kalamdb_commons::models::datatypes::KalamDataType;
 use kalamdb_commons::models::UserId;
@@ -895,7 +895,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         user_id: &UserId,
         key: &UserTableRowId,
         updates: Row,
-    ) -> Result<UserTableRowId, KalamDbError> {
+    ) -> Result<Option<UserTableRowId>, KalamDbError> {
         // Load referenced version to extract PK, then delegate to update_by_pk_value
         let prior_opt = self.store.get(key).into_kalamdb_error("Failed to load prior version")?;
 
@@ -937,7 +937,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         user_id: &UserId,
         pk_value: &str,
         updates: Row,
-    ) -> Result<UserTableRowId, KalamDbError> {
+    ) -> Result<Option<UserTableRowId>, KalamDbError> {
         let span = tracing::debug_span!(
             "table.update",
             table_id = %self.core.table_id(),
@@ -989,13 +989,32 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
                     })?
                 };
 
-            // Merge updates onto latest
+            // Coerce update values to match schema types (e.g., Utf8 → TimestampMicrosecond).
+            // Without this, the no-op comparison would fail for any column where the
+            // SQL literal type differs from the stored Arrow type (TIMESTAMP, INT, etc.).
+            let coerced = coerce_updates(updates, &self.schema_ref()).map_err(|e| {
+                KalamDbError::InvalidOperation(format!("Schema coercion failed: {}", e))
+            })?;
+
+            // Merge coerced updates onto latest
             let mut merged = latest_row.fields.values.clone();
-            for (k, v) in &updates.values {
-                merged.insert(k.clone(), v.clone());
+            for (k, v) in coerced.values {
+                merged.insert(k, v);
             }
 
             let new_fields = Row::new(merged);
+
+            // Skip write if the merged row is identical to the existing row.
+            // Like PostgreSQL / MySQL, a no-op UPDATE should not create a new
+            // MVCC version, fire notifications, or count as a row affected.
+            if new_fields == latest_row.fields {
+                tracing::debug!(
+                    table_id = %self.core.table_id(),
+                    pk = pk_value,
+                    "table.update_noop: row unchanged, skipping write"
+                );
+                return Ok(None);
+            }
 
             // VALIDATE NOT NULL CONSTRAINTS on the merged row (per ADR-016)
             crate::utils::datafusion_dml::validate_not_null_with_set(
@@ -1075,7 +1094,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
                     );
                 }
             }
-            Ok(row_key)
+            Ok(Some(row_key))
         }
         .instrument(span)
         .await
@@ -1753,10 +1772,12 @@ impl TableProvider for UserTableProvider {
                 values.insert(column.clone(), value);
             }
 
-            self.update_by_pk_value(user_id, &pk_value, Row::new(values))
+            let result = self.update_by_pk_value(user_id, &pk_value, Row::new(values))
                 .await
                 .map_err(|e| DataFusionError::Execution(e.to_string()))?;
-            updated += 1;
+            if result.is_some() {
+                updated += 1;
+            }
         }
 
         crate::utils::datafusion_dml::rows_affected_plan(state, updated).await
@@ -1787,7 +1808,8 @@ impl crate::utils::dml_provider::KalamTableProvider for UserTableProvider {
         updates: Row,
     ) -> Result<bool, KalamDbError> {
         match self.update_by_pk_value(user_id, pk_value, updates).await {
-            Ok(_) => Ok(true),
+            Ok(Some(_)) => Ok(true),
+            Ok(None) => Ok(false), // no-op: row unchanged
             Err(KalamDbError::NotFound(_)) => Ok(false),
             Err(e) => Err(e),
         }

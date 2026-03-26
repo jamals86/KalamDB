@@ -412,15 +412,13 @@ pub async fn set_user_id(client: &tokio_postgres::Client, user_id: &str) {
 pub async fn wait_for_table_queryable(client: &tokio_postgres::Client, table: &str) {
     let sql = format!("SELECT 1 FROM {table} LIMIT 0");
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    let mut last_error = String::new();
 
     loop {
         match client.simple_query(&sql).await {
             Ok(_) => return,
             Err(err) => {
-                last_error = err.to_string();
                 if std::time::Instant::now() >= deadline {
-                    panic!("table {table} did not become queryable within timeout: {last_error}");
+                    panic!("table {table} did not become queryable within timeout: {err}");
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             },
