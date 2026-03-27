@@ -2977,9 +2977,17 @@ mod tests {
                 if let Some(header) = authorization.clone() {
                     state.lock().await.sql_authorization_headers.push(header.clone());
                     match header.as_str() {
-                        "Bearer expired-token" => {
-                            ("HTTP/1.1 401 Unauthorized", "Token expired".to_string())
-                        },
+                        "Bearer expired-token" => (
+                            "HTTP/1.1 401 Unauthorized",
+                            json!({
+                                "status": "error",
+                                "error": {
+                                    "code": "TOKEN_EXPIRED",
+                                    "message": "Token expired"
+                                }
+                            })
+                            .to_string(),
+                        ),
                         "Bearer fresh-token" => (
                             "HTTP/1.1 200 OK",
                             json!({

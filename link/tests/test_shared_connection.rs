@@ -493,17 +493,27 @@ async fn test_subscription_drop_unsubscribes() {
 /// Without connect(), subscribe() should return an error.
 #[tokio::test]
 async fn test_subscribe_without_connect_returns_error() {
-    let client = match create_test_client() {
-        Ok(c) => c,
+    let token = match common::root_access_token_blocking() {
+        Ok(t) => t,
         Err(e) => {
             eprintln!("Skipping test (server not available): {}", e);
             return;
         },
     };
 
+    // Build a client with lazy-connect disabled so that subscribe() without
+    // an explicit connect() returns an error instead of auto-connecting.
+    let client = KalamLinkClient::builder()
+        .base_url(common::server_url())
+        .timeout(Duration::from_secs(30))
+        .auth(AuthProvider::jwt_token(token))
+        .connection_options(ConnectionOptions::new().with_ws_lazy_connect(false))
+        .build()
+        .expect("build client");
+
     ensure_table(&client, "default.legacy_sub_test").await;
 
-    // Don't call connect() — should fail because no shared connection
+    // Don't call connect() — should fail because no shared connection and lazy-connect is off
     let result = timeout(TEST_TIMEOUT, client.subscribe("SELECT * FROM default.legacy_sub_test"))
         .await
         .expect("subscribe should not time out");

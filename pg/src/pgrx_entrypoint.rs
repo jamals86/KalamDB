@@ -2,6 +2,7 @@ use kalam_pg_common::USER_ID_GUC;
 use pgrx::guc::{GucContext, GucFlags, GucRegistry, GucSetting};
 use pgrx::prelude::*;
 use std::ffi::{CStr, CString};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 static KALAM_USER_ID_SETTING: GucSetting<Option<CString>> =
     GucSetting::<Option<CString>>::new(None::<&'static CStr>);
@@ -47,6 +48,33 @@ pub fn pg_kalam_user_id() -> Option<String> {
 #[pg_extern]
 pub fn pg_kalam_user_id_guc_name() -> &'static str {
     USER_ID_GUC
+}
+
+// Monotonic counter for SNOWFLAKE_ID to guarantee uniqueness within a PG backend.
+static SNOWFLAKE_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// Generate a KalamDB-compatible snowflake ID.
+///
+/// Layout (63 usable bits, always positive):
+///   - Bits 22..62: milliseconds since 2020-01-01 (covers ~139 years)
+///   - Bits 12..21: lower 10 bits of PG backend PID (node disambiguation)
+///   - Bits  0..11: per-backend monotonic sequence (4096 IDs/ms before wrap)
+#[pg_extern]
+pub fn snowflake_id() -> i64 {
+    // Custom epoch: 2020-01-01T00:00:00Z in milliseconds
+    const EPOCH_MS: u64 = 1_577_836_800_000;
+
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock before UNIX epoch")
+        .as_millis() as u64;
+    let ts = now_ms.saturating_sub(EPOCH_MS);
+
+    let pid = std::process::id() as u64;
+    let seq = SNOWFLAKE_SEQ.fetch_add(1, Ordering::Relaxed);
+
+    let id = ((ts & 0x1FF_FFFF_FFFF) << 22) | ((pid & 0x3FF) << 12) | (seq & 0xFFF);
+    id as i64
 }
 
 /// Read the active PostgreSQL GUC value for `kalam.user_id`.

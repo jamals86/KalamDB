@@ -963,26 +963,26 @@ mod tests {
     }
 
     #[test]
-    fn strip_for_foreign_table_removes_pk_and_snowflake() {
+    fn strip_for_foreign_table_removes_pk_keeps_defaults() {
         let defs = vec![
             "id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID()".to_string(),
             "name TEXT NOT NULL".to_string(),
             "age INTEGER".to_string(),
         ];
         let result = super::strip_for_foreign_table(&defs);
-        assert_eq!(result[0], "id BIGINT");
-        assert_eq!(result[1], "name TEXT");
+        assert_eq!(result[0], "id BIGINT DEFAULT SNOWFLAKE_ID()");
+        assert_eq!(result[1], "name TEXT NOT NULL");
         assert_eq!(result[2], "age INTEGER");
     }
 
     #[test]
-    fn strip_for_foreign_table_preserves_non_snowflake_defaults() {
+    fn strip_for_foreign_table_preserves_all_defaults() {
         let defs = vec![
             "status TEXT NOT NULL DEFAULT 'pending'".to_string(),
             "created TIMESTAMP DEFAULT NOW()".to_string(),
         ];
         let result = super::strip_for_foreign_table(&defs);
-        assert_eq!(result[0], "status TEXT DEFAULT 'pending'");
+        assert_eq!(result[0], "status TEXT NOT NULL DEFAULT 'pending'");
         assert_eq!(result[1], "created TIMESTAMP DEFAULT NOW()");
     }
 
@@ -1004,7 +1004,8 @@ mod tests {
         // Simulates the full USING kalamdb path with KalamDB-native syntax:
         // 1. User writes: id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID()
         // 2. Passed through as-is to KalamDB
-        // 3. strip_for_foreign_table → id BIGINT  (for PG foreign table)
+        // 3. strip_for_foreign_table → id BIGINT DEFAULT SNOWFLAKE_ID() NOT NULL etc. (for PG foreign table)
+        //    Only PRIMARY KEY is removed.
         let input = vec![
             "id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID()".to_string(),
             "name TEXT NOT NULL".to_string(),
@@ -1012,8 +1013,8 @@ mod tests {
         ];
 
         let pg_defs = super::strip_for_foreign_table(&input);
-        assert_eq!(pg_defs[0], "id BIGINT");
-        assert_eq!(pg_defs[1], "name TEXT");
+        assert_eq!(pg_defs[0], "id BIGINT DEFAULT SNOWFLAKE_ID()");
+        assert_eq!(pg_defs[1], "name TEXT NOT NULL");
         assert_eq!(pg_defs[2], "created TIMESTAMP DEFAULT NOW()");
     }
 }
@@ -1230,14 +1231,14 @@ fn find_keyword_position(sql: &str, keyword: &str) -> Option<usize> {
 ///
 /// Specifically removes:
 /// - `PRIMARY KEY` constraints (not supported on foreign tables)
-/// - `DEFAULT SNOWFLAKE_ID()` (function doesn't exist in PostgreSQL)
-/// - `NOT NULL` constraints (not enforced on foreign tables anyway)
 /// - Standalone table-level constraint entries like `PRIMARY KEY (col)`
+///
+/// Keeps:
+/// - `DEFAULT SNOWFLAKE_ID()` (pg_kalam provides this function)
+/// - `NOT NULL` (valid on foreign tables; not enforced by PG but documents intent)
+/// - Other DEFAULT expressions (NOW(), literals, etc.)
 fn strip_for_foreign_table(column_defs: &[String]) -> Vec<String> {
     let pk_re = regex::Regex::new(r"(?i)\bPRIMARY\s+KEY\b").unwrap();
-    let snowflake_default_re =
-        regex::Regex::new(r"(?i)\bDEFAULT\s+SNOWFLAKE_ID\(\)").unwrap();
-    let not_null_re = regex::Regex::new(r"(?i)\bNOT\s+NULL\b").unwrap();
     let table_pk_re =
         regex::Regex::new(r"(?i)^\s*PRIMARY\s+KEY\s*\(").unwrap();
 
@@ -1245,10 +1246,7 @@ fn strip_for_foreign_table(column_defs: &[String]) -> Vec<String> {
         .iter()
         .filter(|def| !table_pk_re.is_match(def))
         .map(|def| {
-            let mut result = def.clone();
-            result = pk_re.replace_all(&result, "").into_owned();
-            result = snowflake_default_re.replace_all(&result, "").into_owned();
-            result = not_null_re.replace_all(&result, "").into_owned();
+            let result = pk_re.replace_all(def, "").into_owned();
             // Collapse multiple spaces
             let collapsed = result.split_whitespace().collect::<Vec<_>>().join(" ");
             collapsed.trim_end_matches(',').trim().to_string()
