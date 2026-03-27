@@ -8,6 +8,7 @@ import { toPersistedTab } from "@/features/sql-studio/utils/workspaceHelpers";
 
 const SQL_STUDIO_WORKSPACE_TABLE = "dba.favorites";
 const SQL_STUDIO_WORKSPACE_ROW_ID = "sql-studio-workspace";
+let ensureWorkspaceTablePromise: Promise<void> | null = null;
 
 export interface SqlStudioSyncedSavedQuery extends SqlStudioPersistedSavedQuery {
   openedRecently: boolean;
@@ -153,10 +154,21 @@ function buildWorkspaceSelectSql(): string {
   return `SELECT id, payload FROM ${SQL_STUDIO_WORKSPACE_TABLE} WHERE id = '${SQL_STUDIO_WORKSPACE_ROW_ID}' LIMIT 1`;
 }
 
+function escapeSqlStringLiteral(value: string): string {
+  return value.replace(/'/g, "''");
+}
+
 async function ensureWorkspaceTable(): Promise<void> {
-  await executeSql(
-    `CREATE TABLE IF NOT EXISTS ${SQL_STUDIO_WORKSPACE_TABLE} (id TEXT PRIMARY KEY, payload JSON) WITH (TYPE='USER')`,
-  );
+  if (!ensureWorkspaceTablePromise) {
+    ensureWorkspaceTablePromise = executeSql(
+      `CREATE TABLE IF NOT EXISTS ${SQL_STUDIO_WORKSPACE_TABLE} (id TEXT PRIMARY KEY, payload JSON) WITH (TYPE='USER')`,
+    ).then(() => {}).catch((error) => {
+      ensureWorkspaceTablePromise = null;
+      throw error;
+    });
+  }
+
+  await ensureWorkspaceTablePromise;
 }
 
 async function workspaceRowExists(): Promise<boolean> {
@@ -234,6 +246,7 @@ export function buildSyncedSqlStudioWorkspaceState(
 
 export async function loadSyncedSqlStudioWorkspaceState(): Promise<SqlStudioSyncedWorkspaceState | null> {
   try {
+    await ensureWorkspaceTable();
     const rows = await executeSql(buildWorkspaceSelectSql());
     return parseWorkspaceRow(rows[0]);
   } catch (error) {
@@ -245,7 +258,7 @@ export async function loadSyncedSqlStudioWorkspaceState(): Promise<SqlStudioSync
 export async function saveSyncedSqlStudioWorkspaceState(
   state: SqlStudioSyncedWorkspaceState,
 ): Promise<void> {
-  const payload = JSON.stringify(state);
+  const payload = escapeSqlStringLiteral(JSON.stringify(state));
 
   await ensureWorkspaceTable();
 

@@ -278,6 +278,15 @@ describe("SqlStudio page", () => {
       user: { username: "root", role: "system" },
     });
 
+    mockExecuteSqlStudioQuery.mockResolvedValue({
+      status: "success",
+      rows: [],
+      schema: [],
+      tookMs: 0,
+      rowCount: 0,
+      logs: [],
+    });
+
     mockSchemaTreeQuery.mockReturnValue({
       data: [
         {
@@ -324,6 +333,7 @@ describe("SqlStudio page", () => {
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -490,6 +500,36 @@ describe("SqlStudio page", () => {
     });
   });
 
+  it("shows connecting state and lets the user cancel a stalled live subscription", async () => {
+    let resolveSubscribe: ((value: () => Promise<void>) => void) | null = null;
+    mockSubscribe.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveSubscribe = resolve as (value: () => Promise<void>) => void;
+    }));
+
+    renderSqlStudio();
+
+    fireEvent.change(getSqlEditor(), {
+      target: { value: "SELECT * FROM dba.favorites LIMIT 100" },
+    });
+
+    fireEvent.click(screen.getByRole("switch"));
+    fireEvent.click(screen.getByRole("button", { name: /subscribe/i }));
+
+    expect(await screen.findByRole("button", { name: /connecting\.\.\./i })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /connecting\.\.\./i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /subscribe/i })).toBeTruthy();
+    });
+
+    await act(async () => {
+      resolveSubscribe?.(mockUnsubscribe);
+    });
+
+    expect(mockUnsubscribe).toHaveBeenCalled();
+  });
+
   it("orders live subscription rows by _seq descending, including the initial batch", async () => {
     renderSqlStudio();
 
@@ -499,6 +539,10 @@ describe("SqlStudio page", () => {
 
     fireEvent.click(screen.getByRole("switch"));
     fireEvent.click(screen.getByRole("button", { name: /subscribe/i }));
+
+    await waitFor(() => {
+      expect(mockSubscribe).toHaveBeenCalled();
+    });
 
     await act(async () => {
       liveCallback?.({
@@ -637,49 +681,40 @@ describe("SqlStudio page", () => {
   });
 
   it("hydrates and updates the synced workspace from dba.favorites", async () => {
-    mockLoadSyncedSqlStudioWorkspaceState.mockResolvedValue({
-      version: 1,
-      tabs: [
-        {
-          id: "synced-tab",
-          name: "Synced Query",
-          query: "SELECT * FROM default.events",
-          settings: {
-            isDirty: false,
-            isLive: false,
-            liveStatus: "idle",
-            resultView: "results",
-            lastSavedAt: null,
-            savedQueryId: "saved-1",
+    vi.useFakeTimers();
+    mockLoadSyncedSqlStudioWorkspaceState
+      .mockResolvedValueOnce({
+        version: 1,
+        tabs: [
+          {
+            id: "synced-tab",
+            name: "Synced Query",
+            query: "SELECT * FROM default.events",
+            settings: {
+              isDirty: false,
+              isLive: false,
+              liveStatus: "idle",
+              resultView: "results",
+              lastSavedAt: null,
+              savedQueryId: "saved-1",
+            },
           },
-        },
-      ],
-      savedQueries: [
-        {
-          id: "saved-1",
-          title: "Favorite Query",
-          sql: "SELECT * FROM default.events",
-          lastSavedAt: "2026-03-27T00:00:00.000Z",
-          isLive: false,
-          openedRecently: true,
-          isCurrentTab: true,
-        },
-      ],
-      activeTabId: "synced-tab",
-      updatedAt: "2026-03-27T00:00:00.000Z",
-    });
-
-    renderSqlStudio();
-
-    expect(await screen.findByRole("button", { name: /synced query/i })).toBeTruthy();
-    expect(await screen.findByText("Favorite Query")).toBeTruthy();
-
-    await waitFor(() => {
-      expect(mockSubscribeToSyncedSqlStudioWorkspaceState).toHaveBeenCalled();
-    });
-
-    await act(async () => {
-      remoteWorkspaceCallback?.({
+        ],
+        savedQueries: [
+          {
+            id: "saved-1",
+            title: "Favorite Query",
+            sql: "SELECT * FROM default.events",
+            lastSavedAt: "2026-03-27T00:00:00.000Z",
+            isLive: false,
+            openedRecently: true,
+            isCurrentTab: true,
+          },
+        ],
+        activeTabId: "synced-tab",
+        updatedAt: "2026-03-27T00:00:00.000Z",
+      })
+      .mockResolvedValueOnce({
         version: 1,
         tabs: [
           {
@@ -710,9 +745,24 @@ describe("SqlStudio page", () => {
         activeTabId: "synced-tab",
         updatedAt: "2026-03-27T00:00:01.000Z",
       });
+
+    renderSqlStudio();
+
+    await act(async () => {
+      await Promise.resolve();
     });
 
-    expect(await screen.findByRole("button", { name: /synced query updated/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /synced query/i })).toBeTruthy();
+    expect(screen.getByText("Favorite Query")).toBeTruthy();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+      await Promise.resolve();
+    });
+
+    vi.useRealTimers();
+
+    expect(screen.getByRole("button", { name: /synced query updated/i })).toBeTruthy();
   });
 
   it("persists favorites through the synced workspace payload", async () => {

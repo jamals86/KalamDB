@@ -5,9 +5,10 @@ vi.mock("@/lib/kalam-client", () => ({
   executeSql: vi.fn(),
 }));
 
-import { executeSql } from "@/lib/kalam-client";
-import { fetchSqlStudioSchemaTree } from "@/services/sqlStudioService";
+import { executeQuery, executeSql } from "@/lib/kalam-client";
+import { executeSqlStudioQuery, fetchSqlStudioSchemaTree } from "@/services/sqlStudioService";
 
+const executeQueryMock = vi.mocked(executeQuery);
 const executeSqlMock = vi.mocked(executeSql);
 
 describe("fetchSqlStudioSchemaTree", () => {
@@ -111,5 +112,45 @@ describe("fetchSqlStudioSchemaTree", () => {
       isNullable: false,
       ordinal: 1,
     });
+  });
+});
+
+describe("executeSqlStudioQuery", () => {
+  beforeEach(() => {
+    executeQueryMock.mockReset();
+  });
+
+  it("returns plain serializable row values for Redux state", async () => {
+    executeQueryMock.mockResolvedValue({
+      status: "success",
+      took: 1,
+      results: [
+        {
+          schema: [
+            { name: "actor_user_id", data_type: "Utf8", index: 0, flags: [] },
+            { name: "details", data_type: "Json", index: 1, flags: [] },
+            { name: "timestamp", data_type: "Timestamp", index: 2, flags: [] },
+          ],
+          named_rows: [
+            {
+              actor_user_id: { toJson: () => "root" },
+              details: { toJson: () => ({ nested: [1, 2, 3], ok: true }) },
+              timestamp: { toJson: () => "2026-03-28T00:00:00Z" },
+            },
+          ],
+          row_count: 1,
+        },
+      ],
+    } as never);
+
+    const result = await executeSqlStudioQuery("SELECT * FROM system.audit_log");
+
+    expect(result.rows).toEqual([
+      {
+        actor_user_id: "root",
+        details: { nested: [1, 2, 3], ok: true },
+        timestamp: "2026-03-28T00:00:00Z",
+      },
+    ]);
   });
 });

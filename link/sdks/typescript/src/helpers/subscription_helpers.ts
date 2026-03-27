@@ -102,7 +102,7 @@ export function normalizeLiveRowsWasmEvent(event: {
 export function normalizeLiveRowsKeyColumns<T>(
   options: LiveRowsOptions<T>,
 ): string[] | undefined {
-  const declaredColumns = options.keyColumns;
+  const declaredColumns = options.keyColumns ?? options.keyColumn;
   if (declaredColumns === undefined) {
     return undefined;
   }

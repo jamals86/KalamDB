@@ -319,7 +319,10 @@ export function StudioEditorPanel({
 
   const hasSelectedSql = selectedSql.trim().length > 0;
   const executeLabel = hasSelectedSql ? "Execute Selected" : "Execute";
-  const isExecuteDisabled = isRunning || !sql.trim() || liveStatus === "connecting";
+  const isConnectingLive = isLive && liveStatus === "connecting";
+  const isExecuteDisabled = isLive
+    ? !sql.trim()
+    : isRunning || !sql.trim();
 
   return (
     <div className="flex h-full flex-col bg-background">
@@ -364,7 +367,6 @@ export function StudioEditorPanel({
               <Switch
                 checked={isLive}
                 onCheckedChange={onToggleLive}
-                disabled={liveStatus === "connecting"}
               />
               <span className="text-xs text-muted-foreground">Live query</span>
               {isLive && (
@@ -397,15 +399,15 @@ export function StudioEditorPanel({
               onClick={() => runSql("auto")}
               disabled={isExecuteDisabled}
             >
-              {liveStatus === "connected" ? (
+              {liveStatus === "connected" || isConnectingLive ? (
                 <Square className="mr-1.5 h-3.5 w-3.5" />
               ) : (
                 <Play className="mr-1.5 h-3.5 w-3.5" />
               )}
               {liveStatus === "connected"
                 ? "Stop"
-                : isRunning
-                  ? "Running..."
+                : isConnectingLive
+                  ? "Connecting..."
                   : "Subscribe"}
             </Button>
           ) : (
