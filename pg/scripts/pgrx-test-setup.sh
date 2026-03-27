@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
-# pgrx-test-setup.sh — Set up the pgrx-managed PostgreSQL 16 for DDL e2e testing.
+# pgrx-test-setup.sh — Set up a pgrx-managed PostgreSQL instance for DDL e2e testing.
 #
 # Prerequisites:
-#   1. pgrx PG16 installed: cargo pgrx init --pg16 download
+#   1. pgrx PG installed: cargo pgrx init --pg<major> download
 #   2. KalamDB server running locally with cluster mode (gRPC on :9188, HTTP on :8080)
 #
 # Usage:
@@ -13,7 +13,8 @@
 #   ./pg/scripts/pgrx-test-setup.sh --psql   # Open psql against the test DB
 #
 # After setup, connect manually:
-#   ~/.pgrx/16.13/pgrx-install/bin/psql -h localhost -p 28816 -U $USER -d kalamdb_test
+#   PG_MAJOR=17 ./pg/scripts/pgrx-test-setup.sh
+#   ~/.pgrx/<pg-version>/pgrx-install/bin/psql -h localhost -p 28817 -U $USER -d kalamdb_test
 #
 set -euo pipefail
 
@@ -21,16 +22,20 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PG_DIR="$SCRIPT_DIR/../.."
 PG_CRATE="$SCRIPT_DIR/.."
 
-# pgrx PG16 paths
+# pgrx-managed PostgreSQL selection
 PGRX_HOME="$HOME/.pgrx"
-PG_CONFIG="$PGRX_HOME/16.13/pgrx-install/bin/pg_config"
-PSQL="$PGRX_HOME/16.13/pgrx-install/bin/psql"
-PG_CTL="$PGRX_HOME/16.13/pgrx-install/bin/pg_ctl"
-DATA_DIR="$PGRX_HOME/data-16"
+PG_MAJOR="${PG_MAJOR:-16}"
+PG_EXTENSION_FLAVOR="${PG_EXTENSION_FLAVOR:-pg${PG_MAJOR}}"
+PGRX_VERSION_DIR="${PGRX_VERSION_DIR:-$(find "$PGRX_HOME" -maxdepth 1 -type d -name "${PG_MAJOR}.*" 2>/dev/null | sort -V | tail -n 1)}"
+PGRX_INSTALL_BIN_DIR="$PGRX_VERSION_DIR/pgrx-install/bin"
+PG_CONFIG="$PGRX_INSTALL_BIN_DIR/pg_config"
+PSQL="$PGRX_INSTALL_BIN_DIR/psql"
+PG_CTL="$PGRX_INSTALL_BIN_DIR/pg_ctl"
+DATA_DIR="$PGRX_HOME/data-${PG_MAJOR}"
 
 # Connection settings (pgrx defaults)
 PG_HOST="localhost"
-PG_PORT=28816
+PG_PORT="${PG_PORT:-288${PG_MAJOR}}"
 PG_USER="$USER"
 TEST_DB="kalamdb_test"
 
@@ -42,9 +47,18 @@ info()  { echo "  [INFO] $*"; }
 error() { echo "  [ERROR] $*" >&2; }
 
 check_pg_config() {
+    if [[ -z "$PGRX_VERSION_DIR" ]]; then
+        error "Could not find a pgrx install for PostgreSQL $PG_MAJOR under $PGRX_HOME"
+        error "Run: cargo pgrx init --pg${PG_MAJOR} download"
+        exit 1
+    fi
     if [ ! -x "$PG_CONFIG" ]; then
-        error "pgrx PG16 not found at $PG_CONFIG"
-        error "Run: cargo pgrx init --pg16 download"
+        error "pgrx PostgreSQL $PG_MAJOR not found at $PG_CONFIG"
+        error "Run: cargo pgrx init --pg${PG_MAJOR} download"
+        exit 1
+    fi
+    if [[ "$PG_EXTENSION_FLAVOR" != "pg${PG_MAJOR}" ]]; then
+        error "PG_EXTENSION_FLAVOR must match PG_MAJOR (expected pg${PG_MAJOR}, got $PG_EXTENSION_FLAVOR)"
         exit 1
     fi
 }
@@ -54,7 +68,7 @@ start_pg() {
         info "PostgreSQL already running on port $PG_PORT"
         return 0
     fi
-    info "Starting pgrx PostgreSQL 16..."
+    info "Starting pgrx PostgreSQL $PG_MAJOR..."
     "$PG_CTL" -D "$DATA_DIR" -l "$DATA_DIR/pgrx.log" -o "-p $PG_PORT" start
     # Wait for ready
     for i in $(seq 1 15); do
@@ -69,14 +83,18 @@ start_pg() {
 }
 
 stop_pg() {
-    info "Stopping pgrx PostgreSQL 16..."
+    info "Stopping pgrx PostgreSQL $PG_MAJOR..."
     "$PG_CTL" -D "$DATA_DIR" stop -m fast 2>/dev/null || info "Already stopped"
 }
 
 install_extension() {
     info "Building and installing pg_kalam extension..."
     cd "$PG_CRATE"
-    cargo pgrx install --pg-config="$PG_CONFIG" 2>&1 | tail -3
+    cargo pgrx install \
+        --pg-config="$PG_CONFIG" \
+        --no-default-features \
+        -F "$PG_EXTENSION_FLAVOR" \
+        2>&1 | tail -3
     info "Extension installed"
 }
 
@@ -122,7 +140,7 @@ setup_database() {
     info "  $PSQL -h $PG_HOST -p $PG_PORT -U $PG_USER -d $TEST_DB"
     info ""
     info "Run e2e DDL tests with:"
-    info "  cargo nextest run --features e2e -p kalam-pg-extension -E 'test(e2e_ddl)'"
+    info "  cargo nextest run --no-default-features --features e2e,$PG_EXTENSION_FLAVOR -p kalam-pg-extension -E 'test(e2e_ddl)'"
 }
 
 open_psql() {

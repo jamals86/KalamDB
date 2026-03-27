@@ -64,6 +64,7 @@ env:
   WASM_PACK_VERSION: "0.14.0"
   PG_EXTENSION_MAJOR: "16"
   PG_EXTENSION_FLAVOR: "pg16"
+  PGRX_VERSION: "0.17.0"
   DEFAULT_PLATFORMS: "linux-x86_64,macos-aarch64,linux-aarch64"
   RUSTC_WRAPPER: ""
   CARGO_BUILD_RUSTC_WRAPPER: ""
@@ -955,8 +956,10 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Build the builder image (Debian Bookworm — matches postgres:16-bookworm)
+          # Build the builder image for the selected PostgreSQL major.
           docker build \
+            --build-arg PG_MAJOR="$PG_EXTENSION_MAJOR" \
+            --build-arg PGRX_VERSION="$PGRX_VERSION" \
             -f pg/docker/Dockerfile.builder-base \
             -t pg-kalam-builder-x86 \
             .
@@ -972,18 +975,19 @@ jobs:
             -e CARGO_INCREMENTAL=0 \
             -e CARGO_TARGET_DIR=/target-cache \
             -e RUSTFLAGS="-Cdebuginfo=0" \
+            -e PG_EXTENSION_MAJOR \
             -e PG_EXTENSION_FLAVOR \
             pg-kalam-builder-x86 \
             bash -c '
               cd /src && \
               cargo pgrx install \
                 -p kalam-pg-extension \
-                -c /usr/bin/pg_config \
+                -c "/usr/lib/postgresql/${PG_EXTENSION_MAJOR}/bin/pg_config" \
                 --no-default-features \
                 --profile release-pg \
                 -F ${PG_EXTENSION_FLAVOR} && \
-                LIBDIR="$(/usr/bin/pg_config --pkglibdir)" && \
-                SQLDIR="$(/usr/bin/pg_config --sharedir)/extension" && \
+                LIBDIR="$(/usr/lib/postgresql/${PG_EXTENSION_MAJOR}/bin/pg_config --pkglibdir)" && \
+                SQLDIR="$(/usr/lib/postgresql/${PG_EXTENSION_MAJOR}/bin/pg_config --sharedir)/extension" && \
                 cp "$LIBDIR/pg_kalam.so" /artifacts/ && \
                 cp "$SQLDIR/pg_kalam.control" /artifacts/ && \
                 cp "$SQLDIR"/pg_kalam--*.sql /artifacts/
@@ -1038,7 +1042,6 @@ jobs:
       - build_linux_x86_64
       - build_cli_linux_x86_64
       - read_version
-    continue-on-error: true
 
     steps:
       - name: Checkout
@@ -1077,6 +1080,13 @@ jobs:
         with:
           shared-key: smoke-tests
           cache-on-failure: true
+
+      - name: Install cargo-nextest
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C ${CARGO_HOME:-~/.cargo}/bin
+          cargo nextest --version
 
       - name: Prepare binaries
         shell: bash
@@ -1129,6 +1139,7 @@ jobs:
 
       - name: Run smoke tests
         id: smoke_tests
+        continue-on-error: true
         shell: bash
         env:
           KALAMDB_SERVER_URL: "http://localhost:8080"
@@ -1136,12 +1147,12 @@ jobs:
         run: |
           set -euo pipefail
           cd cli
-          if cargo test --features e2e-tests --test smoke 2>&1 | tee ../smoke-test-output.txt; then
+          if cargo nextest run --features e2e-tests --test smoke 2>&1 | tee ../smoke-test-output.txt; then
             echo "smoke_tests_passed=true" >> "$GITHUB_OUTPUT"
             echo "✅ All smoke tests passed!"
           else
             echo "smoke_tests_passed=false" >> "$GITHUB_OUTPUT"
-            echo "⚠️ Some smoke tests failed (marked as warning)"
+            echo "⚠️ Some smoke tests failed"
           fi
 
       - name: Stop server
@@ -1167,8 +1178,15 @@ jobs:
           if [[ "${{ steps.smoke_tests.outputs.smoke_tests_passed }}" == "true" ]]; then
             echo "::notice::✅ Smoke tests passed successfully"
           else
-            echo "::warning::⚠️ Some smoke tests failed - review smoke-test-results artifact for details"
+            echo "::error::Smoke tests failed - review smoke-test-results artifact for details"
           fi
+
+      - name: Fail if smoke tests failed
+        if: always() && steps.smoke_tests.outputs.smoke_tests_passed != 'true'
+        shell: bash
+        run: |
+          echo "Smoke tests failed" >&2
+          exit 1
 
   release:
     name: Publish GitHub Release
@@ -1260,7 +1278,14 @@ jobs:
           if ! ls -1 ./*.tar.gz ./*.zip >/dev/null 2>&1; then
             echo "No release artifacts found. Check workflow inputs.platforms / all_platforms." >&2
             exit 1
+          f///////////////////////////////////////////////////////////////////////////////////////////../////////////////////////.......................................................................................i
+
+          PG_EXTENSION_ASSET="pg_kalam-${VERSION}-${PG_EXTENSION_FLAVOR}-linux-x86_64.tar.gz"
+          if [[ ! -f "$PG_EXTENSION_ASSET" ]]; then
+            echo "Missing PostgreSQL extension release asset: $PG_EXTENSION_ASSET" >&2
+            exit 1
           fi
+
           sha256sum ./*.tar.gz ./*.zip > SHA256SUMS
 
       - name: Create GitHub Release
@@ -1610,7 +1635,6 @@ jobs:
       failed: ${{ steps.parse_typescript_badge.outputs.failed }}
       message: ${{ steps.parse_typescript_badge.outputs.message }}
       color: ${{ steps.parse_typescript_badge.outputs.color }}
-    continue-on-error: true
 
     steps:
       - name: Checkout
@@ -1752,6 +1776,21 @@ jobs:
           path: ts-sdk-server.log
           if-no-files-found: ignore
 
+      - name: Upload TypeScript SDK test output
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: ts-sdk-test-output
+          path: ts-sdk-test-output.txt
+          if-no-files-found: ignore
+
+      - name: Fail if TypeScript SDK tests failed
+        if: always() && steps.run_typescript_tests.outcome != 'success'
+        shell: bash
+        run: |
+          echo "TypeScript SDK tests failed" >&2
+          exit 1
+
   sdk_tests_dart:
     name: Dart SDK Tests (Linux x86_64)
     runs-on: ubuntu-latest
@@ -1764,7 +1803,6 @@ jobs:
       failed: ${{ steps.parse_dart_badge.outputs.failed }}
       message: ${{ steps.parse_dart_badge.outputs.message }}
       color: ${{ steps.parse_dart_badge.outputs.color }}
-    continue-on-error: true
 
     steps:
       - name: Checkout
@@ -1862,15 +1900,10 @@ jobs:
           import os
           from pathlib import Path
 
-          hidden = {}
-          total = 0
-          passed = 0
-          failed = 0
 
-          for path_str in ("dart-sdk-models-machine.jsonl", "dart-sdk-e2e-machine.jsonl"):
-              path = Path(path_str)
+          def iter_events(path: Path):
               if not path.exists():
-                  continue
+                  return
 
               for raw_line in path.read_text(encoding="utf-8", errors="replace").splitlines():
                   line = raw_line.strip()
@@ -1882,46 +1915,54 @@ jobs:
                   except json.JSONDecodeError:
                       continue
 
-                events = parsed if isinstance(parsed, list) else [parsed]
-                for event in events:
-                  if not isinstance(event, dict):
-                    continue
+                  events = parsed if isinstance(parsed, list) else [parsed]
+                  for event in events:
+                      if isinstance(event, dict):
+                          yield event
 
+
+          hidden = {}
+          total = 0
+          passed = 0
+          failed = 0
+
+          for path_str in ("dart-sdk-models-machine.jsonl", "dart-sdk-e2e-machine.jsonl"):
+              for event in iter_events(Path(path_str)):
                   event_type = event.get("type")
                   if event_type == "testStart":
-                    test_info = event.get("test", {})
-                    test_id = test_info.get("id")
-                    if test_id is not None:
-                      hidden[test_id] = bool(test_info.get("hidden", False))
+                      test_info = event.get("test", {})
+                      test_id = test_info.get("id")
+                      if test_id is not None:
+                          hidden[test_id] = bool(test_info.get("hidden", False))
                   elif event_type == "testDone":
-                    test_id = event.get("testID")
-                    if hidden.get(test_id, False):
-                      continue
+                      test_id = event.get("testID")
+                      if hidden.get(test_id, False):
+                          continue
 
-                    total += 1
-                    result = event.get("result")
-                    if result == "success":
-                      passed += 1
-                    elif result in {"failure", "error"}:
-                      failed += 1
+                      total += 1
+                      result = event.get("result")
+                      if result == "success":
+                          passed += 1
+                      elif result in {"failure", "error"}:
+                          failed += 1
 
           outcome = os.environ.get("STEP_OUTCOME", "failure")
           if total == 0 and outcome == "success":
               message = "passed"
               color = "brightgreen"
           elif total == 0:
-            message = "failed"
-            color = "red"
+              message = "failed"
+              color = "red"
           else:
-            message = f"{passed}/{total} passed" if failed == 0 and outcome == "success" else f"{passed}/{total} passed, {failed} failed"
-            color = "brightgreen" if failed == 0 and outcome == "success" else "red"
+              message = f"{passed}/{total} passed" if failed == 0 and outcome == "success" else f"{passed}/{total} passed, {failed} failed"
+              color = "brightgreen" if failed == 0 and outcome == "success" else "red"
 
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
-            handle.write(f"total={total}\n")
-            handle.write(f"passed={passed}\n")
-            handle.write(f"failed={failed}\n")
-            handle.write(f"message={message}\n")
-            handle.write(f"color={color}\n")
+              handle.write(f"total={total}\n")
+              handle.write(f"passed={passed}\n")
+              handle.write(f"failed={failed}\n")
+              handle.write(f"message={message}\n")
+              handle.write(f"color={color}\n")
           PYTHON
 
       - name: Stop server
@@ -1937,6 +1978,23 @@ jobs:
           name: dart-sdk-server-log
           path: dart-sdk-server.log
           if-no-files-found: ignore
+
+      - name: Upload Dart SDK test output
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: dart-sdk-test-output
+          path: |
+            dart-sdk-models-machine.jsonl
+            dart-sdk-e2e-machine.jsonl
+          if-no-files-found: ignore
+
+      - name: Fail if Dart SDK tests failed
+        if: always() && steps.run_dart_tests.outcome != 'success'
+        shell: bash
+        run: |
+          echo "Dart SDK tests failed" >&2
+          exit 1
 
   # ═══════════════════════════════════════════════════════════════════════════
   # NPM PUBLISH - Publish TypeScript SDK to npm registry

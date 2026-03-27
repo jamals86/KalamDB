@@ -2,7 +2,7 @@
 #
 # Two-stage build:
 #   1. Builder  — compiles the pg_kalam pgrx extension for Linux
-#   2. Runtime  — postgres:16 with the extension installed
+#   2. Runtime  — postgres:${PG_MAJOR} with the extension installed
 #
 # The extension is a thin remote FDW client (~9 workspace crates) that
 # connects to a KalamDB server via gRPC.  The full backend is NOT built.
@@ -10,10 +10,20 @@
 # Build from repo root:
 #   docker build -f pg/docker/Dockerfile -t kalamdb-pg:latest .
 
+ARG RUST_BASE_IMAGE=public.ecr.aws/docker/library/rust:1.92-bookworm
+ARG POSTGRES_BASE_IMAGE=public.ecr.aws/docker/library/postgres:16-bookworm
+ARG PG_MAJOR=16
+ARG PG_EXTENSION_FLAVOR=pg16
+ARG PGRX_VERSION=0.17.0
+
 # ---------------------------------------------------------------------------
-# Stage 1: Builder — Rust toolchain + PG 16 dev headers → .so + .sql
+# Stage 1: Builder — Rust toolchain + selected PG dev headers → .so + .sql
 # ---------------------------------------------------------------------------
-FROM rust:1.92-bookworm AS builder
+FROM ${RUST_BASE_IMAGE} AS builder
+
+ARG PG_MAJOR
+ARG PG_EXTENSION_FLAVOR
+ARG PGRX_VERSION
 
 ENV CARGO_BUILD_JOBS=1
 ENV CARGO_INCREMENTAL=0
@@ -21,7 +31,7 @@ ENV CARGO_INCREMENTAL=0
 # Without it, any panic in async/gRPC code causes SIGABRT (process abort).
 ENV RUSTFLAGS="-Cdebuginfo=0 -Cpanic=unwind"
 
-# Install PG 16 server + dev headers (needed by pgrx)
+# Install the selected PG server + dev headers needed by pgrx.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         curl ca-certificates gnupg lsb-release \
     && echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
@@ -29,14 +39,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
        | gpg --dearmor -o /etc/apt/trusted.gpg.d/pgdg.gpg \
     && apt-get update && apt-get install -y --no-install-recommends \
-        postgresql-16 \
-        postgresql-server-dev-16 \
+        postgresql-${PG_MAJOR} \
+        postgresql-server-dev-${PG_MAJOR} \
         libclang-dev clang pkg-config libssl-dev cmake make git \
     && rm -rf /var/lib/apt/lists/*
 
 # cargo-pgrx must match the workspace pgrx crate version
-RUN cargo install cargo-pgrx --version "=0.16.1" --locked
-RUN cargo pgrx init --pg16=/usr/bin/pg_config
+RUN cargo install cargo-pgrx --version "=${PGRX_VERSION}" --locked
+RUN cargo pgrx init "--pg${PG_MAJOR}=/usr/lib/postgresql/${PG_MAJOR}/bin/pg_config"
 
 WORKDIR /build
 
@@ -104,26 +114,31 @@ COPY backend/crates/kalamdb-macros/  backend/crates/kalamdb-macros/
 COPY backend/crates/kalamdb-pg/          backend/crates/kalamdb-pg/
 COPY backend/crates/kalamdb-server-auth/ backend/crates/kalamdb-server-auth/
 
-# Build + install the extension into the system PG 16 paths
+# Build + install the extension into the selected system PG paths.
 RUN cargo pgrx install \
     -p kalam-pg-extension \
-    -c /usr/bin/pg_config \
+    -c /usr/lib/postgresql/${PG_MAJOR}/bin/pg_config \
     --no-default-features \
     --release \
-    -F pg16
+    -F ${PG_EXTENSION_FLAVOR}
 
 # Collect the artifacts into one place for the runtime stage
 RUN mkdir -p /pg-artifacts \
-    && cp /usr/lib/postgresql/16/lib/pg_kalam.so          /pg-artifacts/ \
-    && cp /usr/share/postgresql/16/extension/pg_kalam.control /pg-artifacts/ \
-    && cp /usr/share/postgresql/16/extension/pg_kalam--*.sql  /pg-artifacts/
+    && cp /usr/lib/postgresql/${PG_MAJOR}/lib/pg_kalam.so          /pg-artifacts/ \
+    && cp /usr/share/postgresql/${PG_MAJOR}/extension/pg_kalam.control /pg-artifacts/ \
+    && cp /usr/share/postgresql/${PG_MAJOR}/extension/pg_kalam--*.sql  /pg-artifacts/
 
 # ---------------------------------------------------------------------------
-# Stage 2: Runtime — stock postgres:16 with the extension installed
+# Stage 2: Runtime — stock postgres:${PG_MAJOR} with the extension installed
 # ---------------------------------------------------------------------------
-FROM postgres:16-bookworm
+FROM ${POSTGRES_BASE_IMAGE}
 
-COPY --from=builder /pg-artifacts/pg_kalam.so          /usr/lib/postgresql/16/lib/
-COPY --from=builder /pg-artifacts/pg_kalam.control     /usr/share/postgresql/16/extension/
-COPY --from=builder /pg-artifacts/pg_kalam--*.sql      /usr/share/postgresql/16/extension/
+ARG PG_MAJOR
+
+COPY --from=builder /pg-artifacts/ /pg-artifacts/
+
+RUN install -m 755 /pg-artifacts/pg_kalam.so "/usr/lib/postgresql/${PG_MAJOR}/lib/pg_kalam.so" \
+    && install -m 644 /pg-artifacts/pg_kalam.control "/usr/share/postgresql/${PG_MAJOR}/extension/pg_kalam.control" \
+    && install -m 644 /pg-artifacts/pg_kalam--*.sql "/usr/share/postgresql/${PG_MAJOR}/extension/" \
+    && rm -rf /pg-artifacts
 

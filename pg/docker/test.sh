@@ -24,6 +24,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PGRX_HOME="$HOME/.pgrx"
+PG_MAJOR="${PG_MAJOR:-16}"
 
 export PGHOST="${PGHOST:-localhost}"
 export PGPORT="${PGPORT:-5433}"
@@ -34,17 +36,19 @@ export PGDATABASE="${PGDATABASE:-kalamdb}"
 KALAMDB_API_URL="${KALAMDB_API_URL:-http://localhost:8088}"
 KALAMDB_PASSWORD="${KALAMDB_PASSWORD:-kalamdb123}"
 
-if [ -x "$HOME/.pgrx/16.13/pgrx-install/bin/pg_isready" ]; then
-    PG_ISREADY_BIN="$HOME/.pgrx/16.13/pgrx-install/bin/pg_isready"
-else
-    PG_ISREADY_BIN="$(command -v pg_isready)"
-fi
+find_pgrx_bin() {
+    local binary="$1"
+    local candidate
+    candidate="$(find "$PGRX_HOME" -maxdepth 3 -type f -path "$PGRX_HOME/${PG_MAJOR}.*/pgrx-install/bin/$binary" 2>/dev/null | sort -V | tail -n 1)"
+    if [[ -n "$candidate" ]]; then
+        printf '%s\n' "$candidate"
+        return 0
+    fi
+    command -v "$binary"
+}
 
-if [ -x "$HOME/.pgrx/16.13/pgrx-install/bin/psql" ]; then
-    PSQL_BIN="$HOME/.pgrx/16.13/pgrx-install/bin/psql"
-else
-    PSQL_BIN="$(command -v psql)"
-fi
+PG_ISREADY_BIN="$(find_pgrx_bin pg_isready)"
+PSQL_BIN="$(find_pgrx_bin psql)"
 
 echo "========================================"
 echo " KalamDB PG Extension — Docker Test"
