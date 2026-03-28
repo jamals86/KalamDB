@@ -18,9 +18,7 @@ fn parses_remote_server_options() {
 
 #[test]
 fn rejects_missing_host() {
-    let options = BTreeMap::from([
-        ("port".to_string(), "50051".to_string()),
-    ]);
+    let options = BTreeMap::from([("port".to_string(), "50051".to_string())]);
 
     let err = ServerOptions::parse(&options).expect_err("missing host should fail");
     assert!(err.to_string().contains("host"));
@@ -28,9 +26,7 @@ fn rejects_missing_host() {
 
 #[test]
 fn rejects_missing_port() {
-    let options = BTreeMap::from([
-        ("host".to_string(), "127.0.0.1".to_string()),
-    ]);
+    let options = BTreeMap::from([("host".to_string(), "127.0.0.1".to_string())]);
 
     let err = ServerOptions::parse(&options).expect_err("missing port should fail");
     assert!(err.to_string().contains("port"));
@@ -69,9 +65,18 @@ fn parses_tls_server_options() {
     let options = BTreeMap::from([
         ("host".to_string(), "kalam.example.com".to_string()),
         ("port".to_string(), "9188".to_string()),
-        ("ca_cert".to_string(), "-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----".to_string()),
-        ("client_cert".to_string(), "-----BEGIN CERTIFICATE-----\nclient\n-----END CERTIFICATE-----".to_string()),
-        ("client_key".to_string(), "-----BEGIN PRIVATE KEY-----\nkey\n-----END PRIVATE KEY-----".to_string()),
+        (
+            "ca_cert".to_string(),
+            "-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----".to_string(),
+        ),
+        (
+            "client_cert".to_string(),
+            "-----BEGIN CERTIFICATE-----\nclient\n-----END CERTIFICATE-----".to_string(),
+        ),
+        (
+            "client_key".to_string(),
+            "-----BEGIN PRIVATE KEY-----\nkey\n-----END PRIVATE KEY-----".to_string(),
+        ),
     ]);
 
     let parsed = ServerOptions::parse(&options).expect("parse TLS server options");
@@ -90,7 +95,10 @@ fn rejects_client_cert_without_key() {
     let options = BTreeMap::from([
         ("host".to_string(), "127.0.0.1".to_string()),
         ("port".to_string(), "50051".to_string()),
-        ("client_cert".to_string(), "-----BEGIN CERTIFICATE-----\ncert\n-----END CERTIFICATE-----".to_string()),
+        (
+            "client_cert".to_string(),
+            "-----BEGIN CERTIFICATE-----\ncert\n-----END CERTIFICATE-----".to_string(),
+        ),
     ]);
 
     let err = ServerOptions::parse(&options).expect_err("client_cert without key should fail");
@@ -103,7 +111,10 @@ fn rejects_client_key_without_cert() {
     let options = BTreeMap::from([
         ("host".to_string(), "127.0.0.1".to_string()),
         ("port".to_string(), "50051".to_string()),
-        ("client_key".to_string(), "-----BEGIN PRIVATE KEY-----\nkey\n-----END PRIVATE KEY-----".to_string()),
+        (
+            "client_key".to_string(),
+            "-----BEGIN PRIVATE KEY-----\nkey\n-----END PRIVATE KEY-----".to_string(),
+        ),
     ]);
 
     let err = ServerOptions::parse(&options).expect_err("client_key without cert should fail");

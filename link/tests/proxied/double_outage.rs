@@ -127,7 +127,8 @@ async fn test_proxy_server_down_while_reconnecting() {
     proxy.simulate_server_up();
 
     for _ in 0..100 {
-        if connect_count.load(Ordering::SeqCst) >= expected_connects && client.is_connected().await {
+        if connect_count.load(Ordering::SeqCst) >= expected_connects && client.is_connected().await
+        {
             break;
         }
         sleep(Duration::from_millis(100)).await;

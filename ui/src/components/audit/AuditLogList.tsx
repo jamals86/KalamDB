@@ -143,7 +143,7 @@ function formatTimestamp(timestamp: string): string {
           <span className="text-sm text-muted-foreground">
             {logs.length} log{logs.length !== 1 ? 's' : ''}
           </span>
-          <Button variant="outline" size="icon" onClick={handleRefresh} disabled={isLoading}>
+          <Button variant="outline" size="icon" onClick={handleRefresh} disabled={isLoading} aria-label="Refresh audit logs">
             <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
           </Button>
         </div>
@@ -189,6 +189,7 @@ function formatTimestamp(timestamp: string): string {
               </div>
               <div className="flex items-end">
                 <Button onClick={handleApplyFilters} className="w-full">
+                  <Filter className="mr-2 h-4 w-4" />
                   Apply Filters
                 </Button>
               </div>
@@ -258,6 +259,7 @@ function formatTimestamp(timestamp: string): string {
                         size="icon"
                         onClick={() => setSelectedLog(log)}
                         title="View details"
+                        aria-label={`View details for audit log ${log.audit_id}`}
                       >
                         <Eye className="h-4 w-4" />
                       </Button>

@@ -733,7 +733,10 @@ fn apply_alter_operation(
                 .iter_mut()
                 .find(|c| c.column_name == *column_name)
                 .ok_or_else(|| {
-                    KalamDbError::InvalidOperation(format!("Column '{}' does not exist", column_name))
+                    KalamDbError::InvalidOperation(format!(
+                        "Column '{}' does not exist",
+                        column_name
+                    ))
                 })?;
 
             if col.is_primary_key && *nullable {
@@ -749,7 +752,11 @@ fn apply_alter_operation(
                 format!(
                     "ALTER COLUMN {} {}",
                     column_name,
-                    if *nullable { "DROP NOT NULL" } else { "SET NOT NULL" }
+                    if *nullable {
+                        "DROP NOT NULL"
+                    } else {
+                        "SET NOT NULL"
+                    }
                 ),
                 changed,
             ))
@@ -771,7 +778,10 @@ fn apply_alter_operation(
                 .iter_mut()
                 .find(|c| c.column_name == *column_name)
                 .ok_or_else(|| {
-                    KalamDbError::InvalidOperation(format!("Column '{}' does not exist", column_name))
+                    KalamDbError::InvalidOperation(format!(
+                        "Column '{}' does not exist",
+                        column_name
+                    ))
                 })?;
 
             let changed = col.default_value != *default_value;
@@ -795,7 +805,10 @@ fn apply_alter_operation(
                 .iter_mut()
                 .find(|c| c.column_name == *column_name)
                 .ok_or_else(|| {
-                    KalamDbError::InvalidOperation(format!("Column '{}' does not exist", column_name))
+                    KalamDbError::InvalidOperation(format!(
+                        "Column '{}' does not exist",
+                        column_name
+                    ))
                 })?;
 
             let changed = !col.default_value.is_none();
@@ -910,7 +923,11 @@ fn get_operation_summary(op: &ColumnOperation) -> String {
         } => format!(
             "ALTER COLUMN {} {}",
             column_name,
-            if *nullable { "DROP NOT NULL" } else { "SET NOT NULL" }
+            if *nullable {
+                "DROP NOT NULL"
+            } else {
+                "SET NOT NULL"
+            }
         ),
         ColumnOperation::SetDefault {
             column_name,
@@ -918,7 +935,7 @@ fn get_operation_summary(op: &ColumnOperation) -> String {
         } => format!("ALTER COLUMN {} SET DEFAULT {}", column_name, default_value.to_sql()),
         ColumnOperation::DropDefault { column_name } => {
             format!("ALTER COLUMN {} DROP DEFAULT", column_name)
-        }
+        },
         ColumnOperation::Rename {
             old_column_name,
             new_column_name,

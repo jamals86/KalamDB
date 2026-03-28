@@ -16,10 +16,7 @@ async fn wait_for_row_after_checkpoint(
     let mut resumed_seq = Some(checkpoint);
 
     for _ in 0..60 {
-        if expected_ids
-            .iter()
-            .all(|expected| seen_ids.iter().any(|seen| seen == expected))
-        {
+        if expected_ids.iter().all(|expected| seen_ids.iter().any(|seen| seen == expected)) {
             break;
         }
 
@@ -130,9 +127,7 @@ async fn test_proxy_blackhole_keeps_socket_open_until_client_times_out() {
         let resume_from = query_max_seq(&writer, &table).await;
 
         assert!(
-            proxy
-                .wait_for_active_connections(1, Duration::from_secs(2))
-                .await,
+            proxy.wait_for_active_connections(1, Duration::from_secs(2)).await,
             "proxy should have at least one active connection before blackhole"
         );
 
@@ -142,7 +137,10 @@ async fn test_proxy_blackhole_keeps_socket_open_until_client_times_out() {
 
         writer
             .execute_query(
-                &format!("INSERT INTO {} (id, value) VALUES ('gap-blackhole', 'during-outage')", table),
+                &format!(
+                    "INSERT INTO {} (id, value) VALUES ('gap-blackhole', 'during-outage')",
+                    table
+                ),
                 None,
                 None,
                 None,
@@ -173,7 +171,9 @@ async fn test_proxy_blackhole_keeps_socket_open_until_client_times_out() {
         proxy.restore_traffic();
 
         for _ in 0..80 {
-            if connect_count.load(Ordering::SeqCst) >= expected_connects && client.is_connected().await {
+            if connect_count.load(Ordering::SeqCst) >= expected_connects
+                && client.is_connected().await
+            {
                 break;
             }
             sleep(Duration::from_millis(100)).await;
@@ -183,7 +183,10 @@ async fn test_proxy_blackhole_keeps_socket_open_until_client_times_out() {
 
         writer
             .execute_query(
-                &format!("INSERT INTO {} (id, value) VALUES ('live-blackhole', 'after-reconnect')", table),
+                &format!(
+                    "INSERT INTO {} (id, value) VALUES ('live-blackhole', 'after-reconnect')",
+                    table
+                ),
                 None,
                 None,
                 None,
@@ -252,7 +255,10 @@ async fn test_proxy_latency_does_not_false_positive_disconnect() {
         proxy.set_latency(Duration::from_millis(300));
         sleep(Duration::from_secs(4)).await;
 
-        assert!(client.is_connected().await, "client should stay connected under moderate latency");
+        assert!(
+            client.is_connected().await,
+            "client should stay connected under moderate latency"
+        );
         assert_eq!(
             disconnect_count.load(Ordering::SeqCst),
             disconnects_before,
@@ -400,17 +406,25 @@ async fn test_proxy_packet_loss_style_stalls_resume_without_replay() {
         proxy.clear_chunk_stall_pattern();
 
         for _ in 0..120 {
-            if connect_count.load(Ordering::SeqCst) >= expected_connects && client.is_connected().await {
+            if connect_count.load(Ordering::SeqCst) >= expected_connects
+                && client.is_connected().await
+            {
                 break;
             }
             sleep(Duration::from_millis(100)).await;
         }
 
-        assert!(client.is_connected().await, "client should reconnect after stall pattern clears");
+        assert!(
+            client.is_connected().await,
+            "client should reconnect after stall pattern clears"
+        );
 
         writer
             .execute_query(
-                &format!("INSERT INTO {} (id, value) VALUES ('live-lossy', 'after-reconnect')", table),
+                &format!(
+                    "INSERT INTO {} (id, value) VALUES ('live-lossy', 'after-reconnect')",
+                    table
+                ),
                 None,
                 None,
                 None,

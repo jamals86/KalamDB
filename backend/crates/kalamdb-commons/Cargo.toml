@@ -17,13 +17,9 @@ once_cell = { workspace = true }
 hex = { workspace = true }
 sha2 = { workspace = true }
 thiserror = { workspace = true }
-toml = { workspace = true }
-anyhow = { workspace = true }
-num_cpus = { workspace = true }
 datafusion-common = { workspace = true, optional = true }
 parking_lot = { workspace = true }
 storekey = { workspace = true }
-kalamdb-macros = { path = "../kalamdb-macros" }
 # Optional dependencies - only enabled via features
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
@@ -32,7 +28,6 @@ flatbuffers = { workspace = true, optional = true }
 flexbuffers = { workspace = true, optional = true }
 chrono = { workspace = true, optional = true }
 arrow = { workspace = true, optional = true }
-openraft = { workspace = true, optional = true }
 uuid = { workspace = true, optional = true }
 nanoid = { workspace = true, optional = true }
 log = { workspace = true, optional = true }
@@ -85,7 +80,6 @@ full = [
 	"arrow-utils",
 	"table-definition",
 	"dep:chrono",
-	"dep:openraft",
 	"dep:uuid",
 	"dep:nanoid",
 	"dep:log",

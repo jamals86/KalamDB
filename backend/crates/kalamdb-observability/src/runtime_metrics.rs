@@ -91,19 +91,15 @@ pub fn collect_runtime_metrics(start_time: Instant) -> RuntimeMetrics {
 
     let mut guard = SHARED_SYSTEM.lock().unwrap_or_else(|e| e.into_inner());
     let sys = guard.get_or_insert_with(|| {
-        System::new_with_specifics(RefreshKind::nothing().with_memory(MemoryRefreshKind::everything()))
+        System::new_with_specifics(
+            RefreshKind::nothing().with_memory(MemoryRefreshKind::everything()),
+        )
     });
 
     // Only refresh what we need: current process memory/cpu + system memory
-    let process_refresh = ProcessRefreshKind::nothing()
-        .with_memory()
-        .with_cpu();
+    let process_refresh = ProcessRefreshKind::nothing().with_memory().with_cpu();
     if let Ok(pid) = sysinfo::get_current_pid() {
-        sys.refresh_processes_specifics(
-            ProcessesToUpdate::Some(&[pid]),
-            false,
-            process_refresh,
-        );
+        sys.refresh_processes_specifics(ProcessesToUpdate::Some(&[pid]), false, process_refresh);
     }
     sys.refresh_memory_specifics(MemoryRefreshKind::everything());
 

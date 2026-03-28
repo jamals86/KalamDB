@@ -2,11 +2,11 @@
 
 pub mod tcp_proxy;
 
-use std::collections::HashMap;
 use kalamdb_configs::ServerConfig;
 use kalamdb_server::lifecycle::RunningTestHttpServer;
 use reqwest::Client;
 use serde_json::json;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
@@ -231,12 +231,10 @@ fn root_access_token_blocking_for_base_url(
     if Handle::try_current().is_ok() {
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let result = Runtime::new()
-                .map_err(|e| e.to_string())
-                .and_then(|rt| {
-                    rt.block_on(root_access_token_for_base_url(&base_url, &password))
-                        .map_err(|e| e.to_string())
-                });
+            let result = Runtime::new().map_err(|e| e.to_string()).and_then(|rt| {
+                rt.block_on(root_access_token_for_base_url(&base_url, &password))
+                    .map_err(|e| e.to_string())
+            });
             let _ = tx.send(result);
         });
 

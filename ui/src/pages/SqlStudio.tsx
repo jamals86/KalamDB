@@ -89,12 +89,12 @@ import {
 import { ExplorerTableContextMenu } from "@/features/sql-studio/components/ExplorerTableContextMenu";
 import {
   buildSyncedSqlStudioWorkspaceState,
-  loadSyncedSqlStudioWorkspaceState,
   saveSyncedSqlStudioWorkspaceState,
+  subscribeToSyncedSqlStudioWorkspaceState,
   type SqlStudioSyncedWorkspaceState,
 } from "@/services/sqlStudioWorkspaceSyncService";
 
-const WORKSPACE_PERSIST_DEBOUNCE_MS = 250;
+const WORKSPACE_PERSIST_DEBOUNCE_MS = 750;
 
 function normalizeLiveRows(rows: unknown[]): Record<string, unknown>[] {
   return rows.map((row) => {
@@ -115,6 +115,19 @@ function extractWsMessageType(raw: string): string {
   } catch {
     return "raw";
   }
+}
+
+function extractMessage(value: unknown, fallback: string): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "object" && value !== null && "message" in value) {
+    const message = (value as { message?: unknown }).message;
+    if (typeof message === "string") {
+      return message;
+    }
+  }
+  return fallback;
 }
 
 function mapPersistedTabToQueryTab(tab: SqlStudioSyncedWorkspaceState["tabs"][number]): QueryTab {
@@ -221,6 +234,11 @@ export default function SqlStudio() {
 
   // Initialize with a single blank tab while waiting for remote workspace to load.
   useEffect(() => {
+    if (tabs.length > 0) {
+      setIsUiHydrated(true);
+      return;
+    }
+
     const blankTab = createQueryTab(1);
     dispatch(hydrateSqlStudioWorkspace({
       tabs: [blankTab],
@@ -228,8 +246,7 @@ export default function SqlStudio() {
       activeTabId: blankTab.id,
     }));
     setIsUiHydrated(true);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [dispatch, tabs.length]);
 
   useEffect(() => {
     if (!isUiHydrated || !user?.username) {
@@ -237,58 +254,53 @@ export default function SqlStudio() {
     }
 
     let cancelled = false;
+    let remoteUnsubscribe: Unsubscribe | null = null;
+    let didReceiveInitialSnapshot = false;
 
     void (async () => {
-      const remoteWorkspace = await loadSyncedSqlStudioWorkspaceState();
-      if (cancelled) {
-        return;
-      }
-
-      if (remoteWorkspace) {
-        lastSyncedWorkspaceSnapshotRef.current = serializeSyncedWorkspaceSnapshot(remoteWorkspace);
-        applySyncedWorkspace(remoteWorkspace);
-      }
-
-      setIsRemoteWorkspaceHydrated(true);
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [applySyncedWorkspace, isUiHydrated, user?.username]);
-
-  // Poll for workspace changes from other browser tabs every 30 seconds.
-  // Using live() caused WASM RefCell panics (the SDK borrow is not safely re-entrant
-  // when the WebSocket and query futures overlap during initial setup).  Polling is
-  // safe because loadSyncedSqlStudioWorkspaceState() goes through queueQuery.
-  useEffect(() => {
-    if (!isRemoteWorkspaceHydrated) {
-      return;
-    }
-
-    const intervalId = window.setInterval(() => {
-      void (async () => {
-        try {
-          const remoteWorkspace = await loadSyncedSqlStudioWorkspaceState();
-          if (!remoteWorkspace) {
+      try {
+        remoteUnsubscribe = await subscribeToSyncedSqlStudioWorkspaceState(user.username, (nextWorkspace) => {
+          if (cancelled) {
             return;
           }
 
-          const nextSnapshot = serializeSyncedWorkspaceSnapshot(remoteWorkspace);
+          if (!didReceiveInitialSnapshot) {
+            didReceiveInitialSnapshot = true;
+            setIsRemoteWorkspaceHydrated(true);
+          }
+
+          if (!nextWorkspace) {
+            return;
+          }
+
+          const nextSnapshot = serializeSyncedWorkspaceSnapshot(nextWorkspace);
           if (nextSnapshot === lastSyncedWorkspaceSnapshotRef.current) {
             return;
           }
 
           lastSyncedWorkspaceSnapshotRef.current = nextSnapshot;
-          applySyncedWorkspace(remoteWorkspace);
-        } catch {
-          // Polling errors are non-fatal; ignore and retry next tick.
-        }
-      })();
-    }, 30_000);
+          applySyncedWorkspace(nextWorkspace);
+        });
 
-    return () => window.clearInterval(intervalId);
-  }, [applySyncedWorkspace, isRemoteWorkspaceHydrated]);
+        if (cancelled && remoteUnsubscribe) {
+          void remoteUnsubscribe();
+          remoteUnsubscribe = null;
+        }
+      } catch (error) {
+        if (!cancelled) {
+          console.error("Failed to initialize synced SQL Studio workspace subscription", error);
+          setIsRemoteWorkspaceHydrated(true);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (remoteUnsubscribe) {
+        void remoteUnsubscribe();
+      }
+    };
+  }, [applySyncedWorkspace, isUiHydrated, user?.username]);
 
   useEffect(() => {
     if (!selectedTableKey && schema.length > 0 && schema[0].tables.length > 0) {
@@ -550,7 +562,7 @@ export default function SqlStudio() {
       dispatch(appendWorkspaceResultLog({
         tabId: tab.id,
         entry: createLogEntry(
-          `WebSocket disconnected: ${(reason as Record<string, unknown>)?.message ?? "unknown reason"}`,
+          `WebSocket disconnected: ${extractMessage(reason, "unknown reason")}`,
           "error",
           user?.username,
           reason,
@@ -565,7 +577,7 @@ export default function SqlStudio() {
       dispatch(appendWorkspaceResultLog({
         tabId: tab.id,
         entry: createLogEntry(
-          `Connection error: ${(error as Record<string, unknown>)?.message ?? "unknown error"}`,
+          `Connection error: ${extractMessage(error, "unknown error")}`,
           "error",
           user?.username,
           error,
@@ -965,7 +977,7 @@ export default function SqlStudio() {
     const timeoutId = window.setTimeout(() => {
       void (async () => {
         try {
-          await saveSyncedSqlStudioWorkspaceState(nextRemoteState);
+          await saveSyncedSqlStudioWorkspaceState(nextRemoteState, user?.username);
           lastSyncedWorkspaceSnapshotRef.current = nextSnapshot;
         } catch (error) {
           console.error("Failed to save synced SQL Studio workspace", error);
@@ -980,6 +992,7 @@ export default function SqlStudio() {
     isUiHydrated,
     savedQueries,
     tabs,
+    user?.username,
   ]);
 
   if (!activeTab) {
@@ -998,7 +1011,7 @@ export default function SqlStudio() {
             defaultSize={horizontalLayout[0]}
             minSize="12%"
             maxSize="36%"
-            className="min-h-0"
+            className="min-h-0 overflow-hidden"
             onResize={(size) => {
               const numericSize = Number(size);
               if (!Number.isFinite(numericSize)) {
@@ -1036,7 +1049,7 @@ export default function SqlStudio() {
 
           <ResizableHandle withHandle />
 
-          <ResizablePanel defaultSize={horizontalLayout[1]} minSize="40%" className="min-h-0">
+          <ResizablePanel defaultSize={horizontalLayout[1]} minSize="40%" className="min-h-0 overflow-hidden">
             <div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-background">
               <div className="absolute right-2 top-1.5 z-20">
                 <Button
@@ -1066,7 +1079,7 @@ export default function SqlStudio() {
                 <ResizablePanel
                   defaultSize={verticalLayout[0]}
                   minSize="20%"
-                  className="min-h-0"
+                  className="min-h-0 overflow-hidden"
                   onResize={(size) => {
                     const numericSize = Number(size);
                     if (!Number.isFinite(numericSize)) {
@@ -1103,7 +1116,7 @@ export default function SqlStudio() {
 
                 <ResizableHandle withHandle />
 
-                <ResizablePanel defaultSize={verticalLayout[1]} minSize="20%" className="min-h-0">
+                <ResizablePanel defaultSize={verticalLayout[1]} minSize="20%" className="min-h-0 overflow-hidden">
                   <StudioResultsGrid
                     result={activeResult}
                     isRunning={isRunning}
@@ -1122,7 +1135,7 @@ export default function SqlStudio() {
         </ResizablePanelGroup>
 
         {!isInspectorCollapsed && (
-          <div className="min-h-0 w-[320px] min-w-[240px] max-w-[420px] border-l border-border">
+          <div className="min-h-0 w-[320px] min-w-[240px] max-w-[420px] overflow-hidden border-l border-border">
             <StudioInspectorPanel selectedTable={selectedTable} history={history} />
           </div>
         )}

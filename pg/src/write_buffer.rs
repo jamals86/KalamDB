@@ -51,8 +51,7 @@ impl PendingBatch {
             TenantContext::new(None, self.user_id.clone()),
             rows,
         );
-        self.runtime
-            .block_on(async { self.executor.insert(request).await })?;
+        self.runtime.block_on(async { self.executor.insert(request).await })?;
         Ok(())
     }
 
@@ -142,5 +141,3 @@ pub fn discard_all() {
         map.clear();
     }
 }
-
-

@@ -59,8 +59,7 @@ pub fn load_pem(value: &str) -> Result<Vec<u8>, String> {
     if value.contains("-----BEGIN") {
         Ok(value.as_bytes().to_vec())
     } else {
-        std::fs::read(value)
-            .map_err(|e| format!("Failed reading PEM file '{}': {}", value, e))
+        std::fs::read(value).map_err(|e| format!("Failed reading PEM file '{}': {}", value, e))
     }
 }
 
@@ -84,25 +83,21 @@ impl RpcTlsConfig {
 
     /// Load the CA certificate bytes.
     pub fn load_ca_cert(&self) -> Result<Vec<u8>, String> {
-        let value = self.ca_cert.as_deref()
-            .ok_or("ca_cert is not configured")?;
+        let value = self.ca_cert.as_deref().ok_or("ca_cert is not configured")?;
         load_pem(value)
     }
 
     /// Load the server certificate bytes.
     pub fn load_server_cert(&self) -> Result<Vec<u8>, String> {
-        let value = self.server_cert.as_deref()
-            .ok_or("server_cert is not configured")?;
+        let value = self.server_cert.as_deref().ok_or("server_cert is not configured")?;
         load_pem(value)
     }
 
     /// Load the server private key bytes.
     pub fn load_server_key(&self) -> Result<Vec<u8>, String> {
-        let value = self.server_key.as_deref()
-            .ok_or("server_key is not configured")?;
+        let value = self.server_key.as_deref().ok_or("server_key is not configured")?;
         load_pem(value)
     }
-
 }
 
 #[cfg(test)]
@@ -174,8 +169,12 @@ mod tests {
         let config = RpcTlsConfig {
             enabled: true,
             ca_cert: Some("-----BEGIN CERTIFICATE-----\nCA\n-----END CERTIFICATE-----".to_string()),
-            server_cert: Some("-----BEGIN CERTIFICATE-----\nSRV\n-----END CERTIFICATE-----".to_string()),
-            server_key: Some("-----BEGIN PRIVATE KEY-----\nKEY\n-----END PRIVATE KEY-----".to_string()),
+            server_cert: Some(
+                "-----BEGIN CERTIFICATE-----\nSRV\n-----END CERTIFICATE-----".to_string(),
+            ),
+            server_key: Some(
+                "-----BEGIN PRIVATE KEY-----\nKEY\n-----END PRIVATE KEY-----".to_string(),
+            ),
             require_client_cert: true,
         };
         assert!(config.validate().is_ok());

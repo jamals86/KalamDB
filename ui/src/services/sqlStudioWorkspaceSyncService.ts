@@ -7,7 +7,8 @@ import { subscribeRows, executeSql, type Unsubscribe } from "@/lib/kalam-client"
 import { toPersistedTab } from "@/features/sql-studio/utils/workspaceHelpers";
 
 const SQL_STUDIO_WORKSPACE_TABLE = "dba.favorites";
-const SQL_STUDIO_WORKSPACE_ROW_ID = "sql-studio-workspace";
+const LEGACY_SQL_STUDIO_WORKSPACE_ROW_ID = "sql-studio-workspace";
+const SQL_STUDIO_WORKSPACE_STATE_KEY = "workspace";
 let ensureWorkspaceTablePromise: Promise<void> | null = null;
 
 export interface SqlStudioSyncedSavedQuery extends SqlStudioPersistedSavedQuery {
@@ -150,12 +151,27 @@ function normalizeWorkspacePayload(value: unknown): SqlStudioSyncedWorkspaceStat
   };
 }
 
-function buildWorkspaceSelectSql(): string {
-  return `SELECT id, payload FROM ${SQL_STUDIO_WORKSPACE_TABLE} WHERE id = '${SQL_STUDIO_WORKSPACE_ROW_ID}' LIMIT 1`;
-}
-
 function escapeSqlStringLiteral(value: string): string {
   return value.replace(/'/g, "''");
+}
+
+function buildWorkspaceRowId(username?: string | null): string {
+  const normalizedUsername = username?.trim();
+  if (!normalizedUsername) {
+    return LEGACY_SQL_STUDIO_WORKSPACE_ROW_ID;
+  }
+
+  return `sql-studio-state:${normalizedUsername}:${SQL_STUDIO_WORKSPACE_STATE_KEY}`;
+}
+
+function buildWorkspaceSelectSql(rowId: string): string {
+  const escapedRowId = escapeSqlStringLiteral(rowId);
+  return `SELECT id, payload FROM ${SQL_STUDIO_WORKSPACE_TABLE} WHERE id = '${escapedRowId}' LIMIT 1`;
+}
+
+function buildWorkspaceSubscriptionSql(rowId: string): string {
+  const escapedRowId = escapeSqlStringLiteral(rowId);
+  return `SELECT id, payload FROM ${SQL_STUDIO_WORKSPACE_TABLE} WHERE id = '${escapedRowId}'`;
 }
 
 async function ensureWorkspaceTable(): Promise<void> {
@@ -171,8 +187,8 @@ async function ensureWorkspaceTable(): Promise<void> {
   await ensureWorkspaceTablePromise;
 }
 
-async function workspaceRowExists(): Promise<boolean> {
-  const rows = await executeSql(buildWorkspaceSelectSql());
+async function workspaceRowExists(rowId: string): Promise<boolean> {
+  const rows = await executeSql(buildWorkspaceSelectSql(rowId));
   return rows.length > 0;
 }
 
@@ -244,11 +260,30 @@ export function buildSyncedSqlStudioWorkspaceState(
   };
 }
 
-export async function loadSyncedSqlStudioWorkspaceState(): Promise<SqlStudioSyncedWorkspaceState | null> {
+export async function loadSyncedSqlStudioWorkspaceState(
+  username?: string | null,
+): Promise<SqlStudioSyncedWorkspaceState | null> {
   try {
     await ensureWorkspaceTable();
-    const rows = await executeSql(buildWorkspaceSelectSql());
-    return parseWorkspaceRow(rows[0]);
+    const scopedRowId = buildWorkspaceRowId(username);
+    const scopedRows = await executeSql(buildWorkspaceSelectSql(scopedRowId));
+    const scopedWorkspace = parseWorkspaceRow(scopedRows[0]);
+    if (scopedWorkspace) {
+      return scopedWorkspace;
+    }
+
+    if (!username?.trim()) {
+      return null;
+    }
+
+    const legacyRows = await executeSql(buildWorkspaceSelectSql(LEGACY_SQL_STUDIO_WORKSPACE_ROW_ID));
+    const legacyWorkspace = parseWorkspaceRow(legacyRows[0]);
+    if (!legacyWorkspace) {
+      return null;
+    }
+
+    await saveSyncedSqlStudioWorkspaceState(legacyWorkspace, username);
+    return legacyWorkspace;
   } catch (error) {
     console.warn("Failed to load synced SQL Studio workspace", error);
     return null;
@@ -257,28 +292,33 @@ export async function loadSyncedSqlStudioWorkspaceState(): Promise<SqlStudioSync
 
 export async function saveSyncedSqlStudioWorkspaceState(
   state: SqlStudioSyncedWorkspaceState,
+  username?: string | null,
 ): Promise<void> {
   const payload = escapeSqlStringLiteral(JSON.stringify(state));
+  const rowId = buildWorkspaceRowId(username);
+  const escapedRowId = escapeSqlStringLiteral(rowId);
 
   await ensureWorkspaceTable();
 
-  if (await workspaceRowExists()) {
+  if (await workspaceRowExists(rowId)) {
     await executeSql(
-      `UPDATE ${SQL_STUDIO_WORKSPACE_TABLE} SET payload = '${payload}' WHERE id = '${SQL_STUDIO_WORKSPACE_ROW_ID}'`,
+      `UPDATE ${SQL_STUDIO_WORKSPACE_TABLE} SET payload = '${payload}' WHERE id = '${escapedRowId}'`,
     );
     return;
   }
 
   await executeSql(
-    `INSERT INTO ${SQL_STUDIO_WORKSPACE_TABLE} (id, payload) VALUES ('${SQL_STUDIO_WORKSPACE_ROW_ID}', '${payload}')`,
+    `INSERT INTO ${SQL_STUDIO_WORKSPACE_TABLE} (id, payload) VALUES ('${escapedRowId}', '${payload}')`,
   );
 }
 
 export async function subscribeToSyncedSqlStudioWorkspaceState(
+  username: string,
   onChange: (state: SqlStudioSyncedWorkspaceState | null) => void,
 ): Promise<Unsubscribe> {
+  const rowId = buildWorkspaceRowId(username);
   return subscribeRows<Record<string, unknown>>(
-    buildWorkspaceSelectSql(),
+    buildWorkspaceSubscriptionSql(rowId),
     (rows) => {
       onChange(parseWorkspaceRow(rows[0]));
     },

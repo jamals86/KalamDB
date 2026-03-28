@@ -7,9 +7,8 @@ use kalam_pg_api::{MutationResponse, ScanResponse};
 use kalam_pg_common::{KalamPgError, RemoteServerConfig};
 use kalamdb_pg::{
     BeginTransactionRequest, CloseSessionRequest, CommitTransactionRequest, DeleteRpcRequest,
-    ExecuteQueryRpcRequest, ExecuteSqlRpcRequest,
-    InsertRpcRequest, OpenSessionRequest, PgServiceClient, PingRequest,
-    RollbackTransactionRequest, ScanRpcRequest, UpdateRpcRequest,
+    ExecuteQueryRpcRequest, ExecuteSqlRpcRequest, InsertRpcRequest, OpenSessionRequest,
+    PgServiceClient, PingRequest, RollbackTransactionRequest, ScanRpcRequest, UpdateRpcRequest,
 };
 #[cfg(feature = "tls")]
 use tonic::transport::{Certificate, ClientTlsConfig, Identity};
@@ -42,9 +41,7 @@ pub struct RemoteKalamClient {
 }
 
 impl RemoteKalamClient {
-    pub async fn connect(
-        config: RemoteServerConfig,
-    ) -> Result<Self, KalamPgError> {
+    pub async fn connect(config: RemoteServerConfig) -> Result<Self, KalamPgError> {
         let server_addr = format!("{}:{}", config.host, config.port);
         let mut endpoint = Endpoint::from_shared(config.endpoint_uri())
             .map_err(|error| KalamPgError::Execution(error.to_string()))?;
@@ -66,7 +63,8 @@ impl RemoteKalamClient {
             #[cfg(not(feature = "tls"))]
             {
                 return Err(KalamPgError::Execution(
-                    "TLS requested but kalam-pg-client was compiled without the 'tls' feature".to_string(),
+                    "TLS requested but kalam-pg-client was compiled without the 'tls' feature"
+                        .to_string(),
                 ));
             }
         }
@@ -104,7 +102,8 @@ impl RemoteKalamClient {
                 "connection to KalamDB server at {server_addr} timed out – \
                  check the server is running and the port is correct"
             ))
-        } else if detail.contains("certificate") || detail.contains("tls") || detail.contains("TLS") {
+        } else if detail.contains("certificate") || detail.contains("tls") || detail.contains("TLS")
+        {
             KalamPgError::Execution(format!(
                 "TLS handshake with KalamDB server at {server_addr} failed: {detail}"
             ))
@@ -132,37 +131,34 @@ impl RemoteKalamClient {
                         "KalamDB server at {server_addr} is unavailable: {msg}"
                     ))
                 }
-            }
+            },
             Code::NotFound => {
                 let msg = status.message();
                 KalamPgError::Execution(format!("not found: {msg}"))
-            }
+            },
             Code::Unauthenticated => KalamPgError::Execution(
-                "authentication failed – check the auth_header in CREATE SERVER OPTIONS".to_string(),
+                "authentication failed – check the auth_header in CREATE SERVER OPTIONS"
+                    .to_string(),
             ),
-            Code::PermissionDenied => KalamPgError::Execution(format!(
-                "permission denied: {}",
-                status.message()
-            )),
+            Code::PermissionDenied => {
+                KalamPgError::Execution(format!("permission denied: {}", status.message()))
+            },
             Code::DeadlineExceeded => KalamPgError::Execution(format!(
                 "request to KalamDB server at {server_addr} timed out"
             )),
-            Code::AlreadyExists => KalamPgError::Execution(format!(
-                "already exists: {}",
-                status.message()
-            )),
-            Code::InvalidArgument => KalamPgError::Execution(format!(
-                "invalid argument: {}",
-                status.message()
-            )),
+            Code::AlreadyExists => {
+                KalamPgError::Execution(format!("already exists: {}", status.message()))
+            },
+            Code::InvalidArgument => {
+                KalamPgError::Execution(format!("invalid argument: {}", status.message()))
+            },
             Code::Unimplemented => KalamPgError::Execution(format!(
                 "operation not supported by KalamDB server at {server_addr}: {}",
                 status.message()
             )),
-            Code::Internal => KalamPgError::Execution(format!(
-                "internal KalamDB error: {}",
-                status.message()
-            )),
+            Code::Internal => {
+                KalamPgError::Execution(format!("internal KalamDB error: {}", status.message()))
+            },
             _ => KalamPgError::Execution(format!(
                 "KalamDB error ({}): {}",
                 status.code(),
@@ -179,8 +175,8 @@ impl RemoteKalamClient {
             .ca_cert
             .as_deref()
             .ok_or_else(|| KalamPgError::Execution("ca_cert is required for TLS".to_string()))?;
-        let ca_bytes = load_pem(ca_pem)
-            .map_err(|e| KalamPgError::Execution(format!("ca_cert: {e}")))?;
+        let ca_bytes =
+            load_pem(ca_pem).map_err(|e| KalamPgError::Execution(format!("ca_cert: {e}")))?;
         let mut tls = ClientTlsConfig::new().ca_certificate(Certificate::from_pem(ca_bytes));
 
         if let (Some(cert_str), Some(key_str)) =
@@ -199,10 +195,7 @@ impl RemoteKalamClient {
     pub async fn ping(&self) -> Result<(), KalamPgError> {
         let mut client = PgServiceClient::new(self.channel.clone());
         let request = self.authorized_request(PingRequest {});
-        client
-            .ping(request)
-            .await
-            .map_err(|e| Self::grpc_err(e, &self.server_addr))?;
+        client.ping(request).await.map_err(|e| Self::grpc_err(e, &self.server_addr))?;
         Ok(())
     }
 
@@ -232,10 +225,7 @@ impl RemoteKalamClient {
     }
 
     /// Close a session and free server-side resources.
-    pub async fn close_session(
-        &self,
-        session_id: &str,
-    ) -> Result<(), KalamPgError> {
+    pub async fn close_session(&self, session_id: &str) -> Result<(), KalamPgError> {
         let mut client = PgServiceClient::new(self.channel.clone());
         let request = self.authorized_request(CloseSessionRequest {
             session_id: session_id.trim().to_string(),
@@ -367,10 +357,7 @@ impl RemoteKalamClient {
     }
 
     /// Begin a new transaction within the given session.
-    pub async fn begin_transaction(
-        &self,
-        session_id: &str,
-    ) -> Result<String, KalamPgError> {
+    pub async fn begin_transaction(&self, session_id: &str) -> Result<String, KalamPgError> {
         let mut client = PgServiceClient::new(self.channel.clone());
         let request = self.authorized_request(BeginTransactionRequest {
             session_id: session_id.to_string(),
@@ -422,11 +409,7 @@ impl RemoteKalamClient {
     }
 
     /// Execute a DDL SQL statement on the KalamDB backend.
-    pub async fn execute_sql(
-        &self,
-        sql: &str,
-        session_id: &str,
-    ) -> Result<String, KalamPgError> {
+    pub async fn execute_sql(&self, sql: &str, session_id: &str) -> Result<String, KalamPgError> {
         let mut client = PgServiceClient::new(self.channel.clone());
         let request = self.authorized_request(ExecuteSqlRpcRequest {
             sql: sql.to_string(),
@@ -473,14 +456,13 @@ impl RemoteKalamClient {
     }
 
     /// Decode Arrow IPC bytes received from the gRPC response into RecordBatches.
-    fn decode_ipc_batches(
-        ipc_batches: &[bytes::Bytes],
-    ) -> Result<Vec<RecordBatch>, KalamPgError> {
+    fn decode_ipc_batches(ipc_batches: &[bytes::Bytes]) -> Result<Vec<RecordBatch>, KalamPgError> {
         let mut batches = Vec::with_capacity(ipc_batches.len());
         for ipc_bytes in ipc_batches {
             let cursor = Cursor::new(ipc_bytes.as_ref());
-            let reader = StreamReader::try_new(cursor, None)
-                .map_err(|e| KalamPgError::Execution(format!("failed to read IPC stream: {}", e)))?;
+            let reader = StreamReader::try_new(cursor, None).map_err(|e| {
+                KalamPgError::Execution(format!("failed to read IPC stream: {}", e))
+            })?;
             for batch_result in reader {
                 let batch = batch_result.map_err(|e| {
                     KalamPgError::Execution(format!("failed to decode IPC batch: {}", e))
@@ -503,7 +485,8 @@ impl RemoteKalamClient {
         let mut rows = Vec::new();
         for batch in batches {
             let schema = batch.schema();
-            let field_names: Vec<&str> = schema.fields().iter().map(|f| f.name().as_str()).collect();
+            let field_names: Vec<&str> =
+                schema.fields().iter().map(|f| f.name().as_str()).collect();
             for row_idx in 0..batch.num_rows() {
                 let mut obj = serde_json::Map::new();
                 for (col_idx, col) in batch.columns().iter().enumerate() {
@@ -515,64 +498,64 @@ impl RemoteKalamClient {
                             DataType::Utf8 => {
                                 let arr = col.as_any().downcast_ref::<StringArray>().unwrap();
                                 serde_json::Value::String(arr.value(row_idx).to_string())
-                            }
+                            },
                             DataType::LargeUtf8 => {
                                 let arr = col.as_any().downcast_ref::<LargeStringArray>().unwrap();
                                 serde_json::Value::String(arr.value(row_idx).to_string())
-                            }
+                            },
                             DataType::Int8 => {
                                 let arr = col.as_any().downcast_ref::<Int8Array>().unwrap();
                                 serde_json::Value::Number(arr.value(row_idx).into())
-                            }
+                            },
                             DataType::Int16 => {
                                 let arr = col.as_any().downcast_ref::<Int16Array>().unwrap();
                                 serde_json::Value::Number(arr.value(row_idx).into())
-                            }
+                            },
                             DataType::Int32 => {
                                 let arr = col.as_any().downcast_ref::<Int32Array>().unwrap();
                                 serde_json::Value::Number(arr.value(row_idx).into())
-                            }
+                            },
                             DataType::Int64 => {
                                 let arr = col.as_any().downcast_ref::<Int64Array>().unwrap();
                                 serde_json::Value::Number(arr.value(row_idx).into())
-                            }
+                            },
                             DataType::UInt8 => {
                                 let arr = col.as_any().downcast_ref::<UInt8Array>().unwrap();
                                 serde_json::Value::Number(arr.value(row_idx).into())
-                            }
+                            },
                             DataType::UInt16 => {
                                 let arr = col.as_any().downcast_ref::<UInt16Array>().unwrap();
                                 serde_json::Value::Number(arr.value(row_idx).into())
-                            }
+                            },
                             DataType::UInt32 => {
                                 let arr = col.as_any().downcast_ref::<UInt32Array>().unwrap();
                                 serde_json::Value::Number(arr.value(row_idx).into())
-                            }
+                            },
                             DataType::UInt64 => {
                                 let arr = col.as_any().downcast_ref::<UInt64Array>().unwrap();
                                 serde_json::Value::Number(arr.value(row_idx).into())
-                            }
+                            },
                             DataType::Float32 => {
                                 let arr = col.as_any().downcast_ref::<Float32Array>().unwrap();
                                 let v = arr.value(row_idx) as f64;
                                 serde_json::Number::from_f64(v)
                                     .map(serde_json::Value::Number)
                                     .unwrap_or(serde_json::Value::Null)
-                            }
+                            },
                             DataType::Float64 => {
                                 let arr = col.as_any().downcast_ref::<Float64Array>().unwrap();
                                 serde_json::Number::from_f64(arr.value(row_idx))
                                     .map(serde_json::Value::Number)
                                     .unwrap_or(serde_json::Value::Null)
-                            }
+                            },
                             DataType::Boolean => {
                                 let arr = col.as_any().downcast_ref::<BooleanArray>().unwrap();
                                 serde_json::Value::Bool(arr.value(row_idx))
-                            }
+                            },
                             _ => {
                                 // For all other types, produce a string representation.
                                 serde_json::Value::String(format!("{:?}", col.data_type()))
-                            }
+                            },
                         }
                     };
                     obj.insert(field_name, value);

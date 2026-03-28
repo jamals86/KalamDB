@@ -157,9 +157,7 @@ impl TcpDisconnectProxy {
 
     /// Add a fixed per-chunk forwarding delay in both directions.
     pub fn set_latency(&self, latency: Duration) {
-        self.impairments
-            .latency_ms
-            .store(latency.as_millis() as u64, Ordering::SeqCst);
+        self.impairments.latency_ms.store(latency.as_millis() as u64, Ordering::SeqCst);
     }
 
     /// Clear any fixed forwarding latency.
@@ -172,9 +170,7 @@ impl TcpDisconnectProxy {
     /// This approximates packet loss and retransmission delays without dropping
     /// raw TCP bytes, which would corrupt WebSocket frames.
     pub fn set_chunk_stall_pattern(&self, every_n_chunks: u64, stall_duration: Duration) {
-        self.impairments
-            .stall_every_n_chunks
-            .store(every_n_chunks, Ordering::SeqCst);
+        self.impairments.stall_every_n_chunks.store(every_n_chunks, Ordering::SeqCst);
         self.impairments
             .stall_duration_ms
             .store(stall_duration.as_millis() as u64, Ordering::SeqCst);

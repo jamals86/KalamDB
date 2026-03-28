@@ -344,7 +344,7 @@ export async function fetchSqlStudioSchemaTree(): Promise<StudioNamespace[]> {
       column_name,
       data_type,
       is_nullable,
-      ordinal_position
+      CAST(ordinal_position AS BIGINT) AS ordinal_position
     FROM information_schema.columns
     ORDER BY table_schema, table_name, ordinal_position
   `);

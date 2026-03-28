@@ -1,0 +1,178 @@
+use super::common::{
+    count_rows, create_user_foreign_table, postgres_error_text, set_user_id, unique_name,
+    wait_for_table_queryable, TestEnv,
+};
+
+#[tokio::test]
+#[ntest::timeout(7000)]
+async fn e2e_duplicate_primary_key_insert_fails() {
+    let env = TestEnv::global().await;
+    let pg = env.pg_connect().await;
+    let table = unique_name("profiles");
+    let qualified_table = format!("e2e.{table}");
+
+    create_user_foreign_table(
+        &pg,
+        &table,
+        "id TEXT, name TEXT, age INTEGER, _userid TEXT, _seq BIGINT, _deleted BOOLEAN",
+    )
+    .await;
+    set_user_id(&pg, "dup-user").await;
+
+    super::common::delete_all(&pg, &qualified_table, "id").await;
+
+    pg.execute(
+        &format!("INSERT INTO {qualified_table} (id, name, age) VALUES ($1, $2, $3)"),
+        &[&"dup-1", &"Alice", &30_i32],
+    )
+    .await
+    .expect("first insert should succeed");
+
+    let err = pg
+        .execute(
+            &format!("INSERT INTO {qualified_table} (id, name, age) VALUES ($1, $2, $3)"),
+            &[&"dup-1", &"Alice 2", &31_i32],
+        )
+        .await
+        .expect_err("duplicate primary key insert should fail");
+
+    let message = postgres_error_text(&err);
+    assert!(
+        message.contains("Primary key violation")
+            || message.contains("already exists")
+            || message.contains("appears multiple times")
+            || message.contains("db error"),
+        "unexpected duplicate key error: {message}"
+    );
+
+    let count = count_rows(&pg, &qualified_table, Some("id = 'dup-1'")).await;
+    assert_eq!(count, 1, "first insert should remain committed after duplicate failure");
+}
+
+#[tokio::test]
+#[ntest::timeout(7000)]
+async fn e2e_insert_without_backing_kalamdb_table_fails() {
+    let env = TestEnv::global().await;
+    let pg = env.pg_connect().await;
+    let table = unique_name("missing_profiles");
+
+    pg.batch_execute(&format!(
+        "CREATE SCHEMA IF NOT EXISTS app; \
+             DROP FOREIGN TABLE IF EXISTS app.{table}; \
+             CREATE FOREIGN TABLE app.{table} ( \
+                 id TEXT, \
+                 name TEXT, \
+                 age INTEGER, \
+                 _userid TEXT, \
+                 _seq BIGINT, \
+                 _deleted BOOLEAN \
+             ) SERVER kalam_server \
+             OPTIONS (namespace 'app', \"table\" '{table}', table_type 'user');"
+    ))
+    .await
+    .expect("create local-only foreign table");
+    env.kalamdb_sql(&format!("DROP USER TABLE IF EXISTS app.{table}")).await;
+
+    set_user_id(&pg, "user-1").await;
+
+    let err = pg
+        .execute(
+            &format!("INSERT INTO app.{table} (id, name, age) VALUES ($1, $2, $3)"),
+            &[&"p1", &"Alice", &30_i32],
+        )
+        .await
+        .expect_err("insert without backing KalamDB table should fail");
+
+    let message = postgres_error_text(&err);
+    assert!(
+        message.contains("table not found")
+            || message.contains("provider not found")
+            || message.contains("db error"),
+        "unexpected missing table error: {message}"
+    );
+}
+
+#[tokio::test]
+#[ntest::timeout(7000)]
+async fn e2e_user_table_scan_without_user_id_fails_clearly() {
+    let env = TestEnv::global().await;
+    let table = unique_name("profiles_missing_uid");
+    let writer = env.pg_connect().await;
+
+    create_user_foreign_table(
+        &writer,
+        &table,
+        "id TEXT, name TEXT, age INTEGER, _userid TEXT, _seq BIGINT, _deleted BOOLEAN",
+    )
+    .await;
+    set_user_id(&writer, "scan-user").await;
+    wait_for_table_queryable(&writer, &format!("e2e.{table}")).await;
+    writer
+        .execute(
+            &format!("INSERT INTO e2e.{table} (id, name, age) VALUES ($1, $2, $3)"),
+            &[&"scan-1", &"Alice", &30_i32],
+        )
+        .await
+        .expect("seed user table row");
+
+    let reader = env.pg_connect().await;
+
+    let err = reader
+        .query_one(&format!("SELECT id FROM e2e.{table} LIMIT 1"), &[])
+        .await
+        .expect_err("user table scan without session user should fail");
+
+    let message = postgres_error_text(&err);
+    assert!(
+        message.contains("user_id"),
+        "missing user_id error should mention user_id: {message}"
+    );
+}
+
+#[tokio::test]
+#[ntest::timeout(7000)]
+async fn e2e_offline_kalamdb_server_reports_connection_error() {
+    let env = TestEnv::global().await;
+    let pg = env.pg_connect().await;
+    let server_name = unique_name("offline_server");
+    let table_name = unique_name("offline_items");
+
+    pg.batch_execute("CREATE SCHEMA IF NOT EXISTS e2e;")
+        .await
+        .expect("create e2e schema");
+
+    pg.batch_execute(&format!(
+        "CREATE SERVER {server_name}
+            FOREIGN DATA WRAPPER pg_kalam
+            OPTIONS (host '127.0.0.1', port '1');"
+    ))
+    .await
+    .expect("create offline foreign server");
+
+    let err = pg
+        .batch_execute(&format!(
+            "CREATE FOREIGN TABLE e2e.{table_name} (
+                id TEXT,
+                title TEXT,
+                value INTEGER
+            ) SERVER {server_name}
+            OPTIONS (namespace 'e2e', \"table\" '{table_name}', table_type 'shared');"
+        ))
+        .await
+        .expect_err("offline server create should fail");
+
+    let message = postgres_error_text(&err);
+    assert!(
+        message.contains("KalamDB server")
+            || message.contains("could not connect")
+            || message.contains("unreachable"),
+        "offline server error should be user-facing: {message}"
+    );
+
+    pg.batch_execute(&format!("DROP FOREIGN TABLE IF EXISTS e2e.{table_name};"))
+        .await
+        .ok();
+    pg.batch_execute(&format!("DROP SERVER IF EXISTS {server_name} CASCADE;"))
+        .await
+        .ok();
+}

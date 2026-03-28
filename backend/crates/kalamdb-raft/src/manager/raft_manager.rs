@@ -630,12 +630,12 @@ impl RaftManager {
                 let ca_pem = rpc_tls.load_ca_cert().map_err(|e| {
                     RaftError::Config(format!("Failed loading cluster CA cert: {}", e))
                 })?;
-                let cert_pem = rpc_tls.load_server_cert().map_err(|e| {
-                    RaftError::Config(format!("Failed loading node cert: {}", e))
-                })?;
-                let key_pem = rpc_tls.load_server_key().map_err(|e| {
-                    RaftError::Config(format!("Failed loading node key: {}", e))
-                })?;
+                let cert_pem = rpc_tls
+                    .load_server_cert()
+                    .map_err(|e| RaftError::Config(format!("Failed loading node cert: {}", e)))?;
+                let key_pem = rpc_tls
+                    .load_server_key()
+                    .map_err(|e| RaftError::Config(format!("Failed loading node key: {}", e)))?;
 
                 let server_name = if let Some(name) = peer.rpc_server_name.as_ref() {
                     name.clone()

@@ -64,7 +64,6 @@ pub enum KalamLinkError {
 
     /// The operation was cancelled
     Cancelled,
-
 }
 
 impl fmt::Display for KalamLinkError {

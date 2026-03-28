@@ -3,7 +3,6 @@ import {
   ChevronDown,
   ChevronRight,
   Database,
-  FolderOpen,
   KeyRound,
   Radio,
   Search,
@@ -122,7 +121,7 @@ const StudioExplorerPanelComponent = ({
   return (
     <TooltipProvider delayDuration={250}>
       <div className="flex h-full min-h-0 flex-col overflow-hidden border-r border-border bg-muted/30 text-muted-foreground">
-        <div className="border-b border-border px-3 py-3">
+        <div className="shrink-0 border-b border-border px-3 py-3">
           <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Explorer</p>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -140,7 +139,7 @@ const StudioExplorerPanelComponent = ({
           </Tooltip>
         </div>
 
-        <ScrollArea className="min-h-0 flex-1 overflow-hidden">
+        <ScrollArea className="h-full min-h-0 flex-1 overflow-hidden">
           <div className="space-y-3 p-2">
             <div>
               <button
@@ -153,6 +152,7 @@ const StudioExplorerPanelComponent = ({
                 ) : (
                   <ChevronRight className="h-3 w-3" />
                 )}
+                <Star className="h-3 w-3 text-primary" />
                 Favorites
               </button>
               {favoritesExpanded && (
@@ -172,7 +172,6 @@ const StudioExplorerPanelComponent = ({
                             >
                               <Star className="h-3.5 w-3.5 text-primary" />
                               <span className="truncate">{savedQuery.title}</span>
-                              {savedQuery.isLive && <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />}
                             </button>
                           </TooltipTrigger>
                           <TooltipContent>
@@ -197,6 +196,7 @@ const StudioExplorerPanelComponent = ({
                 ) : (
                   <ChevronRight className="h-3 w-3" />
                 )}
+                <Database className="h-3 w-3" />
                 Namespaces
               </button>
               {namespaceSectionExpanded && (
@@ -251,6 +251,7 @@ const StudioExplorerPanelComponent = ({
                                 <button
                                   type="button"
                                   onClick={() => onToggleTable(tableKey)}
+                                  aria-label={tableOpen ? `Collapse ${table.name}` : `Expand ${table.name}`}
                                   className="mr-1 text-muted-foreground hover:text-muted-foreground"
                                 >
                                   {tableOpen ? (
@@ -271,7 +272,6 @@ const StudioExplorerPanelComponent = ({
                                     </TooltipTrigger>
                                     <TooltipContent>{tableMeta.tooltip}</TooltipContent>
                                   </Tooltip>
-                                  <FolderOpen className="h-3.5 w-3.5" />
                                   <span className="truncate text-sm">{table.name}</span>
                                 </button>
                               </div>
@@ -308,18 +308,6 @@ const StudioExplorerPanelComponent = ({
           </div>
         </ScrollArea>
 
-        <div className="border-t border-border bg-background px-3 py-2">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                <span>Connected</span>
-                <span className="ml-auto">14ms</span>
-              </div>
-            </TooltipTrigger>
-            <TooltipContent>Current SQL studio connection latency</TooltipContent>
-          </Tooltip>
-        </div>
       </div>
     </TooltipProvider>
   );

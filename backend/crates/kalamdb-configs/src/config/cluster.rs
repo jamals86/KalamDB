@@ -287,7 +287,11 @@ impl ClusterConfig {
     }
 }
 
-fn validate_advertised_address(field_name: &str, value: &str, has_peers: bool) -> Result<(), String> {
+fn validate_advertised_address(
+    field_name: &str,
+    value: &str,
+    has_peers: bool,
+) -> Result<(), String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
         return Err(format!("{} cannot be empty", field_name));
@@ -387,7 +391,9 @@ mod tests {
         let mut config = valid_config();
         config.rpc_addr = "0.0.0.0:9188".to_string();
 
-        let err = config.validate().expect_err("wildcard advertise address must be rejected when peers exist");
+        let err = config
+            .validate()
+            .expect_err("wildcard advertise address must be rejected when peers exist");
         assert!(err.contains("cluster.rpc_addr"));
     }
 

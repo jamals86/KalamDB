@@ -53,15 +53,12 @@ impl DmlExecutor {
             return Ok(provider);
         }
 
-        schema_registry
-            .get_table_if_exists_async(table_id)
-            .await
-            .map_err(|e| {
-                ApplierError::Execution(format!(
-                    "Failed to reload {} metadata for {}: {}",
-                    provider_label, table_id, e
-                ))
-            })?;
+        schema_registry.get_table_if_exists_async(table_id).await.map_err(|e| {
+            ApplierError::Execution(format!(
+                "Failed to reload {} metadata for {}: {}",
+                provider_label, table_id, e
+            ))
+        })?;
 
         schema_registry
             .get_provider(table_id)
@@ -524,10 +521,8 @@ impl DmlExecutor {
                     <UserTableProvider as BaseTableProvider<UserTableRowId, UserTableRow>>::update(
                         provider, user_id, &key, updates,
                     )
-                        .await
-                        .map_err(|e| {
-                        ApplierError::Execution(format!("Failed to update row: {}", e))
-                    })?;
+                    .await
+                    .map_err(|e| ApplierError::Execution(format!("Failed to update row: {}", e)))?;
                     Ok(1)
                 } else {
                     Ok(0)

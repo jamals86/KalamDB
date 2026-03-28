@@ -234,9 +234,8 @@ unsafe fn begin_foreign_modify_impl(rinfo: *mut pg_sys::ResultRelInfo) -> Result
         )
     })?;
 
-    let remote_state =
-        crate::remote_state::ensure_remote_extension_state(remote_config)
-            .map_err(|e| KalamPgError::Execution(e.to_string()))?;
+    let remote_state = crate::remote_state::ensure_remote_extension_state(remote_config)
+        .map_err(|e| KalamPgError::Execution(e.to_string()))?;
     let executor = remote_state.executor()?;
     let runtime = std::sync::Arc::clone(remote_state.runtime());
 
@@ -255,7 +254,9 @@ unsafe fn begin_foreign_modify_impl(rinfo: *mut pg_sys::ResultRelInfo) -> Result
     Ok(())
 }
 
-unsafe fn current_modify_table_id(rinfo: *mut pg_sys::ResultRelInfo) -> Option<kalamdb_commons::TableId> {
+unsafe fn current_modify_table_id(
+    rinfo: *mut pg_sys::ResultRelInfo,
+) -> Option<kalamdb_commons::TableId> {
     let state_ptr = (*rinfo).ri_FdwState;
     if state_ptr.is_null() {
         return None;
@@ -327,9 +328,7 @@ unsafe fn exec_foreign_batch_insert_impl(
         rows,
     );
 
-    state
-        .runtime
-        .block_on(async { state.executor.insert(request).await })?;
+    state.runtime.block_on(async { state.executor.insert(request).await })?;
     Ok(())
 }
 
@@ -355,9 +354,7 @@ unsafe fn exec_foreign_update_impl(
         updates,
     );
 
-    state
-        .runtime
-        .block_on(async { state.executor.update(request).await })?;
+    state.runtime.block_on(async { state.executor.update(request).await })?;
     Ok(())
 }
 
@@ -380,9 +377,7 @@ unsafe fn exec_foreign_delete_impl(
         pk_value,
     );
 
-    state
-        .runtime
-        .block_on(async { state.executor.delete(request).await })?;
+    state.runtime.block_on(async { state.executor.delete(request).await })?;
     Ok(())
 }
 

@@ -15,7 +15,6 @@ mimalloc = { version = "0.1", default-features = false, optional = true }
 # Core library
 kalamdb-core = { path = "crates/kalamdb-core" }
 kalamdb-api = { path = "crates/kalamdb-api", default-features = false }
-kalamdb-sql = { path = "crates/kalamdb-sql" }
 kalamdb-store = { path = "crates/kalamdb-store" }
 kalamdb-auth = { path = "crates/kalamdb-auth" }
 kalamdb-commons = { path = "crates/kalamdb-commons" }
@@ -24,14 +23,8 @@ kalamdb-system = { path = "crates/kalamdb-system" }
 kalamdb-dba = { path = "crates/kalamdb-dba" }
 
 
-# JWT authentication
-jsonwebtoken = { workspace = true }
-
 # Password hashing
 bcrypt = { workspace = true }
-
-# DataFusion for system schema registration
-datafusion = { workspace = true }
 
 # Async runtime
 tokio = { workspace = true }
@@ -43,13 +36,8 @@ actix-cors = { workspace = true }
 # Async futures utilities
 futures-util = { workspace = true }
 
-# Configuration
-toml = { workspace = true }
-
 # Logging
 log = { workspace = true }
-colored = { workspace = true }
-regex = { workspace = true }
 
 # Tracing / observability
 tracing = { workspace = true }
@@ -64,11 +52,7 @@ opentelemetry-otlp = { workspace = true, optional = true }
 # Time handling
 chrono = { workspace = true }
 
-# UUID generation
-uuid = { workspace = true }
-
 # Serialization
-serde = { workspace = true }
 serde_json = { workspace = true }
 
 # Error handling
@@ -146,11 +130,13 @@ reqwest = { workspace = true }
 actix-web = { workspace = true }
 tokio-tungstenite = { workspace = true }
 futures-util = { workspace = true }
+jsonwebtoken = { workspace = true }
 uuid = { workspace = true }
 base64 = { workspace = true }
 bcrypt = { workspace = true }
 datafusion = { workspace = true }
 libc = { workspace = true }
+serde = { workspace = true }
 arrow = { workspace = true }
 hex = { workspace = true }
 rand = { workspace = true }

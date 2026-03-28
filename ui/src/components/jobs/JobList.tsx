@@ -193,7 +193,7 @@ export function JobList({ initialFilters, compact = false, onJobClick }: JobList
             <span className="text-sm text-muted-foreground">
               {jobs.length} job{jobs.length !== 1 ? 's' : ''}
             </span>
-            <Button variant="outline" size="icon" onClick={() => refetch()} disabled={isLoading}>
+            <Button variant="outline" size="icon" onClick={() => refetch()} disabled={isLoading} aria-label="Refresh jobs">
               <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
             </Button>
           </div>
@@ -236,6 +236,7 @@ export function JobList({ initialFilters, compact = false, onJobClick }: JobList
               </div>
               <div className="flex items-end">
                 <Button onClick={handleApplyFilters} className="w-full">
+                  <Filter className="mr-2 h-4 w-4" />
                   Apply Filters
                 </Button>
               </div>
@@ -319,7 +320,7 @@ export function JobList({ initialFilters, compact = false, onJobClick }: JobList
                     </TableCell>
                   )}
                   <TableCell>
-                    <Button variant="ghost" size="sm">
+                    <Button variant="ghost" size="sm" aria-label={`View details for job ${job.job_id}`} title="View job details">
                       <Eye className="h-4 w-4" />
                     </Button>
                   </TableCell>

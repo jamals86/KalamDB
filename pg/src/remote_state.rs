@@ -58,22 +58,16 @@ pub fn ensure_remote_extension_state(
         return Ok(state);
     }
     let state = (|| -> Result<RemoteExtensionState, KalamPgError> {
-        let runtime = Arc::new(
-            tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .map_err(|e| KalamPgError::Execution(format!("failed to build tokio runtime: {}", e)))?,
-        );
+        let runtime =
+            Arc::new(tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(
+                |e| KalamPgError::Execution(format!("failed to build tokio runtime: {}", e)),
+            )?);
 
-        let client = runtime.block_on(async {
-            RemoteKalamClient::connect(config).await
-        })?;
+        let client = runtime.block_on(async { RemoteKalamClient::connect(config).await })?;
 
         // Generate a session id based on PG backend PID for session reuse.
         let session_id = format!("pg-{}", std::process::id());
-        runtime.block_on(async {
-            client.open_session(&session_id, None).await
-        })?;
+        runtime.block_on(async { client.open_session(&session_id, None).await })?;
 
         // Register a PostgreSQL process-exit callback to close the session
         // when this backend shuts down (disconnect, idle timeout, etc.).
@@ -100,26 +94,20 @@ unsafe extern "C-unwind" fn on_proc_exit_close_session(_code: i32, _arg: pg_sys:
     };
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        state.runtime.block_on(async {
-            state.client.close_session(&state.session_id).await
-        })
+        state
+            .runtime
+            .block_on(async { state.client.close_session(&state.session_id).await })
     }));
 
     match result {
         Ok(Ok(())) => {
             eprintln!("pg_kalam: session {} closed", state.session_id);
-        }
+        },
         Ok(Err(e)) => {
-            eprintln!(
-                "pg_kalam: failed to close session {}: {}",
-                state.session_id, e
-            );
-        }
+            eprintln!("pg_kalam: failed to close session {}: {}", state.session_id, e);
+        },
         Err(_panic) => {
-            eprintln!(
-                "pg_kalam: panic closing session {}",
-                state.session_id,
-            );
-        }
+            eprintln!("pg_kalam: panic closing session {}", state.session_id,);
+        },
     }
 }

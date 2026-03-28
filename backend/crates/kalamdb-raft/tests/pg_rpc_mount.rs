@@ -33,13 +33,11 @@ async fn shared_rpc_server_hosts_pg_service() {
 
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    let client = RemoteKalamClient::connect(
-        RemoteServerConfig {
-            host: "127.0.0.1".to_string(),
-            port: 19741,
-            ..Default::default()
-        },
-    )
+    let client = RemoteKalamClient::connect(RemoteServerConfig {
+        host: "127.0.0.1".to_string(),
+        port: 19741,
+        ..Default::default()
+    })
     .await
     .expect("connect remote client");
 

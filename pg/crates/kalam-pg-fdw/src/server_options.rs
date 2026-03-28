@@ -19,9 +19,7 @@ impl ServerOptions {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .ok_or_else(|| {
-                KalamPgError::Validation(
-                    "server option 'host' is required".to_string(),
-                )
+                KalamPgError::Validation("server option 'host' is required".to_string())
             })?
             .to_string();
 
@@ -31,9 +29,7 @@ impl ServerOptions {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .ok_or_else(|| {
-                KalamPgError::Validation(
-                    "server option 'port' is required".to_string(),
-                )
+                KalamPgError::Validation("server option 'port' is required".to_string())
             })?
             .parse::<u16>()
             .map_err(|err| {

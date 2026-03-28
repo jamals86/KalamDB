@@ -183,9 +183,7 @@ mod tests {
         let handler = CreateNamespaceHandler::new(app_ctx);
 
         let adapter = TypedHandlerAdapter::new(handler, |stmt| match stmt.kind() {
-            kalamdb_sql::classifier::SqlStatementKind::CreateNamespace(s) => {
-                Some(s.clone())
-            },
+            kalamdb_sql::classifier::SqlStatementKind::CreateNamespace(s) => Some(s.clone()),
             _ => None,
         });
         let ctx = ExecutionContext::new(
@@ -196,12 +194,10 @@ mod tests {
 
         let stmt = kalamdb_sql::classifier::SqlStatement::new(
             "CREATE NAMESPACE test_adapter_ns".to_string(),
-            kalamdb_sql::classifier::SqlStatementKind::CreateNamespace(
-                CreateNamespaceStatement {
-                    name: NamespaceId::new("test_adapter_ns"),
-                    if_not_exists: false,
-                },
-            ),
+            kalamdb_sql::classifier::SqlStatementKind::CreateNamespace(CreateNamespaceStatement {
+                name: NamespaceId::new("test_adapter_ns"),
+                if_not_exists: false,
+            }),
         );
 
         let result = adapter.execute(stmt, vec![], &ctx).await;
@@ -215,9 +211,7 @@ mod tests {
         let handler = CreateNamespaceHandler::new(app_ctx);
 
         let adapter = TypedHandlerAdapter::new(handler, |stmt| match stmt.kind() {
-            kalamdb_sql::classifier::SqlStatementKind::CreateNamespace(s) => {
-                Some(s.clone())
-            },
+            kalamdb_sql::classifier::SqlStatementKind::CreateNamespace(s) => Some(s.clone()),
             _ => None,
         });
         let ctx = ExecutionContext::new(

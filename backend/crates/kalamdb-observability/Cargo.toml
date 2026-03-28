@@ -9,20 +9,9 @@ repository.workspace = true
 build = "../../build.rs"
 
 [dependencies]
-# Internal crates (minimal dependencies)
-kalamdb-commons = { path = "../kalamdb-commons" }
-
 # System monitoring
 sysinfo = { workspace = true }
 num_cpus = { workspace = true }
-
-# Async
-async-trait = { workspace = true }
-tokio = { workspace = true, features = ["sync"] }
-
-# Error handling
-thiserror = { workspace = true }
-anyhow = { workspace = true }
 
 # Logging
 log = { workspace = true }

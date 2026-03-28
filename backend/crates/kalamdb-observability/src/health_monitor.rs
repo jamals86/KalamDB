@@ -91,7 +91,9 @@ impl HealthMonitor {
             MemoryRefreshKind, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System,
         };
 
-        let mut guard = SHARED_SYSTEM.lock().unwrap_or_else(|e: std::sync::PoisonError<_>| e.into_inner());
+        let mut guard = SHARED_SYSTEM
+            .lock()
+            .unwrap_or_else(|e: std::sync::PoisonError<_>| e.into_inner());
         let sys = guard.get_or_insert_with(|| {
             System::new_with_specifics(
                 RefreshKind::nothing().with_memory(MemoryRefreshKind::everything()),
@@ -107,14 +109,8 @@ impl HealthMonitor {
             },
         };
 
-        let process_refresh = ProcessRefreshKind::nothing()
-            .with_memory()
-            .with_cpu();
-        sys.refresh_processes_specifics(
-            ProcessesToUpdate::Some(&[pid]),
-            false,
-            process_refresh,
-        );
+        let process_refresh = ProcessRefreshKind::nothing().with_memory().with_cpu();
+        sys.refresh_processes_specifics(ProcessesToUpdate::Some(&[pid]), false, process_refresh);
         sys.refresh_memory_specifics(MemoryRefreshKind::everything());
 
         let process = sys.process(pid);

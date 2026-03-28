@@ -60,9 +60,7 @@ pub async fn record_stats_snapshot(app_context: Arc<AppContext>) -> Result<usize
     let node_id = app_context.node_id().to_string();
 
     let mut rows = Vec::new();
-    let metrics = app_context
-        .compute_metrics_async()
-        .await?;
+    let metrics = app_context.compute_metrics_async().await?;
     for (metric_name, metric_value_text) in metrics {
         let Some(metric_value) = parse_numeric_metric(&metric_value_text) else {
             continue;

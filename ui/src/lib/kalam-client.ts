@@ -19,6 +19,7 @@ import {
   type LiveRowsOptions,
   type LogEntry,
   type LogListener,
+  type OnConnectCallback,
   type OnDisconnectCallback,
   type OnErrorCallback,
   type OnReceiveCallback,
@@ -36,12 +37,21 @@ let subscriptionClient: KalamDBClient | null = null;
 let currentToken: string | null = null;
 let isInitialized = false;
 let isSubscriptionInitialized = false;
+let currentConnectListener: OnConnectCallback | undefined;
 let currentDisconnectListener: OnDisconnectCallback | undefined;
 let currentErrorListener: OnErrorCallback | undefined;
 let currentReceiveListener: OnReceiveCallback | undefined;
 let currentSendListener: OnSendCallback | undefined;
+const connectivityListeners = new Set<ClientConnectivityListener>();
 const isDebugLoggingEnabled = import.meta.env.DEV;
 const ADMIN_UI_PING_INTERVAL_MS = 5_000;
+
+export type ClientConnectivityEvent =
+  | { type: 'connect' }
+  | { type: 'disconnect'; reason: DisconnectReason }
+  | { type: 'error'; error: ConnectionError };
+
+export type ClientConnectivityListener = (event: ClientConnectivityEvent) => void;
 
 function debugLog(...args: unknown[]): void {
   if (isDebugLoggingEnabled) {
@@ -107,28 +117,51 @@ async function serializedSubscriptionCall<T>(fn: () => Promise<T>): Promise<T> {
   return result;
 }
 
-function createSdkClient(jwtToken: string): KalamDBClient {
+function createSdkClient(jwtToken: string, eagerWebSocket = false): KalamDBClient {
   return new KalamDBClient({
     url: getBackendUrl(),
     authProvider: async () => Auth.jwt(jwtToken),
     pingIntervalMs: ADMIN_UI_PING_INTERVAL_MS,
+    wsLazyConnect: !eagerWebSocket,
   });
+}
+
+function notifyConnectivityListeners(event: ClientConnectivityEvent): void {
+  for (const listener of connectivityListeners) {
+    try {
+      listener(event);
+    } catch (error) {
+      console.error('[kalam-client] Connectivity listener failed:', error);
+    }
+  }
+}
+
+function handleSubscriptionClientConnect(): void {
+  currentConnectListener?.();
+  notifyConnectivityListeners({ type: 'connect' });
+}
+
+function handleSubscriptionClientDisconnect(reason: DisconnectReason): void {
+  currentDisconnectListener?.(reason);
+  notifyConnectivityListeners({ type: 'disconnect', reason });
+}
+
+function handleSubscriptionClientError(error: ConnectionError): void {
+  currentErrorListener?.(error);
+  notifyConnectivityListeners({ type: 'error', error });
 }
 
 function applySubscriptionClientListeners(targetClient: KalamDBClient): void {
   targetClient.setLogListener(undefined);
+  targetClient.onConnect(handleSubscriptionClientConnect);
   if (currentReceiveListener) {
     targetClient.onReceive(currentReceiveListener);
   }
   if (currentSendListener) {
     targetClient.onSend(currentSendListener);
   }
-  if (currentDisconnectListener) {
-    targetClient.onDisconnect(currentDisconnectListener);
-  }
-  if (currentErrorListener) {
-    targetClient.onError(currentErrorListener);
-  }
+  targetClient.onDisconnect(handleSubscriptionClientDisconnect);
+  targetClient.onError(handleSubscriptionClientError);
 }
 
 async function disconnectSdkClient(targetClient: KalamDBClient | null): Promise<void> {
@@ -145,7 +178,7 @@ async function disconnectSdkClient(targetClient: KalamDBClient | null): Promise<
 
 async function initializeSubscriptionClient(jwtToken: string): Promise<KalamDBClient> {
   return queueLifecycle(async () => {
-    if (jwtToken === currentToken && subscriptionClient && isSubscriptionInitialized) {
+    if (jwtToken === currentToken && subscriptionClient && isSubscriptionInitialized && subscriptionClient.isConnected()) {
       debugLog('[kalam-client] Returning existing initialized subscription client');
       return subscriptionClient;
     }
@@ -156,7 +189,7 @@ async function initializeSubscriptionClient(jwtToken: string): Promise<KalamDBCl
       isSubscriptionInitialized = false;
     }
 
-    const nextClient = createSdkClient(jwtToken);
+    const nextClient = createSdkClient(jwtToken, true);
     debugLog('[kalam-client] Initializing subscription WASM client...');
     await nextClient.initialize();
     applySubscriptionClientListeners(nextClient);
@@ -387,11 +420,20 @@ export function isClientConnected(): boolean {
   );
 }
 
+export function isSubscriptionClientConnected(): boolean {
+  return Boolean(
+    subscriptionClient !== null
+    && isSubscriptionInitialized
+    && subscriptionClient.isConnected(),
+  );
+}
+
 /**
  * Connect WebSocket for real-time subscriptions
  */
 export async function connectWebSocket(): Promise<void> {
-  await ensureSubscriptionClient();
+  const token = requireToken();
+  await initializeSubscriptionClient(token);
 }
 
 /**
@@ -558,17 +600,31 @@ export function setClientSendListener(listener: OnSendCallback | undefined): voi
   }
 }
 
+export function setClientConnectListener(listener: OnConnectCallback | undefined): void {
+  currentConnectListener = listener;
+  if (subscriptionClient) {
+    subscriptionClient.onConnect(handleSubscriptionClientConnect);
+  }
+}
+
 export function setClientDisconnectListener(listener: OnDisconnectCallback | undefined): void {
   currentDisconnectListener = listener;
   if (subscriptionClient) {
-    subscriptionClient.onDisconnect(listener ?? (() => {}));
+    subscriptionClient.onDisconnect(handleSubscriptionClientDisconnect);
   }
 }
 
 export function setClientErrorListener(listener: OnErrorCallback | undefined): void {
   currentErrorListener = listener;
   if (subscriptionClient) {
-    subscriptionClient.onError(listener ?? (() => {}));
+    subscriptionClient.onError(handleSubscriptionClientError);
+  }
+}
+
+export function subscribeToClientConnectivity(listener: ClientConnectivityListener): () => void {
+  connectivityListeners.add(listener);
+  return () => {
+    connectivityListeners.delete(listener);
   }
 }
 
@@ -581,6 +637,7 @@ export type {
   DisconnectReason,
   LogEntry,
   LogListener,
+  OnConnectCallback,
   OnDisconnectCallback,
   OnErrorCallback,
   OnReceiveCallback,

@@ -20,7 +20,9 @@
 
 use crate::error::{FilestoreError, Result};
 use arrow::record_batch::RecordBatch;
-use datafusion::parquet::arrow::async_reader::{ParquetObjectReader, ParquetRecordBatchStreamBuilder};
+use datafusion::parquet::arrow::async_reader::{
+    ParquetObjectReader, ParquetRecordBatchStreamBuilder,
+};
 use datafusion::parquet::arrow::ProjectionMask;
 use futures_util::TryStreamExt;
 use object_store::path::Path as ObjectPath;
@@ -76,9 +78,7 @@ pub async fn parse_parquet_stream(
         projected_cols = columns.len(),
         "Opened ObjectStore Parquet stream"
     );
-    let stream = builder
-        .build()
-        .map_err(|e| FilestoreError::Parquet(e.to_string()))?;
+    let stream = builder.build().map_err(|e| FilestoreError::Parquet(e.to_string()))?;
     Ok(Box::pin(stream.map_err(|e| FilestoreError::Parquet(e.to_string()))))
 }
 

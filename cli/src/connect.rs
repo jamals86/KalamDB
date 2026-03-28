@@ -900,10 +900,7 @@ pub async fn create_session(
         },
         Err(e) => {
             // If the server is unreachable, return detailed diagnostics.
-            if matches!(
-                e,
-                KalamLinkError::NetworkError(_) | KalamLinkError::TimeoutError(_)
-            ) {
+            if matches!(e, KalamLinkError::NetworkError(_) | KalamLinkError::TimeoutError(_)) {
                 Err(CLIError::LinkError(KalamLinkError::NetworkError(
                     build_connectivity_diagnostics(&server_url, &e),
                 )))

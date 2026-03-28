@@ -25,10 +25,9 @@ mod tests {
 
     fn generate_cert_der(cn: &str) -> Vec<u8> {
         let mut params = rcgen::CertificateParams::new(Vec::new()).unwrap();
-        params.distinguished_name.push(
-            rcgen::DnType::CommonName,
-            rcgen::DnValue::Utf8String(cn.to_string()),
-        );
+        params
+            .distinguished_name
+            .push(rcgen::DnType::CommonName, rcgen::DnValue::Utf8String(cn.to_string()));
         let key_pair = rcgen::KeyPair::generate().unwrap();
         let cert = params.self_signed(&key_pair).unwrap();
         cert.der().to_vec()

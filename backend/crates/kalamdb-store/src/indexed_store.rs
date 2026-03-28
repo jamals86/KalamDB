@@ -776,14 +776,12 @@ where
             .get(index_idx)
             .ok_or_else(|| StorageError::Other(format!("Index {} not found", index_idx)))?
             .clone();
-        let mut iter = match self
-            .backend
-            .scan_reverse(&index_partition, Some(prefix), None, Some(1))
-        {
-            Ok(iter) => iter,
-            Err(StorageError::PartitionNotFound(_)) => return Ok(None),
-            Err(error) => return Err(error),
-        };
+        let mut iter =
+            match self.backend.scan_reverse(&index_partition, Some(prefix), None, Some(1)) {
+                Ok(iter) => iter,
+                Err(StorageError::PartitionNotFound(_)) => return Ok(None),
+                Err(error) => return Err(error),
+            };
 
         while let Some((_index_key, primary_key_bytes)) = iter.next() {
             let primary_key = K::from_storage_key(&primary_key_bytes)
@@ -1341,9 +1339,7 @@ mod tests {
         let store =
             IndexedEntityStore::new(backend.clone(), "test_jobs", vec![Arc::new(TestStatusIndex)]);
 
-        backend
-            .drop_partition(&Partition::new("test_jobs_status_idx"))
-            .unwrap();
+        backend.drop_partition(&Partition::new("test_jobs_status_idx")).unwrap();
 
         let result = store.get_latest_by_index_prefix(0, &[2]).unwrap();
         assert!(result.is_none());

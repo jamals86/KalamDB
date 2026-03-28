@@ -158,7 +158,7 @@ export function StorageList({ onSelectStorage }: StorageListProps) {
           <Plus className="h-4 w-4 mr-2" />
           Create Storage
         </Button>
-        <Button variant="outline" size="icon" onClick={() => void refetch()} disabled={isLoading}>
+        <Button variant="outline" size="icon" onClick={() => void refetch()} disabled={isLoading} aria-label="Refresh storages">
           <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
         </Button>
       </div>
@@ -286,6 +286,7 @@ export function StorageList({ onSelectStorage }: StorageListProps) {
                         size="icon"
                         onClick={(e) => handleHealthCheck(storage, e)}
                         title="Check storage health"
+                        aria-label={`Check health for ${storage.storage_name}`}
                         disabled={healthLoadingId === storage.storage_id}
                       >
                         {healthLoadingId === storage.storage_id ? (
@@ -299,6 +300,7 @@ export function StorageList({ onSelectStorage }: StorageListProps) {
                         size="icon"
                         onClick={(e) => handleEdit(storage, e)}
                         title="Edit storage"
+                        aria-label={`Edit ${storage.storage_name}`}
                       >
                         <Pencil className="h-4 w-4" />
                       </Button>

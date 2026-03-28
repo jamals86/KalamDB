@@ -156,7 +156,9 @@ pub fn decode_shared_table_row_metadata(bytes: &[u8], pk_name: &str) -> Result<R
     let envelope = decode_enveloped(bytes, ROW_SCHEMA_VERSION)?;
     let payload =
         flatbuffers::root::<fb_row::SharedTableRowPayload>(&envelope.payload).map_err(|e| {
-            StorageError::SerializationError(format!("shared table row metadata decode failed: {e}"))
+            StorageError::SerializationError(format!(
+                "shared table row metadata decode failed: {e}"
+            ))
         })?;
 
     let pk_value = extract_pk_from_payload(payload.fields(), pk_name);
@@ -169,7 +171,10 @@ pub fn decode_shared_table_row_metadata(bytes: &[u8], pk_name: &str) -> Result<R
 }
 
 /// Decode only metadata (seq, deleted, pk_value) from a user table row's serialized bytes.
-pub fn decode_user_table_row_metadata(bytes: &[u8], pk_name: &str) -> Result<(UserId, RowMetadata)> {
+pub fn decode_user_table_row_metadata(
+    bytes: &[u8],
+    pk_name: &str,
+) -> Result<(UserId, RowMetadata)> {
     let envelope = decode_enveloped(bytes, ROW_SCHEMA_VERSION)?;
     let payload =
         flatbuffers::root::<fb_row::UserTableRowPayload>(&envelope.payload).map_err(|e| {
@@ -184,11 +189,14 @@ pub fn decode_user_table_row_metadata(bytes: &[u8], pk_name: &str) -> Result<(Us
 
     let pk_value = extract_pk_from_payload(payload.fields(), pk_name);
 
-    Ok((UserId::from(user_id), RowMetadata {
-        seq: SeqId::new(payload.seq()),
-        deleted: payload.deleted(),
-        pk_value,
-    }))
+    Ok((
+        UserId::from(user_id),
+        RowMetadata {
+            seq: SeqId::new(payload.seq()),
+            deleted: payload.deleted(),
+            pk_value,
+        },
+    ))
 }
 
 /// Extract a single named field value from a FlatBuffers RowPayload without full deserialization.

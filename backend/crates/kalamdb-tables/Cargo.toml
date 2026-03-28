@@ -23,12 +23,7 @@ kalamdb-vector = { path = "../kalamdb-vector" }
 
 # Apache Arrow ecosystem
 arrow = { workspace = true }
-arrow-schema = { workspace = true }
 datafusion = { workspace = true }
-datafusion-common = { workspace = true }
-
-# Concurrent data structures
-dashmap = { workspace = true }
 
 # Async
 async-trait = { workspace = true }
@@ -39,13 +34,8 @@ futures-util = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
-# Encoding
-base64 = { workspace = true }
-hex = { workspace = true }
-
 # Error handling
 thiserror = { workspace = true }
-anyhow = { workspace = true }
 
 # Time handling
 chrono = { workspace = true }
@@ -54,9 +44,6 @@ chrono = { workspace = true }
 log = { workspace = true }
 tracing = { workspace = true }
 once_cell = { workspace = true }
-
-# UUID generation
-uuid = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

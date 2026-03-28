@@ -4,12 +4,8 @@
 //! [`SharedConnection`](crate::connection::SharedConnection).
 
 use crate::{
-    error::Result,
-    models::ChangeEvent,
-    seq_id::SeqId,
-    subscription::buffer_event,
-    subscription::event_progress,
-    timeouts::KalamLinkTimeouts,
+    error::Result, models::ChangeEvent, seq_id::SeqId, subscription::buffer_event,
+    subscription::event_progress, timeouts::KalamLinkTimeouts,
 };
 use std::collections::VecDeque;
 use tokio::sync::mpsc;

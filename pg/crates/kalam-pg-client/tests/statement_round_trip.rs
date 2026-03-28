@@ -38,11 +38,7 @@ impl OperationExecutor for MockExecutor {
             Arc::clone(&schema),
             vec![
                 Arc::new(Int64Array::from(vec![1, 2, 3])),
-                Arc::new(StringArray::from(vec![
-                    Some("alice"),
-                    Some("bob"),
-                    None,
-                ])),
+                Arc::new(StringArray::from(vec![Some("alice"), Some("bob"), None])),
             ],
         )
         .expect("build batch");
@@ -81,8 +77,7 @@ impl OperationExecutor for MockExecutor {
 /// Spin up a KalamPgService with the mock executor on the given port.
 async fn start_server(port: u16) {
     let bind_addr: SocketAddr = format!("127.0.0.1:{port}").parse().expect("bind addr");
-    let service = KalamPgService::new(false, None)
-        .with_operation_executor(Arc::new(MockExecutor));
+    let service = KalamPgService::new(false, None).with_operation_executor(Arc::new(MockExecutor));
 
     tokio::spawn(async move {
         tonic::transport::Server::builder()
@@ -96,13 +91,11 @@ async fn start_server(port: u16) {
 }
 
 async fn connect(port: u16) -> RemoteKalamClient {
-    RemoteKalamClient::connect(
-        RemoteServerConfig {
-            host: "127.0.0.1".to_string(),
-            port,
-            ..Default::default()
-        },
-    )
+    RemoteKalamClient::connect(RemoteServerConfig {
+        host: "127.0.0.1".to_string(),
+        port,
+        ..Default::default()
+    })
     .await
     .expect("connect client")
 }
@@ -117,10 +110,7 @@ async fn scan_returns_arrow_batches() {
     start_server(59981).await;
     let client = connect(59981).await;
 
-    client
-        .open_session("sess-scan", Some("app"))
-        .await
-        .expect("open session");
+    client.open_session("sess-scan", Some("app")).await.expect("open session");
 
     let response = client
         .scan("app", "messages", "shared", "sess-scan", None, vec![], None)
@@ -132,20 +122,12 @@ async fn scan_returns_arrow_batches() {
     assert_eq!(batch.num_rows(), 3);
     assert_eq!(batch.num_columns(), 2);
 
-    let id_col = batch
-        .column(0)
-        .as_any()
-        .downcast_ref::<Int64Array>()
-        .expect("id column");
+    let id_col = batch.column(0).as_any().downcast_ref::<Int64Array>().expect("id column");
     assert_eq!(id_col.value(0), 1);
     assert_eq!(id_col.value(1), 2);
     assert_eq!(id_col.value(2), 3);
 
-    let name_col = batch
-        .column(1)
-        .as_any()
-        .downcast_ref::<StringArray>()
-        .expect("name column");
+    let name_col = batch.column(1).as_any().downcast_ref::<StringArray>().expect("name column");
     assert_eq!(name_col.value(0), "alice");
     assert_eq!(name_col.value(1), "bob");
     assert!(name_col.is_null(2));
@@ -157,21 +139,10 @@ async fn scan_with_projection_and_limit() {
     start_server(59982).await;
     let client = connect(59982).await;
 
-    client
-        .open_session("sess-proj", Some("app"))
-        .await
-        .expect("open session");
+    client.open_session("sess-proj", Some("app")).await.expect("open session");
 
     let response = client
-        .scan(
-            "app",
-            "messages",
-            "shared",
-            "sess-proj",
-            None,
-            vec!["id".to_string()],
-            Some(1),
-        )
+        .scan("app", "messages", "shared", "sess-proj", None, vec!["id".to_string()], Some(1))
         .await
         .expect("scan with projection");
 
@@ -186,10 +157,7 @@ async fn insert_single_row() {
     start_server(59983).await;
     let client = connect(59983).await;
 
-    client
-        .open_session("sess-ins", Some("app"))
-        .await
-        .expect("open session");
+    client.open_session("sess-ins", Some("app")).await.expect("open session");
 
     let response = client
         .insert(
@@ -212,10 +180,7 @@ async fn insert_multiple_rows() {
     start_server(59984).await;
     let client = connect(59984).await;
 
-    client
-        .open_session("sess-ins-multi", Some("app"))
-        .await
-        .expect("open session");
+    client.open_session("sess-ins-multi", Some("app")).await.expect("open session");
 
     let response = client
         .insert(
@@ -242,10 +207,7 @@ async fn insert_with_user_id() {
     start_server(59985).await;
     let client = connect(59985).await;
 
-    client
-        .open_session("sess-ins-uid", Some("app"))
-        .await
-        .expect("open session");
+    client.open_session("sess-ins-uid", Some("app")).await.expect("open session");
 
     let response = client
         .insert(
@@ -268,10 +230,7 @@ async fn update_single_row() {
     start_server(59986).await;
     let client = connect(59986).await;
 
-    client
-        .open_session("sess-upd", Some("app"))
-        .await
-        .expect("open session");
+    client.open_session("sess-upd", Some("app")).await.expect("open session");
 
     let response = client
         .update(
@@ -295,10 +254,7 @@ async fn update_with_user_id() {
     start_server(59987).await;
     let client = connect(59987).await;
 
-    client
-        .open_session("sess-upd-uid", Some("app"))
-        .await
-        .expect("open session");
+    client.open_session("sess-upd-uid", Some("app")).await.expect("open session");
 
     let response = client
         .update(
@@ -322,10 +278,7 @@ async fn delete_single_row() {
     start_server(59988).await;
     let client = connect(59988).await;
 
-    client
-        .open_session("sess-del", Some("app"))
-        .await
-        .expect("open session");
+    client.open_session("sess-del", Some("app")).await.expect("open session");
 
     let response = client
         .delete("app", "messages", "shared", "sess-del", None, "1")
@@ -341,20 +294,10 @@ async fn delete_with_user_id() {
     start_server(59989).await;
     let client = connect(59989).await;
 
-    client
-        .open_session("sess-del-uid", Some("app"))
-        .await
-        .expect("open session");
+    client.open_session("sess-del-uid", Some("app")).await.expect("open session");
 
     let response = client
-        .delete(
-            "app",
-            "messages",
-            "user",
-            "sess-del-uid",
-            Some("user-42"),
-            "1",
-        )
+        .delete("app", "messages", "user", "sess-del-uid", Some("user-42"), "1")
         .await
         .expect("delete with user_id");
 
@@ -367,17 +310,11 @@ async fn transaction_lifecycle_with_dml() {
     start_server(59990).await;
     let client = connect(59990).await;
 
-    let session = client
-        .open_session("sess-tx", Some("app"))
-        .await
-        .expect("open session");
+    let session = client.open_session("sess-tx", Some("app")).await.expect("open session");
     assert_eq!(session.session_id, "sess-tx");
 
     // Begin transaction
-    let tx_id = client
-        .begin_transaction("sess-tx")
-        .await
-        .expect("begin tx");
+    let tx_id = client.begin_transaction("sess-tx").await.expect("begin tx");
     assert!(!tx_id.is_empty());
 
     // Insert within transaction
@@ -410,10 +347,7 @@ async fn transaction_lifecycle_with_dml() {
     assert_eq!(upd_resp.affected_rows, 1);
 
     // Commit transaction
-    client
-        .commit_transaction("sess-tx", &tx_id)
-        .await
-        .expect("commit tx");
+    client.commit_transaction("sess-tx", &tx_id).await.expect("commit tx");
 }
 
 #[tokio::test]
@@ -422,15 +356,9 @@ async fn transaction_rollback() {
     start_server(59991).await;
     let client = connect(59991).await;
 
-    client
-        .open_session("sess-rb", Some("app"))
-        .await
-        .expect("open session");
+    client.open_session("sess-rb", Some("app")).await.expect("open session");
 
-    let tx_id = client
-        .begin_transaction("sess-rb")
-        .await
-        .expect("begin tx");
+    let tx_id = client.begin_transaction("sess-rb").await.expect("begin tx");
 
     // Insert then rollback
     client
@@ -445,9 +373,5 @@ async fn transaction_rollback() {
         .await
         .expect("insert in tx");
 
-    client
-        .rollback_transaction("sess-rb", &tx_id)
-        .await
-        .expect("rollback tx");
+    client.rollback_transaction("sess-rb", &tx_id).await.expect("rollback tx");
 }
-

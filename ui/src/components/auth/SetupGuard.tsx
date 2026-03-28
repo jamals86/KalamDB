@@ -37,7 +37,7 @@ export default function SetupGuard({ children }: SetupGuardProps) {
   // Show loading while checking status
   if (isCheckingStatus) {
     return (
-      <div className="flex min-h-screen flex-col items-center justify-center bg-background">
+      <div className="flex h-full min-h-full flex-col items-center justify-center bg-background">
         <div className="flex items-center gap-3 mb-4">
           <Database className="h-10 w-10 text-primary" />
           <span className="text-2xl font-bold">KalamDB</span>

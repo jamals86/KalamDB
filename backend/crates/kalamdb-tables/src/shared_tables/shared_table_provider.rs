@@ -1574,10 +1574,8 @@ impl SharedTableProvider {
         // Hot storage: scan raw bytes and decode metadata only (skip full field deserialization)
         let hot_future = tokio::task::spawn_blocking(move || {
             let partition = store.partition();
-            let iter = store
-                .backend()
-                .scan(&partition, None, None, Some(1_000_000))
-                .map_err(|e| {
+            let iter =
+                store.backend().scan(&partition, None, None, Some(1_000_000)).map_err(|e| {
                     KalamDbError::InvalidOperation(format!(
                         "Failed to scan shared table hot storage for count: {}",
                         e
@@ -1586,15 +1584,10 @@ impl SharedTableProvider {
 
             let mut hot_metadata = Vec::new();
             for (key_bytes, value_bytes) in iter {
-                let key =
-                    kalamdb_commons::ids::SharedTableRowId::from_storage_key(&key_bytes).map_err(
-                        |e| {
-                            KalamDbError::InvalidOperation(format!(
-                                "Failed to decode row key: {}",
-                                e
-                            ))
-                        },
-                    )?;
+                let key = kalamdb_commons::ids::SharedTableRowId::from_storage_key(&key_bytes)
+                    .map_err(|e| {
+                        KalamDbError::InvalidOperation(format!("Failed to decode row key: {}", e))
+                    })?;
                 match decode_shared_table_row_metadata(&value_bytes, &pk_name_clone) {
                     Ok(metadata) => hot_metadata.push((key, metadata)),
                     Err(e) => {
@@ -1611,9 +1604,12 @@ impl SharedTableProvider {
 
         let (hot_result, cold_result): (_, _) = tokio::join!(hot_future, cold_future);
 
-        let hot_metadata: Vec<(kalamdb_commons::ids::SharedTableRowId, kalamdb_commons::serialization::row_codec::RowMetadata)> = hot_result
-            .map_err(|e| KalamDbError::InvalidOperation(format!("spawn_blocking join error: {}", e)))?
-            ?;
+        let hot_metadata: Vec<(
+            kalamdb_commons::ids::SharedTableRowId,
+            kalamdb_commons::serialization::row_codec::RowMetadata,
+        )> = hot_result.map_err(|e| {
+            KalamDbError::InvalidOperation(format!("spawn_blocking join error: {}", e))
+        })??;
 
         let parquet_batch = cold_result?;
         let count = crate::utils::version_resolution::count_resolved_from_metadata(
@@ -1818,7 +1814,8 @@ impl TableProvider for SharedTableProvider {
                 values.insert(column.clone(), value);
             }
 
-            let result = self.update_by_pk_value(base::system_user_id(), &pk_value, Row::new(values))
+            let result = self
+                .update_by_pk_value(base::system_user_id(), &pk_value, Row::new(values))
                 .await
                 .map_err(|e| DataFusionError::Execution(e.to_string()))?;
             if result.is_some() {

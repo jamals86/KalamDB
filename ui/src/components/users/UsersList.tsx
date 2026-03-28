@@ -83,7 +83,7 @@ export function UsersList() {
           />
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="icon" onClick={() => void refetch()} disabled={isLoading}>
+          <Button variant="outline" size="icon" onClick={() => void refetch()} disabled={isLoading} aria-label="Refresh users">
             <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
           </Button>
           <Button onClick={() => setIsCreateOpen(true)}>
@@ -142,6 +142,8 @@ export function UsersList() {
                           variant="ghost"
                           size="icon"
                           onClick={() => setEditingUser(user)}
+                          aria-label={`Edit ${user.username}`}
+                          title={`Edit ${user.username}`}
                         >
                           <Pencil className="h-4 w-4" />
                         </Button>
@@ -150,6 +152,8 @@ export function UsersList() {
                           size="icon"
                           onClick={() => setDeletingUser(user)}
                           disabled={currentUser?.username === user.username}
+                          aria-label={`Delete ${user.username}`}
+                          title={`Delete ${user.username}`}
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>

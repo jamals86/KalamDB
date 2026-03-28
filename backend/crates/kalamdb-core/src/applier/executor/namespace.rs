@@ -55,9 +55,7 @@ impl NamespaceExecutor {
                 .system_tables()
                 .namespaces()
                 .delete_namespace(&namespace_id)
-                .map_err(|e| {
-                    ApplierError::Execution(format!("Failed to drop namespace: {}", e))
-                })?;
+                .map_err(|e| ApplierError::Execution(format!("Failed to drop namespace: {}", e)))?;
             Ok(format!("Namespace {} dropped successfully", namespace_id))
         })
         .await

@@ -47,11 +47,7 @@ where
 /// working directory so config, credentials, and history still land in a
 /// writable `.kalam` directory.
 pub fn get_cli_home_dir() -> PathBuf {
-    resolve_cli_home_dir_with(
-        |key| env::var(key).ok(),
-        dirs::home_dir(),
-        env::current_dir().ok(),
-    )
+    resolve_cli_home_dir_with(|key| env::var(key).ok(), dirs::home_dir(), env::current_dir().ok())
 }
 
 /// Get the KalamDB CLI configuration directory path.

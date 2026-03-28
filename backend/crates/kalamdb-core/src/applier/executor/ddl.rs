@@ -51,11 +51,7 @@ impl DdlExecutor {
                 log::debug!("DdlExecutor: Cleared SQL plan cache after DDL");
             }
 
-            Ok(format!(
-                "{} table {} created successfully",
-                table_type,
-                table_id.full_name(),
-            ))
+            Ok(format!("{} table {} created successfully", table_type, table_id.full_name(),))
         })
         .await
         .map_err(|e| ApplierError::Execution(format!("Task join error: {}", e)))?

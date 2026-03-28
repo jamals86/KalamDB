@@ -86,15 +86,6 @@ export function QueryTabStrip({
               <FileCode2 className={cn("h-3.5 w-3.5 shrink-0", isActive ? "text-primary" : "text-muted-foreground")} />
               <span className="min-w-0 flex-1 truncate text-left">{tab.title}</span>
               <span className="ml-auto flex shrink-0 items-center gap-1.5">
-                {tab.liveStatus === "connected" && (
-                  <span className="relative flex h-2.5 w-2.5 shrink-0">
-                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-                    <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
-                  </span>
-                )}
-                {tab.isLive && tab.liveStatus !== "connected" && (
-                  <span className="h-2 w-2 shrink-0 rounded-full bg-sky-400/80" />
-                )}
                 {tab.unreadChangeCount > 0 && !isActive && (
                   <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-amber-500 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-amber-950">
                     {tab.unreadChangeCount}

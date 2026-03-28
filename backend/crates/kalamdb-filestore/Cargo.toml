@@ -18,9 +18,7 @@ kalamdb-configs = { path = "../kalamdb-configs" }
 
 # Apache Arrow ecosystem
 arrow = { workspace = true }
-arrow-schema = { workspace = true }
 datafusion = { workspace = true }
-datafusion-common = { workspace = true }
 
 # Serialization
 serde = { workspace = true }
@@ -28,7 +26,6 @@ serde_json = { workspace = true }
 
 # Error handling
 thiserror = { workspace = true }
-anyhow = { workspace = true }
 
 # Async runtime
 tokio = { workspace = true }
@@ -48,9 +45,6 @@ sysinfo = { workspace = true }
 
 # Random number generation (for health check test files)
 rand = { workspace = true }
-
-# UUID generation
-uuid = { workspace = true }
 
 # Object store (S3/GCS/Azure/local abstraction)
 object_store = { workspace = true }

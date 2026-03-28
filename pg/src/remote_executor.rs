@@ -21,10 +21,7 @@ impl RemoteBackendExecutor {
 impl KalamBackendExecutor for RemoteBackendExecutor {
     async fn scan(&self, request: ScanRequest) -> Result<ScanResponse, KalamPgError> {
         request.validate()?;
-        let user_id = request
-            .tenant_context
-            .effective_user_id()
-            .map(|u| u.as_str().to_string());
+        let user_id = request.tenant_context.effective_user_id().map(|u| u.as_str().to_string());
 
         let columns = request.projection.unwrap_or_default();
         let limit = request.limit.map(|l| l as u64);
@@ -44,10 +41,7 @@ impl KalamBackendExecutor for RemoteBackendExecutor {
 
     async fn insert(&self, request: InsertRequest) -> Result<MutationResponse, KalamPgError> {
         request.validate()?;
-        let user_id = request
-            .tenant_context
-            .effective_user_id()
-            .map(|u| u.as_str().to_string());
+        let user_id = request.tenant_context.effective_user_id().map(|u| u.as_str().to_string());
 
         let rows_json: Vec<String> = request
             .rows
@@ -69,10 +63,7 @@ impl KalamBackendExecutor for RemoteBackendExecutor {
 
     async fn update(&self, request: UpdateRequest) -> Result<MutationResponse, KalamPgError> {
         request.validate()?;
-        let user_id = request
-            .tenant_context
-            .effective_user_id()
-            .map(|u| u.as_str().to_string());
+        let user_id = request.tenant_context.effective_user_id().map(|u| u.as_str().to_string());
 
         let updates_json =
             serde_json::to_string(&request.updates).unwrap_or_else(|_| "{}".to_string());
@@ -92,10 +83,7 @@ impl KalamBackendExecutor for RemoteBackendExecutor {
 
     async fn delete(&self, request: DeleteRequest) -> Result<MutationResponse, KalamPgError> {
         request.validate()?;
-        let user_id = request
-            .tenant_context
-            .effective_user_id()
-            .map(|u| u.as_str().to_string());
+        let user_id = request.tenant_context.effective_user_id().map(|u| u.as_str().to_string());
 
         self.client
             .delete(

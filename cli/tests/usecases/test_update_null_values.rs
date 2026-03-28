@@ -256,11 +256,7 @@ fn test_update_no_changes() {
     let verify_sql = format!("SELECT id, value FROM {} WHERE id = 555", full_table_name);
     let output = execute_sql_as_root_via_cli(&verify_sql).unwrap();
     assert!(output.contains("555"), "Row should still exist: {}", output);
-    assert!(
-        output.contains("unchanged"),
-        "Value should be unchanged: {}",
-        output
-    );
+    assert!(output.contains("unchanged"), "Value should be unchanged: {}", output);
 
     // Now do an actual update and verify it still works
     let real_update_sql =

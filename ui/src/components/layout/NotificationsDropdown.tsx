@@ -21,7 +21,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Bell, Play, CheckCircle, Clock, ScrollText, RefreshCw, ExternalLink } from 'lucide-react';
+import { Bell, Briefcase, Play, CheckCircle, Clock, ScrollText, RefreshCw, ExternalLink } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const STATUS_COLORS: Record<string, string> = {
@@ -99,7 +99,7 @@ export function NotificationsDropdown() {
     <>
       <DropdownMenu open={isOpen} onOpenChange={setIsOpen}>
         <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="icon" className="relative">
+          <Button variant="ghost" size="icon" className="relative" aria-label="Open notifications">
             <Bell className="h-5 w-5" />
             {runningJobsCount > 0 && (
               <span className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center">
@@ -124,6 +124,8 @@ export function NotificationsDropdown() {
                 variant="ghost" 
                 size="icon" 
                 className="h-6 w-6" 
+                aria-label="Refresh notifications"
+                title="Refresh notifications"
                 onClick={(e) => {
                   e.preventDefault();
                   void refetch();
@@ -137,10 +139,12 @@ export function NotificationsDropdown() {
           
           <Tabs defaultValue="jobs" className="w-full">
             <TabsList className="w-full grid grid-cols-2 h-8">
-              <TabsTrigger value="jobs" className="text-xs">
+              <TabsTrigger value="jobs" className="gap-1.5 text-xs">
+                <Briefcase className="h-3.5 w-3.5" />
                 Jobs {runningJobsCount > 0 && `(${runningJobsCount} running)`}
               </TabsTrigger>
-              <TabsTrigger value="audit" className="text-xs">
+              <TabsTrigger value="audit" className="gap-1.5 text-xs">
+                <ScrollText className="h-3.5 w-3.5" />
                 Audit Logs
               </TabsTrigger>
             </TabsList>

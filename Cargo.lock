@@ -3908,10 +3908,8 @@ dependencies = [
  "bytes",
  "cc",
  "chrono",
- "dashmap 6.1.0",
  "flate2",
  "futures-util",
- "jsonwebtoken",
  "kalamdb-auth",
  "kalamdb-commons",
  "kalamdb-configs",
@@ -3922,7 +3920,6 @@ dependencies = [
  "kalamdb-sql",
  "kalamdb-store",
  "kalamdb-system",
- "kalamdb-tables",
  "log",
  "mime_guess",
  "moka",
@@ -3933,7 +3930,6 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
- "tracing-actix-web",
  "uuid",
 ]
 
@@ -3955,12 +3951,9 @@ dependencies = [
  "kalamdb-configs",
  "kalamdb-oidc",
  "kalamdb-session",
- "kalamdb-sql",
- "kalamdb-store",
  "kalamdb-system",
  "log",
  "once_cell",
- "serde",
  "serde_json",
  "sha2 0.11.0",
  "thiserror 2.0.18",
@@ -3972,7 +3965,6 @@ dependencies = [
 name = "kalamdb-commons"
 version = "0.4.2-dev"
 dependencies = [
- "anyhow",
  "arrow",
  "arrow-schema",
  "chrono",
@@ -3981,19 +3973,15 @@ dependencies = [
  "flatbuffers",
  "flexbuffers",
  "hex",
- "kalamdb-macros",
  "log",
  "nanoid",
- "num_cpus",
  "once_cell",
- "openraft",
  "parking_lot",
  "serde",
  "serde_json",
  "sha2 0.11.0",
  "storekey",
  "thiserror 2.0.18",
- "toml 1.1.0+spec-1.1.0",
  "tracing",
  "uuid",
 ]
@@ -4081,14 +4069,11 @@ dependencies = [
 name = "kalamdb-filestore"
 version = "0.4.2-dev"
 dependencies = [
- "anyhow",
  "arrow",
- "arrow-schema",
  "bytes",
  "chrono",
  "dashmap 6.1.0",
  "datafusion",
- "datafusion-common",
  "futures-util",
  "hex",
  "kalamdb-commons",
@@ -4109,7 +4094,6 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
- "uuid",
 ]
 
 [[package]]
@@ -4125,16 +4109,11 @@ dependencies = [
 name = "kalamdb-observability"
 version = "0.4.2-dev"
 dependencies = [
- "anyhow",
- "async-trait",
  "cc",
  "chrono",
- "kalamdb-commons",
  "log",
  "num_cpus",
  "sysinfo",
- "thiserror 2.0.18",
- "tokio",
 ]
 
 [[package]]
@@ -4184,7 +4163,6 @@ dependencies = [
  "kalamdb-system",
  "kalamdb-tables",
  "log",
- "serde",
  "serde_json",
  "tokio",
  "tracing",
@@ -4194,7 +4172,6 @@ dependencies = [
 name = "kalamdb-raft"
 version = "0.4.2-dev"
 dependencies = [
- "anyhow",
  "async-trait",
  "chrono",
  "dashmap 6.1.0",
@@ -4237,7 +4214,6 @@ dependencies = [
  "bcrypt",
  "cc",
  "chrono",
- "colored",
  "datafusion",
  "futures-util",
  "hex",
@@ -4265,7 +4241,6 @@ dependencies = [
  "opentelemetry-otlp",
  "opentelemetry_sdk",
  "rand 0.10.0",
- "regex",
  "reqwest 0.13.2",
  "serde",
  "serde_json",
@@ -4273,7 +4248,6 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-tungstenite",
- "toml 1.1.0+spec-1.1.0",
  "tracing",
  "tracing-actix-web",
  "tracing-log",
@@ -4286,7 +4260,6 @@ dependencies = [
 name = "kalamdb-server-auth"
 version = "0.4.2-dev"
 dependencies = [
- "kalamdb-configs",
  "log",
  "rcgen",
  "tonic",
@@ -4298,13 +4271,9 @@ name = "kalamdb-session"
 version = "0.4.2-dev"
 dependencies = [
  "arrow",
- "arrow-schema",
  "async-trait",
  "datafusion",
- "datafusion-common",
  "kalamdb-commons",
- "log",
- "thiserror 2.0.18",
  "tokio",
  "tracing",
 ]
@@ -4324,11 +4293,8 @@ version = "0.4.2-dev"
 dependencies = [
  "anyhow",
  "arrow",
- "chrono",
- "dashmap 6.1.0",
  "kalamdb-commons",
  "kalamdb-session",
- "kalamdb-store",
  "kalamdb-system",
  "log",
  "moka",
@@ -4338,7 +4304,6 @@ dependencies = [
  "serde_json",
  "sqlparser",
  "tempfile",
- "uuid",
 ]
 
 [[package]]
@@ -4349,7 +4314,6 @@ dependencies = [
  "async-trait",
  "chrono",
  "criterion",
- "dashmap 6.1.0",
  "datafusion",
  "kalamdb-commons",
  "kalamdb-configs",
@@ -4368,13 +4332,11 @@ dependencies = [
 name = "kalamdb-streams"
 version = "0.4.2-dev"
 dependencies = [
- "anyhow",
  "chrono",
  "datafusion",
  "flexbuffers",
  "kalamdb-commons",
  "kalamdb-sharding",
- "log",
  "serde",
  "thiserror 2.0.18",
 ]
@@ -4383,14 +4345,10 @@ dependencies = [
 name = "kalamdb-system"
 version = "0.4.2-dev"
 dependencies = [
- "anyhow",
  "arrow",
- "arrow-schema",
  "async-trait",
  "chrono",
- "dashmap 6.1.0",
  "datafusion",
- "datafusion-common",
  "flexbuffers",
  "kalamdb-commons",
  "kalamdb-macros",
@@ -4405,24 +4363,17 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
- "uuid",
 ]
 
 [[package]]
 name = "kalamdb-tables"
 version = "0.4.2-dev"
 dependencies = [
- "anyhow",
  "arrow",
- "arrow-schema",
  "async-trait",
- "base64",
  "chrono",
- "dashmap 6.1.0",
  "datafusion",
- "datafusion-common",
  "futures-util",
- "hex",
  "kalamdb-commons",
  "kalamdb-filestore",
  "kalamdb-session",
@@ -4439,14 +4390,12 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
- "uuid",
 ]
 
 [[package]]
 name = "kalamdb-vector"
 version = "0.4.2-dev"
 dependencies = [
- "arrow",
  "async-trait",
  "bytes",
  "chrono",

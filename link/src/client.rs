@@ -1096,22 +1096,22 @@ impl KalamLinkClientBuilder {
                                     "username": username,
                                     "password": password,
                                 });
-                                let resp = client
-                                    .post(&url)
-                                    .json(&body)
-                                    .send()
-                                    .await
-                                    .map_err(|e: reqwest::Error| KalamLinkError::NetworkError(e.to_string()))?;
+                                let resp = client.post(&url).json(&body).send().await.map_err(
+                                    |e: reqwest::Error| KalamLinkError::NetworkError(e.to_string()),
+                                )?;
                                 if !resp.status().is_success() {
                                     let msg = resp.text().await.unwrap_or_default();
                                     return Err(KalamLinkError::AuthenticationError(format!(
-                                        "Login failed during token refresh: {}", msg
+                                        "Login failed during token refresh: {}",
+                                        msg
                                     )));
                                 }
                                 let login_resp = resp
                                     .json::<crate::models::LoginResponse>()
                                     .await
-                                    .map_err(|e: reqwest::Error| KalamLinkError::NetworkError(e.to_string()))?;
+                                    .map_err(|e: reqwest::Error| {
+                                        KalamLinkError::NetworkError(e.to_string())
+                                    })?;
                                 log::debug!("[LINK_HTTP] Reauthenticated via basic login");
                                 Ok(AuthProvider::jwt_token(login_resp.access_token))
                             },

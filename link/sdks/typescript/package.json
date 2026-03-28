@@ -43,11 +43,11 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "ws": "^8.19.0"
+    "ws": "^8.20.0"
   },
   "devDependencies": {
-    "@types/node": "^25.4.0",
-    "typescript": "^5.9.3"
+    "@types/node": "^25.5.0",
+    "typescript": "^6.0.2"
   },
   "keywords": [
     "kalamdb",

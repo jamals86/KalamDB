@@ -72,44 +72,100 @@ unsafe extern "C-unwind" fn kalam_process_utility(
             if !is_internal {
                 handle_create_foreign_table(ft_stmt, &statement_sql);
             }
-        }
+        },
         pg_sys::NodeTag::T_AlterTableStmt => {
             let alter_stmt = utility_stmt as *mut pg_sys::AlterTableStmt;
             if (*alter_stmt).objtype == pg_sys::ObjectType::OBJECT_FOREIGN_TABLE {
                 let statement_sql = extract_statement_sql(pstmt, query_string);
                 let mirrored_clause = extract_alter_operation_clause(&statement_sql);
                 // Let PostgreSQL alter the foreign table first.
-                call_prev(pstmt, query_string, read_only_tree, context, params, query_env, dest, qc);
+                call_prev(
+                    pstmt,
+                    query_string,
+                    read_only_tree,
+                    context,
+                    params,
+                    query_env,
+                    dest,
+                    qc,
+                );
                 handle_alter_foreign_table(alter_stmt, mirrored_clause);
             } else {
-                call_prev(pstmt, query_string, read_only_tree, context, params, query_env, dest, qc);
+                call_prev(
+                    pstmt,
+                    query_string,
+                    read_only_tree,
+                    context,
+                    params,
+                    query_env,
+                    dest,
+                    qc,
+                );
             }
-        }
+        },
         pg_sys::NodeTag::T_DropStmt => {
             let drop_stmt = utility_stmt as *mut pg_sys::DropStmt;
             if (*drop_stmt).removeType == pg_sys::ObjectType::OBJECT_FOREIGN_TABLE {
                 // Read foreign table info BEFORE Postgres drops it.
                 let drop_targets = collect_drop_targets(drop_stmt);
-                call_prev(pstmt, query_string, read_only_tree, context, params, query_env, dest, qc);
+                call_prev(
+                    pstmt,
+                    query_string,
+                    read_only_tree,
+                    context,
+                    params,
+                    query_env,
+                    dest,
+                    qc,
+                );
                 handle_drop_foreign_tables(&drop_targets);
             } else {
-                call_prev(pstmt, query_string, read_only_tree, context, params, query_env, dest, qc);
+                call_prev(
+                    pstmt,
+                    query_string,
+                    read_only_tree,
+                    context,
+                    params,
+                    query_env,
+                    dest,
+                    qc,
+                );
             }
-        }
+        },
         pg_sys::NodeTag::T_CreateStmt => {
             // Intercept regular CREATE TABLE ... USING kalamdb
             let create_stmt = utility_stmt as *mut pg_sys::CreateStmt;
             let access_method = read_cstr((*create_stmt).accessMethod);
             if access_method.eq_ignore_ascii_case("kalamdb") {
                 let statement_sql = extract_statement_sql(pstmt, query_string);
-                handle_create_table_using_kalamdb(create_stmt, &statement_sql, pstmt, query_string, read_only_tree, context, params, query_env, dest, qc);
+                handle_create_table_using_kalamdb(
+                    create_stmt,
+                    &statement_sql,
+                    pstmt,
+                    query_string,
+                    read_only_tree,
+                    context,
+                    params,
+                    query_env,
+                    dest,
+                    qc,
+                );
             } else {
-                call_prev(pstmt, query_string, read_only_tree, context, params, query_env, dest, qc);
+                call_prev(
+                    pstmt,
+                    query_string,
+                    read_only_tree,
+                    context,
+                    params,
+                    query_env,
+                    dest,
+                    qc,
+                );
             }
-        }
+        },
         _ => {
             call_prev(pstmt, query_string, read_only_tree, context, params, query_env, dest, qc);
-        }
+        },
     }
 }
 
@@ -176,10 +232,10 @@ unsafe fn handle_create_foreign_table(
         Ok(_) => {
             pgrx::warning!("pg_kalam DDL: no user columns found in CREATE FOREIGN TABLE");
             return;
-        }
+        },
         Err(error) => {
             pgrx::error!("pg_kalam DDL: failed to parse CREATE FOREIGN TABLE: {}", error);
-        }
+        },
     };
 
     // Transform SERIAL/BIGSERIAL/IDENTITY → integer type + DEFAULT SNOWFLAKE_ID()
@@ -193,10 +249,7 @@ unsafe fn handle_create_foreign_table(
     }
 
     // Build SQL statements
-    let create_ns_sql = format!(
-        "CREATE NAMESPACE IF NOT EXISTS {}",
-        quote_ident(&namespace)
-    );
+    let create_ns_sql = format!("CREATE NAMESPACE IF NOT EXISTS {}", quote_ident(&namespace));
 
     // Collect any extra KalamDB-specific options from the FDW table options
     // (e.g. storage_id, flush_policy, access_level, etc.)
@@ -228,7 +281,12 @@ unsafe fn handle_create_foreign_table(
     }
 
     if let Err(e) = execute_remote_sql(&create_table_sql, &server_name) {
-        pgrx::error!("pg_kalam DDL: failed to create KalamDB table {}.{}: {}", namespace, table_name, e);
+        pgrx::error!(
+            "pg_kalam DDL: failed to create KalamDB table {}.{}: {}",
+            namespace,
+            table_name,
+            e
+        );
     }
 }
 
@@ -299,7 +357,7 @@ unsafe fn handle_alter_foreign_table(
         | pg_sys::AlterTableType::AT_DropColumn
         | pg_sys::AlterTableType::AT_SetNotNull
         | pg_sys::AlterTableType::AT_DropNotNull
-        | pg_sys::AlterTableType::AT_ColumnDefault => {}
+        | pg_sys::AlterTableType::AT_ColumnDefault => {},
         _ => return,
     }
 
@@ -311,7 +369,7 @@ unsafe fn handle_alter_foreign_table(
                 error
             );
             return;
-        }
+        },
     };
 
     let sql = format!(
@@ -366,7 +424,11 @@ unsafe fn collect_drop_targets(drop_stmt: *mut pg_sys::DropStmt) -> Vec<DropTarg
             continue;
         }
 
-        let flags = if (*drop_stmt).missing_ok { pg_sys::RVROption::RVR_MISSING_OK as u32 } else { 0 };
+        let flags = if (*drop_stmt).missing_ok {
+            pg_sys::RVROption::RVR_MISSING_OK as u32
+        } else {
+            0
+        };
         let relid = pg_sys::RangeVarGetRelidExtended(
             rv,
             pg_sys::AccessShareLock as i32,
@@ -424,8 +486,12 @@ unsafe fn handle_drop_foreign_tables(targets: &[DropTarget]) {
         );
 
         if let Err(e) = execute_remote_sql(&sql, &target.server_name) {
-            pgrx::warning!("pg_kalam DDL: failed to drop KalamDB table {}.{}: {}",
-                target.namespace, target.table_name, e);
+            pgrx::warning!(
+                "pg_kalam DDL: failed to drop KalamDB table {}.{}: {}",
+                target.namespace,
+                target.table_name,
+                e
+            );
         }
     }
 }
@@ -518,14 +584,9 @@ fn infer_primary_key_column(mut column_defs: Vec<String>, table_type: TableType)
     }
 
     let has_primary_key = column_defs.iter().any(|entry| {
-        entry
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .windows(2)
-            .any(|window| {
-                window[0].eq_ignore_ascii_case("PRIMARY")
-                    && window[1].eq_ignore_ascii_case("KEY")
-            })
+        entry.split_whitespace().collect::<Vec<_>>().windows(2).any(|window| {
+            window[0].eq_ignore_ascii_case("PRIMARY") && window[1].eq_ignore_ascii_case("KEY")
+        })
     });
     if has_primary_key {
         return column_defs;
@@ -576,20 +637,20 @@ fn find_column_list_bounds(sql: &str) -> Option<(usize, usize)> {
                 } else {
                     in_single_quote = !in_single_quote;
                 }
-            }
+            },
             '"' if !in_single_quote => {
                 if in_double_quote && bytes.get(idx + 1) == Some(&b'"') {
                     idx += 1;
                 } else {
                     in_double_quote = !in_double_quote;
                 }
-            }
+            },
             '(' if !in_single_quote && !in_double_quote => {
                 if start_idx.is_none() {
                     start_idx = Some(idx);
                 }
                 depth += 1;
-            }
+            },
             ')' if !in_single_quote && !in_double_quote => {
                 if depth == 0 {
                     return None;
@@ -598,8 +659,8 @@ fn find_column_list_bounds(sql: &str) -> Option<(usize, usize)> {
                 if depth == 0 {
                     return start_idx.map(|start| (start, idx));
                 }
-            }
-            _ => {}
+            },
+            _ => {},
         }
         idx += 1;
     }
@@ -625,14 +686,14 @@ fn split_top_level_sql_list(input: &str) -> Vec<String> {
                 } else {
                     in_single_quote = !in_single_quote;
                 }
-            }
+            },
             '"' if !in_single_quote => {
                 if in_double_quote && bytes.get(idx + 1) == Some(&b'"') {
                     idx += 1;
                 } else {
                     in_double_quote = !in_double_quote;
                 }
-            }
+            },
             '(' if !in_single_quote && !in_double_quote => depth += 1,
             ')' if !in_single_quote && !in_double_quote && depth > 0 => depth -= 1,
             ',' if !in_single_quote && !in_double_quote && depth == 0 => {
@@ -641,8 +702,8 @@ fn split_top_level_sql_list(input: &str) -> Vec<String> {
                     entries.push(entry.to_string());
                 }
                 start = idx + 1;
-            }
-            _ => {}
+            },
+            _ => {},
         }
         idx += 1;
     }
@@ -704,17 +765,11 @@ fn consume_sql_keyword(sql: &str, index: &mut usize, keyword: &str) -> Result<()
     skip_sql_whitespace(sql, index);
     let remaining = &sql[*index..];
     if remaining.len() < keyword.len() {
-        return Err(KalamPgError::Validation(format!(
-            "expected '{}' in SQL clause",
-            keyword
-        )));
+        return Err(KalamPgError::Validation(format!("expected '{}' in SQL clause", keyword)));
     }
     let candidate = &remaining[..keyword.len()];
     if !candidate.eq_ignore_ascii_case(keyword) {
-        return Err(KalamPgError::Validation(format!(
-            "expected '{}' in SQL clause",
-            keyword
-        )));
+        return Err(KalamPgError::Validation(format!("expected '{}' in SQL clause", keyword)));
     }
     *index += keyword.len();
     Ok(())
@@ -748,9 +803,7 @@ fn consume_identifier_part(sql: &str, index: &mut usize) -> Result<(), KalamPgEr
     skip_sql_whitespace(sql, index);
     let remaining = &sql[*index..];
     if remaining.is_empty() {
-        return Err(KalamPgError::Validation(
-            "expected identifier in SQL clause".to_string(),
-        ));
+        return Err(KalamPgError::Validation("expected identifier in SQL clause".to_string()));
     }
 
     if let Some(rest) = remaining.strip_prefix('"') {
@@ -766,9 +819,7 @@ fn consume_identifier_part(sql: &str, index: &mut usize) -> Result<(), KalamPgEr
         .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
         .count();
     if ident_len == 0 {
-        return Err(KalamPgError::Validation(
-            "expected identifier in SQL clause".to_string(),
-        ));
+        return Err(KalamPgError::Validation("expected identifier in SQL clause".to_string()));
     }
     *index += ident_len;
     Ok(())
@@ -955,7 +1006,8 @@ mod tests {
 
     #[test]
     fn extract_with_options_from_sql_works() {
-        let sql = "CREATE TABLE t (id INT) USING kalamdb WITH (type = 'user', storage_id = 'local');";
+        let sql =
+            "CREATE TABLE t (id INT) USING kalamdb WITH (type = 'user', storage_id = 'local');";
         let opts = super::extract_with_options_from_sql(sql);
         assert_eq!(opts.len(), 2);
         assert_eq!(opts.get("type").unwrap(), "user");
@@ -1066,10 +1118,10 @@ unsafe fn handle_create_table_using_kalamdb(
         Ok(defs) if !defs.is_empty() => defs,
         Ok(_) => {
             pgrx::error!("pg_kalam: no columns found in CREATE TABLE USING kalamdb");
-        }
+        },
         Err(e) => {
             pgrx::error!("pg_kalam: failed to parse CREATE TABLE: {}", e);
-        }
+        },
     };
 
     // 3. Column defs are passed through to KalamDB as-is.
@@ -1102,10 +1154,7 @@ unsafe fn handle_create_table_using_kalamdb(
         format!(" WITH ({})", pairs.join(", "))
     };
 
-    let create_ns_sql = format!(
-        "CREATE NAMESPACE IF NOT EXISTS {}",
-        quote_ident(&namespace)
-    );
+    let create_ns_sql = format!("CREATE NAMESPACE IF NOT EXISTS {}", quote_ident(&namespace));
     let create_kalamdb_table_sql = format!(
         "CREATE {} TABLE IF NOT EXISTS {}.{} ({}){}",
         table_type_keyword,
@@ -1122,15 +1171,14 @@ unsafe fn handle_create_table_using_kalamdb(
     if let Err(e) = execute_remote_sql(&create_kalamdb_table_sql, DEFAULT_KALAM_SERVER) {
         pgrx::error!(
             "pg_kalam: failed to create KalamDB table {}.{}: {}",
-            namespace, table_name, e
+            namespace,
+            table_name,
+            e
         );
     }
 
     // 9. Create PG schema + foreign table via SPI (with propagation suppressed)
-    let create_schema_sql = format!(
-        "CREATE SCHEMA IF NOT EXISTS {}",
-        quote_ident(&namespace)
-    );
+    let create_schema_sql = format!("CREATE SCHEMA IF NOT EXISTS {}", quote_ident(&namespace));
 
     let ft_options = format!("table_type '{}'", table_type_keyword.to_lowercase());
     let create_ft_sql = format!(
@@ -1154,7 +1202,9 @@ unsafe fn handle_create_table_using_kalamdb(
     if let Err(e) = spi_result {
         pgrx::error!(
             "pg_kalam: failed to create foreign table {}.{}: {}",
-            namespace, table_name, e
+            namespace,
+            table_name,
+            e
         );
     }
 }
@@ -1170,12 +1220,10 @@ unsafe fn handle_create_table_using_kalamdb(
 /// understand PostgreSQL's implicit sequence creation for serial types.
 fn transform_serial_types(column_defs: Vec<String>) -> Vec<String> {
     // Regex patterns for serial types (case-insensitive)
-    let serial_re = regex::Regex::new(
-        r"(?i)\b(BIG|SMALL)?SERIAL\d?\b"
-    ).unwrap();
-    let generated_identity_re = regex::Regex::new(
-        r"(?i)GENERATED\s+(ALWAYS|BY\s+DEFAULT)\s+AS\s+IDENTITY(\s*\([^)]*\))?"
-    ).unwrap();
+    let serial_re = regex::Regex::new(r"(?i)\b(BIG|SMALL)?SERIAL\d?\b").unwrap();
+    let generated_identity_re =
+        regex::Regex::new(r"(?i)GENERATED\s+(ALWAYS|BY\s+DEFAULT)\s+AS\s+IDENTITY(\s*\([^)]*\))?")
+            .unwrap();
 
     column_defs
         .into_iter()
@@ -1210,9 +1258,8 @@ fn transform_serial_types(column_defs: Vec<String>) -> Vec<String> {
 
             // 2. Replace GENERATED {ALWAYS|BY DEFAULT} AS IDENTITY with DEFAULT SNOWFLAKE_ID()
             if generated_identity_re.is_match(&result) {
-                result = generated_identity_re
-                    .replace(&result, "DEFAULT SNOWFLAKE_ID()")
-                    .into_owned();
+                result =
+                    generated_identity_re.replace(&result, "DEFAULT SNOWFLAKE_ID()").into_owned();
             }
 
             result
@@ -1239,8 +1286,7 @@ fn find_keyword_position(sql: &str, keyword: &str) -> Option<usize> {
 /// - Other DEFAULT expressions (NOW(), literals, etc.)
 fn strip_for_foreign_table(column_defs: &[String]) -> Vec<String> {
     let pk_re = regex::Regex::new(r"(?i)\bPRIMARY\s+KEY\b").unwrap();
-    let table_pk_re =
-        regex::Regex::new(r"(?i)^\s*PRIMARY\s+KEY\s*\(").unwrap();
+    let table_pk_re = regex::Regex::new(r"(?i)^\s*PRIMARY\s+KEY\s*\(").unwrap();
 
     column_defs
         .iter()
@@ -1297,8 +1343,8 @@ fn extract_with_options_from_sql(sql: &str) -> std::collections::HashMap<String,
                     end = i;
                     break;
                 }
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
 
@@ -1309,11 +1355,7 @@ fn extract_with_options_from_sql(sql: &str) -> std::collections::HashMap<String,
         let pair = pair.trim();
         if let Some(eq_pos) = pair.find('=') {
             let key = pair[..eq_pos].trim().to_lowercase();
-            let value = pair[eq_pos + 1..]
-                .trim()
-                .trim_matches('\'')
-                .trim_matches('"')
-                .to_string();
+            let value = pair[eq_pos + 1..].trim().trim_matches('\'').trim_matches('"').to_string();
             if !key.is_empty() {
                 options.insert(key, value);
             }
@@ -1349,10 +1391,10 @@ fn execute_remote_sql(sql: &str, server_name: &str) -> Result<String, KalamPgErr
             })?;
             crate::remote_state::ensure_remote_extension_state(remote_config)
                 .map_err(|e| KalamPgError::Execution(e.to_string()))?
-        }
+        },
     };
 
-    state.runtime().block_on(async {
-        state.client().execute_sql(sql, state.session_id()).await
-    })
+    state
+        .runtime()
+        .block_on(async { state.client().execute_sql(sql, state.session_id()).await })
 }

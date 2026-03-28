@@ -398,7 +398,6 @@ impl TimestampFormatter {
             format!("{} {} ago", value, unit)
         }
     }
-
 }
 
 impl Default for TimestampFormatter {

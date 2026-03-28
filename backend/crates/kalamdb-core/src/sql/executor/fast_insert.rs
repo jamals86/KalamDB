@@ -223,5 +223,3 @@ fn values_to_rows(
 
     Ok(rows)
 }
-
-

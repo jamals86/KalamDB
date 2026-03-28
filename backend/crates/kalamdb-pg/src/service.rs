@@ -10,9 +10,7 @@ use tonic::{Response, Status};
 use tonic_prost::ProstCodec;
 
 #[cfg(feature = "server")]
-use crate::operation_executor::{
-    self, OperationExecutor,
-};
+use crate::operation_executor::{self, OperationExecutor};
 #[cfg(feature = "server")]
 use crate::{RemotePgSession, SessionRegistry};
 
@@ -314,7 +312,9 @@ pub mod pg_service_client {
             let codec = ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static("/kalamdb.pg.PgService/CloseSession");
             let mut request = request.into_request();
-            request.extensions_mut().insert(GrpcMethod::new(PG_SERVICE_NAME, "CloseSession"));
+            request
+                .extensions_mut()
+                .insert(GrpcMethod::new(PG_SERVICE_NAME, "CloseSession"));
             self.inner.unary(request, path, codec).await
         }
 
@@ -382,9 +382,12 @@ pub mod pg_service_client {
                 Status::new(tonic::Code::Unknown, format!("Service not ready: {:?}", error))
             })?;
             let codec = ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static("/kalamdb.pg.PgService/BeginTransaction");
+            let path =
+                http::uri::PathAndQuery::from_static("/kalamdb.pg.PgService/BeginTransaction");
             let mut request = request.into_request();
-            request.extensions_mut().insert(GrpcMethod::new(PG_SERVICE_NAME, "BeginTransaction"));
+            request
+                .extensions_mut()
+                .insert(GrpcMethod::new(PG_SERVICE_NAME, "BeginTransaction"));
             self.inner.unary(request, path, codec).await
         }
 
@@ -396,9 +399,12 @@ pub mod pg_service_client {
                 Status::new(tonic::Code::Unknown, format!("Service not ready: {:?}", error))
             })?;
             let codec = ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static("/kalamdb.pg.PgService/CommitTransaction");
+            let path =
+                http::uri::PathAndQuery::from_static("/kalamdb.pg.PgService/CommitTransaction");
             let mut request = request.into_request();
-            request.extensions_mut().insert(GrpcMethod::new(PG_SERVICE_NAME, "CommitTransaction"));
+            request
+                .extensions_mut()
+                .insert(GrpcMethod::new(PG_SERVICE_NAME, "CommitTransaction"));
             self.inner.unary(request, path, codec).await
         }
 
@@ -410,9 +416,12 @@ pub mod pg_service_client {
                 Status::new(tonic::Code::Unknown, format!("Service not ready: {:?}", error))
             })?;
             let codec = ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static("/kalamdb.pg.PgService/RollbackTransaction");
+            let path =
+                http::uri::PathAndQuery::from_static("/kalamdb.pg.PgService/RollbackTransaction");
             let mut request = request.into_request();
-            request.extensions_mut().insert(GrpcMethod::new(PG_SERVICE_NAME, "RollbackTransaction"));
+            request
+                .extensions_mut()
+                .insert(GrpcMethod::new(PG_SERVICE_NAME, "RollbackTransaction"));
             self.inner.unary(request, path, codec).await
         }
 
@@ -440,7 +449,9 @@ pub mod pg_service_client {
             let codec = ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static("/kalamdb.pg.PgService/ExecuteQuery");
             let mut request = request.into_request();
-            request.extensions_mut().insert(GrpcMethod::new(PG_SERVICE_NAME, "ExecuteQuery"));
+            request
+                .extensions_mut()
+                .insert(GrpcMethod::new(PG_SERVICE_NAME, "ExecuteQuery"));
             self.inner.unary(request, path, codec).await
         }
     }
@@ -774,7 +785,9 @@ pub mod pg_service_server {
 
     struct CommitTransactionSvc<T: PgService>(Arc<T>);
 
-    impl<T: PgService> tonic::server::UnaryService<CommitTransactionRequest> for CommitTransactionSvc<T> {
+    impl<T: PgService> tonic::server::UnaryService<CommitTransactionRequest>
+        for CommitTransactionSvc<T>
+    {
         type Response = CommitTransactionResponse;
         type Future = BoxFuture<Response<Self::Response>, Status>;
 
@@ -787,7 +800,9 @@ pub mod pg_service_server {
 
     struct RollbackTransactionSvc<T: PgService>(Arc<T>);
 
-    impl<T: PgService> tonic::server::UnaryService<RollbackTransactionRequest> for RollbackTransactionSvc<T> {
+    impl<T: PgService> tonic::server::UnaryService<RollbackTransactionRequest>
+        for RollbackTransactionSvc<T>
+    {
         type Response = RollbackTransactionResponse;
         type Future = BoxFuture<Response<Self::Response>, Status>;
 
@@ -977,12 +992,7 @@ impl PgService for KalamPgService {
     ) -> Result<Response<ScanRpcResponse>, Status> {
         self.authorize(&request)?;
         let inner = request.into_inner();
-        log::debug!(
-            "PG scan: {}.{} type={}",
-            inner.namespace,
-            inner.table_name,
-            inner.table_type
-        );
+        log::debug!("PG scan: {}.{} type={}", inner.namespace, inner.table_name, inner.table_type);
         let domain_req = operation_executor::scan_request_from_rpc(&inner)?;
         let domain_result = self.operation_executor()?.execute_scan(domain_req).await?;
         let response = operation_executor::scan_result_to_rpc(domain_result)?;
@@ -1014,12 +1024,7 @@ impl PgService for KalamPgService {
     ) -> Result<Response<UpdateRpcResponse>, Status> {
         self.authorize(&request)?;
         let inner = request.into_inner();
-        log::debug!(
-            "PG update: {}.{} pk={}",
-            inner.namespace,
-            inner.table_name,
-            inner.pk_value
-        );
+        log::debug!("PG update: {}.{} pk={}", inner.namespace, inner.table_name, inner.pk_value);
         let domain_req = operation_executor::update_request_from_rpc(&inner)?;
         let result = self.operation_executor()?.execute_update(domain_req).await?;
         Ok(Response::new(UpdateRpcResponse {
@@ -1033,12 +1038,7 @@ impl PgService for KalamPgService {
     ) -> Result<Response<DeleteRpcResponse>, Status> {
         self.authorize(&request)?;
         let inner = request.into_inner();
-        log::debug!(
-            "PG delete: {}.{} pk={}",
-            inner.namespace,
-            inner.table_name,
-            inner.pk_value
-        );
+        log::debug!("PG delete: {}.{} pk={}", inner.namespace, inner.table_name, inner.pk_value);
         let domain_req = operation_executor::delete_request_from_rpc(&inner)?;
         let result = self.operation_executor()?.execute_delete(domain_req).await?;
         Ok(Response::new(DeleteRpcResponse {
@@ -1082,9 +1082,7 @@ impl PgService for KalamPgService {
             return Err(Status::invalid_argument("session_id must not be empty"));
         }
         if transaction_id.is_empty() {
-            return Err(Status::invalid_argument(
-                "transaction_id must not be empty",
-            ));
+            return Err(Status::invalid_argument("transaction_id must not be empty"));
         }
 
         let committed_id = self

@@ -38,9 +38,9 @@ impl TypedStatementHandler<AlterNamespaceStatement> for AlterNamespaceHandler {
         let name_owned = name.to_string();
         tokio::task::spawn_blocking(move || {
             let namespaces_provider = app_ctx.system_tables().namespaces();
-            let mut namespace = namespaces_provider
-                .get_namespace(&ns_id)?
-                .ok_or_else(|| KalamDbError::NotFound(format!("Namespace '{}' not found", name_owned)))?;
+            let mut namespace = namespaces_provider.get_namespace(&ns_id)?.ok_or_else(|| {
+                KalamDbError::NotFound(format!("Namespace '{}' not found", name_owned))
+            })?;
 
             // Update namespace options (merge with existing options)
             let mut current_options: serde_json::Value = if let Some(ref opts) = namespace.options {
@@ -57,10 +57,9 @@ impl TypedStatementHandler<AlterNamespaceStatement> for AlterNamespaceHandler {
             }
 
             // Serialize back to string
-            namespace.options = Some(
-                serde_json::to_string(&current_options)
-                    .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to serialize options: {}", e)))?,
-            );
+            namespace.options = Some(serde_json::to_string(&current_options).map_err(|e| {
+                KalamDbError::InvalidOperation(format!("Failed to serialize options: {}", e))
+            })?);
 
             // Save updated namespace
             namespaces_provider.update_namespace(namespace)?;

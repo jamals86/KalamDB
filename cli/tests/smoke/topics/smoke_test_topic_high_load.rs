@@ -740,10 +740,8 @@ async fn test_topic_high_load_concurrent_publishers() {
         // Check for various datatypes
         if let Some(val) = payload.get("value").or_else(|| payload.get("score")) {
             let normalized = common::extract_typed_value(val);
-            let is_numeric_string = normalized
-                .as_str()
-                .and_then(|raw| raw.parse::<f64>().ok())
-                .is_some();
+            let is_numeric_string =
+                normalized.as_str().and_then(|raw| raw.parse::<f64>().ok()).is_some();
             assert!(
                 normalized.is_number() || is_numeric_string,
                 "Numeric field should be a number: {:?}",

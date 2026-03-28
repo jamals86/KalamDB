@@ -491,12 +491,12 @@ impl RaftNetworkFactory {
         let ca_pem = tls.load_ca_cert().map_err(|e| {
             crate::RaftError::Config(format!("Failed loading cluster CA cert: {}", e))
         })?;
-        let cert_pem = tls.load_server_cert().map_err(|e| {
-            crate::RaftError::Config(format!("Failed loading node cert: {}", e))
-        })?;
-        let key_pem = tls.load_server_key().map_err(|e| {
-            crate::RaftError::Config(format!("Failed loading node key: {}", e))
-        })?;
+        let cert_pem = tls
+            .load_server_cert()
+            .map_err(|e| crate::RaftError::Config(format!("Failed loading node cert: {}", e)))?;
+        let key_pem = tls
+            .load_server_key()
+            .map_err(|e| crate::RaftError::Config(format!("Failed loading node key: {}", e)))?;
 
         let mut peer_server_names = HashMap::new();
         for peer in peers {

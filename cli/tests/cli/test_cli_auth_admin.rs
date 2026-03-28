@@ -509,11 +509,7 @@ async fn test_cli_flush_table() {
         job["status"].as_str().unwrap_or("").to_lowercase()
     };
 
-    assert_eq!(
-        final_status, "completed",
-        "Flush job failed (status: {})",
-        final_status
-    );
+    assert_eq!(final_status, "completed", "Flush job failed (status: {})", final_status);
 
     // If job is completed, result metadata may be empty depending on backend timing.
 

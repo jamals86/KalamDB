@@ -440,15 +440,14 @@ pub async fn start_rpc_server(
         let ca_pem = rpc_tls.load_ca_cert().map_err(|e| {
             crate::RaftError::Config(format!("Failed loading cluster CA cert: {}", e))
         })?;
-        let cert_pem = rpc_tls.load_server_cert().map_err(|e| {
-            crate::RaftError::Config(format!("Failed loading node cert: {}", e))
-        })?;
-        let key_pem = rpc_tls.load_server_key().map_err(|e| {
-            crate::RaftError::Config(format!("Failed loading node key: {}", e))
-        })?;
+        let cert_pem = rpc_tls
+            .load_server_cert()
+            .map_err(|e| crate::RaftError::Config(format!("Failed loading node cert: {}", e)))?;
+        let key_pem = rpc_tls
+            .load_server_key()
+            .map_err(|e| crate::RaftError::Config(format!("Failed loading node key: {}", e)))?;
 
-        let mut tls = ServerTlsConfig::new()
-            .identity(Identity::from_pem(cert_pem, key_pem));
+        let mut tls = ServerTlsConfig::new().identity(Identity::from_pem(cert_pem, key_pem));
 
         if rpc_tls.require_client_cert {
             tls = tls.client_ca_root(Certificate::from_pem(ca_pem));

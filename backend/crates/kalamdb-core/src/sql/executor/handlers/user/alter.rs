@@ -4,7 +4,9 @@ use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
-use kalamdb_auth::security::password::{hash_password, validate_password_with_policy, PasswordPolicy};
+use kalamdb_auth::security::password::{
+    hash_password, validate_password_with_policy, PasswordPolicy,
+};
 use kalamdb_sql::ddl::{AlterUserStatement, UserModification};
 use std::sync::Arc;
 
@@ -37,8 +39,7 @@ impl TypedStatementHandler<AlterUserStatement> for AlterUserHandler {
             app_ctx.system_tables().users().get_user_by_username(&username)
         })
         .await
-        .map_err(|e| KalamDbError::ExecutionError(format!("Task join error: {}", e)))?
-        ?
+        .map_err(|e| KalamDbError::ExecutionError(format!("Task join error: {}", e)))??
         .ok_or_else(|| {
             KalamDbError::NotFound(format!("User '{}' not found", statement.username))
         })?;
@@ -62,9 +63,12 @@ impl TypedStatementHandler<AlterUserStatement> for AlterUserHandler {
                     validate_password_with_policy(new_pw, &policy)
                         .map_err(|e| KalamDbError::InvalidOperation(e.to_string()))?;
                 }
-                updated.password_hash = hash_password(new_pw, Some(self.app_context.config().auth.bcrypt_cost))
-                    .await
-                    .map_err(|e| KalamDbError::InvalidOperation(format!("Password hash error: {}", e)))?;
+                updated.password_hash =
+                    hash_password(new_pw, Some(self.app_context.config().auth.bcrypt_cost))
+                        .await
+                        .map_err(|e| {
+                        KalamDbError::InvalidOperation(format!("Password hash error: {}", e))
+                    })?;
             },
             UserModification::SetRole(new_role) => {
                 if !context.is_admin() {

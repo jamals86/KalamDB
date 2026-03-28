@@ -54,12 +54,10 @@ impl RpcCaller {
                 log::info!("mTLS authorized PG extension client: CN=kalamdb-pg-{}", name);
                 Ok(name)
             },
-            CallerIdentity::ClusterNode { raw_id } => {
-                Err(Status::permission_denied(format!(
-                    "Cluster node 'kalamdb-node-{}' is not a valid PG extension identity",
-                    raw_id
-                )))
-            },
+            CallerIdentity::ClusterNode { raw_id } => Err(Status::permission_denied(format!(
+                "Cluster node 'kalamdb-node-{}' is not a valid PG extension identity",
+                raw_id
+            ))),
         }
     }
 
@@ -69,12 +67,10 @@ impl RpcCaller {
     pub fn require_cluster_node<T>(request: &Request<T>) -> Result<String, Status> {
         match Self::identify(request)? {
             CallerIdentity::ClusterNode { raw_id } => Ok(raw_id),
-            CallerIdentity::PgExtension { name } => {
-                Err(Status::permission_denied(format!(
-                    "PG extension 'kalamdb-pg-{}' is not a valid cluster node identity",
-                    name
-                )))
-            },
+            CallerIdentity::PgExtension { name } => Err(Status::permission_denied(format!(
+                "PG extension 'kalamdb-pg-{}' is not a valid cluster node identity",
+                name
+            ))),
         }
     }
 
@@ -82,9 +78,7 @@ impl RpcCaller {
     fn classify_cn(cn: &str) -> Result<CallerIdentity, Status> {
         if let Some(name) = cn.strip_prefix(PG_CN_PREFIX) {
             if name.is_empty() {
-                return Err(Status::permission_denied(
-                    "PG extension CN has empty name suffix",
-                ));
+                return Err(Status::permission_denied("PG extension CN has empty name suffix"));
             }
             return Ok(CallerIdentity::PgExtension {
                 name: name.to_string(),
@@ -93,9 +87,7 @@ impl RpcCaller {
 
         if let Some(raw_id) = cn.strip_prefix(NODE_CN_PREFIX) {
             if raw_id.is_empty() {
-                return Err(Status::permission_denied(
-                    "Cluster node CN has empty id suffix",
-                ));
+                return Err(Status::permission_denied("Cluster node CN has empty id suffix"));
             }
             return Ok(CallerIdentity::ClusterNode {
                 raw_id: raw_id.to_string(),
@@ -116,13 +108,23 @@ mod tests {
     #[test]
     fn classify_pg_extension() {
         let id = RpcCaller::classify_cn("kalamdb-pg-myapp").unwrap();
-        assert_eq!(id, CallerIdentity::PgExtension { name: "myapp".to_string() });
+        assert_eq!(
+            id,
+            CallerIdentity::PgExtension {
+                name: "myapp".to_string()
+            }
+        );
     }
 
     #[test]
     fn classify_cluster_node() {
         let id = RpcCaller::classify_cn("kalamdb-node-3").unwrap();
-        assert_eq!(id, CallerIdentity::ClusterNode { raw_id: "3".to_string() });
+        assert_eq!(
+            id,
+            CallerIdentity::ClusterNode {
+                raw_id: "3".to_string()
+            }
+        );
     }
 
     #[test]

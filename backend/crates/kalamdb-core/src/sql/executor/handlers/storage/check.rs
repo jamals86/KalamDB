@@ -61,10 +61,7 @@ impl TypedStatementHandler<CheckStorageStatement> for CheckStorageHandler {
         .map_err(|e| KalamDbError::ExecutionError(format!("Task join error: {}", e)))?
         .into_kalamdb_error("Failed to get storage")?
         .ok_or_else(|| {
-            KalamDbError::NotFound(format!(
-                "Storage '{}' not found",
-                statement.storage_id.as_str()
-            ))
+            KalamDbError::NotFound(format!("Storage '{}' not found", statement.storage_id.as_str()))
         })?;
 
         // Run the health check

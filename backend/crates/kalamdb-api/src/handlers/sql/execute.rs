@@ -389,7 +389,8 @@ async fn execute_file_upload_path(
     }
 
     let stmt = &prepared_statements[0];
-    let execute_as_user = match resolve_execute_as_user(stmt, impersonation_service, exec_ctx).await {
+    let execute_as_user = match resolve_execute_as_user(stmt, impersonation_service, exec_ctx).await
+    {
         Ok(uid) => uid,
         Err(err) => {
             return HttpResponse::BadRequest().json(SqlResponse::error(
@@ -600,16 +601,17 @@ async fn execute_batch_path(
     for (idx, stmt) in prepared_statements.iter().enumerate() {
         let is_last = idx + 1 == stmt_count;
 
-        let execute_as_user = match resolve_execute_as_user(stmt, impersonation_service, exec_ctx).await {
-            Ok(uid) => uid,
-            Err(err) => {
-                return HttpResponse::BadRequest().json(SqlResponse::error(
-                    ErrorCode::SqlExecutionError,
-                    &err,
-                    took_ms(start_time),
-                ));
-            },
-        };
+        let execute_as_user =
+            match resolve_execute_as_user(stmt, impersonation_service, exec_ctx).await {
+                Ok(uid) => uid,
+                Err(err) => {
+                    return HttpResponse::BadRequest().json(SqlResponse::error(
+                        ErrorCode::SqlExecutionError,
+                        &err,
+                        took_ms(start_time),
+                    ));
+                },
+            };
 
         // Reject EXECUTE AS USER on SHARED tables — impersonation is only
         // meaningful for USER tables (row-level security).

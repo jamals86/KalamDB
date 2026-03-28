@@ -9,7 +9,9 @@ use kalamdb_session::SessionUserContext;
 use tonic::Status;
 
 use super::scan;
-use super::types::{DeleteRequest, InsertRequest, MutationResult, ScanRequest, ScanResult, UpdateRequest};
+use super::types::{
+    DeleteRequest, InsertRequest, MutationResult, ScanRequest, ScanResult, UpdateRequest,
+};
 use crate::app_context::AppContext;
 use crate::sql::ExecutionContext;
 
@@ -97,9 +99,7 @@ impl OperationExecutor for OperationService {
                 resp.rows_affected()
             },
             TableType::System => {
-                return Err(Status::permission_denied(
-                    "cannot insert into system tables",
-                ));
+                return Err(Status::permission_denied("cannot insert into system tables"));
             },
         };
         Ok(MutationResult {
@@ -125,11 +125,7 @@ impl OperationExecutor for OperationService {
             },
             TableType::Shared => {
                 let resp = applier
-                    .update_shared_data(
-                        request.table_id,
-                        request.updates,
-                        Some(request.pk_value),
-                    )
+                    .update_shared_data(request.table_id, request.updates, Some(request.pk_value))
                     .await
                     .map_err(|e| Status::internal(e.to_string()))?;
                 resp.rows_affected()
@@ -149,29 +145,20 @@ impl OperationExecutor for OperationService {
             TableType::User | TableType::Stream => {
                 let user_id = require_user_id(request.user_id, "deletes")?;
                 let resp = applier
-                    .delete_user_data(
-                        request.table_id,
-                        user_id,
-                        Some(vec![request.pk_value]),
-                    )
+                    .delete_user_data(request.table_id, user_id, Some(vec![request.pk_value]))
                     .await
                     .map_err(|e| Status::internal(e.to_string()))?;
                 resp.rows_affected()
             },
             TableType::Shared => {
                 let resp = applier
-                    .delete_shared_data(
-                        request.table_id,
-                        Some(vec![request.pk_value]),
-                    )
+                    .delete_shared_data(request.table_id, Some(vec![request.pk_value]))
                     .await
                     .map_err(|e| Status::internal(e.to_string()))?;
                 resp.rows_affected()
             },
             TableType::System => {
-                return Err(Status::permission_denied(
-                    "cannot delete from system tables",
-                ));
+                return Err(Status::permission_denied("cannot delete from system tables"));
             },
         };
         Ok(MutationResult {
@@ -213,35 +200,29 @@ impl OperationExecutor for OperationService {
             base,
         );
 
-        let sql_executor = crate::sql::executor::SqlExecutor::new(
-            Arc::clone(&self.app_context),
-            false,
-        );
+        let sql_executor =
+            crate::sql::executor::SqlExecutor::new(Arc::clone(&self.app_context), false);
         let result = sql_executor
             .execute(sql, &exec_ctx, Vec::new())
             .await
             .map_err(|e| Status::internal(e.to_string()))?;
 
         match result {
-            crate::sql::ExecutionResult::Rows { batches, row_count, .. } => {
+            crate::sql::ExecutionResult::Rows {
+                batches, row_count, ..
+            } => {
                 let (ipc_batches, _) = kalamdb_pg::encode_batches(&batches)?;
                 Ok((format!("{} row(s)", row_count), ipc_batches))
-            }
+            },
             crate::sql::ExecutionResult::Success { message } => Ok((message, Vec::new())),
             other => Ok((format!("OK (affected: {})", other.affected_rows()), Vec::new())),
         }
     }
 }
 
-fn require_user_id(
-    user_id: Option<UserId>,
-    operation: &str,
-) -> Result<UserId, Status> {
+fn require_user_id(user_id: Option<UserId>, operation: &str) -> Result<UserId, Status> {
     user_id.ok_or_else(|| {
-        Status::invalid_argument(format!(
-            "user_id required for user/stream table {}",
-            operation
-        ))
+        Status::invalid_argument(format!("user_id required for user/stream table {}", operation))
     })
 }
 
@@ -264,7 +245,9 @@ mod tests {
     use std::sync::Arc;
 
     fn empty_row() -> Row {
-        Row { values: BTreeMap::new() }
+        Row {
+            values: BTreeMap::new(),
+        }
     }
 
     /// Helper: create an AppContext and OperationService for tests.
@@ -303,8 +286,8 @@ mod tests {
         let cached = Arc::new(CachedTableData::new(Arc::new(table_def)));
 
         // Wrap seed data in a MemTable provider
-        let mem = MemTable::try_new(Arc::clone(&arrow_schema), vec![batches])
-            .expect("MemTable creation");
+        let mem =
+            MemTable::try_new(Arc::clone(&arrow_schema), vec![batches]).expect("MemTable creation");
         cached.set_system_provider(Arc::new(mem));
 
         app_ctx.schema_registry().insert_cached(table_id.clone(), cached);

@@ -28,7 +28,11 @@ pub fn resolve_table_options_for_relation(
         let namespace_ptr = unsafe { pg_sys::get_namespace_name((*rel).relnamespace) };
         cstr_to_string(namespace_ptr)
     };
-    let table_name = Some(unsafe { CStr::from_ptr((*rel).relname.data.as_ptr()) }.to_string_lossy().into_owned());
+    let table_name = Some(
+        unsafe { CStr::from_ptr((*rel).relname.data.as_ptr()) }
+            .to_string_lossy()
+            .into_owned(),
+    );
     let table_type = options
         .get("table_type")
         .ok_or_else(|| {
@@ -36,12 +40,10 @@ pub fn resolve_table_options_for_relation(
         })
         .and_then(|value| TableType::from_str(value).map_err(KalamPgError::Validation))?;
 
-    let namespace = namespace.ok_or_else(|| {
-        KalamPgError::Validation("relation namespace is required".to_string())
-    })?;
-    let table_name = table_name.ok_or_else(|| {
-        KalamPgError::Validation("relation table name is required".to_string())
-    })?;
+    let namespace = namespace
+        .ok_or_else(|| KalamPgError::Validation("relation namespace is required".to_string()))?;
+    let table_name = table_name
+        .ok_or_else(|| KalamPgError::Validation("relation table name is required".to_string()))?;
 
     Ok(TableOptions {
         table_id: TableId::new(NamespaceId::new(namespace), TableName::new(table_name)),

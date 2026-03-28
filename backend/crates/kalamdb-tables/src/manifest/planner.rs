@@ -176,7 +176,10 @@ impl ManifestAccessPlanner {
 
         // Return empty batch if no files found
         if parquet_files.is_empty() {
-            return Ok((RecordBatch::new_empty(effective_schema), (total_batches, skipped, scanned)));
+            return Ok((
+                RecordBatch::new_empty(effective_schema),
+                (total_batches, skipped, scanned),
+            ));
         }
 
         let mut all_batches = Vec::new();
@@ -197,15 +200,9 @@ impl ManifestAccessPlanner {
                         .as_ref()
                         .map(|c| c.iter().map(|s| s.as_str()).collect())
                         .unwrap_or_default();
-                    sc.read_parquet_file_stream(
-                        table_type,
-                        table_id,
-                        user_id,
-                        &file,
-                        &col_refs,
-                    )
-                    .await
-                    .into_kalamdb_error("Failed to open Parquet stream")
+                    sc.read_parquet_file_stream(table_type, table_id, user_id, &file, &col_refs)
+                        .await
+                        .into_kalamdb_error("Failed to open Parquet stream")
                 }
             })
             .collect();
@@ -247,7 +244,10 @@ impl ManifestAccessPlanner {
 
         // Return empty batch if all files were empty
         if all_batches.is_empty() {
-            return Ok((RecordBatch::new_empty(effective_schema), (total_batches, skipped, scanned)));
+            return Ok((
+                RecordBatch::new_empty(effective_schema),
+                (total_batches, skipped, scanned),
+            ));
         }
 
         // Concatenate all batches

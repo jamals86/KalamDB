@@ -49,9 +49,9 @@ impl ServerConfig {
     pub fn apply_env_overrides(&mut self) -> anyhow::Result<()> {
         // Server workers (actix-web worker thread count)
         if let Ok(val) = env::var("KALAMDB_SERVER_WORKERS") {
-            self.server.workers = val.parse().map_err(|_| {
-                anyhow::anyhow!("Invalid KALAMDB_SERVER_WORKERS value: {}", val)
-            })?;
+            self.server.workers = val
+                .parse()
+                .map_err(|_| anyhow::anyhow!("Invalid KALAMDB_SERVER_WORKERS value: {}", val))?;
         }
 
         // Server host
@@ -250,9 +250,8 @@ impl ServerConfig {
 
         // Top-level RPC TLS overrides (unified mTLS config)
         if let Ok(val) = env::var("KALAMDB_RPC_TLS_ENABLED") {
-            self.rpc_tls.enabled = val.eq_ignore_ascii_case("true")
-                || val == "1"
-                || val.eq_ignore_ascii_case("yes");
+            self.rpc_tls.enabled =
+                val.eq_ignore_ascii_case("true") || val == "1" || val.eq_ignore_ascii_case("yes");
         }
         if let Ok(val) = env::var("KALAMDB_RPC_TLS_CA_CERT") {
             self.rpc_tls.ca_cert = Some(val);
@@ -264,9 +263,8 @@ impl ServerConfig {
             self.rpc_tls.server_key = Some(val);
         }
         if let Ok(val) = env::var("KALAMDB_RPC_TLS_REQUIRE_CLIENT_CERT") {
-            self.rpc_tls.require_client_cert = val.eq_ignore_ascii_case("true")
-                || val == "1"
-                || val.eq_ignore_ascii_case("yes");
+            self.rpc_tls.require_client_cert =
+                val.eq_ignore_ascii_case("true") || val == "1" || val.eq_ignore_ascii_case("yes");
         }
 
         Ok(())

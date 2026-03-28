@@ -80,9 +80,7 @@ fn session_registry_commit_wrong_tx_id_fails() {
     registry.open_or_get("s1");
 
     let _tx_id = registry.begin_transaction("s1").expect("begin");
-    let err = registry
-        .commit_transaction("s1", "wrong-tx-id")
-        .expect_err("wrong tx id");
+    let err = registry.commit_transaction("s1", "wrong-tx-id").expect_err("wrong tx id");
     assert!(err.contains("mismatch"));
 }
 
@@ -103,9 +101,7 @@ fn session_registry_commit_already_committed_fails() {
     let tx_id = registry.begin_transaction("s1").expect("begin");
     registry.commit_transaction("s1", &tx_id).expect("commit");
 
-    let err = registry
-        .commit_transaction("s1", &tx_id)
-        .expect_err("no active tx");
+    let err = registry.commit_transaction("s1", &tx_id).expect_err("no active tx");
     assert!(err.contains("no active transaction"));
 }
 
