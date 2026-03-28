@@ -7,7 +7,7 @@ export default function Layout() {
   const isSqlWorkspace = location.pathname.startsWith("/sql");
 
   return (
-    <div className="flex h-screen flex-col bg-background">
+    <div className="flex h-full min-h-0 flex-col bg-background">
       <Header />
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <Sidebar />

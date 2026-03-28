@@ -84,7 +84,11 @@ impl StorageCached {
 
     fn base_directory(&self) -> &str {
         let trimmed = self.storage.base_directory.trim();
-        if trimmed.is_empty() { "." } else { trimmed }
+        if trimmed.is_empty() {
+            "."
+        } else {
+            trimmed
+        }
     }
 
     fn join_paths(&self, relative: &str) -> String {
@@ -463,38 +467,81 @@ impl StorageCached {
     // Thin delegates to async methods via `run_blocking`. Used by flush
     // paths and other sync contexts.
 
-    pub fn list_sync(&self, table_type: TableType, table_id: &TableId, user_id: Option<&UserId>) -> Result<ListResult> {
+    pub fn list_sync(
+        &self,
+        table_type: TableType,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+    ) -> Result<ListResult> {
         let (tid, uid) = (table_id.clone(), user_id.cloned());
         run_blocking(|| async { self.list(table_type, &tid, uid.as_ref()).await })
     }
 
-    pub fn list_parquet_files_sync(&self, table_type: TableType, table_id: &TableId, user_id: Option<&UserId>) -> Result<Vec<String>> {
+    pub fn list_parquet_files_sync(
+        &self,
+        table_type: TableType,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+    ) -> Result<Vec<String>> {
         let (tid, uid) = (table_id.clone(), user_id.cloned());
         run_blocking(|| async { self.list_parquet_files(table_type, &tid, uid.as_ref()).await })
     }
 
-    pub fn get_sync(&self, table_type: TableType, table_id: &TableId, user_id: Option<&UserId>, filename: &str) -> Result<GetResult> {
+    pub fn get_sync(
+        &self,
+        table_type: TableType,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+        filename: &str,
+    ) -> Result<GetResult> {
         let (tid, uid, f) = (table_id.clone(), user_id.cloned(), filename.to_string());
         run_blocking(|| async { self.get(table_type, &tid, uid.as_ref(), &f).await })
     }
 
-    pub fn put_sync(&self, table_type: TableType, table_id: &TableId, user_id: Option<&UserId>, filename: &str, data: Bytes) -> Result<PutResult> {
+    pub fn put_sync(
+        &self,
+        table_type: TableType,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+        filename: &str,
+        data: Bytes,
+    ) -> Result<PutResult> {
         let (tid, uid, f) = (table_id.clone(), user_id.cloned(), filename.to_string());
         run_blocking(|| async { self.put(table_type, &tid, uid.as_ref(), &f, data).await })
     }
 
-    pub fn delete_sync(&self, table_type: TableType, table_id: &TableId, user_id: Option<&UserId>, filename: &str) -> Result<DeleteResult> {
+    pub fn delete_sync(
+        &self,
+        table_type: TableType,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+        filename: &str,
+    ) -> Result<DeleteResult> {
         let (tid, uid, f) = (table_id.clone(), user_id.cloned(), filename.to_string());
         run_blocking(|| async { self.delete(table_type, &tid, uid.as_ref(), &f).await })
     }
 
-    pub fn head_sync(&self, table_type: TableType, table_id: &TableId, user_id: Option<&UserId>, filename: &str) -> Result<FileInfo> {
+    pub fn head_sync(
+        &self,
+        table_type: TableType,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+        filename: &str,
+    ) -> Result<FileInfo> {
         let (tid, uid, f) = (table_id.clone(), user_id.cloned(), filename.to_string());
         run_blocking(|| async { self.head(table_type, &tid, uid.as_ref(), &f).await })
     }
 
-    pub fn rename_sync(&self, table_type: TableType, table_id: &TableId, user_id: Option<&UserId>, from: &str, to: &str) -> Result<RenameResult> {
-        let (tid, uid, from, to) = (table_id.clone(), user_id.cloned(), from.to_string(), to.to_string());
+    pub fn rename_sync(
+        &self,
+        table_type: TableType,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+        from: &str,
+        to: &str,
+    ) -> Result<RenameResult> {
+        let (tid, uid, from, to) =
+            (table_id.clone(), user_id.cloned(), from.to_string(), to.to_string());
         run_blocking(|| async { self.rename(table_type, &tid, uid.as_ref(), &from, &to).await })
     }
 
@@ -510,7 +557,16 @@ impl StorageCached {
     ) -> Result<ParquetWriteResult> {
         let (tid, uid, f) = (table_id.clone(), user_id.cloned(), filename.to_string());
         run_blocking(|| async {
-            self.write_parquet(table_type, &tid, uid.as_ref(), &f, schema, batches, bloom_filter_columns).await
+            self.write_parquet(
+                table_type,
+                &tid,
+                uid.as_ref(),
+                &f,
+                schema,
+                batches,
+                bloom_filter_columns,
+            )
+            .await
         })
     }
 

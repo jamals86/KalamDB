@@ -19,6 +19,7 @@ import {
   type LiveRowsOptions,
   type LogEntry,
   type LogListener,
+  type OnConnectCallback,
   type OnDisconnectCallback,
   type OnErrorCallback,
   type OnReceiveCallback,
@@ -32,14 +33,25 @@ import {
 import { getBackendOrigin } from "./backend-url";
 
 let client: KalamDBClient | null = null;
+let subscriptionClient: KalamDBClient | null = null;
 let currentToken: string | null = null;
 let isInitialized = false;
+let isSubscriptionInitialized = false;
+let currentConnectListener: OnConnectCallback | undefined;
 let currentDisconnectListener: OnDisconnectCallback | undefined;
 let currentErrorListener: OnErrorCallback | undefined;
 let currentReceiveListener: OnReceiveCallback | undefined;
 let currentSendListener: OnSendCallback | undefined;
+const connectivityListeners = new Set<ClientConnectivityListener>();
 const isDebugLoggingEnabled = import.meta.env.DEV;
 const ADMIN_UI_PING_INTERVAL_MS = 5_000;
+
+export type ClientConnectivityEvent =
+  | { type: 'connect' }
+  | { type: 'disconnect'; reason: DisconnectReason }
+  | { type: 'error'; error: ConnectionError };
+
+export type ClientConnectivityListener = (event: ClientConnectivityEvent) => void;
 
 function debugLog(...args: unknown[]): void {
   if (isDebugLoggingEnabled) {
@@ -53,6 +65,19 @@ function debugLog(...args: unknown[]): void {
  */
 let queryQueue: Promise<unknown> = Promise.resolve();
 let lifecycleQueue: Promise<unknown> = Promise.resolve();
+function requireToken(): string {
+  if (!currentToken) {
+    throw new Error('Not authenticated. Please log in first.');
+  }
+
+  return currentToken;
+}
+/**
+ * Serializes concurrent live()/subscribe() setups so they never overlap.
+ * React StrictMode double-mounts fire two subscription effects nearly simultaneously;
+ * without this lock both would call live() concurrently and crash the WASM RefCell.
+ */
+let subscriptionSetupLock: Promise<unknown> = Promise.resolve();
 
 /**
  * Queue a query to ensure sequential execution and prevent WASM borrow errors.
@@ -68,6 +93,134 @@ async function queueQuery<T>(fn: () => Promise<T>): Promise<T> {
   // Update the queue to wait for this query (ignore errors to not block next queries)
   queryQueue = result.catch(() => {});
   return result;
+}
+
+/**
+ * Serialize live()/subscribe() setup on the dedicated subscription client.
+ *
+ * Query execution uses a separate WASM client instance, so we no longer need to block
+ * the query queue here. We only need to ensure we do not start two subscription setup
+ * calls concurrently on the same subscription client.
+ */
+async function serializedSubscriptionCall<T>(fn: () => Promise<T>): Promise<T> {
+  const runSetup = async (): Promise<T> => {
+    try {
+      return await fn();
+    } catch (err) {
+      console.error('[kalam-client] Subscription setup failed:', err);
+      throw err;
+    }
+  };
+
+  const result = subscriptionSetupLock.then(runSetup, runSetup);
+  subscriptionSetupLock = result.catch(() => {});
+  return result;
+}
+
+function createSdkClient(jwtToken: string, eagerWebSocket = false): KalamDBClient {
+  return new KalamDBClient({
+    url: getBackendUrl(),
+    authProvider: async () => Auth.jwt(jwtToken),
+    pingIntervalMs: ADMIN_UI_PING_INTERVAL_MS,
+    wsLazyConnect: !eagerWebSocket,
+  });
+}
+
+function notifyConnectivityListeners(event: ClientConnectivityEvent): void {
+  for (const listener of connectivityListeners) {
+    try {
+      listener(event);
+    } catch (error) {
+      console.error('[kalam-client] Connectivity listener failed:', error);
+    }
+  }
+}
+
+function handleSubscriptionClientConnect(): void {
+  currentConnectListener?.();
+  notifyConnectivityListeners({ type: 'connect' });
+}
+
+function handleSubscriptionClientDisconnect(reason: DisconnectReason): void {
+  currentDisconnectListener?.(reason);
+  notifyConnectivityListeners({ type: 'disconnect', reason });
+}
+
+function handleSubscriptionClientError(error: ConnectionError): void {
+  currentErrorListener?.(error);
+  notifyConnectivityListeners({ type: 'error', error });
+}
+
+function applySubscriptionClientListeners(targetClient: KalamDBClient): void {
+  targetClient.setLogListener(undefined);
+  targetClient.onConnect(handleSubscriptionClientConnect);
+  if (currentReceiveListener) {
+    targetClient.onReceive(currentReceiveListener);
+  }
+  if (currentSendListener) {
+    targetClient.onSend(currentSendListener);
+  }
+  targetClient.onDisconnect(handleSubscriptionClientDisconnect);
+  targetClient.onError(handleSubscriptionClientError);
+}
+
+async function disconnectSdkClient(targetClient: KalamDBClient | null): Promise<void> {
+  if (!targetClient) {
+    return;
+  }
+
+  try {
+    await targetClient.disconnect();
+  } catch {
+    // Ignore disconnect errors during teardown/token rotation.
+  }
+}
+
+async function initializeSubscriptionClient(jwtToken: string): Promise<KalamDBClient> {
+  return queueLifecycle(async () => {
+    if (jwtToken === currentToken && subscriptionClient && isSubscriptionInitialized && subscriptionClient.isConnected()) {
+      debugLog('[kalam-client] Returning existing initialized subscription client');
+      return subscriptionClient;
+    }
+
+    if (subscriptionClient) {
+      await disconnectSdkClient(subscriptionClient);
+      subscriptionClient = null;
+      isSubscriptionInitialized = false;
+    }
+
+    const nextClient = createSdkClient(jwtToken, true);
+    debugLog('[kalam-client] Initializing subscription WASM client...');
+    await nextClient.initialize();
+    applySubscriptionClientListeners(nextClient);
+
+    subscriptionClient = nextClient;
+    currentToken = jwtToken;
+    isSubscriptionInitialized = true;
+    debugLog('[kalam-client] Subscription WASM initialized successfully');
+    return nextClient;
+  });
+}
+
+async function ensureQueryClient(): Promise<KalamDBClient> {
+  const token = requireToken();
+
+  if (!client || !isInitialized) {
+    debugLog('[kalam-client] Query client not initialized, initializing now...');
+    return initializeClient(token);
+  }
+
+  return client;
+}
+
+async function ensureSubscriptionClient(): Promise<KalamDBClient> {
+  const token = requireToken();
+
+  if (!subscriptionClient || !isSubscriptionInitialized) {
+    return initializeSubscriptionClient(token);
+  }
+
+  return subscriptionClient;
 }
 
 /**
@@ -108,20 +261,15 @@ export async function initializeClient(jwtToken: string): Promise<KalamDBClient>
 
     if (client && jwtToken !== currentToken) {
       debugLog('[kalam-client] Token changed, disconnecting old client');
-      try {
-        await client.disconnect();
-      } catch {
-        // Ignore disconnect errors
-      }
+      await disconnectSdkClient(client);
+      await disconnectSdkClient(subscriptionClient);
       client = null;
+      subscriptionClient = null;
       isInitialized = false;
+      isSubscriptionInitialized = false;
     }
 
-    const nextClient = new KalamDBClient({
-      url: getBackendUrl(),
-      authProvider: async () => Auth.jwt(jwtToken),
-      pingIntervalMs: ADMIN_UI_PING_INTERVAL_MS,
-    });
+    const nextClient = createSdkClient(jwtToken);
 
     debugLog('[kalam-client] Initializing WASM...');
     await nextClient.initialize();
@@ -129,18 +277,6 @@ export async function initializeClient(jwtToken: string): Promise<KalamDBClient>
     client = nextClient;
     currentToken = jwtToken;
     isInitialized = true;
-    if (currentReceiveListener) {
-      nextClient.onReceive(currentReceiveListener);
-    }
-    if (currentSendListener) {
-      nextClient.onSend(currentSendListener);
-    }
-    if (currentDisconnectListener) {
-      nextClient.onDisconnect(currentDisconnectListener);
-    }
-    if (currentErrorListener) {
-      nextClient.onError(currentErrorListener);
-    }
     debugLog('[kalam-client] WASM initialized successfully');
     return nextClient;
   });
@@ -169,17 +305,15 @@ export async function clearClient(): Promise<void> {
   await queueLifecycle(async () => {
     debugLog('[kalam-client] clearClient called');
     const existingClient = client;
+    const existingSubscriptionClient = subscriptionClient;
     client = null;
+    subscriptionClient = null;
     currentToken = null;
     isInitialized = false;
+    isSubscriptionInitialized = false;
 
-    if (existingClient) {
-      try {
-        await existingClient.disconnect();
-      } catch {
-        // Ignore disconnect errors on logout
-      }
-    }
+    await disconnectSdkClient(existingClient);
+    await disconnectSdkClient(existingSubscriptionClient);
   });
 }
 
@@ -197,21 +331,14 @@ export function getCurrentToken(): string | null {
  * Uses a query queue to prevent concurrent WASM calls which cause borrow errors.
  */
 export async function executeQuery(sql: string): Promise<QueryResponse> {
-  if (!currentToken) {
-    throw new Error('Not authenticated. Please log in first.');
-  }
-  
-  if (!client || !isInitialized) {
-    debugLog('[kalam-client] Client not initialized, initializing now...');
-    await initializeClient(currentToken);
-  }
+  const queryClient = await ensureQueryClient();
   
   debugLog("[kalam-client] Executing query via SDK:", sql.substring(0, 120) + (sql.length > 120 ? "..." : ""));
   
   // Queue the query to prevent concurrent WASM access
   return queueQuery(async () => {
     try {
-      const response = await client!.query(sql);
+      const response = await queryClient.query(sql);
       if (response.status === "error") {
         console.warn("[kalam-client] Query failed:", response.error?.message ?? "Unknown error");
       } else {
@@ -254,15 +381,8 @@ function unwrapRowData(rows: RowData[]): Record<string, unknown>[] {
  */
 export async function executeSql(sql: string): Promise<Record<string, unknown>[]> {
   try {
-    if (!currentToken) {
-      throw new Error('Not authenticated. Please log in first.');
-    }
-
-    if (!client || !isInitialized) {
-      await initializeClient(currentToken);
-    }
-
-    const rows = await queueQuery(() => client!.queryAll(sql));
+    const queryClient = await ensureQueryClient();
+    const rows = await queueQuery(() => queryClient.queryAll(sql));
     if (!rows.length) {
       return [];
     }
@@ -278,52 +398,42 @@ export async function executeSql(sql: string): Promise<Record<string, unknown>[]
  * Insert data into a table using SDK's insert method
  */
 export async function insert(tableName: string, data: Record<string, unknown>): Promise<QueryResponse> {
-  if (!currentToken) {
-    throw new Error('Not authenticated. Please log in first.');
-  }
-  
-  if (!client || !isInitialized) {
-    await initializeClient(currentToken);
-  }
-  
-  return queueQuery(() => client!.insert(tableName, data));
+  const queryClient = await ensureQueryClient();
+  return queueQuery(() => queryClient.insert(tableName, data));
 }
 
 /**
  * Delete a row from a table using SDK's delete method
  */
 export async function deleteRow(tableName: string, rowId: string | number): Promise<void> {
-  if (!currentToken) {
-    throw new Error('Not authenticated. Please log in first.');
-  }
-  
-  if (!client || !isInitialized) {
-    await initializeClient(currentToken);
-  }
-  
-  return queueQuery(() => client!.delete(tableName, rowId));
+  const queryClient = await ensureQueryClient();
+  return queueQuery(() => queryClient.delete(tableName, rowId));
 }
 
 /**
  * Check if client is connected (WebSocket)
  */
 export function isClientConnected(): boolean {
-  return client !== null && isInitialized && client.isConnected();
+  return Boolean(
+    (client !== null && isInitialized && client.isConnected())
+    || (subscriptionClient !== null && isSubscriptionInitialized && subscriptionClient.isConnected()),
+  );
+}
+
+export function isSubscriptionClientConnected(): boolean {
+  return Boolean(
+    subscriptionClient !== null
+    && isSubscriptionInitialized
+    && subscriptionClient.isConnected(),
+  );
 }
 
 /**
  * Connect WebSocket for real-time subscriptions
  */
 export async function connectWebSocket(): Promise<void> {
-  if (!currentToken) {
-    throw new Error('Not authenticated. Please log in first.');
-  }
-  
-  if (!client || !isInitialized) {
-    await initializeClient(currentToken);
-  }
-  
-  //await client!.connect();
+  const token = requireToken();
+  await initializeSubscriptionClient(token);
 }
 
 /**
@@ -370,6 +480,34 @@ function parseOptionsFromSql(sql: string): { sql: string; options: SubscriptionO
   return { sql: cleanSql, options };
 }
 
+function isSqlQueryTarget(sql: string): boolean {
+  const trimmed = sql.trim().toLowerCase();
+  return trimmed.startsWith('select ')
+    || trimmed.startsWith('select\n')
+    || trimmed.startsWith('select\t');
+}
+
+function normalizeSubscriptionTarget(
+  tableOrQuery: string,
+  options?: SubscriptionOptions,
+): {
+  cleanSql: string;
+  subscribeOptions: SubscriptionOptions;
+  isSqlQuery: boolean;
+} {
+  const { sql: cleanSql, options: parsedOptions } = parseOptionsFromSql(tableOrQuery);
+
+  return {
+    cleanSql,
+    subscribeOptions: {
+      last_rows: parsedOptions.last_rows ?? options?.last_rows,
+      batch_size: parsedOptions.batch_size ?? options?.batch_size,
+      from: parsedOptions.from ?? options?.from,
+    },
+    isSqlQuery: isSqlQueryTarget(cleanSql),
+  };
+}
+
 /**
  * Subscribe to table changes
  * Returns an unsubscribe function (Firebase/Supabase style)
@@ -384,47 +522,24 @@ export async function subscribe(
   callback: (event: ServerMessage) => void,
   options?: SubscriptionOptions
 ): Promise<Unsubscribe> {
-  if (!currentToken) {
-    throw new Error('Not authenticated. Please log in first.');
-  }
-  
-  if (!client || !isInitialized) {
-    await initializeClient(currentToken);
-  }
-  
-  // // Ensure WebSocket is connected
-  // if (!client!.isConnected()) {
-  //   console.log('[kalam-client] Connecting WebSocket for subscription...');
-  //   await client!.connect();
-  // }
-  
-  // Parse OPTIONS from SQL if present (CLI-style syntax)
-  const { sql: cleanSql, options: parsedOptions } = parseOptionsFromSql(tableOrQuery);
-  
-  // Merge options: parsed from SQL > passed options > defaults
-  const subscribeOptions: SubscriptionOptions = {
-    last_rows: parsedOptions.last_rows ?? options?.last_rows,
-    batch_size: parsedOptions.batch_size ?? options?.batch_size,
-    from: parsedOptions.from ?? options?.from,
-  };
+  const liveClient = await ensureSubscriptionClient();
+  const { cleanSql, subscribeOptions, isSqlQuery } = normalizeSubscriptionTarget(tableOrQuery, options);
   
   debugLog('[kalam-client] Subscribing to:', cleanSql, 'with options:', subscribeOptions);
-  
-  // Detect if input is a SQL query or just a table name
-  const trimmed = cleanSql.trim().toLowerCase();
-  const isSqlQuery = trimmed.startsWith('select ') || 
-                     trimmed.startsWith('select\n') || 
-                     trimmed.startsWith('select\t');
   
   let unsubscribe: Unsubscribe;
   if (isSqlQuery) {
     // Full SQL query - use subscribeWithSql
     debugLog('[kalam-client] Detected SQL query, using subscribeWithSql');
-    unsubscribe = await client!.subscribeWithSql(cleanSql, callback, subscribeOptions);
+    unsubscribe = await serializedSubscriptionCall(
+      () => liveClient.subscribeWithSql(cleanSql, callback, subscribeOptions),
+    );
   } else {
     // Just a table name - use subscribe (which wraps in SELECT * FROM)
     debugLog('[kalam-client] Detected table name, using subscribe');
-    unsubscribe = await client!.subscribe(cleanSql, callback, subscribeOptions);
+    unsubscribe = await serializedSubscriptionCall(
+      () => liveClient.subscribe(cleanSql, callback, subscribeOptions),
+    );
   }
   
   debugLog('[kalam-client] Subscription registered successfully');
@@ -442,34 +557,23 @@ export async function subscribeRows<T = RowData>(
   callback: (rows: T[]) => void,
   options?: LiveRowsOptions<T>,
 ): Promise<Unsubscribe> {
-  if (!currentToken) {
-    throw new Error('Not authenticated. Please log in first.');
-  }
-
-  if (!client || !isInitialized) {
-    await initializeClient(currentToken);
-  }
-
-  const { sql: cleanSql } = parseOptionsFromSql(tableOrQuery);
-  const trimmed = cleanSql.trim().toLowerCase();
-  const isSqlQuery = trimmed.startsWith('select ') ||
-                     trimmed.startsWith('select\n') ||
-                     trimmed.startsWith('select\t');
+  const liveClient = await ensureSubscriptionClient();
+  const { cleanSql, isSqlQuery } = normalizeSubscriptionTarget(tableOrQuery);
 
   if (isSqlQuery) {
     debugLog('[kalam-client] Detected SQL query, using live');
-    return client!.live(cleanSql, callback, options);
+    return serializedSubscriptionCall(() => liveClient.live(cleanSql, callback, options));
   }
 
   debugLog('[kalam-client] Detected table name, using liveTableRows');
-  return client!.liveTableRows(cleanSql, callback, options);
+  return serializedSubscriptionCall(() => liveClient.liveTableRows(cleanSql, callback, options));
 }
 
 /**
  * Get subscription count
  */
 export function getSubscriptionCount(): number {
-  return client?.getSubscriptionCount() ?? 0;
+  return subscriptionClient?.getSubscriptionCount() ?? 0;
 }
 
 /**
@@ -477,36 +581,50 @@ export function getSubscriptionCount(): number {
  * Pass undefined to remove the listener.
  */
 export function setClientLogListener(listener: LogListener | undefined): void {
-  if (client) {
-    client.setLogListener(listener);
+  if (subscriptionClient) {
+    subscriptionClient.setLogListener(listener);
   }
 }
 
 export function setClientReceiveListener(listener: OnReceiveCallback | undefined): void {
   currentReceiveListener = listener;
-  if (client) {
-    client.onReceive(listener ?? (() => {}));
+  if (subscriptionClient) {
+    subscriptionClient.onReceive(listener ?? (() => {}));
   }
 }
 
 export function setClientSendListener(listener: OnSendCallback | undefined): void {
   currentSendListener = listener;
-  if (client) {
-    client.onSend(listener ?? (() => {}));
+  if (subscriptionClient) {
+    subscriptionClient.onSend(listener ?? (() => {}));
+  }
+}
+
+export function setClientConnectListener(listener: OnConnectCallback | undefined): void {
+  currentConnectListener = listener;
+  if (subscriptionClient) {
+    subscriptionClient.onConnect(handleSubscriptionClientConnect);
   }
 }
 
 export function setClientDisconnectListener(listener: OnDisconnectCallback | undefined): void {
   currentDisconnectListener = listener;
-  if (client) {
-    client.onDisconnect(listener ?? (() => {}));
+  if (subscriptionClient) {
+    subscriptionClient.onDisconnect(handleSubscriptionClientDisconnect);
   }
 }
 
 export function setClientErrorListener(listener: OnErrorCallback | undefined): void {
   currentErrorListener = listener;
-  if (client) {
-    client.onError(listener ?? (() => {}));
+  if (subscriptionClient) {
+    subscriptionClient.onError(handleSubscriptionClientError);
+  }
+}
+
+export function subscribeToClientConnectivity(listener: ClientConnectivityListener): () => void {
+  connectivityListeners.add(listener);
+  return () => {
+    connectivityListeners.delete(listener);
   }
 }
 
@@ -519,6 +637,7 @@ export type {
   DisconnectReason,
   LogEntry,
   LogListener,
+  OnConnectCallback,
   OnDisconnectCallback,
   OnErrorCallback,
   OnReceiveCallback,

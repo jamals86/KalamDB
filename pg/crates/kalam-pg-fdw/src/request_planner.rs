@@ -8,7 +8,9 @@ use crate::update_input::UpdateInput;
 use crate::update_plan::UpdatePlan;
 use crate::virtual_column::VirtualColumn;
 use datafusion_common::ScalarValue;
-use kalam_pg_api::{DeleteRequest, InsertRequest, ScanFilter, ScanRequest, TenantContext, UpdateRequest};
+use kalam_pg_api::{
+    DeleteRequest, InsertRequest, ScanFilter, ScanRequest, TenantContext, UpdateRequest,
+};
 use kalam_pg_common::{KalamPgError, DELETED_COLUMN, SEQ_COLUMN, USER_ID_COLUMN};
 use kalamdb_commons::models::rows::Row;
 use kalamdb_commons::models::UserId;

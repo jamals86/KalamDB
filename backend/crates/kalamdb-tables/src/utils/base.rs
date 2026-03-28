@@ -247,7 +247,12 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     ///
     /// # Returns
     /// `Ok(Some(key))` if the row was updated, `Ok(None)` if the row was unchanged (no-op).
-    async fn update(&self, user_id: &UserId, key: &K, updates: Row) -> Result<Option<K>, KalamDbError>;
+    async fn update(
+        &self,
+        user_id: &UserId,
+        key: &K,
+        updates: Row,
+    ) -> Result<Option<K>, KalamDbError>;
 
     /// Delete a row by key (appends tombstone with _deleted=true)
     ///
@@ -623,9 +628,16 @@ where
     let schema = provider.schema_ref();
 
     // Scan cold storage for this PK value using async I/O
-    let batch =
-        scan_parquet_files_as_batch_async(core, table_id, table_type, scope, schema, Some(&filter), None)
-            .await?;
+    let batch = scan_parquet_files_as_batch_async(
+        core,
+        table_id,
+        table_type,
+        scope,
+        schema,
+        Some(&filter),
+        None,
+    )
+    .await?;
 
     if batch.num_rows() == 0 {
         return Ok(None);
@@ -1095,10 +1107,8 @@ async fn pk_exists_batch_in_parquet_via_storage_cache(
     // Track latest version per PK value: pk_value -> (max_seq, is_deleted)
     let mut versions: HashMap<String, (i64, bool)> = HashMap::new();
 
-    while let Some(batch) = stream
-        .try_next()
-        .await
-        .into_kalamdb_error("Failed to read Parquet batch")?
+    while let Some(batch) =
+        stream.try_next().await.into_kalamdb_error("Failed to read Parquet batch")?
     {
         let pk_idx = batch.schema().index_of(pk_column).ok();
         let seq_idx = batch.schema().index_of(SystemColumnNames::SEQ).ok();
@@ -1188,10 +1198,8 @@ async fn pk_exists_in_parquet_via_storage_cache(
     // Track latest version: (max_seq, is_deleted)
     let mut latest: Option<(i64, bool)> = None;
 
-    while let Some(batch) = stream
-        .try_next()
-        .await
-        .into_kalamdb_error("Failed to read Parquet batch")?
+    while let Some(batch) =
+        stream.try_next().await.into_kalamdb_error("Failed to read Parquet batch")?
     {
         let pk_idx = batch.schema().index_of(pk_column).ok();
         let seq_idx = batch.schema().index_of(SystemColumnNames::SEQ).ok();
@@ -1237,7 +1245,7 @@ async fn pk_exists_in_parquet_via_storage_cache(
                         *max_seq = seq;
                         *del = deleted;
                     }
-                }
+                },
                 None => latest = Some((seq, deleted)),
             }
         }
@@ -1482,10 +1490,7 @@ pub fn calculate_scan_limit(limit: Option<usize>) -> usize {
 ///
 /// Shared between SharedTableProvider and UserTableProvider for vector
 /// column upsert operations.
-pub fn extract_embedding_vector(
-    value: &ScalarValue,
-    expected_dimensions: u32,
-) -> Option<Vec<f32>> {
+pub fn extract_embedding_vector(value: &ScalarValue, expected_dimensions: u32) -> Option<Vec<f32>> {
     let parse_inner = |array: &dyn Array| -> Option<Vec<f32>> {
         let float_array = array.as_any().downcast_ref::<Float32Array>()?;
         if float_array.len() != expected_dimensions as usize {
@@ -1540,14 +1545,8 @@ pub fn extract_embedding_vector(
 /// This function avoids duplicating the notification row building logic.
 pub fn build_notification_row(fields: &Row, seq: SeqId, deleted: bool) -> Row {
     let mut values = fields.values.clone();
-    values.insert(
-        SystemColumnNames::SEQ.to_string(),
-        ScalarValue::Int64(Some(seq.as_i64())),
-    );
-    values.insert(
-        SystemColumnNames::DELETED.to_string(),
-        ScalarValue::Boolean(Some(deleted)),
-    );
+    values.insert(SystemColumnNames::SEQ.to_string(), ScalarValue::Int64(Some(seq.as_i64())));
+    values.insert(SystemColumnNames::DELETED.to_string(), ScalarValue::Boolean(Some(deleted)));
     Row::new(values)
 }
 
@@ -1556,14 +1555,14 @@ pub fn build_notification_row(fields: &Row, seq: SeqId, deleted: bool) -> Row {
 /// Used by the COUNT(*) fast-path in both SharedTableProvider and UserTableProvider
 /// when projection is empty.
 pub fn build_count_only_batch(count: usize) -> Result<RecordBatch, KalamDbError> {
-    let empty_schema = Arc::new(datafusion::arrow::datatypes::Schema::new(
-        Vec::<datafusion::arrow::datatypes::Field>::new(),
-    ));
+    let empty_schema = Arc::new(datafusion::arrow::datatypes::Schema::new(Vec::<
+        datafusion::arrow::datatypes::Field,
+    >::new()));
     if count == 0 {
         return Ok(RecordBatch::new_empty(empty_schema));
     }
-    let options = datafusion::arrow::record_batch::RecordBatchOptions::new()
-        .with_row_count(Some(count));
+    let options =
+        datafusion::arrow::record_batch::RecordBatchOptions::new().with_row_count(Some(count));
     RecordBatch::try_new_with_options(empty_schema, vec![], &options).map_err(|e| {
         KalamDbError::InvalidOperation(format!("Failed to build count-only batch: {}", e))
     })

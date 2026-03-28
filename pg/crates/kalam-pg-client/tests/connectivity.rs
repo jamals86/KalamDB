@@ -22,7 +22,7 @@ async fn start_server_and_client(addr: &str) -> RemoteKalamClient {
     let port = bind_addr.port();
     RemoteKalamClient::connect(RemoteServerConfig {
         host: "127.0.0.1".to_string(),
-        port: port,
+        port,
         ..Default::default()
     })
     .await
@@ -52,10 +52,7 @@ async fn remote_client_connects_and_opens_session() {
 async fn sequential_transactions_commit_cleanly() {
     let client = start_server_and_client("127.0.0.1:59972").await;
 
-    client
-        .open_session("pg-seq-tx", None)
-        .await
-        .expect("open session");
+    client.open_session("pg-seq-tx", None).await.expect("open session");
 
     for i in 0..5 {
         let tx_id = client
@@ -77,16 +74,10 @@ async fn sequential_transactions_commit_cleanly() {
 async fn stale_transaction_auto_rollback_on_new_begin() {
     let client = start_server_and_client("127.0.0.1:59973").await;
 
-    client
-        .open_session("pg-stale-tx", None)
-        .await
-        .expect("open session");
+    client.open_session("pg-stale-tx", None).await.expect("open session");
 
     // Begin a transaction and intentionally skip commit/rollback
-    let _tx_id1 = client
-        .begin_transaction("pg-stale-tx")
-        .await
-        .expect("begin tx1");
+    let _tx_id1 = client.begin_transaction("pg-stale-tx").await.expect("begin tx1");
 
     // Beginning a new transaction should succeed (auto-rollback of stale tx1)
     let tx_id2 = client
@@ -94,10 +85,7 @@ async fn stale_transaction_auto_rollback_on_new_begin() {
         .await
         .expect("begin tx2 should auto-rollback stale tx1");
 
-    client
-        .commit_transaction("pg-stale-tx", &tx_id2)
-        .await
-        .expect("commit tx2");
+    client.commit_transaction("pg-stale-tx", &tx_id2).await.expect("commit tx2");
 }
 
 /// Verify close_session removes the session from the server registry.
@@ -106,16 +94,10 @@ async fn stale_transaction_auto_rollback_on_new_begin() {
 async fn close_session_removes_server_state() {
     let client = start_server_and_client("127.0.0.1:59974").await;
 
-    client
-        .open_session("pg-close-test", None)
-        .await
-        .expect("open session");
+    client.open_session("pg-close-test", None).await.expect("open session");
 
     // Close the session — should succeed
-    client
-        .close_session("pg-close-test")
-        .await
-        .expect("close session");
+    client.close_session("pg-close-test").await.expect("close session");
 
     // Closing again should also succeed (idempotent remove)
     client
@@ -140,12 +122,12 @@ async fn connect_with_timeout_fails_on_unreachable_server() {
     match client {
         Err(_) => {
             // Connection failed immediately — this is acceptable
-        }
+        },
         Ok(c) => {
             // Connection appeared to succeed (tonic uses lazy connect).
             // The first RPC call should fail with timeout.
             let result = c.ping().await;
             assert!(result.is_err(), "ping to unreachable server should fail");
-        }
+        },
     }
 }

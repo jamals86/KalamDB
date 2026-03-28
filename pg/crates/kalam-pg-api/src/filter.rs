@@ -6,10 +6,7 @@ use datafusion_common::ScalarValue;
 /// primarily to strip `_userid` before request execution.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ScanFilter {
-    Eq {
-        column: String,
-        value: ScalarValue,
-    },
+    Eq { column: String, value: ScalarValue },
 }
 
 impl ScanFilter {

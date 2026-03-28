@@ -200,21 +200,14 @@ impl DdlTestEnv {
         // Response format: { "results": [{ "schema": [{"name": "col1", ...}, ...], "rows": [...] }] }
         val["results"][0]["schema"]
             .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v["name"].as_str().map(String::from))
-                    .collect()
-            })
+            .map(|arr| arr.iter().filter_map(|v| v["name"].as_str().map(String::from)).collect())
             .unwrap_or_default()
     }
 
     // -- lifecycle ----------------------------------------------------------
 
     async fn start() -> Self {
-        let http_client = Client::builder()
-            .timeout(Duration::from_secs(15))
-            .build()
-            .unwrap();
+        let http_client = Client::builder().timeout(Duration::from_secs(15)).build().unwrap();
 
         // 1. Verify KalamDB is reachable
         Self::wait_for_kalamdb(&http_client).await;
@@ -257,21 +250,17 @@ impl DdlTestEnv {
         }
         panic!(
             "KalamDB not reachable at {}\n\
-             Start with: cd backend && cargo run"
-            , config.base_url
+             Start with: cd backend && cargo run",
+            config.base_url
         );
     }
 
     async fn authenticate(client: &Client) -> String {
         let config = kalamdb_auth_config();
 
-        if let Some(token) = try_login(
-            client,
-            &config.base_url,
-            &config.login_username,
-            &config.login_password,
-        )
-        .await
+        if let Some(token) =
+            try_login(client, &config.base_url, &config.login_username, &config.login_password)
+                .await
         {
             return token;
         }
@@ -286,25 +275,17 @@ impl DdlTestEnv {
             .send()
             .await;
 
-        if let Some(token) = try_login(
-            client,
-            &config.base_url,
-            &config.login_username,
-            &config.login_password,
-        )
-        .await
+        if let Some(token) =
+            try_login(client, &config.base_url, &config.login_username, &config.login_password)
+                .await
         {
             return token;
         }
 
         if config.setup_username != config.login_username {
-            if let Some(token) = try_login(
-                client,
-                &config.base_url,
-                &config.setup_username,
-                &config.setup_password,
-            )
-            .await
+            if let Some(token) =
+                try_login(client, &config.base_url, &config.setup_username, &config.setup_password)
+                    .await
             {
                 return token;
             }
@@ -316,7 +297,12 @@ impl DdlTestEnv {
     }
 }
 
-async fn try_login(client: &Client, base_url: &str, username: &str, password: &str) -> Option<String> {
+async fn try_login(
+    client: &Client,
+    base_url: &str,
+    username: &str,
+    password: &str,
+) -> Option<String> {
     let resp = client
         .post(format!("{base_url}/v1/api/auth/login"))
         .json(&serde_json::json!({

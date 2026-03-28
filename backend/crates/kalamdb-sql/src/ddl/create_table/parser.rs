@@ -331,7 +331,8 @@ impl CreateTableStatement {
                             },
                             // GENERATED { ALWAYS | BY DEFAULT } AS IDENTITY
                             ColumnOption::Generated {
-                                generated_as: sqlparser::ast::GeneratedAs::Always
+                                generated_as:
+                                    sqlparser::ast::GeneratedAs::Always
                                     | sqlparser::ast::GeneratedAs::ByDefault,
                                 generation_expr: None,
                                 ..
@@ -422,16 +423,13 @@ fn normalize_create_table_sql(sql: &str) -> (String, Option<TableType>) {
     // Strip `USING <access_method>` clause (PostgreSQL table access method syntax).
     // e.g. `CREATE TABLE t (...) USING kalamdb WITH (...)` → `CREATE TABLE t (...) WITH (...)`
     // We accept the access method for compatibility but KalamDB always uses its own engine.
-    normalized = USING_ACCESS_METHOD_RE
-        .replace(&normalized, ") ")
-        .into_owned();
+    normalized = USING_ACCESS_METHOD_RE.replace(&normalized, ") ").into_owned();
 
     if let Some(caps) = CREATE_TYPED_PREFIX_RE.captures(&normalized) {
         let requested_type = caps[1].to_ascii_uppercase();
         let table_type = TableType::from_str_opt(&requested_type).unwrap_or(TableType::User);
-        let normalized_sql = CREATE_TYPED_PREFIX_RE
-            .replace(&normalized, "CREATE TABLE")
-            .into_owned();
+        let normalized_sql =
+            CREATE_TYPED_PREFIX_RE.replace(&normalized, "CREATE TABLE").into_owned();
         (normalized_sql, Some(table_type))
     } else {
         (normalized, None)

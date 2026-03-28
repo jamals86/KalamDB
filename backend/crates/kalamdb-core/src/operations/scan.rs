@@ -26,13 +26,13 @@ pub async fn execute_scan(
     limit: Option<usize>,
 ) -> Result<Vec<RecordBatch>, OperationError> {
     // 1. Resolve table provider
-    let cached = schema_registry.get(table_id).ok_or_else(|| {
-        OperationError::TableNotFound(table_id.full_name())
-    })?;
+    let cached = schema_registry
+        .get(table_id)
+        .ok_or_else(|| OperationError::TableNotFound(table_id.full_name()))?;
 
-    let provider = cached.get_provider().ok_or_else(|| {
-        OperationError::ProviderNotAvailable(table_id.full_name())
-    })?;
+    let provider = cached
+        .get_provider()
+        .ok_or_else(|| OperationError::ProviderNotAvailable(table_id.full_name()))?;
 
     // 2. Build projection from column names → indices
     let projection = if columns.is_empty() {
@@ -63,9 +63,7 @@ pub async fn execute_scan(
 
     // 4. Collect results using TaskContext only
     let task_ctx = state.task_ctx();
-    let batches = collect(plan, task_ctx)
-        .await
-        .map_err(OperationError::DataFusion)?;
+    let batches = collect(plan, task_ctx).await.map_err(OperationError::DataFusion)?;
 
     Ok(batches)
 }

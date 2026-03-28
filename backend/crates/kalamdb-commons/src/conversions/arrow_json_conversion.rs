@@ -434,7 +434,11 @@ mod tests {
             Field::new("thread_id", DataType::Utf8, true),
             Field::new("role", DataType::Utf8, true),
             Field::new("content", DataType::Utf8, true),
-            Field::new("created_at", DataType::Timestamp(arrow::datatypes::TimeUnit::Microsecond, None), true),
+            Field::new(
+                "created_at",
+                DataType::Timestamp(arrow::datatypes::TimeUnit::Microsecond, None),
+                true,
+            ),
             Field::new("_seq", DataType::Int64, false),
             Field::new("_deleted", DataType::Boolean, false),
         ]))
@@ -496,9 +500,7 @@ mod tests {
         // UPDATE ... SET created_at = 1704067200000000 (raw Int64 from SQL literal)
         // After coercion: Int64 → TimestampMicrosecond(1704067200000000)
         let schema = chat_messages_schema();
-        let update_row = make_row(vec![
-            ("created_at", ScalarValue::Int64(Some(1704067200000000))),
-        ]);
+        let update_row = make_row(vec![("created_at", ScalarValue::Int64(Some(1704067200000000)))]);
 
         let coerced = coerce_updates(update_row, &schema).unwrap();
 
@@ -591,9 +593,7 @@ mod tests {
     fn coerce_updates_casts_int64_to_timestamp() {
         // TIMESTAMP columns: expr_to_scalar produces Int64, stored is TimestampMicrosecond
         let schema = chat_messages_schema();
-        let update_row = make_row(vec![
-            ("created_at", ScalarValue::Int64(Some(1704067200000000))),
-        ]);
+        let update_row = make_row(vec![("created_at", ScalarValue::Int64(Some(1704067200000000)))]);
 
         let coerced = coerce_updates(update_row, &schema).unwrap();
         let val = coerced.values.get("created_at").unwrap();
@@ -623,9 +623,7 @@ mod tests {
     fn coerce_updates_ignores_unknown_columns() {
         // Columns not in schema should pass through unchanged
         let schema = chat_messages_schema();
-        let update_row = make_row(vec![
-            ("nonexistent_col", ScalarValue::Utf8(Some("val".into()))),
-        ]);
+        let update_row = make_row(vec![("nonexistent_col", ScalarValue::Utf8(Some("val".into())))]);
 
         let coerced = coerce_updates(update_row, &schema).unwrap();
         let val = coerced.values.get("nonexistent_col").unwrap();

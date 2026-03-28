@@ -52,16 +52,15 @@ pub fn ensure_transaction(session_id: &str) -> Result<String, kalam_pg_common::K
     register_xact_callback();
 
     // Begin a new transaction via the remote client
-    let state = crate::remote_state::get_remote_extension_state()
-        .ok_or_else(|| {
-            kalam_pg_common::KalamPgError::Execution(
-                "remote extension state not initialized".to_string(),
-            )
-        })?;
-
-    let transaction_id = state.runtime().block_on(async {
-        state.client().begin_transaction(session_id).await
+    let state = crate::remote_state::get_remote_extension_state().ok_or_else(|| {
+        kalam_pg_common::KalamPgError::Execution(
+            "remote extension state not initialized".to_string(),
+        )
     })?;
+
+    let transaction_id = state
+        .runtime()
+        .block_on(async { state.client().begin_transaction(session_id).await })?;
 
     let mut guard = CURRENT_TX.lock().unwrap_or_else(|e| e.into_inner());
     *guard = Some(ActiveTransaction {
@@ -74,9 +73,7 @@ pub fn ensure_transaction(session_id: &str) -> Result<String, kalam_pg_common::K
 
 /// Register the PostgreSQL xact callback (idempotent).
 fn register_xact_callback() {
-    let mut registered = XACT_CALLBACK_REGISTERED
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
+    let mut registered = XACT_CALLBACK_REGISTERED.lock().unwrap_or_else(|e| e.into_inner());
     if *registered {
         return;
     }
@@ -99,7 +96,10 @@ fn register_xact_callback() {
 /// We must only consume CURRENT_TX on the final COMMIT/ABORT events.
 /// Taking it on PRE_COMMIT would prevent the actual COMMIT handler from
 /// seeing the transaction, leaving the server-side transaction dangling.
-unsafe extern "C-unwind" fn xact_callback(event: pg_sys::XactEvent::Type, _arg: *mut std::ffi::c_void) {
+unsafe extern "C-unwind" fn xact_callback(
+    event: pg_sys::XactEvent::Type,
+    _arg: *mut std::ffi::c_void,
+) {
     // Flush write buffer at PRE_COMMIT (before the transaction commit RPC).
     if matches!(event, pg_sys::XactEvent::XACT_EVENT_PRE_COMMIT) {
         if let Err(e) = crate::write_buffer::flush_all() {
@@ -147,10 +147,7 @@ unsafe extern "C-unwind" fn xact_callback(event: pg_sys::XactEvent::Type, _arg: 
     if is_commit {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             state.runtime().block_on(async {
-                state
-                    .client()
-                    .commit_transaction(&tx.session_id, &tx.transaction_id)
-                    .await
+                state.client().commit_transaction(&tx.session_id, &tx.transaction_id).await
             })
         }));
         match result {
@@ -161,20 +158,14 @@ unsafe extern "C-unwind" fn xact_callback(event: pg_sys::XactEvent::Type, _arg: 
                 );
             },
             Err(_panic) => {
-                eprintln!(
-                    "pg_kalam: panic committing KalamDB transaction {}",
-                    tx.transaction_id,
-                );
+                eprintln!("pg_kalam: panic committing KalamDB transaction {}", tx.transaction_id,);
             },
             Ok(Ok(_)) => {},
         }
     } else {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             state.runtime().block_on(async {
-                state
-                    .client()
-                    .rollback_transaction(&tx.session_id, &tx.transaction_id)
-                    .await
+                state.client().rollback_transaction(&tx.session_id, &tx.transaction_id).await
             })
         }));
         match result {
@@ -185,10 +176,7 @@ unsafe extern "C-unwind" fn xact_callback(event: pg_sys::XactEvent::Type, _arg: 
                 );
             },
             Err(_panic) => {
-                eprintln!(
-                    "pg_kalam: panic rolling back KalamDB transaction {}",
-                    tx.transaction_id,
-                );
+                eprintln!("pg_kalam: panic rolling back KalamDB transaction {}", tx.transaction_id,);
             },
             Ok(Ok(_)) => {},
         }

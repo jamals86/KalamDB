@@ -1,5 +1,5 @@
-use pg_kalam::SessionSettings;
 use kalamdb_commons::models::UserId;
+use pg_kalam::SessionSettings;
 
 #[test]
 fn parses_blank_guc_as_missing_user() {

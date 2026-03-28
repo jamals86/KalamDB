@@ -501,15 +501,13 @@ impl AppContext {
                     Arc::clone(&notification_service),
                 ));
                 raft_executor.set_cluster_handler(cluster_handler);
-                let pg_executor = Arc::new(crate::operations::OperationService::new(
-                    Arc::clone(&app_ctx),
-                ));
+                let pg_executor =
+                    Arc::new(crate::operations::OperationService::new(Arc::clone(&app_ctx)));
                 let mtls = app_ctx.config().rpc_tls.enabled
                     && app_ctx.config().rpc_tls.require_client_cert;
                 let pg_auth_token = app_ctx.config().auth.pg_auth_token.clone();
                 let pg_service = Arc::new(
-                    KalamPgService::new(mtls, pg_auth_token)
-                        .with_operation_executor(pg_executor),
+                    KalamPgService::new(mtls, pg_auth_token).with_operation_executor(pg_executor),
                 );
                 raft_executor.set_pg_service(pg_service);
                 log::info!("Wired gRPC ClusterClient and CoreClusterHandler for cluster RPC");
@@ -1144,11 +1142,9 @@ impl AppContext {
         self: &Arc<Self>,
     ) -> Result<Vec<(String, String)>, crate::error::KalamDbError> {
         let ctx = Arc::clone(self);
-        tokio::task::spawn_blocking(move || ctx.compute_metrics())
-            .await
-            .map_err(|e| {
-                crate::error::KalamDbError::ExecutionError(format!("Task join error: {}", e))
-            })
+        tokio::task::spawn_blocking(move || ctx.compute_metrics()).await.map_err(|e| {
+            crate::error::KalamDbError::ExecutionError(format!("Task join error: {}", e))
+        })
     }
 
     /// Log a concise snapshot of runtime metrics to the console.

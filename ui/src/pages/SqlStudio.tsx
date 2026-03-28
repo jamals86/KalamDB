@@ -12,24 +12,20 @@ import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { useAuth } from "@/lib/auth";
 import {
   subscribe,
+  setClientLogListener,
+  setClientSendListener,
+  setClientReceiveListener,
   setClientDisconnectListener,
   setClientErrorListener,
-  setClientLogListener,
-  setClientReceiveListener,
-  setClientSendListener,
   type Unsubscribe,
 } from "@/lib/kalam-client";
 import type { ServerMessage, ChangeTypeRaw, SchemaField } from "kalam-link";
 import type {
   QueryRunSummary,
   QueryTab,
+  SavedQuery,
   StudioTable,
 } from "@/components/sql-studio-v2/types";
-import {
-  loadSqlStudioWorkspaceState,
-  saveSqlStudioWorkspaceState,
-  type SqlStudioWorkspaceState,
-} from "@/components/sql-studio-v2/workspaceState";
 import {
   executeSqlStudioQuery,
   normalizeSchema,
@@ -40,6 +36,7 @@ import {
   appendWorkspaceResultLog,
   closeWorkspaceTab,
   hydrateSqlStudioWorkspace,
+  incrementWorkspaceTabUnreadChanges,
   prependWorkspaceHistory,
   setWorkspaceLiveSchema,
   setWorkspaceActiveTabId,
@@ -88,11 +85,16 @@ import {
   createSavedQueryId,
   createTabId,
   resolveResultView,
-  toPersistedTab,
 } from "@/features/sql-studio/utils/workspaceHelpers";
 import { ExplorerTableContextMenu } from "@/features/sql-studio/components/ExplorerTableContextMenu";
+import {
+  buildSyncedSqlStudioWorkspaceState,
+  saveSyncedSqlStudioWorkspaceState,
+  subscribeToSyncedSqlStudioWorkspaceState,
+  type SqlStudioSyncedWorkspaceState,
+} from "@/services/sqlStudioWorkspaceSyncService";
 
-const WORKSPACE_PERSIST_DEBOUNCE_MS = 250;
+const WORKSPACE_PERSIST_DEBOUNCE_MS = 750;
 
 function normalizeLiveRows(rows: unknown[]): Record<string, unknown>[] {
   return rows.map((row) => {
@@ -106,44 +108,65 @@ function normalizeLiveRows(rows: unknown[]): Record<string, unknown>[] {
   });
 }
 
-function parseWirePayload(message: string): unknown {
+function extractWsMessageType(raw: string): string {
   try {
-    return JSON.parse(message) as unknown;
+    const parsed = JSON.parse(raw);
+    return typeof parsed?.type === "string" ? parsed.type : "unknown";
   } catch {
-    return undefined;
+    return "raw";
   }
 }
 
-function createWireLogEntry(
-  direction: "send" | "receive",
-  rawMessage: string,
-  asUser?: string,
-) {
-  const parsed = parseWirePayload(rawMessage);
-  const parsedRecord =
-    parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? parsed as Record<string, unknown>
-      : undefined;
-  const messageType =
-    typeof parsedRecord?.type === "string"
-      ? parsedRecord.type
-      : "message";
+function extractMessage(value: unknown, fallback: string): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "object" && value !== null && "message" in value) {
+    const message = (value as { message?: unknown }).message;
+    if (typeof message === "string") {
+      return message;
+    }
+  }
+  return fallback;
+}
 
-  return createLogEntry(
-    `WS ${direction.toUpperCase()} · ${messageType}`,
-    "info",
-    asUser,
-    parsed ?? rawMessage,
-  );
+function mapPersistedTabToQueryTab(tab: SqlStudioSyncedWorkspaceState["tabs"][number]): QueryTab {
+  return {
+    id: tab.id,
+    title: tab.name,
+    sql: tab.query,
+    isDirty: tab.settings.isDirty,
+    unreadChangeCount: 0,
+    isLive: tab.settings.isLive,
+    liveStatus: tab.settings.liveStatus,
+    resultView: tab.settings.resultView,
+    lastSavedAt: tab.settings.lastSavedAt,
+    savedQueryId: tab.settings.savedQueryId,
+    subscriptionOptions: tab.settings.subscriptionOptions,
+  };
+}
+
+function mapPersistedSavedQuery(item: SqlStudioSyncedWorkspaceState["savedQueries"][number]): SavedQuery {
+  return {
+    id: item.id,
+    title: item.title,
+    sql: item.sql,
+    lastSavedAt: item.lastSavedAt,
+    isLive: item.isLive,
+    subscriptionOptions: item.subscriptionOptions,
+  };
+}
+
+function serializeSyncedWorkspaceSnapshot(state: SqlStudioSyncedWorkspaceState): string {
+  return JSON.stringify({
+    ...state,
+    updatedAt: "",
+  });
 }
 
 export default function SqlStudio() {
   const location = useLocation();
   const navigate = useNavigate();
-  const initialWorkspace = useMemo(() => {
-    const fallbackTab = createQueryTab(1);
-    return loadSqlStudioWorkspaceState(toPersistedTab(fallbackTab));
-  }, []);
 
   const dispatch = useAppDispatch();
   const { user } = useAuth();
@@ -169,8 +192,12 @@ export default function SqlStudio() {
     table: StudioTable;
   } | null>(null);
   const [isUiHydrated, setIsUiHydrated] = useState(false);
+  const [isRemoteWorkspaceHydrated, setIsRemoteWorkspaceHydrated] = useState(false);
   const liveUnsubscribeRef = useRef<Record<string, Unsubscribe>>({});
+  const liveGenRef = useRef<Record<string, number>>({});
   const consumedPrefillKeyRef = useRef<string | null>(null);
+  const activeTabIdRef = useRef<string | null>(null);
+  const lastSyncedWorkspaceSnapshotRef = useRef<string | null>(null);
 
   const activeTab = useMemo(
     () => {
@@ -192,46 +219,88 @@ export default function SqlStudio() {
   }, [schema, selectedTableKey]);
 
   useEffect(() => {
-    const workspaceTabs = initialWorkspace.tabs.map((tab) => ({
-      id: tab.id,
-      title: tab.name,
-      sql: tab.query,
-      isDirty: tab.settings.isDirty,
-      isLive: tab.settings.isLive,
-      liveStatus: tab.settings.liveStatus,
-      resultView: tab.settings.resultView,
-      lastSavedAt: tab.settings.lastSavedAt,
-      savedQueryId: tab.settings.savedQueryId,
-      subscriptionOptions: tab.settings.subscriptionOptions,
-    }));
-    const workspaceSavedQueries = initialWorkspace.savedQueries.map((item) => ({
-      id: item.id,
-      title: item.title,
-      sql: item.sql,
-      lastSavedAt: item.lastSavedAt,
-      isLive: item.isLive,
-      subscriptionOptions: item.subscriptionOptions,
-    }));
+    activeTabIdRef.current = activeTabId;
+  }, [activeTabId]);
 
+  const applySyncedWorkspace = useCallback((workspace: SqlStudioSyncedWorkspaceState) => {
+    startTransition(() => {
+      dispatch(hydrateSqlStudioWorkspace({
+        tabs: workspace.tabs.map(mapPersistedTabToQueryTab),
+        savedQueries: workspace.savedQueries.map(mapPersistedSavedQuery),
+        activeTabId: workspace.activeTabId,
+      }));
+    });
+  }, [dispatch]);
+
+  // Initialize with a single blank tab while waiting for remote workspace to load.
+  useEffect(() => {
+    if (tabs.length > 0) {
+      setIsUiHydrated(true);
+      return;
+    }
+
+    const blankTab = createQueryTab(1);
     dispatch(hydrateSqlStudioWorkspace({
-      tabs: workspaceTabs,
-      savedQueries: workspaceSavedQueries,
-      activeTabId: initialWorkspace.activeTabId,
-    }));
-
-    dispatch(hydrateSqlStudioUi({
-      schemaFilter: initialWorkspace.explorerTree.filter,
-      favoritesExpanded: initialWorkspace.explorerTree.favoritesExpanded,
-      namespaceSectionExpanded: initialWorkspace.explorerTree.namespaceSectionExpanded,
-      expandedNamespaces: initialWorkspace.explorerTree.expandedNamespaces,
-      expandedTables: initialWorkspace.explorerTree.expandedTables,
-      selectedTableKey: initialWorkspace.selectedTableKey,
-      isInspectorCollapsed: initialWorkspace.inspectorCollapsed,
-      horizontalLayout: initialWorkspace.sizes.explorerMain,
-      verticalLayout: initialWorkspace.sizes.editorResults,
+      tabs: [blankTab],
+      savedQueries: [],
+      activeTabId: blankTab.id,
     }));
     setIsUiHydrated(true);
-  }, [dispatch, initialWorkspace]);
+  }, [dispatch, tabs.length]);
+
+  useEffect(() => {
+    if (!isUiHydrated || !user?.username) {
+      return;
+    }
+
+    let cancelled = false;
+    let remoteUnsubscribe: Unsubscribe | null = null;
+    let didReceiveInitialSnapshot = false;
+
+    void (async () => {
+      try {
+        remoteUnsubscribe = await subscribeToSyncedSqlStudioWorkspaceState(user.username, (nextWorkspace) => {
+          if (cancelled) {
+            return;
+          }
+
+          if (!didReceiveInitialSnapshot) {
+            didReceiveInitialSnapshot = true;
+            setIsRemoteWorkspaceHydrated(true);
+          }
+
+          if (!nextWorkspace) {
+            return;
+          }
+
+          const nextSnapshot = serializeSyncedWorkspaceSnapshot(nextWorkspace);
+          if (nextSnapshot === lastSyncedWorkspaceSnapshotRef.current) {
+            return;
+          }
+
+          lastSyncedWorkspaceSnapshotRef.current = nextSnapshot;
+          applySyncedWorkspace(nextWorkspace);
+        });
+
+        if (cancelled && remoteUnsubscribe) {
+          void remoteUnsubscribe();
+          remoteUnsubscribe = null;
+        }
+      } catch (error) {
+        if (!cancelled) {
+          console.error("Failed to initialize synced SQL Studio workspace subscription", error);
+          setIsRemoteWorkspaceHydrated(true);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (remoteUnsubscribe) {
+        void remoteUnsubscribe();
+      }
+    };
+  }, [applySyncedWorkspace, isUiHydrated, user?.username]);
 
   useEffect(() => {
     if (!selectedTableKey && schema.length > 0 && schema[0].tables.length > 0) {
@@ -284,6 +353,7 @@ export default function SqlStudio() {
       title: state?.prefillTitle?.trim() || `Query ${tabs.length + 1}`,
       sql: prefillSql,
       isDirty: true,
+      unreadChangeCount: 0,
       isLive: false,
       liveStatus: "idle",
       resultView: "results",
@@ -313,19 +383,32 @@ export default function SqlStudio() {
     dispatch(setWorkspaceActiveTabId(tab.id));
   };
 
+  const cleanupLiveSubscription = useCallback((tabId: string) => {
+    const unsubscribe = liveUnsubscribeRef.current[tabId];
+    if (unsubscribe) {
+      void unsubscribe();
+      delete liveUnsubscribeRef.current[tabId];
+    }
+  }, []);
+
+  const clearWsListeners = useCallback(() => {
+    setClientLogListener(undefined);
+    setClientSendListener(undefined);
+    setClientReceiveListener(undefined);
+    setClientDisconnectListener(undefined);
+    setClientErrorListener(undefined);
+  }, []);
+
   const closeTab = useCallback((tabId: string) => {
     if (tabs.length === 1) {
       return;
     }
 
-    const unsubscribe = liveUnsubscribeRef.current[tabId];
-    if (unsubscribe) {
-      unsubscribe();
-      delete liveUnsubscribeRef.current[tabId];
-    }
+    liveGenRef.current[tabId] = (liveGenRef.current[tabId] ?? 0) + 1;
+    cleanupLiveSubscription(tabId);
 
     dispatch(closeWorkspaceTab(tabId));
-  }, [dispatch, tabs]);
+  }, [cleanupLiveSubscription, dispatch, tabs]);
 
   const openQueryInNewTab = (query: string, title: string) => {
     const tab: QueryTab = {
@@ -333,6 +416,7 @@ export default function SqlStudio() {
       title,
       sql: query,
       isDirty: true,
+      unreadChangeCount: 0,
       isLive: false,
       liveStatus: "idle",
       resultView: "results",
@@ -350,6 +434,22 @@ export default function SqlStudio() {
 
     dispatch(setWorkspaceRunning(true));
     const startedAt = Date.now();
+
+    // Safety net: always unblock the Execute button after 60 s even if the
+    // underlying WASM call or network request stalls and never settles.
+    const safetyTimeoutId = window.setTimeout(() => {
+      dispatch(setWorkspaceRunning(false));
+      dispatch(setWorkspaceTabResult({ tabId, result: {
+        status: "error",
+        rows: [],
+        schema: [],
+        tookMs: Math.round(Date.now() - startedAt),
+        rowCount: 0,
+        logs: [createLogEntry("Query timed out after 60 seconds.", "error", user?.username)],
+        errorMessage: "Query timed out after 60 seconds.",
+      } }));
+      updateTab(tabId, { resultView: "log" });
+    }, 60_000);
 
     try {
       const queryResult = await executeSqlStudioQuery(sql);
@@ -386,24 +486,18 @@ export default function SqlStudio() {
       } }));
       updateTab(tabId, { resultView: "log" });
     } finally {
+      window.clearTimeout(safetyTimeoutId);
       dispatch(setWorkspaceRunning(false));
     }
   };
 
   const stopLiveQuery = useCallback((tabId: string) => {
-    const unsubscribe = liveUnsubscribeRef.current[tabId];
-    if (unsubscribe) {
-      unsubscribe();
-      delete liveUnsubscribeRef.current[tabId];
-    }
-    // Clear the SDK log listener when stopping
-    setClientLogListener(undefined);
-    setClientReceiveListener(undefined);
-    setClientSendListener(undefined);
-    setClientDisconnectListener(undefined);
-    setClientErrorListener(undefined);
+    liveGenRef.current[tabId] = (liveGenRef.current[tabId] ?? 0) + 1;
+    cleanupLiveSubscription(tabId);
+    clearWsListeners();
+    dispatch(setWorkspaceRunning(false));
     updateTab(tabId, { liveStatus: "idle" });
-  }, [updateTab]);
+  }, [cleanupLiveSubscription, clearWsListeners, dispatch, updateTab]);
 
   const startLiveQuery = useCallback(async (tab: QueryTab, sqlOverride?: string) => {
     const sqlToRun = sqlOverride ?? tab.sql;
@@ -412,6 +506,13 @@ export default function SqlStudio() {
       return;
     }
 
+    // Cancel any existing subscription for this tab
+    liveGenRef.current[tab.id] = (liveGenRef.current[tab.id] ?? 0) + 1;
+    cleanupLiveSubscription(tab.id);
+
+    const gen = liveGenRef.current[tab.id];
+
+    dispatch(setWorkspaceRunning(true));
     dispatch(setWorkspaceTabResult({
       tabId: tab.id,
       result: {
@@ -429,8 +530,63 @@ export default function SqlStudio() {
     }));
     updateTab(tab.id, { liveStatus: "connecting", isLive: true });
 
-    // Set up SDK log listener to capture all WS-level logs for this subscription
+    // Wire up WS message tracing — every frame in/out appears in the log panel
+    setClientSendListener((message: string) => {
+      if (liveGenRef.current[tab.id] !== gen) return;
+      dispatch(appendWorkspaceResultLog({
+        tabId: tab.id,
+        entry: createLogEntry(
+          `WS SEND · ${extractWsMessageType(message)}`,
+          "info",
+          user?.username,
+          { raw: message },
+        ),
+      }));
+    });
+
+    setClientReceiveListener((message: string) => {
+      if (liveGenRef.current[tab.id] !== gen) return;
+      dispatch(appendWorkspaceResultLog({
+        tabId: tab.id,
+        entry: createLogEntry(
+          `WS RECEIVE · ${extractWsMessageType(message)}`,
+          "info",
+          user?.username,
+          { raw: message },
+        ),
+      }));
+    });
+
+    setClientDisconnectListener((reason) => {
+      if (liveGenRef.current[tab.id] !== gen) return;
+      dispatch(appendWorkspaceResultLog({
+        tabId: tab.id,
+        entry: createLogEntry(
+          `WebSocket disconnected: ${extractMessage(reason, "unknown reason")}`,
+          "error",
+          user?.username,
+          reason,
+        ),
+        statusOverride: "error",
+      }));
+      updateTab(tab.id, { liveStatus: "error" });
+    });
+
+    setClientErrorListener((error) => {
+      if (liveGenRef.current[tab.id] !== gen) return;
+      dispatch(appendWorkspaceResultLog({
+        tabId: tab.id,
+        entry: createLogEntry(
+          `Connection error: ${extractMessage(error, "unknown error")}`,
+          "error",
+          user?.username,
+          error,
+        ),
+      }));
+    });
+
     setClientLogListener((entry) => {
+      if (liveGenRef.current[tab.id] !== gen) return;
       dispatch(appendWorkspaceResultLog({
         tabId: tab.id,
         entry: createLogEntry(
@@ -441,47 +597,13 @@ export default function SqlStudio() {
         ),
       }));
     });
-    setClientSendListener((message) => {
-      dispatch(appendWorkspaceResultLog({
-        tabId: tab.id,
-        entry: createWireLogEntry("send", message, user?.username),
-      }));
-    });
-    setClientReceiveListener((message) => {
-      dispatch(appendWorkspaceResultLog({
-        tabId: tab.id,
-        entry: createWireLogEntry("receive", message, user?.username),
-      }));
-    });
-    setClientDisconnectListener((reason) => {
-      dispatch(appendWorkspaceResultLog({
-        tabId: tab.id,
-        entry: createLogEntry(
-          `Live connection closed${reason.message ? `: ${reason.message}` : "."}`,
-          "error",
-          user?.username,
-          reason,
-        ),
-        statusOverride: "error",
-      }));
-      updateTab(tab.id, { liveStatus: "error" });
-    });
-    setClientErrorListener((error) => {
-      dispatch(appendWorkspaceResultLog({
-        tabId: tab.id,
-        entry: createLogEntry(
-          `Live connection error: ${error.message}`,
-          "error",
-          user?.username,
-          error,
-        ),
-        statusOverride: "error",
-      }));
-      updateTab(tab.id, { liveStatus: "error" });
-    });
+
+    let hasConnected = false;
 
     try {
       const unsubscribe = await subscribe(sqlToRun, (msg: ServerMessage) => {
+        if (liveGenRef.current[tab.id] !== gen) return;
+
         switch (msg.type) {
           case "error": {
             dispatch(appendWorkspaceResultLog({
@@ -490,6 +612,7 @@ export default function SqlStudio() {
               statusOverride: "error",
             }));
             updateTab(tab.id, { liveStatus: "error" });
+            dispatch(setWorkspaceRunning(false));
             return;
           }
 
@@ -508,10 +631,12 @@ export default function SqlStudio() {
               statusOverride: "error",
             }));
             updateTab(tab.id, { liveStatus: "error" });
+            dispatch(setWorkspaceRunning(false));
             return;
           }
 
           case "subscription_ack": {
+            hasConnected = true;
             if (msg.schema.length > 0) {
               dispatch(setWorkspaceLiveSchema({
                 tabId: tab.id,
@@ -523,10 +648,14 @@ export default function SqlStudio() {
               entry: createLogEntry("Live subscription connected.", "info", user?.username, msg),
             }));
             updateTab(tab.id, { liveStatus: "connected", resultView: "results" });
+            dispatch(setWorkspaceRunning(false));
             return;
           }
 
           case "initial_data_batch": {
+            if (!hasConnected) {
+              hasConnected = true;
+            }
             const rows = normalizeLiveRows(msg.rows);
             dispatch(appendWorkspaceLiveRows({
               tabId: tab.id,
@@ -544,15 +673,17 @@ export default function SqlStudio() {
               ),
             }));
             updateTab(tab.id, { liveStatus: "connected", resultView: "results" });
+            dispatch(setWorkspaceRunning(false));
             return;
           }
 
           case "change": {
             const changeType: ChangeTypeRaw = msg.change_type;
+            let changedRowCount = 1;
 
             if (changeType === "delete") {
-              // DELETE: data is in old_values, rows is null
               const deletedRows = normalizeLiveRows(msg.old_values ?? []);
+              changedRowCount = Math.max(1, deletedRows.length);
               dispatch(appendWorkspaceLiveRows({
                 tabId: tab.id,
                 rows: deletedRows,
@@ -568,9 +699,8 @@ export default function SqlStudio() {
                 ),
               }));
             } else if (changeType === "update") {
-              // UPDATE: delta rows contain only changed columns + PK + _seq.
-              // Changed user columns are the non-system keys (those not starting with '_').
               const updatedRows = normalizeLiveRows(msg.rows ?? []);
+              changedRowCount = Math.max(1, updatedRows.length);
               dispatch(appendWorkspaceLiveRows({
                 tabId: tab.id,
                 rows: updatedRows,
@@ -586,8 +716,8 @@ export default function SqlStudio() {
                 ),
               }));
             } else {
-              // INSERT
               const insertedRows = normalizeLiveRows(msg.rows ?? []);
+              changedRowCount = Math.max(1, insertedRows.length);
               dispatch(appendWorkspaceLiveRows({
                 tabId: tab.id,
                 rows: insertedRows,
@@ -603,12 +733,17 @@ export default function SqlStudio() {
                 ),
               }));
             }
+            if (activeTabIdRef.current !== tab.id) {
+              dispatch(incrementWorkspaceTabUnreadChanges({
+                tabId: tab.id,
+                amount: changedRowCount,
+              }));
+            }
             updateTab(tab.id, { liveStatus: "connected", resultView: "results" });
             return;
           }
 
           default:
-            // Unknown message type — log it for tracing
             dispatch(appendWorkspaceResultLog({
               tabId: tab.id,
               entry: createLogEntry(
@@ -622,8 +757,16 @@ export default function SqlStudio() {
         }
       }, tab.subscriptionOptions);
 
+      // If cancelled while awaiting subscribe, unsubscribe immediately
+      if (liveGenRef.current[tab.id] !== gen) {
+        void unsubscribe();
+        return;
+      }
+
       liveUnsubscribeRef.current[tab.id] = unsubscribe;
     } catch (error) {
+      if (liveGenRef.current[tab.id] !== gen) return;
+
       console.error("Failed to subscribe to live query", error);
       dispatch(appendWorkspaceResultLog({
         tabId: tab.id,
@@ -636,8 +779,9 @@ export default function SqlStudio() {
         statusOverride: "error",
       }));
       updateTab(tab.id, { liveStatus: "error" });
+      dispatch(setWorkspaceRunning(false));
     }
-  }, [dispatch, updateTab, user?.username]);
+  }, [cleanupLiveSubscription, dispatch, updateTab, user?.username]);
 
   const runActiveQuery = async (sqlToRun: string) => {
     if (!activeTab) {
@@ -645,7 +789,7 @@ export default function SqlStudio() {
     }
 
     if (activeTab.isLive) {
-      if (activeTab.liveStatus === "connected") {
+      if (activeTab.liveStatus === "connected" || activeTab.liveStatus === "connecting") {
         stopLiveQuery(activeTab.id);
       } else {
         await startLiveQuery(activeTab, sqlToRun);
@@ -696,6 +840,7 @@ export default function SqlStudio() {
         id: createTabId(tabs.length + 1),
         title: saveTitle,
         isDirty: false,
+        unreadChangeCount: 0,
         savedQueryId: saveId,
         lastSavedAt: nowIso,
         liveStatus: "idle",
@@ -769,6 +914,7 @@ export default function SqlStudio() {
       title: savedQuery.title,
       sql: savedQuery.sql,
       isDirty: false,
+      unreadChangeCount: 0,
       isLive: savedQuery.isLive,
       liveStatus: "idle",
       resultView: "results",
@@ -804,65 +950,49 @@ export default function SqlStudio() {
 
   useEffect(() => {
     return () => {
+      for (const tabId of Object.keys(liveGenRef.current)) {
+        liveGenRef.current[tabId] = (liveGenRef.current[tabId] ?? 0) + 1;
+      }
       Object.values(liveUnsubscribeRef.current).forEach((unsubscribe) => unsubscribe());
       liveUnsubscribeRef.current = {};
       setClientLogListener(undefined);
+      setClientSendListener(undefined);
+      setClientReceiveListener(undefined);
+      setClientDisconnectListener(undefined);
+      setClientErrorListener(undefined);
     };
   }, []);
 
   useEffect(() => {
-    if (tabs.length === 0 || !isUiHydrated) {
+    if (!isUiHydrated || !isRemoteWorkspaceHydrated || tabs.length === 0) {
       return;
     }
 
-    const persistedActiveTabId = tabs.find((tab) => tab.id === activeTabId)?.id ?? tabs[0].id;
-
-    const nextState: SqlStudioWorkspaceState = {
-      version: 1,
-      tabs: tabs.map(toPersistedTab),
-      savedQueries: savedQueries.map((item) => ({
-        id: item.id,
-        title: item.title,
-        sql: item.sql,
-        lastSavedAt: item.lastSavedAt,
-        isLive: item.isLive,
-        subscriptionOptions: item.subscriptionOptions,
-      })),
-      activeTabId: persistedActiveTabId,
-      selectedTableKey,
-      inspectorCollapsed: isInspectorCollapsed,
-      sizes: {
-        explorerMain: horizontalLayout,
-        editorResults: verticalLayout,
-      },
-      explorerTree: {
-        favoritesExpanded,
-        namespaceSectionExpanded,
-        expandedNamespaces,
-        expandedTables,
-        filter: schemaFilter,
-      },
-    };
+    const nextRemoteState = buildSyncedSqlStudioWorkspaceState(tabs, savedQueries, activeTabId);
+    const nextSnapshot = serializeSyncedWorkspaceSnapshot(nextRemoteState);
+    if (nextSnapshot === lastSyncedWorkspaceSnapshotRef.current) {
+      return;
+    }
 
     const timeoutId = window.setTimeout(() => {
-      saveSqlStudioWorkspaceState(nextState);
+      void (async () => {
+        try {
+          await saveSyncedSqlStudioWorkspaceState(nextRemoteState, user?.username);
+          lastSyncedWorkspaceSnapshotRef.current = nextSnapshot;
+        } catch (error) {
+          console.error("Failed to save synced SQL Studio workspace", error);
+        }
+      })();
     }, WORKSPACE_PERSIST_DEBOUNCE_MS);
 
     return () => window.clearTimeout(timeoutId);
   }, [
-    tabs,
     activeTabId,
-    selectedTableKey,
-    isInspectorCollapsed,
-    horizontalLayout,
-    verticalLayout,
-    favoritesExpanded,
-    namespaceSectionExpanded,
-    savedQueries,
-    expandedNamespaces,
-    expandedTables,
-    schemaFilter,
+    isRemoteWorkspaceHydrated,
     isUiHydrated,
+    savedQueries,
+    tabs,
+    user?.username,
   ]);
 
   if (!activeTab) {
@@ -881,7 +1011,7 @@ export default function SqlStudio() {
             defaultSize={horizontalLayout[0]}
             minSize="12%"
             maxSize="36%"
-            className="min-h-0"
+            className="min-h-0 overflow-hidden"
             onResize={(size) => {
               const numericSize = Number(size);
               if (!Number.isFinite(numericSize)) {
@@ -919,7 +1049,7 @@ export default function SqlStudio() {
 
           <ResizableHandle withHandle />
 
-          <ResizablePanel defaultSize={horizontalLayout[1]} minSize="40%" className="min-h-0">
+          <ResizablePanel defaultSize={horizontalLayout[1]} minSize="40%" className="min-h-0 overflow-hidden">
             <div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-background">
               <div className="absolute right-2 top-1.5 z-20">
                 <Button
@@ -949,7 +1079,7 @@ export default function SqlStudio() {
                 <ResizablePanel
                   defaultSize={verticalLayout[0]}
                   minSize="20%"
-                  className="min-h-0"
+                  className="min-h-0 overflow-hidden"
                   onResize={(size) => {
                     const numericSize = Number(size);
                     if (!Number.isFinite(numericSize)) {
@@ -971,10 +1101,10 @@ export default function SqlStudio() {
                     onSqlChange={(value) => updateActiveTab({ sql: value, isDirty: true })}
                     onRun={(runSql) => runActiveQuery(runSql)}
                     onToggleLive={(checked) => {
-                      updateActiveTab({ isLive: checked, liveStatus: "idle" });
-                      if (!checked && activeTab.liveStatus === "connected") {
+                      if (!checked && (activeTab.liveStatus === "connected" || activeTab.liveStatus === "connecting")) {
                         stopLiveQuery(activeTab.id);
                       }
+                      updateActiveTab({ isLive: checked, liveStatus: "idle" });
                     }}
                     onSubscriptionOptionsChange={(options) => updateActiveTab({ subscriptionOptions: options, isDirty: true })}
                     onRename={renameActiveTab}
@@ -986,7 +1116,7 @@ export default function SqlStudio() {
 
                 <ResizableHandle withHandle />
 
-                <ResizablePanel defaultSize={verticalLayout[1]} minSize="20%" className="min-h-0">
+                <ResizablePanel defaultSize={verticalLayout[1]} minSize="20%" className="min-h-0 overflow-hidden">
                   <StudioResultsGrid
                     result={activeResult}
                     isRunning={isRunning}
@@ -1005,7 +1135,7 @@ export default function SqlStudio() {
         </ResizablePanelGroup>
 
         {!isInspectorCollapsed && (
-          <div className="min-h-0 w-[320px] min-w-[240px] max-w-[420px] border-l border-border">
+          <div className="min-h-0 w-[320px] min-w-[240px] max-w-[420px] overflow-hidden border-l border-border">
             <StudioInspectorPanel selectedTable={selectedTable} history={history} />
           </div>
         )}

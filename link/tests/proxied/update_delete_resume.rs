@@ -247,7 +247,9 @@ async fn test_update_and_delete_events_resume_without_replay() {
                         "update-delete reconnect gap",
                     );
                 },
-                Ok(Some(Err(e))) => panic!("subscription errored while waiting for gap update: {}", e),
+                Ok(Some(Err(e))) => {
+                    panic!("subscription errored while waiting for gap update: {}", e)
+                },
                 Ok(None) => panic!("subscription ended unexpectedly while waiting for gap update"),
                 Err(_) => {},
             }

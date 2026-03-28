@@ -221,7 +221,9 @@ unsafe fn begin_foreign_scan_impl(node: *mut pg_sys::ForeignScanState) -> Result
     let server_options = parse_options((*server).options);
     let parsed_server = ServerOptions::parse(&server_options)?;
     let remote_config = parsed_server.remote.ok_or_else(|| {
-        KalamPgError::Validation("foreign server must have host and port options for remote mode".to_string())
+        KalamPgError::Validation(
+            "foreign server must have host and port options for remote mode".to_string(),
+        )
     })?;
 
     // Read session user_id from GUC

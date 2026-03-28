@@ -4,4 +4,6 @@ pub mod service;
 pub mod types;
 
 pub use service::OperationService;
-pub use types::{DeleteRequest, InsertRequest, MutationResult, ScanRequest, ScanResult, UpdateRequest};
+pub use types::{
+    DeleteRequest, InsertRequest, MutationResult, ScanRequest, ScanResult, UpdateRequest,
+};

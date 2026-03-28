@@ -280,14 +280,15 @@ fn test_rapid_connect_disconnect() {
 
             let subscribe_result = tokio::time::timeout(
                 Duration::from_secs(8),
-                client.subscribe_with_config(SubscriptionConfig::new(format!("rapid_{}", i), &query)),
+                client
+                    .subscribe_with_config(SubscriptionConfig::new(format!("rapid_{}", i), &query)),
             )
             .await;
 
             match subscribe_result {
                 Err(_) => {
                     eprintln!("[cycle {}] subscribe timeout", i);
-                }
+                },
                 Ok(Ok(subscription)) => {
                     let mut sub = subscription;
                     let _ = tokio::time::timeout(Duration::from_secs(3), sub.close()).await;

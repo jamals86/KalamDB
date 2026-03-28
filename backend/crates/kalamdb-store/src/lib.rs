@@ -20,11 +20,11 @@
 //! - **Shared Tables**: Global data with key format `{row_id}`
 //! - **Stream Tables**: Ephemeral events with key format `{timestamp_ms}:{row_id}`
 
+mod cf_tuning;
 pub mod entity_store; // Phase 14: Type-safe EntityStore<K, V> with generic keys
 pub mod index; // Generic secondary index support
 pub mod indexed_store; // Phase 15: Automatic secondary index management
 pub mod raft_storage; // Phase 17: Raft log/meta persistence
-mod cf_tuning;
 pub mod rocksdb_impl;
 pub mod rocksdb_init;
 pub mod storage_trait;

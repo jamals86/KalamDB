@@ -23,11 +23,10 @@ export default function Login() {
 
   return (
     <AuthSplitLayout
-      title="Log in to KalamDB"
       description="Sign in with an account that has DBA or system privileges."
-      panelTitle="Run the control plane"
-      panelDescription="Monitor jobs, manage users, and operate SQL Studio from one consistent interface."
-      panelFootnote="Secure access"
+      panelTitle="Realtime Data for AI Agents"
+      panelDescription="Store agent memory, chat history, and tool calls. Stream live updates. Isolate per-tenant data with USER tables. Run SQL in SQL Studio and explore per-user namespaces."
+      panelFootnote="Enterprise Admin UI"
     >
       <LoginForm onSuccess={handleLoginSuccess} />
     </AuthSplitLayout>

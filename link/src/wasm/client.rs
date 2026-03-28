@@ -413,9 +413,10 @@ fn clear_active_socket(
     source_ws: &WebSocket,
     ping_interval_id: &Rc<RefCell<i32>>,
 ) {
-    let should_clear = ws_ref.borrow().as_ref().is_some_and(|current_ws| {
-        js_sys::Object::is(current_ws.as_ref(), source_ws.as_ref())
-    });
+    let should_clear = ws_ref
+        .borrow()
+        .as_ref()
+        .is_some_and(|current_ws| js_sys::Object::is(current_ws.as_ref(), source_ws.as_ref()));
     if !should_clear {
         return;
     }
@@ -448,11 +449,7 @@ fn install_runtime_disconnect_handlers(
     let source_ws_for_error = ws.clone();
     let onerror_callback = Closure::wrap(Box::new(move |e: ErrorEvent| {
         console_log(&format!("KalamClient: WebSocket error: {:?}", e));
-        clear_active_socket(
-            &ws_ref_for_error,
-            &source_ws_for_error,
-            &ping_interval_id_for_error,
-        );
+        clear_active_socket(&ws_ref_for_error, &source_ws_for_error, &ping_interval_id_for_error);
         emit_runtime_ws_error(&on_error_for_err, "WebSocket connection failed", true);
         reject_pending_subscriptions(
             &subscriptions_for_error,
@@ -473,11 +470,7 @@ fn install_runtime_disconnect_handlers(
             e.code(),
             e.reason()
         ));
-        clear_active_socket(
-            &ws_ref_for_close,
-            &source_ws_for_close,
-            &ping_interval_id_for_close,
-        );
+        clear_active_socket(&ws_ref_for_close, &source_ws_for_close, &ping_interval_id_for_close);
         if let Some(cb) = on_disconnect_for_close.borrow().as_ref() {
             let reason_obj = js_sys::Object::new();
             let _ = js_sys::Reflect::set(
@@ -1668,14 +1661,9 @@ impl KalamClient {
         if let Some(ref ah) = auth_header {
             hdrs.push(("Authorization", ah));
         }
-        let json_str = super::helpers::wasm_fetch(
-            &url,
-            "POST",
-            Some(&body_str),
-            &hdrs,
-            "Consume failed",
-        )
-        .await?;
+        let json_str =
+            super::helpers::wasm_fetch(&url, "POST", Some(&body_str), &hdrs, "Consume failed")
+                .await?;
 
         // Parse the raw server response and convert to type-safe ConsumeResponse
         let raw: serde_json::Value = serde_json::from_str(&json_str)
@@ -1779,8 +1767,7 @@ impl KalamClient {
             hdrs.push(("Authorization", ah));
         }
         let json_str =
-            super::helpers::wasm_fetch(&url, "POST", Some(&body_str), &hdrs, "Ack failed")
-                .await?;
+            super::helpers::wasm_fetch(&url, "POST", Some(&body_str), &hdrs, "Ack failed").await?;
 
         let raw: serde_json::Value = serde_json::from_str(&json_str)
             .map_err(|e| JsValue::from_str(&format!("Failed to parse ack response: {}", e)))?;
@@ -1867,8 +1854,8 @@ impl KalamClient {
         if let Some(ref ah) = auth_header {
             hdrs.push(("Authorization", ah));
         }
-        let raw = super::helpers::wasm_fetch(&url, "POST", Some(&body_str), &hdrs, "HTTP error")
-            .await?;
+        let raw =
+            super::helpers::wasm_fetch(&url, "POST", Some(&body_str), &hdrs, "HTTP error").await?;
 
         // Deserialize, populate named_rows (schema → map), re-serialize.
         // This moves the transformation into Rust so every SDK gets it for free.

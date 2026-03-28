@@ -191,6 +191,10 @@ export interface LiveRowsOptions<T> {
    */
   keyColumns?: string[];
   /**
+   * Deprecated alias for `keyColumns`.
+   */
+  keyColumn?: string | string[];
+  /**
    * Resolve a stable key for upsert/delete handling.
    *
    * When this is provided, live row reconciliation falls back to the

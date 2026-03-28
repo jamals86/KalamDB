@@ -99,7 +99,7 @@ actix-files = "0.6.10"
 actix-multipart = "0.7"
 
 # UUID generation
-uuid = { version = "1.22.0", features = ["v4", "v7", "serde"] }
+uuid = { version = "1.23.0", features = ["v4", "v7", "serde"] }
 
 # NanoID generation (21-char URL-safe unique IDs)
 nanoid = "0.4.0"
@@ -111,7 +111,7 @@ ulid = "1.1"
 jsonwebtoken = { version = "10.3.0", default-features = false, features = ["aws_lc_rs"] }
 
 # Configuration
-toml = "0.9.8"
+toml = "1.1.0"
 dotenv = "0.15"
 
 # CLI tools
@@ -171,14 +171,12 @@ dashmap = "6.1"
 bytes = "1.11.1"
 http-body = "1.0.0"
 http-body-util = "0.1.2"
-cc = "1.2.57"
+cc = "1.2.58"
 proc-macro2 = "1.0.106"
 quote = "1.0.44"
 syn = { version = "2.0.117", features = ["full", "extra-traits"] }
 
 # Object storage abstraction (S3/GCS/Azure/local)
-# Kept as a workspace dependency so only kalamdb-filestore needs to opt-in.
-# Using 0.12.4 to match DataFusion 51.0.0 dependency
 object_store = { version = "0.13.1" }
  
 # Vector ANN engines
@@ -209,8 +207,8 @@ rust-embed = { version = "8.11.0", features = ["compression", "include-exclude"]
 mime_guess = "2.0"
 kalamdb-configs = { path = "backend/crates/kalamdb-configs" }
 kalamdb-server = { path = "backend" }
-pgrx = "=0.16.1"
-pgrx-tests = "=0.16.1"
+pgrx = "=0.17.0"
+pgrx-tests = "=0.17.0"
 tokio-postgres = "0.7"
 
 # Tracing / observability

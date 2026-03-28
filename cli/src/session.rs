@@ -15,8 +15,8 @@ use indicatif::{ProgressBar, ProgressStyle};
 use kalam_link::{
     credentials::{CredentialStore, Credentials},
     AuthProvider, AuthRefreshCallback, ConnectionOptions, KalamLinkClient, KalamLinkError,
-    KalamLinkTimeouts, SubscriptionConfig, SubscriptionOptions,
-    TimestampFormatter, UploadProgress, UploadProgressCallback,
+    KalamLinkTimeouts, SubscriptionConfig, SubscriptionOptions, TimestampFormatter, UploadProgress,
+    UploadProgressCallback,
 };
 use rustyline::completion::Completer;
 use rustyline::error::ReadlineError;
@@ -210,7 +210,7 @@ pub struct CLISession {
     cluster_name: Option<String>,
 
     /// Credential store for managing saved credentials
-    credential_store: Option<crate::credentials::FileCredentialStore>,
+    credential_store: Option<Arc<Mutex<crate::credentials::FileCredentialStore>>>,
 
     /// Whether credentials were loaded from storage (vs. provided on command line)
     credentials_loaded: bool,
@@ -288,6 +288,8 @@ impl CLISession {
             .map(|opts| opts.create_formatter())
             .unwrap_or_else(|| ConnectionOptions::default().create_formatter());
 
+        let credential_store = credential_store.map(|store| Arc::new(Mutex::new(store)));
+
         // Build client with connection options if provided
         let mut builder = KalamLinkClient::builder()
             .base_url(&server_url)
@@ -296,11 +298,9 @@ impl CLISession {
             .auth(auth.clone())
             .timeouts(timeouts.clone());
 
-        if let Some(refresher) = Self::build_auth_refresher(
-            &server_url,
-            instance.as_deref(),
-            credential_store.as_ref(),
-        ) {
+        if let Some(refresher) =
+            Self::build_auth_refresher(&server_url, instance.as_deref(), credential_store.clone())
+        {
             builder = builder.auth_refresher(refresher);
         }
 
@@ -391,12 +391,11 @@ impl CLISession {
     pub fn build_auth_refresher(
         server_url: &str,
         instance: Option<&str>,
-        credential_store: Option<&crate::credentials::FileCredentialStore>,
+        credential_store: Option<Arc<Mutex<crate::credentials::FileCredentialStore>>>,
     ) -> Option<AuthRefreshCallback> {
         let instance = instance?.to_owned();
-        let store = credential_store.cloned()?;
+        let store = credential_store?;
         let url = server_url.to_owned();
-        let store = Arc::new(std::sync::Mutex::new(store));
 
         Some(Arc::new(move || {
             let instance = instance.clone();
@@ -407,17 +406,13 @@ impl CLISession {
                     let s = store.lock().unwrap();
                     let creds = s.get_credentials(&instance).ok().flatten();
                     match creds {
-                        Some(c) if c.can_refresh() => {
-                            (c.refresh_token.clone(), Some(c))
-                        },
+                        Some(c) if c.can_refresh() => (c.refresh_token.clone(), Some(c)),
                         _ => (None, None),
                     }
                 };
 
                 let refresh_token = refresh_token.ok_or_else(|| {
-                    KalamLinkError::AuthenticationError(
-                        "No refresh token available".to_string(),
-                    )
+                    KalamLinkError::AuthenticationError("No refresh token available".to_string())
                 })?;
                 let creds = creds.unwrap();
 
@@ -426,9 +421,7 @@ impl CLISession {
                     .timeout(std::time::Duration::from_secs(10))
                     .build()?;
 
-                let login_response = temp_client
-                    .refresh_access_token(&refresh_token)
-                    .await?;
+                let login_response = temp_client.refresh_access_token(&refresh_token).await?;
 
                 // Persist refreshed credentials
                 let new_creds = Credentials::with_refresh_token(
@@ -437,10 +430,7 @@ impl CLISession {
                     login_response.user.username.clone(),
                     login_response.expires_at.clone(),
                     creds.server_url.clone().or_else(|| Some(url.clone())),
-                    login_response
-                        .refresh_token
-                        .clone()
-                        .or_else(|| creds.refresh_token.clone()),
+                    login_response.refresh_token.clone().or_else(|| creds.refresh_token.clone()),
                     login_response
                         .refresh_expires_at
                         .clone()
@@ -2435,44 +2425,46 @@ impl CLISession {
         use kalam_link::credentials::CredentialStore;
 
         match (&self.instance, &self.credential_store) {
-            (Some(instance), Some(store)) => match store.get_credentials(instance) {
-                Ok(Some(creds)) => {
-                    println!("{}", "Stored Credentials".bold().cyan());
-                    println!("  Instance: {}", creds.instance.green());
-                    if let Some(ref username) = creds.username {
-                        println!("  Username: {}", username.green());
-                    }
-                    println!("  JWT Token: {}", "[redacted]".dimmed());
-                    if let Some(ref expires) = creds.expires_at {
-                        let expired_marker = if creds.is_expired() {
-                            " (EXPIRED)".red().to_string()
-                        } else {
-                            "".to_string()
-                        };
-                        println!("  Expires: {}{}", expires.green(), expired_marker);
-                    }
-                    if let Some(ref server_url) = creds.server_url {
-                        println!("  Server URL: {}", server_url.green());
-                    }
-                    println!();
-                    println!("{}", "Security Note:".yellow().bold());
-                    println!(
-                        "  Credentials are stored in: {}",
-                        crate::credentials::FileCredentialStore::default_path()
-                            .display()
-                            .to_string()
-                            .dimmed()
-                    );
-                    #[cfg(unix)]
-                    println!("{}", "  File permissions: 0600 (owner read/write only)".dimmed());
-                },
-                Ok(None) => {
-                    println!("{}", "No credentials stored for this instance".yellow());
-                    println!("Use --username and --password to login and store credentials");
-                },
-                Err(e) => {
-                    eprintln!("{} {}", "Error loading credentials:".red(), e);
-                },
+            (Some(instance), Some(store)) => {
+                match store.lock().unwrap().get_credentials(instance) {
+                    Ok(Some(creds)) => {
+                        println!("{}", "Stored Credentials".bold().cyan());
+                        println!("  Instance: {}", creds.instance.green());
+                        if let Some(ref username) = creds.username {
+                            println!("  Username: {}", username.green());
+                        }
+                        println!("  JWT Token: {}", "[redacted]".dimmed());
+                        if let Some(ref expires) = creds.expires_at {
+                            let expired_marker = if creds.is_expired() {
+                                " (EXPIRED)".red().to_string()
+                            } else {
+                                "".to_string()
+                            };
+                            println!("  Expires: {}{}", expires.green(), expired_marker);
+                        }
+                        if let Some(ref server_url) = creds.server_url {
+                            println!("  Server URL: {}", server_url.green());
+                        }
+                        println!();
+                        println!("{}", "Security Note:".yellow().bold());
+                        println!(
+                            "  Credentials are stored in: {}",
+                            crate::credentials::FileCredentialStore::default_path()
+                                .display()
+                                .to_string()
+                                .dimmed()
+                        );
+                        #[cfg(unix)]
+                        println!("{}", "  File permissions: 0600 (owner read/write only)".dimmed());
+                    },
+                    Ok(None) => {
+                        println!("{}", "No credentials stored for this instance".yellow());
+                        println!("Use --username and --password to login and store credentials");
+                    },
+                    Err(e) => {
+                        eprintln!("{} {}", "Error loading credentials:".red(), e);
+                    },
+                }
             },
             (None, _) => {
                 println!("{}", "Credential management not available".yellow());
@@ -2512,7 +2504,7 @@ impl CLISession {
                             login_response.refresh_expires_at.clone(),
                         );
 
-                        store.set_credentials(&creds)?;
+                        store.lock().unwrap().set_credentials(&creds)?;
 
                         println!("{}", "✓ Credentials updated successfully".green().bold());
                         println!("  Instance: {}", instance.cyan());
@@ -2557,7 +2549,7 @@ impl CLISession {
 
         match (&self.instance, &mut self.credential_store) {
             (Some(instance), Some(store)) => {
-                store.delete_credentials(instance)?;
+                store.lock().unwrap().delete_credentials(instance)?;
 
                 println!("{}", "✓ Credentials deleted successfully".green().bold());
                 println!("  Instance: {}", instance.cyan());
@@ -3187,6 +3179,8 @@ mod tests {
             .credential_store
             .as_ref()
             .expect("credential store available")
+            .lock()
+            .unwrap()
             .get_credentials("local")
             .expect("load refreshed credentials")
             .expect("stored credentials present");

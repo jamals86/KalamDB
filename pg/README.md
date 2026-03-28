@@ -2,7 +2,7 @@
 
 This directory contains the `pg_kalam` PostgreSQL extension.
 
-The extension is built with `pgrx` and targets PostgreSQL 16 through the `pg16` feature.
+The extension is built with `pgrx` and supports PostgreSQL `pg13` through `pg18`. The default build target is `pg16`.
 
 ## What this gives you
 
@@ -22,30 +22,39 @@ The extension is built with `pgrx` and targets PostgreSQL 16 through the `pg16` 
 ### Native source build
 
 - Rust toolchain compatible with this workspace
-- `cargo-pgrx` version `0.16.1`
-- PostgreSQL 16 server and development headers
-- A working `pg_config` for the PostgreSQL 16 instance you want to install into
+- `cargo-pgrx` version `0.17.0`
+- PostgreSQL server and development headers for the major version you want to target
+- A working `pg_config` for the PostgreSQL instance you want to install into
 
 ### Docker build and Docker runtime
 
 - Docker Desktop on macOS, or Docker Engine on Linux
 - Enough memory for a Rust build inside Docker
+- The provided Dockerfiles default to public ECR mirrors for Rust and PostgreSQL base images to avoid Docker Hub auth and rate-limit failures
+- Override those defaults with `RUST_BASE_IMAGE` or `POSTGRES_BASE_IMAGE` if your environment requires a different registry mirror
+- Select the PostgreSQL major with `PG_MAJOR` and matching Cargo feature with `PG_EXTENSION_FLAVOR=pg${PG_MAJOR}`
 
 ## Compile from source and install for testing or development
 
 Run these commands from the repository root.
 
 ```bash
-cargo install cargo-pgrx --version "=0.16.1" --locked
-cargo pgrx init --pg16 "$(command -v pg_config)"
+PG_MAJOR=16
+PG_FEATURE="pg${PG_MAJOR}"
+PG_CONFIG="$(command -v pg_config)"
+
+cargo install cargo-pgrx --version "=0.17.0" --locked
+cargo pgrx init "--pg${PG_MAJOR}=${PG_CONFIG}"
 
 cargo pgrx install \
   -p kalam-pg-extension \
-  -c "$(command -v pg_config)" \
+  -c "${PG_CONFIG}" \
   --no-default-features \
   --profile release-pg \
-  -F pg16
+  -F "${PG_FEATURE}"
 ```
+
+For a different PostgreSQL major, change `PG_MAJOR` and point `PG_CONFIG` at that server's `pg_config`.
 
 What `cargo pgrx install` does:
 
@@ -129,6 +138,11 @@ Useful variants:
 ./pg/docker/build-fast.sh --compile
 ./pg/docker/build-fast.sh --runtime
 ./pg/docker/build-fast.sh --rebuild-base
+PG_MAJOR=17 PG_EXTENSION_FLAVOR=pg17 ./pg/docker/build-fast.sh --compile
+RUST_BASE_IMAGE=public.ecr.aws/docker/library/rust:1.92-bookworm \
+POSTGRES_BASE_IMAGE=public.ecr.aws/docker/library/postgres:17-bookworm \
+PG_MAJOR=17 PG_EXTENSION_FLAVOR=pg17 \
+./pg/docker/build-fast.sh
 ```
 
 What this does:
@@ -136,7 +150,7 @@ What this does:
 - builds the extension inside a Linux builder container
 - caches Cargo registry, git, and target directories in Docker volumes
 - writes installable artifacts to `pg/docker/artifacts/`
-- builds the `kalamdb-pg:latest` runtime image
+- builds the `pg-kalam:latest` runtime image
 
 ### Clean Docker build
 
@@ -149,7 +163,14 @@ If you want a clean multi-stage build without the cached builder flow:
 Equivalent raw Docker command:
 
 ```bash
-docker build -f pg/docker/Dockerfile -t kalamdb-pg:latest .
+docker build \
+  --build-arg PG_MAJOR=17 \
+  --build-arg PG_EXTENSION_FLAVOR=pg17 \
+  --build-arg PGRX_VERSION=0.17.0 \
+  --build-arg RUST_BASE_IMAGE=public.ecr.aws/docker/library/rust:1.92-bookworm \
+  --build-arg POSTGRES_BASE_IMAGE=public.ecr.aws/docker/library/postgres:17-bookworm \
+  -f pg/docker/Dockerfile \
+  -t pg-kalam:latest .
 ```
 
 ## Run PostgreSQL and KalamDB together with Docker Compose
@@ -201,7 +222,7 @@ Build Linux artifacts in Docker and install those into the target Linux PostgreS
 From the repository root:
 
 ```bash
-./pg/docker/build-fast.sh --compile
+PG_MAJOR=17 PG_EXTENSION_FLAVOR=pg17 ./pg/docker/build-fast.sh --compile
 ```
 
 This produces:
@@ -230,12 +251,12 @@ If you want PostgreSQL with the extension already installed in a container, buil
 
 ```bash
 ./pg/docker/build-fast.sh
-docker run --name kalamdb-pg \
+docker run --name pg-kalam \
   -e POSTGRES_USER=kalamdb \
   -e POSTGRES_PASSWORD=kalamdb123 \
   -e POSTGRES_DB=kalamdb \
   -p 5433:5432 \
-  -d kalamdb-pg:latest
+  -d pg-kalam:latest
 ```
 
 Then connect and install the extension or let your own init SQL handle it.
@@ -283,12 +304,12 @@ If PostgreSQL runs in Docker on the same host, use `host.docker.internal` as the
 If you already have a KalamDB server running elsewhere, you can run just the PostgreSQL container:
 
 ```bash
-docker run --name kalamdb-pg \
+docker run --name pg-kalam \
   -e POSTGRES_USER=kalamdb \
   -e POSTGRES_PASSWORD=kalamdb123 \
   -e POSTGRES_DB=kalamdb \
   -p 5433:5432 \
-  -d kalamdb-pg:latest
+  -d pg-kalam:latest
 ```
 
 Then connect:
@@ -321,11 +342,11 @@ CREATE SERVER kalam_server
 
 ## Useful files
 
-- [pg/docker/Dockerfile](pg/docker/Dockerfile)
-- [pg/docker/build.sh](pg/docker/build.sh)
-- [pg/docker/build-fast.sh](pg/docker/build-fast.sh)
-- [pg/docker/docker-compose.yml](pg/docker/docker-compose.yml)
-- [pg/docker/init.sql](pg/docker/init.sql)
-- [docker/build/Dockerfile](docker/build/Dockerfile)
-- [docker/run/single/docker-compose.yml](docker/run/single/docker-compose.yml)
-- [pg/local_test.sql](pg/local_test.sql)
+- [docker/Dockerfile](docker/Dockerfile)
+- [docker/build.sh](docker/build.sh)
+- [docker/build-fast.sh](docker/build-fast.sh)
+- [docker/docker-compose.yml](docker/docker-compose.yml)
+- [docker/init.sql](docker/init.sql)
+- [../docker/build/Dockerfile](../docker/build/Dockerfile)
+- [../docker/run/single/docker-compose.yml](../docker/run/single/docker-compose.yml)
+- [local_test.sql](local_test.sql)

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Editor, { type Monaco } from "@monaco-editor/react";
 import type { IDisposable, Position, editor, languages } from "monaco-editor";
-import { ChevronDown, MoreHorizontal, PenLine, Play, Save, Settings2, Square } from "lucide-react";
+import { ChevronDown, Clock3, Copy, MoreHorizontal, PenLine, Play, RadioTower, Save, Settings2, Square, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
@@ -319,11 +319,14 @@ export function StudioEditorPanel({
 
   const hasSelectedSql = selectedSql.trim().length > 0;
   const executeLabel = hasSelectedSql ? "Execute Selected" : "Execute";
-  const isExecuteDisabled = isRunning || !sql.trim() || liveStatus === "connecting";
+  const isConnectingLive = isLive && liveStatus === "connecting";
+  const isExecuteDisabled = isLive
+    ? !sql.trim()
+    : isRunning || !sql.trim();
 
   return (
-    <div className="flex h-full flex-col bg-background">
-      <div className="flex items-center justify-between border-b border-border px-4 py-2">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-background">
+      <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-2">
         <div className="min-w-0">
           {isEditingTitle ? (
             <input
@@ -364,9 +367,11 @@ export function StudioEditorPanel({
               <Switch
                 checked={isLive}
                 onCheckedChange={onToggleLive}
-                disabled={liveStatus === "connecting"}
               />
-              <span className="text-xs text-muted-foreground">Live query</span>
+              <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                <RadioTower className="h-3 w-3" />
+                Live query
+              </span>
               {isLive && (
                 <Button
                   variant="ghost"
@@ -379,7 +384,10 @@ export function StudioEditorPanel({
                 </Button>
               )}
             </div>
-            <span className="text-xs text-muted-foreground">{lastSavedLabel}</span>
+            <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Clock3 className="h-3 w-3" />
+              {lastSavedLabel}
+            </span>
           </div>
           <Button
             variant="secondary"
@@ -397,15 +405,15 @@ export function StudioEditorPanel({
               onClick={() => runSql("auto")}
               disabled={isExecuteDisabled}
             >
-              {liveStatus === "connected" ? (
+              {liveStatus === "connected" || isConnectingLive ? (
                 <Square className="mr-1.5 h-3.5 w-3.5" />
               ) : (
                 <Play className="mr-1.5 h-3.5 w-3.5" />
               )}
               {liveStatus === "connected"
                 ? "Stop"
-                : isRunning
-                  ? "Running..."
+                : isConnectingLive
+                  ? "Connecting..."
                   : "Subscribe"}
             </Button>
           ) : (
@@ -455,21 +463,31 @@ export function StudioEditorPanel({
                 variant="secondary"
                 size="icon"
                 className="h-8 w-8"
+                aria-label="More query actions"
               >
                 <MoreHorizontal className="h-4 w-4" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem onSelect={() => setIsEditingTitle(true)}>Rename</DropdownMenuItem>
-              <DropdownMenuItem onSelect={onSaveCopy}>Save a copy</DropdownMenuItem>
-              <DropdownMenuItem onSelect={onDelete} className="text-destructive">Delete</DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => setIsEditingTitle(true)}>
+                <PenLine className="mr-2 h-3.5 w-3.5" />
+                Rename
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={onSaveCopy}>
+                <Copy className="mr-2 h-3.5 w-3.5" />
+                Save a copy
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={onDelete} className="text-destructive">
+                <Trash2 className="mr-2 h-3.5 w-3.5" />
+                Delete
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
       </div>
 
       {isLive && showSubscriptionOptions && (
-        <div className="flex items-center gap-4 border-b border-border bg-muted/30 px-4 py-2">
+        <div className="flex shrink-0 items-center gap-4 border-b border-border bg-muted/30 px-4 py-2">
           <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Options</span>
           <div className="flex items-center gap-1.5">
             <label className="text-xs text-muted-foreground" htmlFor="opt-last-rows">last_rows</label>
@@ -535,7 +553,7 @@ export function StudioEditorPanel({
         </div>
       )}
 
-      <div className="flex-1 overflow-hidden">
+      <div className="min-h-0 flex-1 overflow-hidden">
         <Editor
           height="100%"
           defaultLanguage="sql"

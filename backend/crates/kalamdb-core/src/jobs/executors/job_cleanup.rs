@@ -77,13 +77,14 @@ impl JobExecutor for JobCleanupExecutor {
             let jobs_provider = app_ctx.system_tables().jobs();
             let job_nodes_provider = app_ctx.system_tables().job_nodes();
 
-            let deleted_count = jobs_provider
-                .cleanup_old_jobs(retention_days)
-                .map_err(|e| KalamDbError::ExecutionError(format!("Failed to cleanup old jobs: {}", e)))?;
+            let deleted_count = jobs_provider.cleanup_old_jobs(retention_days).map_err(|e| {
+                KalamDbError::ExecutionError(format!("Failed to cleanup old jobs: {}", e))
+            })?;
 
-            let deleted_nodes = job_nodes_provider
-                .cleanup_old_job_nodes(retention_days)
-                .map_err(|e| KalamDbError::ExecutionError(format!("Failed to cleanup old job_nodes: {}", e)))?;
+            let deleted_nodes =
+                job_nodes_provider.cleanup_old_job_nodes(retention_days).map_err(|e| {
+                    KalamDbError::ExecutionError(format!("Failed to cleanup old job_nodes: {}", e))
+                })?;
 
             Ok::<_, KalamDbError>((deleted_count, deleted_nodes))
         })

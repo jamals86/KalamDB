@@ -92,7 +92,11 @@ impl SubscriptionService {
                 )));
             }
 
-            (connection_state.connection_id().clone(), user_id, connection_state.notification_tx.clone())
+            (
+                connection_state.connection_id().clone(),
+                user_id,
+                connection_state.notification_tx.clone(),
+            )
         };
 
         // Generate LiveQueryId
@@ -231,14 +235,12 @@ impl SubscriptionService {
             let user_id = connection_state.user_id().cloned().ok_or_else(|| {
                 KalamDbError::InvalidOperation("Connection not authenticated".to_string())
             })?;
-            let subscription = connection_state.remove_subscription_with_fallback(
-                subscription_id,
-                || {
+            let subscription =
+                connection_state.remove_subscription_with_fallback(subscription_id, || {
                     LiveQueryId::from_string(subscription_id)
                         .ok()
                         .map(|parsed| parsed.subscription_id().to_string())
-                },
-            );
+                });
             match subscription {
                 Some((_key, sub)) => {
                     (connection_state.connection_id().clone(), user_id, sub.table_id, sub.is_shared)

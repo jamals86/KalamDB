@@ -363,8 +363,9 @@ impl StoragePartition {
             | StoragePartition::SystemJobsStatusIdx
             | StoragePartition::SystemJobsIdempotencyIdx
             | StoragePartition::SystemLiveQueriesTableIdx => ColumnFamilyProfile::SystemIndex,
-            StoragePartition::InformationSchemaTables
-            | StoragePartition::ManifestCache => ColumnFamilyProfile::SystemMeta,
+            StoragePartition::InformationSchemaTables | StoragePartition::ManifestCache => {
+                ColumnFamilyProfile::SystemMeta
+            },
         }
     }
 
@@ -567,10 +568,7 @@ mod tests {
             classify_column_family_name("vix_default:profiles_embedding_shared_pk_idx"),
             ColumnFamilyProfile::HotIndex
         );
-        assert_eq!(
-            classify_column_family_name("topic_messages"),
-            ColumnFamilyProfile::HotData
-        );
+        assert_eq!(classify_column_family_name("topic_messages"), ColumnFamilyProfile::HotData);
         assert_eq!(classify_column_family_name("raft_data"), ColumnFamilyProfile::Raft);
     }
 

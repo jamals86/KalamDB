@@ -1,4 +1,4 @@
-import { Clock3, Columns3 } from "lucide-react";
+import { Check, Clock3, Columns3, History, Info, Undo2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -15,12 +15,18 @@ export function StudioInspectorPanel({
   history,
 }: StudioInspectorPanelProps) {
   return (
-    <div className="flex h-full flex-col border-l border-border bg-background">
-      <Tabs defaultValue="details" className="flex h-full flex-col">
-        <div className="border-b border-border px-2 py-2">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden border-l border-border bg-background">
+      <Tabs defaultValue="details" className="flex h-full min-h-0 flex-col">
+        <div className="shrink-0 border-b border-border px-2 py-2">
           <TabsList className="grid h-8 w-full grid-cols-2 bg-transparent">
-            <TabsTrigger value="details">Details</TabsTrigger>
-            <TabsTrigger value="history">History</TabsTrigger>
+            <TabsTrigger value="details" className="gap-1.5">
+              <Info className="h-3.5 w-3.5" />
+              Details
+            </TabsTrigger>
+            <TabsTrigger value="history" className="gap-1.5">
+              <History className="h-3.5 w-3.5" />
+              History
+            </TabsTrigger>
           </TabsList>
         </div>
 
@@ -104,14 +110,20 @@ export function StudioInspectorPanel({
         </TabsContent>
       </Tabs>
 
-      <div className="space-y-2 border-t border-border bg-background px-3 py-3 text-xs">
+      <div className="shrink-0 space-y-2 border-t border-border bg-background px-3 py-3 text-xs">
         <span className="inline-flex items-center gap-1 text-muted-foreground">
           <Columns3 className="h-3 w-3" />
           1 pending edit
         </span>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" className="h-7 flex-1 text-xs">Discard</Button>
-          <Button size="sm" className="h-7 flex-1 text-xs">Commit</Button>
+          <Button variant="outline" size="sm" className="h-7 flex-1 text-xs">
+            <Undo2 className="mr-1.5 h-3.5 w-3.5" />
+            Discard
+          </Button>
+          <Button size="sm" className="h-7 flex-1 text-xs">
+            <Check className="mr-1.5 h-3.5 w-3.5" />
+            Commit
+          </Button>
         </div>
       </div>
     </div>

@@ -415,7 +415,8 @@ impl UserTableProvider {
         let mut cold_rows = Vec::new();
         for user_id in user_ids {
             // Use async version to avoid blocking the runtime
-            let parquet_batch = self.scan_parquet_files_as_batch_async(&user_id, filter, None).await?;
+            let parquet_batch =
+                self.scan_parquet_files_as_batch_async(&user_id, filter, None).await?;
             for row_data in parquet_batch_to_rows(&parquet_batch)? {
                 let seq_id = row_data.seq_id;
                 let row = UserTableRow {
@@ -1555,11 +1556,9 @@ impl UserTableProvider {
 
         let (hot_result, cold_result) = tokio::join!(hot_future, cold_future);
 
-        let hot_metadata = hot_result
-            .map_err(|e| {
-                KalamDbError::InvalidOperation(format!("spawn_blocking join error: {}", e))
-            })?
-            ?;
+        let hot_metadata = hot_result.map_err(|e| {
+            KalamDbError::InvalidOperation(format!("spawn_blocking join error: {}", e))
+        })??;
 
         let parquet_batch = cold_result?;
         let count = crate::utils::version_resolution::count_resolved_from_metadata(
@@ -1752,7 +1751,8 @@ impl TableProvider for UserTableProvider {
                 values.insert(column.clone(), value);
             }
 
-            let result = self.update_by_pk_value(user_id, &pk_value, Row::new(values))
+            let result = self
+                .update_by_pk_value(user_id, &pk_value, Row::new(values))
                 .await
                 .map_err(|e| DataFusionError::Execution(e.to_string()))?;
             if result.is_some() {

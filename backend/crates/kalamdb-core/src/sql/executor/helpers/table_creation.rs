@@ -69,11 +69,30 @@ pub fn create_table(
         stmt.access_level = Some(TableAccess::Private);
     }
 
+    let schema_registry = app_context.schema_registry();
+    let table_id = TableId::from_strings(stmt.namespace_id.as_str(), stmt.table_name.as_str());
+
+    if stmt.if_not_exists {
+        if let Some(existing_def) = schema_registry
+            .get_table_if_exists(&table_id)
+            .into_kalamdb_error("Failed to check table existence")?
+        {
+            if schema_registry.get_provider(&table_id).is_none() {
+                log::info!("Table {} exists but provider missing - registering now", table_id);
+                schema_registry.put((*existing_def).clone())?;
+            }
+
+            log::info!(
+                "ℹ️  {:?} TABLE {} already exists (IF NOT EXISTS - skipping)",
+                table_type,
+                table_id
+            );
+            return Ok(format!("Table {} already exists (IF NOT EXISTS)", table_id));
+        }
+    }
+
     // Build definition (validates, checks existence, builds)
     let table_def = build_table_definition(app_context.clone(), &stmt, user_id, user_role)?;
-    let table_id =
-        TableId::from_strings(table_def.namespace_id.as_str(), table_def.table_name.as_str());
-    let schema_registry = app_context.schema_registry();
 
     // Handle existing table (IF NOT EXISTS)
     if schema_registry.get(&table_id).is_some() {

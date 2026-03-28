@@ -63,8 +63,8 @@ mod tests {
         let payload: EntryPayload<KalamTypeConfig> = EntryPayload::Membership(membership);
 
         let bytes = encode(&payload).expect("Membership should encode");
-        let decoded: EntryPayload<KalamTypeConfig> = decode(&bytes)
-            .expect("Membership should decode");
+        let decoded: EntryPayload<KalamTypeConfig> =
+            decode(&bytes).expect("Membership should decode");
 
         match (&payload, &decoded) {
             (EntryPayload::Membership(m1), EntryPayload::Membership(m2)) => {

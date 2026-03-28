@@ -39,22 +39,13 @@ pub fn compute_metrics(ctx: &crate::app_context::AppContext) -> Vec<(String, Str
     ));
 
     let configured_workers = config.server.workers;
-    metrics.push((
-        "server_workers_configured".to_string(),
-        configured_workers.to_string(),
-    ));
+    metrics.push(("server_workers_configured".to_string(), configured_workers.to_string()));
     metrics.push((
         "server_workers_effective".to_string(),
         effective_server_workers(configured_workers).to_string(),
     ));
-    metrics.push((
-        "max_connections".to_string(),
-        config.performance.max_connections.to_string(),
-    ));
-    metrics.push((
-        "connection_backlog".to_string(),
-        config.performance.backlog.to_string(),
-    ));
+    metrics.push(("max_connections".to_string(), config.performance.max_connections.to_string()));
+    metrics.push(("connection_backlog".to_string(), config.performance.backlog.to_string()));
     metrics.push((
         "worker_max_blocking_threads".to_string(),
         config.performance.worker_max_blocking_threads.to_string(),

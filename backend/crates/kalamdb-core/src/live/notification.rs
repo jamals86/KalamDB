@@ -462,10 +462,7 @@ impl NotificationService {
         };
         if let Err(e) = self.worker_txs[worker_idx].try_send(task) {
             if matches!(e, mpsc::error::TrySendError::Full(_)) {
-                log::warn!(
-                    "Notification worker {} queue full, dropping notification",
-                    worker_idx
-                );
+                log::warn!("Notification worker {} queue full, dropping notification", worker_idx);
             }
         }
     }

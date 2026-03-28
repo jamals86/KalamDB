@@ -178,8 +178,7 @@ pub async fn handle_subscribe(
                 }
             } else {
                 // info!("No initial data to send for {}", subscription_id);
-                let flushed =
-                    connection_state.complete_initial_load(&subscription_id.clone());
+                let flushed = connection_state.complete_initial_load(&subscription_id.clone());
                 if flushed > 0 {
                     debug!(
                         "Flushed {} buffered notifications after initial load for {}",

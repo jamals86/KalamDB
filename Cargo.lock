@@ -936,29 +936,11 @@ dependencies = [
 
 [[package]]
 name = "bindgen"
-version = "0.71.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5f58bf3d7db68cfbac37cfc485a8d711e87e064c3d0fe0435b92f7a407f9d6b3"
-dependencies = [
- "annotate-snippets",
- "bitflags 2.11.0",
- "cexpr",
- "clang-sys",
- "itertools 0.13.0",
- "proc-macro2",
- "quote",
- "regex",
- "rustc-hash",
- "shlex",
- "syn 2.0.117",
-]
-
-[[package]]
-name = "bindgen"
 version = "0.72.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "993776b509cfb49c750f11b8f07a46fa23e0a1386ffc01fb1e7d343efc387895"
 dependencies = [
+ "annotate-snippets",
  "bitflags 2.11.0",
  "cexpr",
  "clang-sys",
@@ -1168,7 +1150,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "374b7c592d9c00c1f4972ea58390ac6b18cbb6ab79011f3bdc90a0b82ca06b77"
 dependencies = [
  "serde",
- "toml",
+ "toml 0.9.12+spec-1.1.0",
 ]
 
 [[package]]
@@ -1179,9 +1161,9 @@ checksum = "37b2a672a2cb129a2e41c10b1224bb368f9f37a2b16b612598138befd7b37eb5"
 
 [[package]]
 name = "cc"
-version = "1.2.57"
+version = "1.2.58"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7a0dd1ca384932ff3641c8718a02769f1698e7563dc6974ffd03346116310423"
+checksum = "e1e928d4b69e3077709075a938a05ffbedfa53a84c8f766efbf8220bb1ff60e1"
 dependencies = [
  "find-msvc-tools",
  "jobserver",
@@ -3788,7 +3770,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tokio-tungstenite",
- "toml",
+ "toml 1.1.0+spec-1.1.0",
  "url",
  "wait-timeout",
 ]
@@ -3926,10 +3908,8 @@ dependencies = [
  "bytes",
  "cc",
  "chrono",
- "dashmap 6.1.0",
  "flate2",
  "futures-util",
- "jsonwebtoken",
  "kalamdb-auth",
  "kalamdb-commons",
  "kalamdb-configs",
@@ -3940,7 +3920,6 @@ dependencies = [
  "kalamdb-sql",
  "kalamdb-store",
  "kalamdb-system",
- "kalamdb-tables",
  "log",
  "mime_guess",
  "moka",
@@ -3951,7 +3930,6 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
- "tracing-actix-web",
  "uuid",
 ]
 
@@ -3973,12 +3951,9 @@ dependencies = [
  "kalamdb-configs",
  "kalamdb-oidc",
  "kalamdb-session",
- "kalamdb-sql",
- "kalamdb-store",
  "kalamdb-system",
  "log",
  "once_cell",
- "serde",
  "serde_json",
  "sha2 0.11.0",
  "thiserror 2.0.18",
@@ -3990,7 +3965,6 @@ dependencies = [
 name = "kalamdb-commons"
 version = "0.4.2-dev"
 dependencies = [
- "anyhow",
  "arrow",
  "arrow-schema",
  "chrono",
@@ -3999,19 +3973,15 @@ dependencies = [
  "flatbuffers",
  "flexbuffers",
  "hex",
- "kalamdb-macros",
  "log",
  "nanoid",
- "num_cpus",
  "once_cell",
- "openraft",
  "parking_lot",
  "serde",
  "serde_json",
  "sha2 0.11.0",
  "storekey",
  "thiserror 2.0.18",
- "toml",
  "tracing",
  "uuid",
 ]
@@ -4024,7 +3994,7 @@ dependencies = [
  "ipnet",
  "openraft",
  "serde",
- "toml",
+ "toml 1.1.0+spec-1.1.0",
 ]
 
 [[package]]
@@ -4099,14 +4069,11 @@ dependencies = [
 name = "kalamdb-filestore"
 version = "0.4.2-dev"
 dependencies = [
- "anyhow",
  "arrow",
- "arrow-schema",
  "bytes",
  "chrono",
  "dashmap 6.1.0",
  "datafusion",
- "datafusion-common",
  "futures-util",
  "hex",
  "kalamdb-commons",
@@ -4127,7 +4094,6 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
- "uuid",
 ]
 
 [[package]]
@@ -4143,16 +4109,11 @@ dependencies = [
 name = "kalamdb-observability"
 version = "0.4.2-dev"
 dependencies = [
- "anyhow",
- "async-trait",
  "cc",
  "chrono",
- "kalamdb-commons",
  "log",
  "num_cpus",
  "sysinfo",
- "thiserror 2.0.18",
- "tokio",
 ]
 
 [[package]]
@@ -4202,7 +4163,6 @@ dependencies = [
  "kalamdb-system",
  "kalamdb-tables",
  "log",
- "serde",
  "serde_json",
  "tokio",
  "tracing",
@@ -4212,7 +4172,6 @@ dependencies = [
 name = "kalamdb-raft"
 version = "0.4.2-dev"
 dependencies = [
- "anyhow",
  "async-trait",
  "chrono",
  "dashmap 6.1.0",
@@ -4255,7 +4214,6 @@ dependencies = [
  "bcrypt",
  "cc",
  "chrono",
- "colored",
  "datafusion",
  "futures-util",
  "hex",
@@ -4283,7 +4241,6 @@ dependencies = [
  "opentelemetry-otlp",
  "opentelemetry_sdk",
  "rand 0.10.0",
- "regex",
  "reqwest 0.13.2",
  "serde",
  "serde_json",
@@ -4291,7 +4248,6 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-tungstenite",
- "toml",
  "tracing",
  "tracing-actix-web",
  "tracing-log",
@@ -4304,7 +4260,6 @@ dependencies = [
 name = "kalamdb-server-auth"
 version = "0.4.2-dev"
 dependencies = [
- "kalamdb-configs",
  "log",
  "rcgen",
  "tonic",
@@ -4316,13 +4271,9 @@ name = "kalamdb-session"
 version = "0.4.2-dev"
 dependencies = [
  "arrow",
- "arrow-schema",
  "async-trait",
  "datafusion",
- "datafusion-common",
  "kalamdb-commons",
- "log",
- "thiserror 2.0.18",
  "tokio",
  "tracing",
 ]
@@ -4342,11 +4293,8 @@ version = "0.4.2-dev"
 dependencies = [
  "anyhow",
  "arrow",
- "chrono",
- "dashmap 6.1.0",
  "kalamdb-commons",
  "kalamdb-session",
- "kalamdb-store",
  "kalamdb-system",
  "log",
  "moka",
@@ -4356,7 +4304,6 @@ dependencies = [
  "serde_json",
  "sqlparser",
  "tempfile",
- "uuid",
 ]
 
 [[package]]
@@ -4367,7 +4314,6 @@ dependencies = [
  "async-trait",
  "chrono",
  "criterion",
- "dashmap 6.1.0",
  "datafusion",
  "kalamdb-commons",
  "kalamdb-configs",
@@ -4386,13 +4332,11 @@ dependencies = [
 name = "kalamdb-streams"
 version = "0.4.2-dev"
 dependencies = [
- "anyhow",
  "chrono",
  "datafusion",
  "flexbuffers",
  "kalamdb-commons",
  "kalamdb-sharding",
- "log",
  "serde",
  "thiserror 2.0.18",
 ]
@@ -4401,14 +4345,10 @@ dependencies = [
 name = "kalamdb-system"
 version = "0.4.2-dev"
 dependencies = [
- "anyhow",
  "arrow",
- "arrow-schema",
  "async-trait",
  "chrono",
- "dashmap 6.1.0",
  "datafusion",
- "datafusion-common",
  "flexbuffers",
  "kalamdb-commons",
  "kalamdb-macros",
@@ -4423,24 +4363,17 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
- "uuid",
 ]
 
 [[package]]
 name = "kalamdb-tables"
 version = "0.4.2-dev"
 dependencies = [
- "anyhow",
  "arrow",
- "arrow-schema",
  "async-trait",
- "base64",
  "chrono",
- "dashmap 6.1.0",
  "datafusion",
- "datafusion-common",
  "futures-util",
- "hex",
  "kalamdb-commons",
  "kalamdb-filestore",
  "kalamdb-session",
@@ -4457,14 +4390,12 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
- "uuid",
 ]
 
 [[package]]
 name = "kalamdb-vector"
 version = "0.4.2-dev"
 dependencies = [
- "arrow",
  "async-trait",
  "bytes",
  "chrono",
@@ -4645,7 +4576,7 @@ version = "0.17.3+10.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cef2a00ee60fe526157c9023edab23943fae1ce2ab6f4abb2a807c1746835de9"
 dependencies = [
- "bindgen 0.72.1",
+ "bindgen",
  "bzip2-sys",
  "cc",
  "libc",
@@ -5413,9 +5344,9 @@ dependencies = [
 
 [[package]]
 name = "pgrx"
-version = "0.16.1"
+version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fdcfb88f7fa9ba42b4ea9d1f85a1d968bbb407cc30308b35f73bdfe6c966f64b"
+checksum = "dd42eed31a68e3e6d7cec284cdaacd8ffa9b2b3ebb3f1df9ec2fd3558834c6e7"
 dependencies = [
  "bitflags 2.11.0",
  "bitvec",
@@ -5434,11 +5365,11 @@ dependencies = [
 
 [[package]]
 name = "pgrx-bindgen"
-version = "0.16.1"
+version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "00e35193b7e71e2f612d336cecd00db0f049f4cc609f2b1c9a34755b5ec559d7"
+checksum = "d30fa3688ab1cb6429ca46725eb32d5d9f186806c0f0aa6419f86e418b8a81ab"
 dependencies = [
- "bindgen 0.71.1",
+ "bindgen",
  "cc",
  "clang-sys",
  "eyre",
@@ -5453,9 +5384,9 @@ dependencies = [
 
 [[package]]
 name = "pgrx-macros"
-version = "0.16.1"
+version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dab542dd4041773874f90cd8e3448195749548dc3fb1daf501e7e11ebfb1dd22"
+checksum = "1ca7cc537daa4cc004f12ad1d31756b506358aa900251a82c3280e719da88fa4"
 dependencies = [
  "pgrx-sql-entity-graph",
  "proc-macro2",
@@ -5465,9 +5396,9 @@ dependencies = [
 
 [[package]]
 name = "pgrx-pg-config"
-version = "0.16.1"
+version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eff9b29df94c3f9fcb0cde220f92eea6975ed05962784a98fb557754ad663501"
+checksum = "1cd8670ad408093a83615fc68071929d7677b40021a475649a626319c464f0a3"
 dependencies = [
  "cargo_toml",
  "codepage",
@@ -5478,16 +5409,16 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.18",
- "toml",
+ "toml 0.9.12+spec-1.1.0",
  "url",
  "winapi",
 ]
 
 [[package]]
 name = "pgrx-pg-sys"
-version = "0.16.1"
+version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "934f2536953ccb6722bef2cfdfb1f8d6d3cd4a4f2c508d56ec85b649c5680c2b"
+checksum = "d9f81faae87d533b573156261b17521c0c7f66f5ca5dab2b9e6ddbf5a63dbd14"
 dependencies = [
  "cee-scape",
  "libc",
@@ -5499,9 +5430,9 @@ dependencies = [
 
 [[package]]
 name = "pgrx-sql-entity-graph"
-version = "0.16.1"
+version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "07a767cb9faa612f1ba7f13718136d4006950d6f253b414ef487a03e85c47a94"
+checksum = "4800fa91a481a83d3c1aaffd1324fcd2e587df0ed342c71d6a66d0899027e505"
 dependencies = [
  "convert_case 0.8.0",
  "eyre",
@@ -6711,9 +6642,9 @@ dependencies = [
 
 [[package]]
 name = "serde_spanned"
-version = "1.0.4"
+version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8bbf91e5a4d6315eee45e704372590b30e260ee83af6639d64557f51b067776"
+checksum = "876ac351060d4f882bb1032b6369eb0aef79ad9df1ea8bc404874d8cc3d0cd98"
 dependencies = [
  "serde_core",
 ]
@@ -7365,6 +7296,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "toml"
+version = "1.1.0+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f8195ca05e4eb728f4ba94f3e3291661320af739c4e43779cbdfae82ab239fcc"
+dependencies = [
+ "indexmap",
+ "serde_core",
+ "serde_spanned",
+ "toml_datetime 1.1.0+spec-1.1.0",
+ "toml_parser",
+ "toml_writer",
+ "winnow 1.0.0",
+]
+
+[[package]]
 name = "toml_datetime"
 version = "0.6.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7381,9 +7327,9 @@ dependencies = [
 
 [[package]]
 name = "toml_datetime"
-version = "1.0.0+spec-1.1.0"
+version = "1.1.0+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32c2555c699578a4f59f0cc68e5116c8d7cabbd45e1409b989d4be085b53f13e"
+checksum = "97251a7c317e03ad83774a8752a7e81fb6067740609f75ea2b585b569a59198f"
 dependencies = [
  "serde_core",
 ]
@@ -7406,25 +7352,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a0a07913e63758bc95142d9863a5a45173b71515e68b690cad70cf99c3255ce1"
 dependencies = [
  "indexmap",
- "toml_datetime 1.0.0+spec-1.1.0",
+ "toml_datetime 1.1.0+spec-1.1.0",
  "toml_parser",
  "winnow 0.7.14",
 ]
 
 [[package]]
 name = "toml_parser"
-version = "1.0.9+spec-1.1.0"
+version = "1.1.0+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "702d4415e08923e7e1ef96cd5727c0dfed80b4d2fa25db9647fe5eb6f7c5a4c4"
+checksum = "2334f11ee363607eb04df9b8fc8a13ca1715a72ba8662a26ac285c98aabb4011"
 dependencies = [
- "winnow 0.7.14",
+ "winnow 1.0.0",
 ]
 
 [[package]]
 name = "toml_writer"
-version = "1.0.6+spec-1.1.0"
+version = "1.1.0+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab16f14aed21ee8bfd8ec22513f7287cd4a91aa92e44edfe2c17ddd004e92607"
+checksum = "d282ade6016312faf3e41e57ebbba0c073e4056dab1232ab1cb624199648f8ed"
 
 [[package]]
 name = "tonic"
@@ -7824,9 +7770,9 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
 name = "uuid"
-version = "1.22.0"
+version = "1.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a68d3c8f01c0cfa54a75291d83601161799e4a89a39e0929f4b0354d88757a37"
+checksum = "5ac8b6f42ead25368cf5b098aeb3dc8a1a2c05a3eee8a9a1a68c640edbfc79d9"
 dependencies = [
  "getrandom 0.4.2",
  "js-sys",
@@ -8505,6 +8451,12 @@ checksum = "5a5364e9d77fcdeeaa6062ced926ee3381faa2ee02d3eb83a5c27a8825540829"
 dependencies = [
  "memchr",
 ]
+
+[[package]]
+name = "winnow"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a90e88e4667264a994d34e6d1ab2d26d398dcdca8b7f52bec8668957517fc7d8"
 
 [[package]]
 name = "wit-bindgen"

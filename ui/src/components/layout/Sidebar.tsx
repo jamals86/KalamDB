@@ -2,10 +2,10 @@ import { useEffect, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import {
   Briefcase,
-  ChevronLeft,
-  ChevronRight,
   FileText,
   LayoutDashboard,
+  PanelLeftClose,
+  PanelLeftOpen,
   RadioTower,
   Settings,
   Terminal,
@@ -115,12 +115,13 @@ export default function Sidebar() {
                   "w-full justify-start text-muted-foreground",
                   collapsed ? "h-9 w-9 p-0 justify-center" : "px-3"
                 )}
+                aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
                 onClick={() => setCollapsed((prev) => !prev)}
               >
                 {collapsed ? (
-                  <ChevronRight className="h-4 w-4" />
+                  <PanelLeftOpen className="h-4 w-4" />
                 ) : (
-                  <ChevronLeft className="h-4 w-4 mr-2" />
+                  <PanelLeftClose className="h-4 w-4 mr-2" />
                 )}
                 {!collapsed && <span>Collapse</span>}
               </Button>

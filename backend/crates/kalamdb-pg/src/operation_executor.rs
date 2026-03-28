@@ -10,7 +10,7 @@ use kalamdb_commons::models::UserId;
 use kalamdb_commons::{TableId, TableType};
 
 use crate::service::{ScanRpcRequest, ScanRpcResponse};
-use crate::{InsertRpcRequest, UpdateRpcRequest, DeleteRpcRequest};
+use crate::{DeleteRpcRequest, InsertRpcRequest, UpdateRpcRequest};
 
 // Re-export domain types from kalamdb-commons (canonical location).
 pub use kalamdb_commons::models::pg_operations::{
@@ -57,9 +57,7 @@ pub fn parse_table_id(namespace: &str, table_name: &str) -> Result<TableId, Stat
 }
 
 pub fn parse_user_id(raw: Option<&str>) -> Option<UserId> {
-    raw.map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(UserId::new)
+    raw.map(str::trim).filter(|s| !s.is_empty()).map(UserId::new)
 }
 
 pub fn parse_row(json: &str) -> Result<Row, Status> {
@@ -81,15 +79,14 @@ pub fn encode_batches(
     for batch in batches {
         let mut buf = Vec::new();
         {
-            let mut writer = StreamWriter::try_new(&mut buf, &schema).map_err(|e| {
-                Status::internal(format!("failed to create IPC writer: {}", e))
-            })?;
-            writer.write(batch).map_err(|e| {
-                Status::internal(format!("failed to write IPC batch: {}", e))
-            })?;
-            writer.finish().map_err(|e| {
-                Status::internal(format!("failed to finish IPC writer: {}", e))
-            })?;
+            let mut writer = StreamWriter::try_new(&mut buf, &schema)
+                .map_err(|e| Status::internal(format!("failed to create IPC writer: {}", e)))?;
+            writer
+                .write(batch)
+                .map_err(|e| Status::internal(format!("failed to write IPC batch: {}", e)))?;
+            writer
+                .finish()
+                .map_err(|e| Status::internal(format!("failed to finish IPC writer: {}", e)))?;
         }
         ipc_batches.push(bytes::Bytes::from(buf));
     }

@@ -1,5 +1,11 @@
 import { createSlice, createAsyncThunk, PayloadAction } from "@reduxjs/toolkit";
-import { authApi, type UserInfo, type LoginRequest, ApiRequestError } from "../lib/api";
+import {
+  authApi,
+  probeBackendReachability,
+  type UserInfo,
+  type LoginRequest,
+  ApiRequestError,
+} from "../lib/api";
 import { setClientToken, clearClient } from "../lib/kalam-client";
 
 interface AuthState {
@@ -20,18 +26,33 @@ const initialState: AuthState = {
   error: null,
 };
 
+function extractAuthErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof ApiRequestError) {
+    return error.apiError.message;
+  }
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message;
+  }
+  return fallback;
+}
+
 export const login = createAsyncThunk(
   "auth/login",
   async (credentials: LoginRequest, { rejectWithValue }) => {
     try {
+      const status = await probeBackendReachability();
+      if (status.needs_setup) {
+        return rejectWithValue("Server setup is not complete yet.");
+      }
+
       const response = await authApi.login(credentials);
       await setClientToken(response.access_token);
       return response;
     } catch (err) {
-      if (err instanceof ApiRequestError) {
-        return rejectWithValue(err.apiError.message);
+      if (err instanceof TypeError) {
+        return rejectWithValue("KalamDB server is unreachable.");
       }
-      return rejectWithValue("Login failed");
+      return rejectWithValue(extractAuthErrorMessage(err, "Login failed"));
     }
   }
 );

@@ -1,7 +1,9 @@
 use datafusion_common::ScalarValue;
 use kalam_pg_api::ScanFilter;
 use kalam_pg_common::{DELETED_COLUMN, SEQ_COLUMN, USER_ID_COLUMN};
-use kalam_pg_fdw::{DeleteInput, InsertInput, RequestPlanner, ScanInput, UpdateInput, VirtualColumn};
+use kalam_pg_fdw::{
+    DeleteInput, InsertInput, RequestPlanner, ScanInput, UpdateInput, VirtualColumn,
+};
 use kalamdb_commons::models::rows::Row;
 use kalamdb_commons::models::{NamespaceId, TableName, UserId};
 use kalamdb_commons::{TableId, TableType};
@@ -40,7 +42,10 @@ fn plan_scan_extracts_user_id_filters_and_virtual_columns() {
     );
     assert_eq!(
         plan.request.filters,
-        vec![ScanFilter::eq("body", ScalarValue::Utf8(Some("hello".to_string())))]
+        vec![ScanFilter::eq(
+            "body",
+            ScalarValue::Utf8(Some("hello".to_string()))
+        )]
     );
     assert_eq!(plan.request.tenant_context.effective_user_id(), Some(&UserId::new("u_fdw")));
     assert_eq!(
@@ -142,9 +147,10 @@ fn plan_update_uses_session_user_id_when_no_explicit() {
         table_id: table_id(),
         table_type: TableType::User,
         pk_value: "pk_1".to_string(),
-        updates: Row::from_vec(vec![
-            ("body".to_string(), ScalarValue::Utf8(Some("edited".to_string()))),
-        ]),
+        updates: Row::from_vec(vec![(
+            "body".to_string(),
+            ScalarValue::Utf8(Some("edited".to_string())),
+        )]),
         session_user_id: Some(UserId::new("session_user")),
     })
     .expect("plan update with session user");
@@ -161,9 +167,10 @@ fn plan_update_shared_table_allows_no_user_id() {
         table_id: table_id(),
         table_type: TableType::Shared,
         pk_value: "pk_shared".to_string(),
-        updates: Row::from_vec(vec![
-            ("status".to_string(), ScalarValue::Utf8(Some("active".to_string()))),
-        ]),
+        updates: Row::from_vec(vec![(
+            "status".to_string(),
+            ScalarValue::Utf8(Some("active".to_string())),
+        )]),
         session_user_id: None,
     })
     .expect("plan update on shared table");
@@ -240,9 +247,10 @@ fn plan_update_rejects_user_table_without_user_id() {
         table_id: table_id(),
         table_type: TableType::User,
         pk_value: "pk_no_user".to_string(),
-        updates: Row::from_vec(vec![
-            ("body".to_string(), ScalarValue::Utf8(Some("x".to_string()))),
-        ]),
+        updates: Row::from_vec(vec![(
+            "body".to_string(),
+            ScalarValue::Utf8(Some("x".to_string())),
+        )]),
         session_user_id: None,
     })
     .expect_err("user table update without user_id should fail");

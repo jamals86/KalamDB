@@ -193,9 +193,7 @@ impl KalamLinkClient {
 
     /// Subscribe to real-time changes
     ///
-    /// If a shared connection has been established via [`connect()`](Self::connect),
-    /// the subscription is multiplexed over it.  Otherwise falls back to a
-    /// per-subscription WebSocket (legacy behaviour).
+    /// Subscriptions are multiplexed over the shared WebSocket connection.
     pub async fn subscribe(&self, query: &str) -> Result<SubscriptionManager> {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -207,9 +205,6 @@ impl KalamLinkClient {
     }
 
     /// Subscribe with advanced configuration (pre-generated ID, options, ws_url override)
-    ///
-    /// Uses the shared connection when available, otherwise falls back to a
-    /// per-subscription WebSocket.
     ///
     /// When [`ConnectionOptions::ws_lazy_connect`] is `true` (the default)
     /// and no shared connection exists yet, `connect()` is called
@@ -1101,22 +1096,22 @@ impl KalamLinkClientBuilder {
                                     "username": username,
                                     "password": password,
                                 });
-                                let resp = client
-                                    .post(&url)
-                                    .json(&body)
-                                    .send()
-                                    .await
-                                    .map_err(|e: reqwest::Error| KalamLinkError::NetworkError(e.to_string()))?;
+                                let resp = client.post(&url).json(&body).send().await.map_err(
+                                    |e: reqwest::Error| KalamLinkError::NetworkError(e.to_string()),
+                                )?;
                                 if !resp.status().is_success() {
                                     let msg = resp.text().await.unwrap_or_default();
                                     return Err(KalamLinkError::AuthenticationError(format!(
-                                        "Login failed during token refresh: {}", msg
+                                        "Login failed during token refresh: {}",
+                                        msg
                                     )));
                                 }
                                 let login_resp = resp
                                     .json::<crate::models::LoginResponse>()
                                     .await
-                                    .map_err(|e: reqwest::Error| KalamLinkError::NetworkError(e.to_string()))?;
+                                    .map_err(|e: reqwest::Error| {
+                                        KalamLinkError::NetworkError(e.to_string())
+                                    })?;
                                 log::debug!("[LINK_HTTP] Reauthenticated via basic login");
                                 Ok(AuthProvider::jwt_token(login_resp.access_token))
                             },

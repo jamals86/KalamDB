@@ -1,8 +1,9 @@
 import { type ReactNode } from "react";
-import { Database } from "lucide-react";
+
+const logoUrl = `${import.meta.env.BASE_URL}branding/kalamdb_logo.png`;
 
 interface AuthSplitLayoutProps {
-  title: string;
+  title?: string;
   description: string;
   children: ReactNode;
   panelTitle?: string;
@@ -11,7 +12,7 @@ interface AuthSplitLayoutProps {
 }
 
 export default function AuthSplitLayout({
-  title,
+  title = "Welcome back",
   description,
   children,
   panelTitle = "KalamDB",
@@ -19,22 +20,23 @@ export default function AuthSplitLayout({
   panelFootnote = "Embedded UI v2",
 }: AuthSplitLayoutProps) {
   return (
-    <div className="min-h-screen bg-muted/40 p-4 md:p-8">
-      <div className="mx-auto flex min-h-[calc(100vh-2rem)] max-w-7xl items-center">
+    <div className="h-full min-h-0 overflow-auto bg-muted/40 p-4 md:p-8">
+      <div className="mx-auto flex min-h-full max-w-7xl items-center">
         <div className="grid w-full overflow-hidden rounded-2xl border bg-card shadow-xl lg:grid-cols-2">
           <section className="relative flex min-h-[680px] items-center justify-center p-6 sm:p-10 lg:p-14">
-            <div className="absolute left-6 top-6 flex items-center gap-2 sm:left-8 sm:top-8">
-              <Database className="h-5 w-5 text-primary" />
-              <div className="leading-tight">
-                <p className="text-sm font-semibold tracking-tight">KalamDB Admin</p>
-                <p className="text-[11px] text-muted-foreground">Embedded UI v2</p>
-              </div>
+            <div className="absolute left-6 top-6 sm:left-8 sm:top-8">
+              <img
+                src={logoUrl}
+                alt="KalamDB"
+                className="h-9 w-auto object-contain"
+              />
+              <p className="mt-2 text-[11px] font-medium text-muted-foreground">Admin UI</p>
             </div>
 
             <div className="w-full max-w-md space-y-8">
               <div className="space-y-2">
-                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Welcome back</p>
-                <h1 className="text-3xl font-semibold tracking-tight text-foreground">{title}</h1>
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">{title}</p>
+                <h1 className="text-3xl font-semibold tracking-tight text-foreground">{panelTitle}</h1>
                 <p className="text-sm text-muted-foreground">{description}</p>
               </div>
               {children}

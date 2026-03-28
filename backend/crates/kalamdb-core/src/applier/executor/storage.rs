@@ -33,9 +33,7 @@ impl StorageExecutor {
                 .system_tables()
                 .storages()
                 .create_storage(storage)
-                .map_err(|e| {
-                    ApplierError::Execution(format!("Failed to create storage: {}", e))
-                })?;
+                .map_err(|e| ApplierError::Execution(format!("Failed to create storage: {}", e)))?;
             Ok(format!("Storage {} created successfully", storage_id))
         })
         .await
@@ -52,9 +50,7 @@ impl StorageExecutor {
                 .system_tables()
                 .storages()
                 .delete_storage(&storage_id)
-                .map_err(|e| {
-                    ApplierError::Execution(format!("Failed to drop storage: {}", e))
-                })?;
+                .map_err(|e| ApplierError::Execution(format!("Failed to drop storage: {}", e)))?;
             Ok(format!("Storage {} dropped successfully", storage_id))
         })
         .await

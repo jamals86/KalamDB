@@ -1,5 +1,4 @@
 import { executeQuery, executeSql } from "@/lib/kalam-client";
-import { KalamCellValue } from "kalam-link";
 import type { SchemaField } from "kalam-link";
 import type {
   QueryLogEntry,
@@ -76,12 +75,38 @@ function rowsToObjects(
   rows: unknown[][] | undefined,
   namedRows?: Record<string, unknown>[],
 ): Record<string, unknown>[] {
+  const normalizeValue = (value: unknown): unknown => {
+    if (Array.isArray(value)) {
+      return value.map((entry) => normalizeValue(entry));
+    }
+
+    if (value && typeof value === "object") {
+      const maybeSerializable = value as { toJson?: () => unknown };
+      if (typeof maybeSerializable.toJson === "function") {
+        try {
+          return normalizeValue(maybeSerializable.toJson());
+        } catch {
+          // Fall through to entry-wise normalization.
+        }
+      }
+
+      return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>).map(([key, entry]) => [
+          key,
+          normalizeValue(entry),
+        ]),
+      );
+    }
+
+    return value;
+  };
+
   // Prefer named_rows: Rust WASM pre-computes the schema→map transformation.
   if (namedRows && namedRows.length > 0) {
     return namedRows.slice(0, MAX_SQL_STUDIO_RENDER_ROWS).map((row) => {
       const item: Record<string, unknown> = {};
       for (const key of Object.keys(row)) {
-        item[key] = KalamCellValue.from(row[key] ?? null);
+        item[key] = normalizeValue(row[key] ?? null);
       }
       return item;
     });
@@ -96,7 +121,7 @@ function rowsToObjects(
   return rowsToRender.map((row) => {
     const item: Record<string, unknown> = {};
     schema.forEach((field) => {
-      item[field.name] = KalamCellValue.from(row[field.index] ?? null);
+      item[field.name] = normalizeValue(row[field.index] ?? null);
     });
     return item;
   });
@@ -319,7 +344,7 @@ export async function fetchSqlStudioSchemaTree(): Promise<StudioNamespace[]> {
       column_name,
       data_type,
       is_nullable,
-      ordinal_position
+      CAST(ordinal_position AS BIGINT) AS ordinal_position
     FROM information_schema.columns
     ORDER BY table_schema, table_name, ordinal_position
   `);

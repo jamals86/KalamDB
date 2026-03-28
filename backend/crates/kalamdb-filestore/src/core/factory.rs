@@ -63,7 +63,8 @@ pub fn build_object_store(
         StorageLocationConfig::Azure(cfg) => build_azure(storage, &cfg, timeouts),
         #[allow(unreachable_patterns)]
         _ => Err(FilestoreError::Config(
-            "This storage backend was not compiled in. Enable the corresponding cloud-* feature.".into(),
+            "This storage backend was not compiled in. Enable the corresponding cloud-* feature."
+                .into(),
         )),
     }
 }

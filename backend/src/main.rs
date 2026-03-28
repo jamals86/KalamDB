@@ -391,9 +391,6 @@ mod tests {
     #[test]
     fn mimalloc_is_global_allocator() {
         let name = std::any::type_name_of_val(&super::ALLOC);
-        assert!(
-            name.contains("MiMalloc"),
-            "expected MiMalloc global allocator, got: {name}"
-        );
+        assert!(name.contains("MiMalloc"), "expected MiMalloc global allocator, got: {name}");
     }
 }

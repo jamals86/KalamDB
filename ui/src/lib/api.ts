@@ -184,7 +184,14 @@ export interface LoginResponse {
   refresh_expires_at: string;
 }
 
+export interface AuthStatusResponse {
+  needs_setup: boolean;
+  message?: string;
+}
+
 export const authApi = {
+  status: () => api.get<AuthStatusResponse>("/auth/status"),
+
   login: (credentials: LoginRequest) =>
     api.post<LoginResponse>("/auth/login", credentials),
   
@@ -194,3 +201,7 @@ export const authApi = {
   
   me: () => api.get<UserInfo>("/auth/me"),
 };
+
+export async function probeBackendReachability(): Promise<AuthStatusResponse> {
+  return authApi.status();
+}

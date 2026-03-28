@@ -40,10 +40,7 @@ pub enum ColumnOperation {
         nullable: Option<bool>,
     },
     /// Set or drop nullable state on an existing column.
-    SetNullable {
-        column_name: String,
-        nullable: bool,
-    },
+    SetNullable { column_name: String, nullable: bool },
     /// Set a column default expression.
     SetDefault {
         column_name: String,
@@ -359,10 +356,9 @@ fn build_alter_column_operation(
         AlterColumnOperation::DropDefault => Ok(ColumnOperation::DropDefault {
             column_name: column_name.value.clone(),
         }),
-        AlterColumnOperation::SetDataType { .. }
-        | AlterColumnOperation::AddGenerated { .. } => {
+        AlterColumnOperation::SetDataType { .. } | AlterColumnOperation::AddGenerated { .. } => {
             Err("Unsupported ALTER COLUMN operation".to_string())
-        }
+        },
     }
 }
 
@@ -412,7 +408,7 @@ fn expr_to_column_default(expr: &Expr) -> ColumnDefault {
                 | "CURRENT_USER" => ColumnDefault::function(&name, vec![]),
                 _ => ColumnDefault::literal(serde_json::Value::String(func.to_string())),
             }
-        }
+        },
         Expr::Value(value) => match &value.value {
             Value::Number(number, _) => {
                 if let Ok(int_value) = number.parse::<i64>() {
@@ -422,7 +418,7 @@ fn expr_to_column_default(expr: &Expr) -> ColumnDefault {
                 } else {
                     ColumnDefault::literal(serde_json::Value::String(number.clone()))
                 }
-            }
+            },
             Value::SingleQuotedString(string_value)
             | Value::DoubleQuotedString(string_value)
             | Value::TripleSingleQuotedString(string_value)
@@ -440,21 +436,21 @@ fn expr_to_column_default(expr: &Expr) -> ColumnDefault {
             | Value::NationalStringLiteral(string_value)
             | Value::HexStringLiteral(string_value) => {
                 ColumnDefault::literal(serde_json::Value::String(string_value.clone()))
-            }
+            },
             Value::DollarQuotedString(string_value) => {
                 ColumnDefault::literal(serde_json::Value::String(string_value.value.clone()))
-            }
+            },
             Value::QuoteDelimitedStringLiteral(string_value)
             | Value::NationalQuoteDelimitedStringLiteral(string_value) => {
                 ColumnDefault::literal(serde_json::Value::String(string_value.value.clone()))
-            }
+            },
             Value::Boolean(boolean_value) => {
                 ColumnDefault::literal(serde_json::Value::Bool(*boolean_value))
-            }
+            },
             Value::Null => ColumnDefault::literal(serde_json::Value::Null),
             Value::Placeholder(value) => {
                 ColumnDefault::literal(serde_json::Value::String(value.clone()))
-            }
+            },
         },
         Expr::Identifier(identifier) => {
             let normalized = identifier.value.to_uppercase();
@@ -464,7 +460,7 @@ fn expr_to_column_default(expr: &Expr) -> ColumnDefault {
                 "NULL" => ColumnDefault::literal(serde_json::Value::Null),
                 _ => ColumnDefault::literal(serde_json::Value::String(identifier.value.clone())),
             }
-        }
+        },
         _ => {
             let literal = expr.to_string();
             let normalized = literal.to_uppercase();
@@ -473,9 +469,11 @@ fn expr_to_column_default(expr: &Expr) -> ColumnDefault {
             } else if normalized == "CURRENT_TIMESTAMP" || normalized == "NOW()" {
                 ColumnDefault::function("NOW", vec![])
             } else {
-                ColumnDefault::literal(serde_json::Value::String(literal.trim_matches('\'').to_string()))
+                ColumnDefault::literal(serde_json::Value::String(
+                    literal.trim_matches('\'').to_string(),
+                ))
             }
-        }
+        },
     }
 }
 
@@ -616,7 +614,7 @@ mod tests {
             } => {
                 assert_eq!(column_name, "age");
                 assert!(!nullable);
-            }
+            },
             _ => panic!("Expected SetNullable operation"),
         }
     }
@@ -632,7 +630,7 @@ mod tests {
         match stmt.operation {
             ColumnOperation::SetNullable { nullable, .. } => {
                 assert!(nullable);
-            }
+            },
             _ => panic!("Expected SetNullable operation"),
         }
     }
@@ -652,7 +650,7 @@ mod tests {
             } => {
                 assert_eq!(column_name, "created_at");
                 assert_eq!(default_value, ColumnDefault::function("NOW", vec![]));
-            }
+            },
             _ => panic!("Expected SetDefault operation"),
         }
     }
@@ -668,7 +666,7 @@ mod tests {
         match stmt.operation {
             ColumnOperation::DropDefault { column_name } => {
                 assert_eq!(column_name, "created_at");
-            }
+            },
             _ => panic!("Expected DropDefault operation"),
         }
     }

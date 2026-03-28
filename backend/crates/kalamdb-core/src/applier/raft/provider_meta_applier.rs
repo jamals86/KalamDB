@@ -450,21 +450,15 @@ impl MetaApplier for ProviderMetaApplier {
                     job.started_at = Some(updated_at);
                 }
 
-                if matches!(
-                    status,
-                    JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled
-                ) && job.finished_at.is_none()
+                if matches!(status, JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled)
+                    && job.finished_at.is_none()
                 {
                     job.finished_at = Some(updated_at);
                 }
 
-                app_context
-                    .system_tables()
-                    .jobs()
-                    .update_job(job)
-                    .map_err(|e| {
-                        RaftError::Internal(format!("Failed to update job status: {}", e))
-                    })?;
+                app_context.system_tables().jobs().update_job(job).map_err(|e| {
+                    RaftError::Internal(format!("Failed to update job status: {}", e))
+                })?;
 
                 return Ok(format!(
                     "Job {} status updated from {:?} to {:?}",
@@ -511,9 +505,7 @@ impl MetaApplier for ProviderMetaApplier {
                     .system_tables()
                     .jobs()
                     .update_job(job)
-                    .map_err(|e| {
-                        RaftError::Internal(format!("Failed to complete job: {}", e))
-                    })?;
+                    .map_err(|e| RaftError::Internal(format!("Failed to complete job: {}", e)))?;
 
                 return Ok(format!("Job {} ({:?}) completed successfully", job_id, job_type));
             }

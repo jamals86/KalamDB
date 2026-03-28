@@ -421,28 +421,29 @@ impl SchemaRegistry {
     /// Register a new or updated table definition (CREATE/ALTER)
     ///
     /// This handles the full lifecycle:
-    /// 1. Persisting to system.tables
-    /// 2. Persisting version history
-    /// 3. Updating the cache (and DataFusion registry)
+    /// 1. Persisting the latest schema version idempotently
+    /// 2. Updating the cache (and DataFusion registry)
     pub fn register_table(&self, table_def: TableDefinition) -> Result<(), KalamDbError> {
         let app_ctx = self.app_context();
         let table_id =
             TableId::from_strings(table_def.namespace_id.as_str(), table_def.table_name.as_str());
 
-        log::info!("Registering table {} via SchemaRegistry", table_id);
-
-        // 1. Persist to system keyspace
+        // 1. Persist latest schema definition without duplicating identical writes.
         let tables_provider = app_ctx.system_tables().tables();
-        tables_provider
-            .create_table(&table_id, &table_def)
+        let persisted_new_version = tables_provider
+            .upsert_table_version(&table_id, &table_def)
             .into_kalamdb_error("Failed to persist table definition")?;
 
-        // 2. Persist schema version
-        tables_provider
-            .put_versioned_schema(&table_id, &table_def)
-            .into_kalamdb_error("Failed to persist schema version")?;
+        if persisted_new_version {
+            log::info!("Registering table {} via SchemaRegistry", table_id);
+        } else {
+            log::debug!(
+                "Table {} already has identical persisted schema; refreshing cache/provider only",
+                table_id
+            );
+        }
 
-        // 3. Update cache
+        // 2. Update cache
         self.put(table_def)?;
 
         Ok(())

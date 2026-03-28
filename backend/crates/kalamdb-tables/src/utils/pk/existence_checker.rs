@@ -378,10 +378,8 @@ impl PkExistenceChecker {
         // Track latest version: (max_seq, is_deleted)
         let mut latest: Option<(i64, bool)> = None;
 
-        while let Some(batch) = stream
-            .try_next()
-            .await
-            .into_kalamdb_error("Failed to read Parquet batch")?
+        while let Some(batch) =
+            stream.try_next().await.into_kalamdb_error("Failed to read Parquet batch")?
         {
             let pk_idx = batch.schema().index_of(pk_column).ok();
             let seq_idx = batch.schema().index_of(SystemColumnNames::SEQ).ok();
@@ -431,7 +429,7 @@ impl PkExistenceChecker {
                             *max_seq = seq;
                             *del = deleted;
                         }
-                    }
+                    },
                     None => latest = Some((seq, deleted)),
                 }
             }

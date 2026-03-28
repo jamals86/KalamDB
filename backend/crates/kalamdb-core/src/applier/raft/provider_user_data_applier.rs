@@ -145,13 +145,9 @@ impl UserDataApplier for ProviderUserDataApplier {
                 lq.last_update = last_update;
                 lq.changes = changes;
 
-                app_context
-                    .system_tables()
-                    .live_queries()
-                    .update_live_query(lq)
-                    .map_err(|e| {
-                        RaftError::Internal(format!("Failed to update live query: {}", e))
-                    })?;
+                app_context.system_tables().live_queries().update_live_query(lq).map_err(|e| {
+                    RaftError::Internal(format!("Failed to update live query: {}", e))
+                })?;
             }
             Ok(())
         })
@@ -194,11 +190,10 @@ impl UserDataApplier for ProviderUserDataApplier {
         let connection_id = connection_id.clone();
         tokio::task::spawn_blocking(move || {
             // Get all live queries for this connection and delete them
-            let live_queries = app_context
-                .system_tables()
-                .live_queries()
-                .list_live_queries()
-                .map_err(|e| RaftError::Internal(format!("Failed to list live queries: {}", e)))?;
+            let live_queries =
+                app_context.system_tables().live_queries().list_live_queries().map_err(|e| {
+                    RaftError::Internal(format!("Failed to list live queries: {}", e))
+                })?;
 
             let mut deleted_count = 0;
             for lq in live_queries {
@@ -232,11 +227,10 @@ impl UserDataApplier for ProviderUserDataApplier {
         let app_context = self.executor.app_context().clone();
         tokio::task::spawn_blocking(move || {
             // Get all live queries and delete those on the failed node
-            let live_queries = app_context
-                .system_tables()
-                .live_queries()
-                .list_live_queries()
-                .map_err(|e| RaftError::Internal(format!("Failed to list live queries: {}", e)))?;
+            let live_queries =
+                app_context.system_tables().live_queries().list_live_queries().map_err(|e| {
+                    RaftError::Internal(format!("Failed to list live queries: {}", e))
+                })?;
 
             let mut removed_count = 0;
             for lq in live_queries {

@@ -295,11 +295,9 @@ impl SqlStatement {
                     CheckStorageStatement::parse(sql).map(SqlStatementKind::CheckStorage)
                 })
             },
-            ["SHOW", "MANIFEST"] | ["SHOW", "MANIFEST", "CACHE", ..] => {
-                Self::wrap(sql, || {
-                    ShowManifestStatement::parse(sql).map(SqlStatementKind::ShowManifest)
-                })
-            },
+            ["SHOW", "MANIFEST"] | ["SHOW", "MANIFEST", "CACHE", ..] => Self::wrap(sql, || {
+                ShowManifestStatement::parse(sql).map(SqlStatementKind::ShowManifest)
+            }),
             // Show user export status / download link
             ["SHOW", "EXPORT", ..] => Self::wrap(sql, || {
                 crate::ddl::export_commands::ShowExportStatement::parse(sql)

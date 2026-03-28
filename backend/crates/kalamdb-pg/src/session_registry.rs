@@ -1,6 +1,6 @@
 use dashmap::DashMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 /// Current lifecycle state of a transaction handle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -129,11 +129,8 @@ impl SessionRegistry {
             session.transaction_has_writes = false;
         }
 
-        let tx_id = format!(
-            "tx-{}-{}",
-            session_id,
-            self.tx_counter.fetch_add(1, Ordering::Relaxed)
-        );
+        let tx_id =
+            format!("tx-{}-{}", session_id, self.tx_counter.fetch_add(1, Ordering::Relaxed));
         session.transaction_id = Some(tx_id.clone());
         session.transaction_state = Some(TransactionState::Active);
         session.transaction_has_writes = false;

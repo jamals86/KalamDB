@@ -35,12 +35,9 @@ kalamdb-commons = { path = "../kalamdb-commons", default-features = false, featu
 kalamdb-configs = { path = "../kalamdb-configs" }
 kalamdb-oidc = { path = "../kalamdb-oidc" }
 kalamdb-session = { path = "../kalamdb-session" }
-kalamdb-store = { path = "../kalamdb-store" }
-kalamdb-sql = { path = "../kalamdb-sql" }
 kalamdb-system = { path = "../kalamdb-system" }
 
 # Serialization
-serde = { workspace = true }
 serde_json = { workspace = true }
 
 # Error handling

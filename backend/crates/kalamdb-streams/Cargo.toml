@@ -24,10 +24,6 @@ chrono = { workspace = true }
 
 # Error handling
 thiserror = { workspace = true }
-anyhow = { workspace = true }
-
-# Logging
-log = { workspace = true }
 
 [lib]
 name = "kalamdb_streams"

@@ -1,10 +1,22 @@
-# pg_kalam runtime — prebuilt extension + stock PostgreSQL 16.
+# pg_kalam runtime — prebuilt extension + selected stock PostgreSQL major.
 # Requires artifacts/ to contain pg_kalam.so, pg_kalam.control, pg_kalam--*.sql
 #
 # Build (from repo root):
-#   docker build -f pg/docker/Dockerfile.runtime -t kalamdb-pg:latest pg/docker
-FROM postgres:16-bookworm
+#   docker build -f pg/docker/Dockerfile.runtime -t pg-kalam:latest pg/docker
+ARG POSTGRES_BASE_IMAGE=public.ecr.aws/docker/library/postgres:16-bookworm
+ARG PG_MAJOR=16
+ARG OCI_IMAGE_DESCRIPTION="PostgreSQL with the pg_kalam extension preinstalled for connecting PostgreSQL foreign tables to a remote KalamDB server."
+FROM ${POSTGRES_BASE_IMAGE}
 
-COPY artifacts/pg_kalam.so           /usr/lib/postgresql/16/lib/
-COPY artifacts/pg_kalam.control      /usr/share/postgresql/16/extension/
-COPY artifacts/pg_kalam--*.sql       /usr/share/postgresql/16/extension/
+ARG PG_MAJOR
+ARG OCI_IMAGE_DESCRIPTION
+
+LABEL org.opencontainers.image.title="pg-kalam" \
+	org.opencontainers.image.description="${OCI_IMAGE_DESCRIPTION}"
+
+COPY artifacts/ /pg-artifacts/
+
+RUN install -m 755 /pg-artifacts/pg_kalam.so "/usr/lib/postgresql/${PG_MAJOR}/lib/pg_kalam.so" \
+	&& install -m 644 /pg-artifacts/pg_kalam.control "/usr/share/postgresql/${PG_MAJOR}/extension/pg_kalam.control" \
+	&& install -m 644 /pg-artifacts/pg_kalam--*.sql "/usr/share/postgresql/${PG_MAJOR}/extension/" \
+	&& rm -rf /pg-artifacts

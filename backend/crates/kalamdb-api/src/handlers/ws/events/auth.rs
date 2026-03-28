@@ -104,8 +104,7 @@ async fn authenticate_with_request(
         tracing::Span::current().record("user_id", auth_result.user_id.as_str());
         tracing::Span::current().record("role", format!("{:?}", auth_result.role).as_str());
 
-        connection_state
-            .mark_authenticated(auth_result.user_id.clone(), auth_result.role);
+        connection_state.mark_authenticated(auth_result.user_id.clone(), auth_result.role);
         registry.on_authenticated(&connection_id, auth_result.user_id.clone());
 
         let msg = WebSocketMessage::AuthSuccess {

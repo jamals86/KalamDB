@@ -18,7 +18,6 @@ kalamdb-session = { path = "../kalamdb-session" }
 
 # Apache Arrow/DataFusion
 datafusion = { workspace = true }
-arrow = { workspace = true }
 
 # Async
 async-trait = { workspace = true }

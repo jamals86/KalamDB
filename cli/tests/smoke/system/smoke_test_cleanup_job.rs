@@ -91,9 +91,8 @@ fn smoke_cleanup_job_completes() {
             }
         },
         Err(error) => {
-            wait_for_table_absent(&namespace, &table, Duration::from_secs(60)).unwrap_or_else(
-                |_| panic!("drop table: {:?}", error),
-            );
+            wait_for_table_absent(&namespace, &table, Duration::from_secs(60))
+                .unwrap_or_else(|_| panic!("drop table: {:?}", error));
         },
     }
 

@@ -11,10 +11,9 @@ function resolveConfiguredOrigin(): string | null {
   return trimTrailingSlashes(configured);
 }
 
-export function getBackendOrigin(): string {
-  const configuredOrigin = resolveConfiguredOrigin();
-  if (configuredOrigin) {
-    return configuredOrigin;
+function resolveDefaultOrigin(): string {
+  if (import.meta.env.DEV) {
+    return "http://localhost:8080";
   }
 
   if (typeof window !== "undefined") {
@@ -22,6 +21,15 @@ export function getBackendOrigin(): string {
   }
 
   return "http://localhost:8080";
+}
+
+export function getBackendOrigin(): string {
+  const configuredOrigin = resolveConfiguredOrigin();
+  if (configuredOrigin) {
+    return configuredOrigin;
+  }
+
+  return resolveDefaultOrigin();
 }
 
 export function getApiBaseUrl(): string {

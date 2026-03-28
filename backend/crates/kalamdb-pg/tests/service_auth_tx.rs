@@ -1,6 +1,6 @@
 use kalamdb_pg::{
-    BeginTransactionRequest, CommitTransactionRequest, KalamPgService,
-    OpenSessionRequest, PgService, PgServiceServer, PingRequest, RollbackTransactionRequest,
+    BeginTransactionRequest, CommitTransactionRequest, KalamPgService, OpenSessionRequest,
+    PgService, PgServiceServer, PingRequest, RollbackTransactionRequest,
 };
 use tonic::Request;
 

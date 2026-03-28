@@ -4,15 +4,15 @@
 // instance and a locally running KalamDB server.
 #![allow(dead_code)]
 
+use std::process::Command;
 use std::sync::OnceLock;
 use std::time::Duration;
-use std::process::Command;
 use std::{env, fmt};
 
 use reqwest::Client;
 use serde_json::Value;
-use tokio_postgres::{Config, NoTls};
 use tokio_postgres::error::SqlState;
+use tokio_postgres::{Config, NoTls};
 
 // ---------------------------------------------------------------------------
 // Constants — pgrx-managed PostgreSQL + local KalamDB
@@ -126,10 +126,7 @@ impl TestEnv {
             .expect("KalamDB SQL request");
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
-        assert!(
-            status.is_success(),
-            "KalamDB SQL failed ({status}): {text}\n  SQL: {sql}"
-        );
+        assert!(status.is_success(), "KalamDB SQL failed ({status}): {text}\n  SQL: {sql}");
         serde_json::from_str(&text).unwrap_or(Value::Null)
     }
 
@@ -169,19 +166,12 @@ impl TestEnv {
         let val: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
         val["results"][0]["schema"]
             .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v["name"].as_str().map(String::from))
-                    .collect()
-            })
+            .map(|arr| arr.iter().filter_map(|v| v["name"].as_str().map(String::from)).collect())
             .unwrap_or_default()
     }
 
     async fn start() -> Self {
-        let http_client = Client::builder()
-            .timeout(Duration::from_secs(15))
-            .build()
-            .unwrap();
+        let http_client = Client::builder().timeout(Duration::from_secs(15)).build().unwrap();
 
         Self::wait_for_kalamdb(&http_client).await;
         let bearer_token = Self::authenticate(&http_client).await;
@@ -220,21 +210,17 @@ impl TestEnv {
         }
         panic!(
             "KalamDB not reachable at {}\n\
-             Start with: cd backend && cargo run"
-            , config.base_url
+             Start with: cd backend && cargo run",
+            config.base_url
         );
     }
 
     async fn authenticate(client: &Client) -> String {
         let config = kalamdb_auth_config();
 
-        if let Some(token) = try_login(
-            client,
-            &config.base_url,
-            &config.login_username,
-            &config.login_password,
-        )
-        .await
+        if let Some(token) =
+            try_login(client, &config.base_url, &config.login_username, &config.login_password)
+                .await
         {
             return token;
         }
@@ -249,25 +235,17 @@ impl TestEnv {
             .send()
             .await;
 
-        if let Some(token) = try_login(
-            client,
-            &config.base_url,
-            &config.login_username,
-            &config.login_password,
-        )
-        .await
+        if let Some(token) =
+            try_login(client, &config.base_url, &config.login_username, &config.login_password)
+                .await
         {
             return token;
         }
 
         if config.setup_username != config.login_username {
-            if let Some(token) = try_login(
-                client,
-                &config.base_url,
-                &config.setup_username,
-                &config.setup_password,
-            )
-            .await
+            if let Some(token) =
+                try_login(client, &config.base_url, &config.setup_username, &config.setup_password)
+                    .await
             {
                 return token;
             }
@@ -279,10 +257,7 @@ impl TestEnv {
     }
 
     async fn ensure_test_db(&self) {
-        let postgres = self
-            .pg_connect_to("postgres")
-            .await
-            .expect("connect to postgres database");
+        let postgres = self.pg_connect_to("postgres").await.expect("connect to postgres database");
 
         let exists = postgres
             .query_opt("SELECT 1 FROM pg_database WHERE datname = $1", &[&TEST_DB])
@@ -322,7 +297,7 @@ impl TestEnv {
                         eprintln!("  waiting for PostgreSQL on port {PG_PORT}...");
                     }
                     tokio::time::sleep(Duration::from_secs(1)).await;
-                }
+                },
             }
         }
         panic!(
@@ -351,7 +326,12 @@ impl TestEnv {
     }
 }
 
-async fn try_login(client: &Client, base_url: &str, username: &str, password: &str) -> Option<String> {
+async fn try_login(
+    client: &Client,
+    base_url: &str,
+    username: &str,
+    password: &str,
+) -> Option<String> {
     let resp = client
         .post(format!("{base_url}/v1/api/auth/login"))
         .json(&serde_json::json!({
@@ -482,7 +462,10 @@ pub async fn timed_count(
     (row.get::<_, i64>(0), elapsed_ms)
 }
 
-pub async fn timed_query(client: &tokio_postgres::Client, sql: &str) -> (Vec<tokio_postgres::Row>, f64) {
+pub async fn timed_query(
+    client: &tokio_postgres::Client,
+    sql: &str,
+) -> (Vec<tokio_postgres::Row>, f64) {
     let start = std::time::Instant::now();
     let rows = client.query(sql, &[]).await.expect("timed_query");
     let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
@@ -517,10 +500,11 @@ pub fn process_rss_kb(pid: u32) -> u64 {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8(output.stdout).expect("parse ps rss output");
-    stdout
-        .trim()
-        .parse::<u64>()
-        .expect("parse rss value")
+    stdout.trim().parse::<u64>().expect("parse rss value")
+}
+
+pub fn process_group_rss_kb(pids: &[u32]) -> u64 {
+    pids.iter().map(|pid| process_rss_kb(*pid)).sum()
 }
 
 pub async fn sample_process_peak_rss_kb(
@@ -536,6 +520,30 @@ pub async fn sample_process_peak_rss_kb(
         peak = peak.max(process_rss_kb(pid));
     }
     peak.max(process_rss_kb(pid))
+}
+
+pub async fn sample_process_group_peak_rss_kb(
+    pids: Vec<u32>,
+    sample_interval_ms: u64,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> u64 {
+    use std::sync::atomic::Ordering;
+
+    let mut peak = process_group_rss_kb(&pids);
+    while !stop.load(Ordering::Relaxed) {
+        tokio::time::sleep(Duration::from_millis(sample_interval_ms)).await;
+        peak = peak.max(process_group_rss_kb(&pids));
+    }
+    peak.max(process_group_rss_kb(&pids))
+}
+
+pub async fn pg_backend_pid(client: &tokio_postgres::Client) -> u32 {
+    let row = client
+        .query_one("SELECT pg_backend_pid()", &[])
+        .await
+        .expect("query pg_backend_pid");
+    let pid: i32 = row.get(0);
+    pid as u32
 }
 
 async fn ensure_schema_exists(client: &tokio_postgres::Client, schema: &str) {

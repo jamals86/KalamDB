@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { configureStore } from "@reduxjs/toolkit";
 import { Provider } from "react-redux";
 import { MemoryRouter } from "react-router-dom";
@@ -21,8 +21,12 @@ const mockSetClientErrorListener = vi.fn();
 const mockSetClientReceiveListener = vi.fn();
 const mockSetClientSendListener = vi.fn();
 const mockUnsubscribe = vi.fn();
+const mockRemoteUnsubscribe = vi.fn();
+const mockSaveSyncedSqlStudioWorkspaceState = vi.fn();
+const mockSubscribeToSyncedSqlStudioWorkspaceState = vi.fn();
 
 let liveCallback: ((message: Record<string, unknown>) => void) | null = null;
+let syncedWorkspaceCallback: ((workspace: Record<string, unknown> | null) => void) | null = null;
 let clientDisconnectCallback: ((reason: Record<string, unknown>) => void) | null = null;
 let clientReceiveCallback: ((message: string) => void) | null = null;
 let clientSendCallback: ((message: string) => void) | null = null;
@@ -52,6 +56,39 @@ vi.mock("@/lib/kalam-client", () => ({
   setClientReceiveListener: (...args: unknown[]) => mockSetClientReceiveListener(...args),
   setClientSendListener: (...args: unknown[]) => mockSetClientSendListener(...args),
   executeSql: vi.fn(),
+}));
+
+vi.mock("@/services/sqlStudioWorkspaceSyncService", () => ({
+  buildSyncedSqlStudioWorkspaceState: (...args: unknown[]) => {
+    const [tabs, savedQueries, activeTabId] = args as [Array<Record<string, unknown>>, Array<Record<string, unknown>>, string | null];
+    const safeActiveTabId = tabs.find((tab) => tab.id === activeTabId)?.id ?? tabs[0]?.id ?? "";
+    return {
+      version: 1,
+      tabs: tabs.map((tab) => ({
+        id: tab.id,
+        name: tab.title,
+        query: tab.sql,
+        settings: {
+          isDirty: tab.isDirty,
+          isLive: tab.isLive,
+          liveStatus: tab.liveStatus,
+          resultView: tab.resultView,
+          lastSavedAt: tab.lastSavedAt,
+          savedQueryId: tab.savedQueryId,
+          subscriptionOptions: tab.subscriptionOptions,
+        },
+      })),
+      savedQueries: savedQueries.map((query) => ({
+        ...query,
+        openedRecently: tabs.some((tab) => tab.savedQueryId === query.id),
+        isCurrentTab: tabs.some((tab) => tab.savedQueryId === query.id && tab.id === safeActiveTabId),
+      })),
+      activeTabId: safeActiveTabId,
+      updatedAt: "2026-03-27T00:00:00.000Z",
+    };
+  },
+  saveSyncedSqlStudioWorkspaceState: (...args: unknown[]) => mockSaveSyncedSqlStudioWorkspaceState(...args),
+  subscribeToSyncedSqlStudioWorkspaceState: (...args: unknown[]) => mockSubscribeToSyncedSqlStudioWorkspaceState(...args),
 }));
 
 vi.mock("kalam-link", () => {
@@ -183,8 +220,7 @@ function createTestStore() {
   });
 }
 
-function renderSqlStudio() {
-  const store = createTestStore();
+function renderSqlStudio(store = createTestStore()) {
   const view = render(
     <Provider store={store}>
       <MemoryRouter>
@@ -214,6 +250,7 @@ describe("SqlStudio page", () => {
       },
     );
     liveCallback = null;
+    syncedWorkspaceCallback = null;
     clientDisconnectCallback = null;
     clientReceiveCallback = null;
     clientSendCallback = null;
@@ -228,10 +265,22 @@ describe("SqlStudio page", () => {
     mockSetClientReceiveListener.mockReset();
     mockSetClientSendListener.mockReset();
     mockUnsubscribe.mockReset();
+    mockRemoteUnsubscribe.mockReset();
+    mockSaveSyncedSqlStudioWorkspaceState.mockReset();
+    mockSubscribeToSyncedSqlStudioWorkspaceState.mockReset();
     window.localStorage.clear();
 
     mockUseAuth.mockReturnValue({
       user: { username: "root", role: "system" },
+    });
+
+    mockExecuteSqlStudioQuery.mockResolvedValue({
+      status: "success",
+      rows: [],
+      schema: [],
+      tookMs: 0,
+      rowCount: 0,
+      logs: [],
     });
 
     mockSchemaTreeQuery.mockReturnValue({
@@ -259,6 +308,11 @@ describe("SqlStudio page", () => {
       liveCallback = callback;
       return mockUnsubscribe;
     });
+    mockSaveSyncedSqlStudioWorkspaceState.mockResolvedValue(undefined);
+    mockSubscribeToSyncedSqlStudioWorkspaceState.mockImplementation(async (_username: string, callback: (workspace: Record<string, unknown> | null) => void) => {
+      syncedWorkspaceCallback = callback;
+      return mockRemoteUnsubscribe;
+    });
     mockSetClientDisconnectListener.mockImplementation((callback?: (reason: Record<string, unknown>) => void) => {
       clientDisconnectCallback = callback ?? null;
     });
@@ -274,6 +328,7 @@ describe("SqlStudio page", () => {
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -399,8 +454,8 @@ describe("SqlStudio page", () => {
       liveCallback?.({
         type: "subscription_ack",
         schema: [
-          { name: "id", data_type: "Int64", index: 0, flags: ["pk"] },
-          { name: "name", data_type: "Utf8", index: 1 },
+          { name: "id", data_type: "BigInt", index: 0, flags: ["pk"] },
+          { name: "name", data_type: "Text", index: 1 },
         ],
       });
       liveCallback?.({
@@ -440,6 +495,36 @@ describe("SqlStudio page", () => {
     });
   });
 
+  it("shows connecting state and lets the user cancel a stalled live subscription", async () => {
+    let resolveSubscribe: ((value: () => Promise<void>) => void) | null = null;
+    mockSubscribe.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveSubscribe = resolve as (value: () => Promise<void>) => void;
+    }));
+
+    renderSqlStudio();
+
+    fireEvent.change(getSqlEditor(), {
+      target: { value: "SELECT * FROM dba.favorites LIMIT 100" },
+    });
+
+    fireEvent.click(screen.getByRole("switch"));
+    fireEvent.click(screen.getByRole("button", { name: /subscribe/i }));
+
+    expect(await screen.findByRole("button", { name: /connecting\.\.\./i })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /connecting\.\.\./i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /subscribe/i })).toBeTruthy();
+    });
+
+    await act(async () => {
+      resolveSubscribe?.(mockUnsubscribe);
+    });
+
+    expect(mockUnsubscribe).toHaveBeenCalled();
+  });
+
   it("orders live subscription rows by _seq descending, including the initial batch", async () => {
     renderSqlStudio();
 
@@ -450,13 +535,17 @@ describe("SqlStudio page", () => {
     fireEvent.click(screen.getByRole("switch"));
     fireEvent.click(screen.getByRole("button", { name: /subscribe/i }));
 
+    await waitFor(() => {
+      expect(mockSubscribe).toHaveBeenCalled();
+    });
+
     await act(async () => {
       liveCallback?.({
         type: "subscription_ack",
         schema: [
-          { name: "id", data_type: "Int64", index: 0, flags: ["pk"] },
-          { name: "name", data_type: "Utf8", index: 1 },
-          { name: "_seq", data_type: "Int64", index: 2 },
+          { name: "id", data_type: "BigInt", index: 0, flags: ["pk"] },
+          { name: "name", data_type: "Text", index: 1 },
+          { name: "_seq", data_type: "BigInt", index: 2 },
         ],
       });
       liveCallback?.({
@@ -524,8 +613,8 @@ describe("SqlStudio page", () => {
       liveCallback?.({
         type: "subscription_ack",
         schema: [
-          { name: "id", data_type: "Int64", index: 0, flags: ["pk"] },
-          { name: "name", data_type: "Utf8", index: 1 },
+          { name: "id", data_type: "BigInt", index: 0, flags: ["pk"] },
+          { name: "name", data_type: "Text", index: 1 },
         ],
       });
       clientDisconnectCallback?.({
@@ -540,5 +629,216 @@ describe("SqlStudio page", () => {
       expect(activeTabId).toBeTruthy();
       expect(state.tabs.find((tab) => tab.id === activeTabId)?.liveStatus).toBe("error");
     });
+  });
+
+  it("shows a change badge on background subscription tabs and clears it when the tab is opened", async () => {
+    renderSqlStudio();
+
+    fireEvent.change(getSqlEditor(), {
+      target: { value: "SELECT id, name FROM default.events" },
+    });
+
+    fireEvent.click(screen.getByRole("switch"));
+    fireEvent.click(screen.getByRole("button", { name: /subscribe/i }));
+
+    await waitFor(() => {
+      expect(mockSubscribe).toHaveBeenCalled();
+    });
+
+    await act(async () => {
+      liveCallback?.({
+        type: "subscription_ack",
+        schema: [
+          { name: "id", data_type: "BigInt", index: 0, flags: ["pk"] },
+          { name: "name", data_type: "Text", index: 1 },
+        ],
+      });
+    });
+
+    fireEvent.click(screen.getByTitle("New query tab"));
+
+    await act(async () => {
+      liveCallback?.({
+        type: "change",
+        change_type: "insert",
+        rows: [{ id: 9, name: "background row" }],
+      });
+    });
+
+    const firstTab = screen.getByRole("button", { name: /untitled query/i });
+    expect(within(firstTab).getByText("1")).toBeTruthy();
+
+    fireEvent.click(firstTab);
+
+    await waitFor(() => {
+      expect(within(firstTab).queryByText("1")).toBeNull();
+    });
+  });
+
+  it("hydrates and updates the synced workspace from dba.favorites", async () => {
+    renderSqlStudio();
+
+    await act(async () => {
+      syncedWorkspaceCallback?.({
+        version: 1,
+        tabs: [
+          {
+            id: "synced-tab",
+            name: "Synced Query",
+            query: "SELECT * FROM default.events",
+            settings: {
+              isDirty: false,
+              isLive: false,
+              liveStatus: "idle",
+              resultView: "results",
+              lastSavedAt: null,
+              savedQueryId: "saved-1",
+            },
+          },
+        ],
+        savedQueries: [
+          {
+            id: "saved-1",
+            title: "Favorite Query",
+            sql: "SELECT * FROM default.events",
+            lastSavedAt: "2026-03-27T00:00:00.000Z",
+            isLive: false,
+            openedRecently: true,
+            isCurrentTab: true,
+          },
+        ],
+        activeTabId: "synced-tab",
+        updatedAt: "2026-03-27T00:00:00.000Z",
+      });
+      await Promise.resolve();
+    });
+
+    expect(screen.getByRole("button", { name: /synced query/i })).toBeTruthy();
+    expect(screen.getByText("Favorite Query")).toBeTruthy();
+
+    await act(async () => {
+      syncedWorkspaceCallback?.({
+        version: 1,
+        tabs: [
+          {
+            id: "synced-tab",
+            name: "Synced Query Updated",
+            query: "SELECT id FROM default.events",
+            settings: {
+              isDirty: false,
+              isLive: false,
+              liveStatus: "idle",
+              resultView: "results",
+              lastSavedAt: null,
+              savedQueryId: "saved-1",
+            },
+          },
+        ],
+        savedQueries: [
+          {
+            id: "saved-1",
+            title: "Favorite Query",
+            sql: "SELECT id FROM default.events",
+            lastSavedAt: "2026-03-27T00:00:00.000Z",
+            isLive: false,
+            openedRecently: true,
+            isCurrentTab: true,
+          },
+        ],
+        activeTabId: "synced-tab",
+        updatedAt: "2026-03-27T00:00:01.000Z",
+      });
+      await Promise.resolve();
+    });
+
+    expect(screen.getByRole("button", { name: /synced query updated/i })).toBeTruthy();
+  });
+
+  it("persists favorites through the synced workspace payload", async () => {
+    renderSqlStudio();
+
+    await act(async () => {
+      syncedWorkspaceCallback?.(null);
+      await Promise.resolve();
+    });
+
+    fireEvent.change(getSqlEditor(), {
+      target: { value: "SELECT id, name FROM default.events" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => {
+      expect(mockSaveSyncedSqlStudioWorkspaceState).toHaveBeenCalled();
+    });
+
+    expect(mockSaveSyncedSqlStudioWorkspaceState).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        savedQueries: [
+          expect.objectContaining({
+            title: "Untitled query",
+            openedRecently: true,
+            isCurrentTab: true,
+          }),
+        ],
+      }),
+      "root",
+    );
+  });
+
+  it("keeps the current workspace when the page remounts", async () => {
+    const store = createTestStore();
+    const firstRender = renderSqlStudio(store);
+
+    await act(async () => {
+      syncedWorkspaceCallback?.(null);
+      await Promise.resolve();
+    });
+
+    fireEvent.change(getSqlEditor(), {
+      target: { value: "SELECT id, name FROM default.events" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Untitled query").length).toBeGreaterThan(0);
+    });
+
+    firstRender.unmount();
+    renderSqlStudio(store);
+
+    expect(screen.getAllByText("Untitled query").length).toBeGreaterThan(0);
+    expect(screen.getByDisplayValue("SELECT id, name FROM default.events")).toBeTruthy();
+  });
+
+  it("debounces synced workspace writes", async () => {
+    vi.useFakeTimers();
+
+    renderSqlStudio();
+
+    await act(async () => {
+      syncedWorkspaceCallback?.(null);
+      await Promise.resolve();
+    });
+
+    fireEvent.change(getSqlEditor(), {
+      target: { value: "SELECT id, name FROM default.events" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    expect(mockSaveSyncedSqlStudioWorkspaceState).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(700);
+    });
+
+    expect(mockSaveSyncedSqlStudioWorkspaceState).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(50);
+    });
+
+    expect(mockSaveSyncedSqlStudioWorkspaceState).toHaveBeenCalled();
+    vi.useRealTimers();
   });
 });

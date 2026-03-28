@@ -453,7 +453,7 @@ pub fn default_rocksdb_raft_profile() -> crate::config::types::RocksDbCfProfileS
 
 pub fn default_rocksdb_block_cache_size() -> usize {
     2 * 1024 * 1024 // 2MB shared across all CFs (down from 4MB)
-                     // Sufficient for point-lookup workloads; most hot blocks stay cached.
+                    // Sufficient for point-lookup workloads; most hot blocks stay cached.
 }
 
 pub fn default_rocksdb_max_background_jobs() -> i32 {

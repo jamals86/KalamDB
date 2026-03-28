@@ -36,19 +36,26 @@ impl TypedStatementHandler<DropStorageStatement> for DropStorageHandler {
             let storages_provider = app_ctx.system_tables().storages();
             let tables_provider = app_ctx.system_tables().tables();
 
-            let storage = storages_provider.get_storage_by_id(&sid)
-                .map_err(|e| KalamDbError::ExecutionError(format!("Failed to get storage: {}", e)))?;
+            let storage = storages_provider.get_storage_by_id(&sid).map_err(|e| {
+                KalamDbError::ExecutionError(format!("Failed to get storage: {}", e))
+            })?;
 
             let count = if storage.is_some() {
-                let all_tables = tables_provider.list_tables()
-                    .map_err(|e| KalamDbError::ExecutionError(format!("Failed to check tables: {}", e)))?;
-                all_tables.iter().filter(|t| {
-                    match &t.table_options {
-                        kalamdb_commons::schemas::TableOptions::User(opts) => opts.storage_id == sid,
-                        kalamdb_commons::schemas::TableOptions::Shared(opts) => opts.storage_id == sid,
+                let all_tables = tables_provider.list_tables().map_err(|e| {
+                    KalamDbError::ExecutionError(format!("Failed to check tables: {}", e))
+                })?;
+                all_tables
+                    .iter()
+                    .filter(|t| match &t.table_options {
+                        kalamdb_commons::schemas::TableOptions::User(opts) => {
+                            opts.storage_id == sid
+                        },
+                        kalamdb_commons::schemas::TableOptions::Shared(opts) => {
+                            opts.storage_id == sid
+                        },
                         _ => false,
-                    }
-                }).count()
+                    })
+                    .count()
             } else {
                 0
             };
@@ -76,8 +83,7 @@ impl TypedStatementHandler<DropStorageStatement> for DropStorageHandler {
         if tables_using_storage_count > 0 {
             return Err(KalamDbError::InvalidOperation(format!(
                 "Cannot drop storage '{}': {} table(s) still using it",
-                statement.storage_id,
-                tables_using_storage_count
+                statement.storage_id, tables_using_storage_count
             )));
         }
 

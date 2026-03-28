@@ -24,8 +24,15 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 ARTIFACTS_DIR="$SCRIPT_DIR/artifacts"
-IMAGE_NAME="${KALAMDB_PG_IMAGE:-kalamdb-pg:latest}"
-BUILDER_IMAGE="pg-kalam-builder"
+IMAGE_NAME="${KALAMDB_PG_IMAGE:-pg-kalam:latest}"
+IMAGE_DESCRIPTION_FILE="$SCRIPT_DIR/image-description.txt"
+OCI_IMAGE_DESCRIPTION="$(tr '\n' ' ' < "$IMAGE_DESCRIPTION_FILE" | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//')"
+PG_MAJOR="${PG_MAJOR:-16}"
+PG_EXTENSION_FLAVOR="${PG_EXTENSION_FLAVOR:-pg${PG_MAJOR}}"
+BUILDER_IMAGE="pg-kalam-builder-pg${PG_MAJOR}"
+RUST_BASE_IMAGE="${RUST_BASE_IMAGE:-public.ecr.aws/docker/library/rust:1.92-bookworm}"
+POSTGRES_BASE_IMAGE="${POSTGRES_BASE_IMAGE:-public.ecr.aws/docker/library/postgres:${PG_MAJOR}-bookworm}"
+PGRX_VERSION="${PGRX_VERSION:-0.17.0}"
 
 DO_COMPILE=true
 DO_RUNTIME=true
@@ -45,6 +52,12 @@ while [[ $# -gt 0 ]]; do
     shift
 done
 
+EXPECTED_FLAVOR="pg${PG_MAJOR}"
+if [[ "$PG_EXTENSION_FLAVOR" != "$EXPECTED_FLAVOR" ]]; then
+    echo "PG_EXTENSION_FLAVOR must match PG_MAJOR (expected $EXPECTED_FLAVOR, got $PG_EXTENSION_FLAVOR)"
+    exit 1
+fi
+
 # ── Step 0: (Optional) Build KalamDB server from source ─────────────────
 build_server() {
     echo "==> Building KalamDB server image from source (→ kalamdb:local) ..."
@@ -63,6 +76,9 @@ ensure_builder_base() {
     if $REBUILD_BASE || ! docker image inspect "$BUILDER_IMAGE" &>/dev/null; then
         echo "==> Building builder base image ($BUILDER_IMAGE) ..."
         docker build \
+            --build-arg RUST_BASE_IMAGE="$RUST_BASE_IMAGE" \
+            --build-arg PG_MAJOR="$PG_MAJOR" \
+            --build-arg PGRX_VERSION="$PGRX_VERSION" \
             -f "$SCRIPT_DIR/Dockerfile.builder-base" \
             -t "$BUILDER_IMAGE" \
             "$REPO_ROOT"
@@ -85,19 +101,21 @@ compile_extension() {
         -v "$ARTIFACTS_DIR:/artifacts" \
         -e CARGO_TARGET_DIR=/target-cache \
         -e CARGO_INCREMENTAL=1 \
+        -e PG_MAJOR="$PG_MAJOR" \
+        -e PG_EXTENSION_FLAVOR="$PG_EXTENSION_FLAVOR" \
         -e RUSTFLAGS="-Cdebuginfo=0" \
         "$BUILDER_IMAGE" \
         bash -c '
             cd /src && \
             cargo pgrx install \
                 -p kalam-pg-extension \
-                -c /usr/bin/pg_config \
+                -c "/usr/lib/postgresql/${PG_MAJOR}/bin/pg_config" \
                 --no-default-features \
                 --profile release-pg \
-                -F pg16 && \
-            cp /usr/lib/postgresql/16/lib/pg_kalam.so          /artifacts/ && \
-            cp /usr/share/postgresql/16/extension/pg_kalam.control /artifacts/ && \
-            cp /usr/share/postgresql/16/extension/pg_kalam--*.sql  /artifacts/
+                -F "${PG_EXTENSION_FLAVOR}" && \
+            cp "/usr/lib/postgresql/${PG_MAJOR}/lib/pg_kalam.so" /artifacts/ && \
+            cp "/usr/share/postgresql/${PG_MAJOR}/extension/pg_kalam.control" /artifacts/ && \
+            cp "/usr/share/postgresql/${PG_MAJOR}/extension/pg_kalam--"*.sql /artifacts/
         '
 
     echo "    Artifacts:"
@@ -114,6 +132,9 @@ build_runtime() {
 
     echo "==> Building runtime image ($IMAGE_NAME) ..."
     docker build \
+        --build-arg PG_MAJOR="$PG_MAJOR" \
+        --build-arg OCI_IMAGE_DESCRIPTION="$OCI_IMAGE_DESCRIPTION" \
+        --build-arg POSTGRES_BASE_IMAGE="$POSTGRES_BASE_IMAGE" \
         -f "$SCRIPT_DIR/Dockerfile.runtime" \
         -t "$IMAGE_NAME" \
         "$SCRIPT_DIR"

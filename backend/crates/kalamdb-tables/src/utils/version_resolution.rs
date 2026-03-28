@@ -564,20 +564,21 @@ pub fn parquet_batch_to_metadata(
 
         let pk_value = pk_idx.and_then(|idx| {
             let array = batch.column(idx);
-            arrow_value_to_scalar(array.as_ref(), row_idx)
-                .ok()
-                .and_then(|sv| match &sv {
-                    ScalarValue::Utf8(Some(s)) | ScalarValue::LargeUtf8(Some(s)) => Some(s.clone()),
-                    other if other.is_null() => None,
-                    other => Some(other.to_string()),
-                })
+            arrow_value_to_scalar(array.as_ref(), row_idx).ok().and_then(|sv| match &sv {
+                ScalarValue::Utf8(Some(s)) | ScalarValue::LargeUtf8(Some(s)) => Some(s.clone()),
+                other if other.is_null() => None,
+                other => Some(other.to_string()),
+            })
         });
 
-        rows.push((seq_id, RowMetadata {
-            seq: seq_id,
-            deleted,
-            pk_value,
-        }));
+        rows.push((
+            seq_id,
+            RowMetadata {
+                seq: seq_id,
+                deleted,
+                pk_value,
+            },
+        ));
     }
 
     Ok(rows)
@@ -585,11 +586,7 @@ pub fn parquet_batch_to_metadata(
 
 /// Count unique non-deleted rows after version resolution (hot + cold merge).
 /// Only tracks (SeqId, deleted) per PK — avoids storing full row metadata.
-pub fn count_merged_rows<R, I, J>(
-    pk_name: &str,
-    hot_rows: I,
-    cold_rows: J,
-) -> usize
+pub fn count_merged_rows<R, I, J>(pk_name: &str, hot_rows: I, cold_rows: J) -> usize
 where
     I: IntoIterator<Item = R>,
     J: IntoIterator<Item = R>,

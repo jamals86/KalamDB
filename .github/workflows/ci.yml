@@ -182,12 +182,18 @@ jobs:
           curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C ${CARGO_HOME:-~/.cargo}/bin
 
       - name: Run tests (nextest)
+        id: nextest
         run: |
-          cargo nextest run --profile ci --workspace --no-fail-fast --failure-output immediate-final
+          cargo nextest run \
+            --profile ci \
+            --workspace \
+            --exclude kalam-pg-extension \
+            --no-fail-fast \
+            --failure-output immediate-final
         continue-on-error: true
 
       - name: Parse test results and generate badge
-        if: always()
+        if: always() && hashFiles('target/nextest/ci/junit.xml') != ''
         run: |
           JUNIT_FILE="target/nextest/ci/junit.xml"
           
@@ -250,7 +256,7 @@ jobs:
           cat > .github/badges/tests.json << EOF
           {
             "schemaVersion": 1,
-            "label": "tests",
+            "label": "overall tests ($TOTAL)",
             "message": "$MESSAGE",
             "color": "$COLOR"
           }
@@ -263,13 +269,25 @@ jobs:
             exit 1
           fi
 
+      - name: Fail if JUnit report is missing after a successful nextest run
+        if: always() && steps.nextest.outcome == 'success' && hashFiles('target/nextest/ci/junit.xml') == ''
+        run: |
+          echo "Error: JUnit XML report not found at target/nextest/ci/junit.xml"
+          exit 1
+
       - name: Publish test report
-        if: always()
+        if: always() && hashFiles('target/nextest/ci/junit.xml') != ''
         uses: dorny/test-reporter@v1
         with:
           name: nextest
           path: target/nextest/ci/junit.xml
           reporter: java-junit
+
+      - name: Fail workflow if nextest did not complete successfully
+        if: always() && steps.nextest.outcome != 'success'
+        run: |
+          echo "nextest failed before completing the workspace suite"
+          exit 1
 
       - name: Commit badge
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'

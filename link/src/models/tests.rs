@@ -24,10 +24,7 @@ fn test_connection_options_default() {
         opts.ws_local_bind_addresses.is_empty(),
         "ws_local_bind_addresses should default to empty"
     );
-    assert_eq!(
-        opts.ping_interval_ms, 5000,
-        "ping_interval_ms should default to 5000"
-    );
+    assert_eq!(opts.ping_interval_ms, 5000, "ping_interval_ms should default to 5000");
 }
 
 #[test]

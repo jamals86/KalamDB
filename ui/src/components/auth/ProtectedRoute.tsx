@@ -12,7 +12,7 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
 
   if (isLoading) {
     return (
-      <div className="flex h-screen items-center justify-center">
+      <div className="flex h-full min-h-full items-center justify-center">
         <div className="text-muted-foreground">Loading...</div>
       </div>
     );
@@ -25,7 +25,7 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
   // Check role - only dba and system can access admin UI
   if (user && !["dba", "system"].includes(user.role)) {
     return (
-      <div className="flex h-screen items-center justify-center">
+      <div className="flex h-full min-h-full items-center justify-center">
         <div className="text-center">
           <h1 className="text-2xl font-bold text-destructive">Access Denied</h1>
           <p className="mt-2 text-muted-foreground">

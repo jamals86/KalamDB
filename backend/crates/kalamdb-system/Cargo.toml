@@ -19,12 +19,9 @@ kalamdb-store = { path = "../kalamdb-store", features = ["datafusion"] }
 
 # Apache Arrow ecosystem
 arrow = { workspace = true }
-arrow-schema = { workspace = true }
 datafusion = { workspace = true }
-datafusion-common = { workspace = true }
 
 # Concurrent data structures
-dashmap = { workspace = true }
 parking_lot = { workspace = true }
 
 # Async
@@ -38,7 +35,6 @@ flexbuffers = { workspace = true }
 
 # Error handling
 thiserror = { workspace = true }
-anyhow = { workspace = true }
 
 # Time handling
 chrono = { workspace = true }
@@ -46,9 +42,6 @@ chrono = { workspace = true }
 # Logging
 log = { workspace = true }
 tracing = { workspace = true }
-
-# UUID generation
-uuid = { workspace = true }
 
 # OnceCell for lazy caches
 once_cell = { workspace = true }

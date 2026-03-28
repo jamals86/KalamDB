@@ -22,9 +22,8 @@ use std::{
 /// Called by the executor when a query returns `TOKEN_EXPIRED`.
 /// Implementations should obtain a fresh JWT (e.g. via login or dynamic
 /// auth provider) and return it.
-pub type AuthRefreshCallback = Arc<
-    dyn Fn() -> Pin<Box<dyn Future<Output = Result<AuthProvider>> + Send>> + Send + Sync,
->;
+pub type AuthRefreshCallback =
+    Arc<dyn Fn() -> Pin<Box<dyn Future<Output = Result<AuthProvider>> + Send>> + Send + Sync>;
 
 /// Handles SQL query execution via HTTP.
 #[derive(Clone)]
@@ -319,10 +318,13 @@ impl QueryExecutor {
                                     Ok(new_auth) => {
                                         *self.auth.lock().unwrap() = new_auth.clone();
                                         // Retry exactly once with fresh credentials.
-                                        let mut retry_builder = self.http_client.post(&self.sql_url).json(&request);
+                                        let mut retry_builder =
+                                            self.http_client.post(&self.sql_url).json(&request);
                                         retry_builder = new_auth.apply_to_request(retry_builder)?;
                                         match retry_builder.send().await {
-                                            Ok(retry_resp) => return Self::handle_response(retry_resp, sql).await,
+                                            Ok(retry_resp) => {
+                                                return Self::handle_response(retry_resp, sql).await
+                                            },
                                             Err(e) => return Err(e.into()),
                                         }
                                     },

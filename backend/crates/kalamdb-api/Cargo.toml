@@ -19,7 +19,6 @@ kalamdb-auth = { path = "../kalamdb-auth" }
 kalamdb-system = { path = "../kalamdb-system" }
 kalamdb-filestore = { path = "../kalamdb-filestore" }
 kalamdb-session = { path = "../kalamdb-session" }
-kalamdb-tables = { path = "../kalamdb-tables" }
 
 # Apache Arrow
 arrow = { workspace = true }
@@ -41,9 +40,6 @@ bytes = { workspace = true }
 # UUID generation
 uuid = { workspace = true }
 
-# JWT authentication
-jsonwebtoken = { workspace = true }
-
 # Time handling
 chrono = { workspace = true }
 
@@ -52,7 +48,6 @@ log = { workspace = true }
 
 # Tracing / observability
 tracing = { workspace = true }
-tracing-actix-web = { workspace = true }
 
 # Async runtime
 tokio = { workspace = true }
@@ -72,7 +67,6 @@ rust-embed = { workspace = true, optional = true }
 mime_guess = { workspace = true }
 
 # Concurrency
-dashmap = { workspace = true }
 moka = { workspace = true }
 parking_lot = { workspace = true }
 
