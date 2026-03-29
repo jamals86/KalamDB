@@ -2043,50 +2043,18 @@ jobs:
           [[ -z "$SERVER_BIN" ]] && { echo "Server binary not found"; exit 1; }
           chmod +x "$SERVER_BIN" && cp "$SERVER_BIN" ./kalamdb-server
 
-      - name: Start server
-        shell: bash
-        run: |
-          set -euo pipefail
-          cp backend/server.example.toml server.toml
-          sed -i 's|data_path = "./data"|data_path = "./test-data"|g' server.toml
-          sed -i 's|logs_path = "./logs"|logs_path = "./test-data/logs"|g' server.toml
-          sed -i 's|jwt_secret = ".*"|jwt_secret = "sdk-test-secret-key-minimum-32-characters-long"|g' server.toml
-          mkdir -p test-data/rocksdb test-data/storage test-data/logs
-          ./kalamdb-server > ts-sdk-server.log 2>&1 &
-          SERVER_PID=$!
-          echo "SERVER_PID=$SERVER_PID" >> "$GITHUB_ENV"
-          for i in {1..60}; do
-            curl -sf http://localhost:8080/health > /dev/null 2>&1 && echo "✅ Server ready (${i}s)" && exit 0
-            kill -0 "$SERVER_PID" 2>/dev/null || { echo "❌ Server died"; cat ts-sdk-server.log; exit 1; }
-            echo "  Waiting... ($i/60)"; sleep 1
-          done
-          echo "❌ Timed out"; cat ts-sdk-server.log; exit 1
-
-      - name: Bootstrap SDK test admin user
-        shell: bash
-        run: |
-          set -euo pipefail
-          curl -fsS http://localhost:8080/v1/api/auth/setup \
-            -H "Content-Type: application/json" \
-            -d '{"username":"admin","password":"kalamdb123","root_password":"kalamdb123"}' \
-            >/dev/null
-
       - name: Run TypeScript SDK tests (offline + serial e2e)
         id: run_typescript_tests
         continue-on-error: true
         shell: bash
-        working-directory: link/sdks/typescript
         env:
           KALAMDB_URL: "http://localhost:8080"
           KALAMDB_USER: "admin"
           KALAMDB_PASSWORD: "kalamdb123"
+          KALAMDB_SERVER_BIN: "${{ github.workspace }}/kalamdb-server"
         run: |
           set -euo pipefail
-          npm install --no-audit --no-fund
-          # test.sh builds the SDK, runs the offline Node suite, then runs the
-          # live e2e files serially to avoid auth rate-limit flakes in CI.
-          chmod +x ./test.sh
-          ./test.sh 2>&1 | tee ../../../ts-sdk-test-output.txt
+          ./scripts/test-typescript-sdk-release.sh
 
       - name: Parse TypeScript SDK test counts
         if: always()
@@ -2126,12 +2094,6 @@ jobs:
               handle.write(f"message={message}\n")
               handle.write(f"color={color}\n")
           PYTHON
-
-      - name: Stop server
-        if: always()
-        shell: bash
-        run: |
-          [[ -n "${SERVER_PID:-}" ]] && kill "$SERVER_PID" 2>/dev/null || true
 
       - name: Upload server log
         if: always()

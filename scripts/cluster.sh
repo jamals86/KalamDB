@@ -437,9 +437,12 @@ start_node() {
         exit 1
     fi
 
-    (cd "$data_dir" && KALAMDB_ROOT_PASSWORD="$ROOT_PASSWORD" nohup "$binary" > "$log_file" 2>&1) &
-    local pid=$!
-    echo $pid > "$pid_file"
+    (
+        cd "$data_dir"
+        KALAMDB_ROOT_PASSWORD="$ROOT_PASSWORD" nohup "$binary" > "$log_file" 2>&1 &
+        echo $! > "$pid_file"
+    )
+    local pid=$(cat "$pid_file")
 
     # Wait for server to start
     sleep 2
@@ -456,6 +459,9 @@ stop_node() {
     local node_id=$1
     local data_dir="$CLUSTER_DATA_DIR/node$node_id"
     local pid_file="$data_dir/server.pid"
+    local http_port=$((8080 + node_id))
+    local rpc_port=$((9080 + node_id))
+    local listener_pids=""
 
     if [ -f "$pid_file" ]; then
         local pid=$(cat "$pid_file")
@@ -472,6 +478,24 @@ stop_node() {
         echo -e "${GREEN}  ✓ Node $node_id stopped${NC}"
     else
         echo -e "${YELLOW}  Node $node_id not running${NC}"
+    fi
+
+    listener_pids=$( (
+        lsof -tiTCP:"$http_port" -sTCP:LISTEN 2>/dev/null || true
+        lsof -tiTCP:"$rpc_port" -sTCP:LISTEN 2>/dev/null || true
+    ) | sort -u )
+
+    if [ -n "$listener_pids" ]; then
+        echo -e "${YELLOW}  Cleaning up leftover listener processes for node $node_id...${NC}"
+        while IFS= read -r listener_pid; do
+            [ -z "$listener_pid" ] && continue
+            kill "$listener_pid" 2>/dev/null || true
+            sleep 1
+            if kill -0 "$listener_pid" 2>/dev/null; then
+                kill -9 "$listener_pid" 2>/dev/null || true
+            fi
+        done <<< "$listener_pids"
+        echo -e "${GREEN}  ✓ Freed ports $http_port and $rpc_port${NC}"
     fi
 }
 
@@ -650,6 +674,35 @@ ensure_cluster_healthy() {
     fi
 }
 
+get_access_token() {
+    local base_url="${1:-http://127.0.0.1:$NODE1_HTTP}"
+    local response
+
+    response=$(curl -fsS -X POST "$base_url/v1/api/auth/login" \
+        -H "Content-Type: application/json" \
+        -d "{\"username\":\"root\",\"password\":\"$ROOT_PASSWORD\"}") || return 1
+
+    python3 - "$response" << 'PY'
+import json
+import sys
+
+if len(sys.argv) < 2:
+    sys.exit(1)
+
+try:
+    data = json.loads(sys.argv[1])
+except json.JSONDecodeError:
+    sys.exit(1)
+
+token = data.get("access_token")
+if token:
+    print(token)
+    sys.exit(0)
+
+sys.exit(1)
+PY
+}
+
 run_cluster_tests() {
     print_header
     ensure_cluster_healthy
@@ -683,7 +736,7 @@ run_smoke_tests() {
     KALAMDB_SERVER_URL="$leader_url" \
     KALAMDB_ROOT_PASSWORD="$ROOT_PASSWORD" \
     RUST_TEST_THREADS=1 \
-        cargo test --test smoke -- --nocapture
+        cargo test --features e2e-tests --test smoke -- --nocapture
 }
 
 run_smoke_tests_all_nodes() {
@@ -708,7 +761,7 @@ run_smoke_tests_all_nodes() {
         if KALAMDB_SERVER_URL="$node_url" \
            KALAMDB_ROOT_PASSWORD="$ROOT_PASSWORD" \
            RUST_TEST_THREADS=1 \
-           cargo test --test smoke smoke_test_core_operations -- --nocapture; then
+           cargo test --features e2e-tests --test smoke smoke_test_core_operations -- --nocapture; then
             echo -e "${GREEN}✓ Core operations passed on $node_url${NC}"
             ((passed++))
         else
@@ -817,14 +870,17 @@ run_full_test_suite() {
 detect_leader_url() {
     local query="SELECT api_addr, is_leader FROM system.cluster"
     local response
+    local access_token
+
+    access_token=$(get_access_token) || return 1
 
     response=$(
-        curl -s \
-            -u "root:$ROOT_PASSWORD" \
+        curl -fsS \
             -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $access_token" \
             -d "{\"sql\":\"$query\"}" \
             "http://127.0.0.1:$NODE1_HTTP/v1/api/sql"
-    )
+    ) || return 1
 
     if [ -z "$response" ]; then
         return 1
