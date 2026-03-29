@@ -58,8 +58,8 @@ async function runTests() {
     // For Node.js, we need to pass the WASM file path explicitly
     const wasmPath = join(wasmOutPath, 'kalam_link_bg.wasm');
     const wasmBuffer = await readFile(wasmPath);
-    
-    await init(wasmBuffer);
+
+    await init({ module_or_path: wasmBuffer });
     console.log('  ✓ WASM initialized successfully');
     passed++;
   } catch (error) {
