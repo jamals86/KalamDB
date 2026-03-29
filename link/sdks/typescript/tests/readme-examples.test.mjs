@@ -251,7 +251,7 @@ test('README queryWithFiles example posts multipart data with auth header', asyn
     assert.equal(fetchCall.options.body.get('params'), JSON.stringify(['att_1']));
 
     const uploaded = fetchCall.options.body.get('file:upload');
-    assert.ok(uploaded instanceof TestFile);
+    assert.ok(uploaded instanceof Blob, 'uploaded file should be a Blob');
     assert.equal(uploaded.name, 'note.txt');
   } finally {
     globalThis.fetch = originalFetch;

@@ -1234,7 +1234,8 @@ jobs:
             libclang-dev \
             llvm-dev \
             pkg-config \
-            libssl-dev
+            libssl-dev \
+            libreadline-dev
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
