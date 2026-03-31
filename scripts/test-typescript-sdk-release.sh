@@ -13,6 +13,7 @@ SERVER_LOG="${TS_SDK_SERVER_LOG:-$ROOT_DIR/ts-sdk-server.log}"
 TEST_OUTPUT="${TS_SDK_TEST_OUTPUT:-$ROOT_DIR/ts-sdk-test-output.txt}"
 SERVER_BIN="${KALAMDB_SERVER_BIN:-}"
 SKIP_SERVER_START="${KALAMDB_SKIP_SERVER_START:-false}"
+SKIP_AUTH_SETUP="${KALAMDB_SKIP_AUTH_SETUP:-false}"
 SERVER_PID=""
 
 cleanup() {
@@ -24,9 +25,8 @@ cleanup() {
 
 trap cleanup EXIT
 
-: > "$SERVER_LOG"
-
 if [[ "$SKIP_SERVER_START" != "true" ]]; then
+    : > "$SERVER_LOG"
     rm -rf "$WORK_DIR"
     mkdir -p "$WORK_DIR/data" "$WORK_DIR/logs"
     cp "$ROOT_DIR/backend/server.example.toml" "$WORK_DIR/server.toml"
@@ -70,10 +70,17 @@ if ! curl -sf "$SERVER_URL/health" > /dev/null 2>&1 \
     exit 1
 fi
 
-curl -fsS "$SERVER_URL/v1/api/auth/setup" \
-    -H "Content-Type: application/json" \
-    -d "{\"username\":\"$SERVER_USER\",\"password\":\"$SERVER_PASSWORD\",\"root_password\":\"$ROOT_PASSWORD\"}" \
-    >/dev/null
+if [[ -s "$SERVER_LOG" ]]; then
+    echo "Recent TypeScript SDK server log output:"
+    tail -n 40 "$SERVER_LOG" || true
+fi
+
+if [[ "$SKIP_AUTH_SETUP" != "true" ]]; then
+    curl -fsS "$SERVER_URL/v1/api/auth/setup" \
+        -H "Content-Type: application/json" \
+        -d "{\"username\":\"$SERVER_USER\",\"password\":\"$SERVER_PASSWORD\",\"root_password\":\"$ROOT_PASSWORD\"}" \
+        >/dev/null
+fi
 
 (
     cd "$ROOT_DIR/link/sdks/typescript"
