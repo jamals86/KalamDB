@@ -25,9 +25,8 @@ cleanup() {
 
 trap cleanup EXIT
 
-: > "$SERVER_LOG"
-
 if [[ "$SKIP_SERVER_START" != "true" ]]; then
+    : > "$SERVER_LOG"
     rm -rf "$WORK_DIR"
     mkdir -p "$WORK_DIR/data" "$WORK_DIR/logs"
     cp "$ROOT_DIR/backend/server.example.toml" "$WORK_DIR/server.toml"
