@@ -207,16 +207,6 @@ test('README executeAsUser example wraps SQL for tenant-safe writes', async () =
 
 test('README queryWithFiles example posts multipart data with auth header', async () => {
   const originalFetch = globalThis.fetch;
-  const originalFile = globalThis.File;
-
-  class TestFile extends Blob {
-    constructor(parts, name, options) {
-      super(parts, options);
-      this.name = name;
-    }
-  }
-
-  globalThis.File = TestFile;
 
   let fetchCall;
   globalThis.fetch = async (url, options) => {
@@ -238,9 +228,14 @@ test('README queryWithFiles example posts multipart data with auth header', asyn
     client.initialized = true;
     client.auth = Auth.jwt('token-123');
 
+    // Use the native File class (available in Node.js 20+) so that FormData
+    // stores and returns a proper File/Blob without undici wrapping it in an
+    // internal class that is not instanceof globalThis.Blob.
+    const testFile = new File(['hello world'], 'note.txt', { type: 'text/plain' });
+
     await client.queryWithFiles(
       'INSERT INTO support.attachments (id, file_data) VALUES ($1, FILE("upload"))',
-      { upload: new TestFile(['hello world'], 'note.txt', { type: 'text/plain' }) },
+      { upload: testFile },
       ['att_1'],
     );
 
@@ -251,11 +246,10 @@ test('README queryWithFiles example posts multipart data with auth header', asyn
     assert.equal(fetchCall.options.body.get('params'), JSON.stringify(['att_1']));
 
     const uploaded = fetchCall.options.body.get('file:upload');
-    assert.ok(uploaded instanceof TestFile);
+    assert.ok(uploaded instanceof Blob, 'uploaded file should be a Blob');
     assert.equal(uploaded.name, 'note.txt');
   } finally {
     globalThis.fetch = originalFetch;
-    globalThis.File = originalFile;
   }
 });
 

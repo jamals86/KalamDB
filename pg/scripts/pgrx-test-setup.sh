@@ -26,7 +26,26 @@ PG_CRATE="$SCRIPT_DIR/.."
 PGRX_HOME="$HOME/.pgrx"
 PG_MAJOR="${PG_MAJOR:-16}"
 PG_EXTENSION_FLAVOR="${PG_EXTENSION_FLAVOR:-pg${PG_MAJOR}}"
-PGRX_VERSION_DIR="${PGRX_VERSION_DIR:-$(find "$PGRX_HOME" -maxdepth 1 -type d -name "${PG_MAJOR}.*" 2>/dev/null | sort -V | tail -n 1)}"
+
+resolve_pgrx_version_dir() {
+    local candidate
+
+    if [[ -n "${PGRX_VERSION_DIR:-}" ]]; then
+        printf '%s\n' "$PGRX_VERSION_DIR"
+        return 0
+    fi
+
+    while IFS= read -r candidate; do
+        [[ -z "$candidate" ]] && continue
+        [[ "$candidate" == *_unpack ]] && continue
+        if [[ -x "$candidate/pgrx-install/bin/pg_config" ]]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done < <(find "$PGRX_HOME" -maxdepth 1 -type d -name "${PG_MAJOR}.*" 2>/dev/null | sort -V -r)
+}
+
+PGRX_VERSION_DIR="$(resolve_pgrx_version_dir)"
 PGRX_INSTALL_BIN_DIR="$PGRX_VERSION_DIR/pgrx-install/bin"
 PG_CONFIG="$PGRX_INSTALL_BIN_DIR/pg_config"
 PSQL="$PGRX_INSTALL_BIN_DIR/psql"
