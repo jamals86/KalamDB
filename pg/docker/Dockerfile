@@ -142,6 +142,10 @@ LABEL org.opencontainers.image.title="pg-kalam" \
 
 COPY --from=builder /pg-artifacts/ /pg-artifacts/
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends postgresql-${PG_MAJOR}-pgvector \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN install -m 755 /pg-artifacts/pg_kalam.so "/usr/lib/postgresql/${PG_MAJOR}/lib/pg_kalam.so" \
     && install -m 644 /pg-artifacts/pg_kalam.control "/usr/share/postgresql/${PG_MAJOR}/extension/pg_kalam.control" \
     && install -m 644 /pg-artifacts/pg_kalam--*.sql "/usr/share/postgresql/${PG_MAJOR}/extension/" \
