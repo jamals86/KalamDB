@@ -15,8 +15,8 @@
 <p align="center"><strong>SDKs</strong></p>
 
 <p align="center">
-  <a href="https://github.com/jamals86/KalamDB/actions/workflows/release.yml"><img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/jamals86/KalamDB/main/.github/badges/sdk-typescript-tests.json" alt="TypeScript SDK Tests" /></a>
-  <a href="https://github.com/jamals86/KalamDB/actions/workflows/release.yml"><img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/jamals86/KalamDB/main/.github/badges/sdk-dart-tests.json" alt="Dart SDK Tests" /></a>
+  <a href="https://github.com/jamals86/KalamDB/actions/workflows/sdks.yml"><img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/jamals86/KalamDB/main/.github/badges/sdk-typescript-tests.json" alt="TypeScript SDK Tests" /></a>
+  <a href="https://github.com/jamals86/KalamDB/actions/workflows/sdks.yml"><img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/jamals86/KalamDB/main/.github/badges/sdk-dart-tests.json" alt="Dart SDK Tests" /></a>
   <a href="https://www.npmjs.com/package/kalam-link"><img src="https://img.shields.io/npm/v/kalam-link?label=typescript%20sdk" alt="TypeScript SDK" /></a>
   <a href="https://pub.dev/packages/kalam_link"><img src="https://img.shields.io/pub/v/kalam_link?label=dart%20sdk" alt="Dart SDK" /></a>
 </p>

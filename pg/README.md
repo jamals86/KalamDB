@@ -8,7 +8,7 @@ The extension is built with `pgrx` and supports PostgreSQL `pg13` through `pg18`
 
 - `CREATE EXTENSION pg_kalam;`
 - A `pg_kalam` foreign data wrapper registered by the extension install SQL
-- A PostgreSQL-side bridge to a running KalamDB server over gRPC
+- A PostgreSQL-side bridge to a running KalamDB server over gRPC- `pgvector` preinstalled in all Docker images (`pg-kalam:latest`, `Dockerfile`, `Dockerfile.runtime`)
 
 ## Choose the right workflow
 
