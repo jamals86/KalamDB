@@ -119,6 +119,33 @@ fn build_notification_from_rows(
     }
 }
 
+#[inline]
+fn clone_notification_for_subscription(
+    notification: &kalamdb_commons::Notification,
+    subscription_id: String,
+) -> kalamdb_commons::Notification {
+    match notification {
+        kalamdb_commons::Notification::Change {
+            change_type,
+            rows,
+            old_values,
+            ..
+        } => kalamdb_commons::Notification::Change {
+            subscription_id,
+            change_type: change_type.clone(),
+            rows: rows.clone(),
+            old_values: old_values.clone(),
+        },
+        kalamdb_commons::Notification::Error { code, message, .. } => {
+            kalamdb_commons::Notification::Error {
+                subscription_id,
+                code: code.clone(),
+                message: message.clone(),
+            }
+        },
+    }
+}
+
 /// Try to deliver a notification to a subscriber, handling flow control.
 /// Returns `true` if the notification was sent to the channel.
 #[inline]
@@ -570,10 +597,11 @@ fn dispatch_chunk(
         };
 
         let notification = if let Some(cached) = cache.get(&proj_key) {
-            // Same projection set — reuse built notification, just patch subscription_id
-            let mut cloned = cached.as_ref().clone();
-            cloned.set_subscription_id(live_id.subscription_id().to_string());
-            Arc::new(cloned)
+            // Same projection set — reuse converted row payload, only rewrite subscription_id.
+            Arc::new(clone_notification_for_subscription(
+                cached.as_ref(),
+                live_id.subscription_id().to_string(),
+            ))
         } else {
             let sub_id = live_id.subscription_id().to_string();
             let n = Arc::new(build_notification_from_rows(
