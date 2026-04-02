@@ -30,6 +30,7 @@ chrono = { workspace = true, optional = true }
 arrow = { workspace = true, optional = true }
 uuid = { workspace = true, optional = true }
 rmp-serde = { workspace = true, optional = true }
+rmp = { workspace = true, optional = true }
 nanoid = { workspace = true, optional = true }
 log = { workspace = true, optional = true }
 tracing = { workspace = true }
@@ -72,7 +73,7 @@ arrow-utils = [
 	"rows",
 	]
 websocket-auth = ["serde"]
-msgpack = ["serde", "dep:rmp-serde"]
+msgpack = ["serde", "dep:rmp", "dep:rmp-serde"]
 # Full feature set including Arrow/DataFusion-backed utilities (for server use)
 full = [
 	"serde",

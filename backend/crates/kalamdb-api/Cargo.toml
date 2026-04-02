@@ -80,5 +80,7 @@ cc = { workspace = true }
 [dev-dependencies]
 # Testing utilities
 tempfile = { workspace = true }
+kalamdb-core = { path = "../kalamdb-core", features = ["test-helpers"] }
 kalamdb-store = { path = "../kalamdb-store" }
 actix-rt = { workspace = true }
+tokio-tungstenite = { workspace = true }

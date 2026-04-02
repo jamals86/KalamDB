@@ -7,7 +7,7 @@ use datafusion::sql::sqlparser::ast::Expr;
 use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::{ConnectionId, ConnectionInfo, LiveQueryId, TableId, UserId};
 use kalamdb_commons::websocket::{CompressionType, ProtocolOptions, SerializationType};
-use kalamdb_commons::Notification;
+use kalamdb_commons::websocket::WireNotification;
 use kalamdb_commons::Role;
 use parking_lot::Mutex;
 use std::collections::VecDeque;
@@ -37,10 +37,10 @@ pub const EVENT_CHANNEL_CAPACITY: usize = 64;
 pub const MAX_BUFFERED_NOTIFICATIONS_PER_SUBSCRIPTION: usize = 1_024;
 
 /// Type alias for sending notifications to WebSocket or consumer clients
-pub type NotificationSender = mpsc::Sender<Arc<Notification>>;
+pub type NotificationSender = mpsc::Sender<Arc<WireNotification>>;
 
 /// Type alias for receiving notifications
-pub type NotificationReceiver = mpsc::Receiver<Arc<Notification>>;
+pub type NotificationReceiver = mpsc::Receiver<Arc<WireNotification>>;
 
 /// Type alias for sending control events to connections
 pub type EventSender = mpsc::Sender<ConnectionEvent>;
@@ -85,7 +85,7 @@ pub struct SubscriptionHandle {
 #[derive(Debug, Clone)]
 pub struct BufferedNotification {
     pub seq: Option<SeqId>,
-    pub notification: Arc<Notification>,
+    pub notification: Arc<WireNotification>,
 }
 
 /// Flow control for subscription initial load gating
@@ -141,7 +141,7 @@ impl SubscriptionFlowControl {
         self.initial_complete.store(true, Ordering::Release);
     }
 
-    pub fn buffer_notification(&self, notification: Arc<Notification>, seq: Option<SeqId>) {
+    pub fn buffer_notification(&self, notification: Arc<WireNotification>, seq: Option<SeqId>) {
         let mut buffer = self.buffer.lock();
         if buffer.len() >= MAX_BUFFERED_NOTIFICATIONS_PER_SUBSCRIPTION {
             buffer.pop_front();
@@ -474,10 +474,17 @@ pub struct ConnectionRegistration {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+    use kalamdb_commons::websocket::{ChangeType, SharedChangePayload};
 
-    fn make_notification(subscription_id: &str) -> Arc<Notification> {
-        Arc::new(Notification::insert(subscription_id.to_string(), vec![HashMap::new()]))
+    fn make_notification(subscription_id: &str) -> Arc<WireNotification> {
+        Arc::new(WireNotification {
+            subscription_id: subscription_id.to_string(),
+            payload: Arc::new(SharedChangePayload::new(
+                ChangeType::Insert,
+                Some(Vec::new()),
+                None,
+            )),
+        })
     }
 
     #[test]

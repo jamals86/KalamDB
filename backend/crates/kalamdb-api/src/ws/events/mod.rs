@@ -70,6 +70,29 @@ pub async fn send_json<T: serde::Serialize>(
     }
 }
 
+/// Protocol-aware message sender for `WireNotification`.
+///
+/// Uses pre-serialised and cached bytes from `WireNotification::to_msgpack()`
+/// / `to_json()` so row data is encoded exactly **once** regardless of how many
+/// subscribers share the same `Arc<SharedChangePayload>`.
+pub async fn send_wire_notification(
+    session: &mut Session,
+    notif: &kalamdb_commons::websocket::WireNotification,
+    serialization: SerializationType,
+    compress: bool,
+) -> Result<(), ()> {
+    match serialization {
+        SerializationType::MessagePack => {
+            let bytes = notif.to_msgpack();
+            send_data_binary(session, &bytes, compress).await
+        },
+        SerializationType::Json => {
+            let bytes = notif.to_json();
+            send_data(session, &bytes, compress).await
+        },
+    }
+}
+
 /// Protocol-aware message sender.
 ///
 /// Serializes `msg` using the connection's negotiated serialization type:

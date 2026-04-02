@@ -7,7 +7,8 @@ use log::{debug, error, info, warn};
 
 use super::context::{UpgradeAuth, WsHandlerContext};
 use super::events::{
-    auth::complete_ws_auth, cleanup::cleanup_connection, send_error, send_json, send_message,
+    auth::complete_ws_auth, cleanup::cleanup_connection, send_error, send_json,
+    send_wire_notification,
 };
 use super::messages::{handle_binary_message, handle_text_message};
 use super::models::WsErrorCode;
@@ -221,7 +222,7 @@ pub(super) async fn run_websocket(
                     match notification {
                         Some(notif) => {
                             let ser = connection_state.serialization_type();
-                            if send_message(&mut session, notif.as_ref(), ser, handler_context.compression_enabled).await.is_err() {
+                            if send_wire_notification(&mut session, notif.as_ref(), ser, handler_context.compression_enabled).await.is_err() {
                                 break;
                             }
                         }

@@ -720,12 +720,193 @@ impl Notification {
     }
 }
 
+// ── WireNotification: shared row data for zero-copy fan-out ──────────────────
+
+/// Row data shared across all subscribers with the same column projection.
+/// Built **once** per (DML event × projection group) and referenced via `Arc`.
+///
+/// Serialization is cached on first access so N subscribers pay the cost of
+/// only one `rmp_serde`/`serde_json` encode, not N.
+#[derive(Debug)]
+pub struct SharedChangePayload {
+    pub change_type: ChangeType,
+    /// New row data (INSERT, UPDATE). `None` for DELETE.
+    pub rows: Option<Vec<RowData>>,
+    /// Previous row data (UPDATE delta, DELETE). `None` for INSERT.
+    pub old_values: Option<Vec<RowData>>,
+    /// Cached msgpack bytes: `(rows_bytes, old_values_bytes)`.
+    /// `None` inner means the field is absent; `Some(vec![])` is valid empty.
+    #[cfg(feature = "msgpack")]
+    msgpack_cache: std::sync::OnceLock<(Option<Vec<u8>>, Option<Vec<u8>>)>,
+    /// Cached JSON bytes: `(rows_bytes, old_values_bytes)`.
+    #[cfg(feature = "serde")]
+    json_cache: std::sync::OnceLock<(Option<Vec<u8>>, Option<Vec<u8>>)>,
+}
+
+impl SharedChangePayload {
+    /// Construct a new payload. Use this instead of struct literals so the
+    /// `OnceLock` fields are always properly initialised.
+    pub fn new(
+        change_type: ChangeType,
+        rows: Option<Vec<RowData>>,
+        old_values: Option<Vec<RowData>>,
+    ) -> Self {
+        Self {
+            change_type,
+            rows,
+            old_values,
+            #[cfg(feature = "msgpack")]
+            msgpack_cache: std::sync::OnceLock::new(),
+            #[cfg(feature = "serde")]
+            json_cache: std::sync::OnceLock::new(),
+        }
+    }
+
+    /// Returns `(rows_msgpack, old_values_msgpack)`.
+    /// Each inner `Option<Vec<u8>>` is `None` when the field is absent.
+    /// Cached after the first call — subsequent calls are a pointer load.
+    #[cfg(feature = "msgpack")]
+    fn msgpack_cached(&self) -> &(Option<Vec<u8>>, Option<Vec<u8>>) {
+        self.msgpack_cache.get_or_init(|| {
+            let rows = self
+                .rows
+                .as_ref()
+                .map(|v| rmp_serde::to_vec_named(v).unwrap_or_default());
+            let old_values = self
+                .old_values
+                .as_ref()
+                .map(|v| rmp_serde::to_vec_named(v).unwrap_or_default());
+            (rows, old_values)
+        })
+    }
+
+    /// Returns `(rows_json, old_values_json)`.
+    /// Each inner `Option<Vec<u8>>` is `None` when the field is absent.
+    /// Cached after the first call — subsequent calls are a pointer load.
+    #[cfg(feature = "serde")]
+    fn json_cached(&self) -> &(Option<Vec<u8>>, Option<Vec<u8>>) {
+        self.json_cache.get_or_init(|| {
+            let rows = self
+                .rows
+                .as_ref()
+                .map(|v| serde_json::to_vec(v).unwrap_or_default());
+            let old_values = self
+                .old_values
+                .as_ref()
+                .map(|v| serde_json::to_vec(v).unwrap_or_default());
+            (rows, old_values)
+        })
+    }
+}
+
+/// Per-subscriber channel message.
+///
+/// `subscription_id` differs per subscriber; `payload` is `Arc`-shared so
+/// row data — and its serialised bytes — are never copied for N subscribers.
+#[derive(Debug, Clone)]
+pub struct WireNotification {
+    pub subscription_id: String,
+    pub payload: std::sync::Arc<SharedChangePayload>,
+}
+
+impl WireNotification {
+    /// Serialise to a complete MessagePack map without re-encoding row data.
+    ///
+    /// Layout: `{ type, subscription_id, change_type [, rows] [, old_values] }`
+    ///
+    /// Row bytes come from the `Arc`-shared cache — zero per-subscriber copy.
+    #[cfg(feature = "msgpack")]
+    pub fn to_msgpack(&self) -> Vec<u8> {
+        use rmp::encode;
+        let p = &self.payload;
+        let (rows_bytes, old_bytes) = p.msgpack_cached();
+        let n_fields = 3u32 + rows_bytes.is_some() as u32 + old_bytes.is_some() as u32;
+
+        // Pre-size: map header + up to 5 string-key entries + pre-cached payloads.
+        let est = 64
+            + rows_bytes.as_ref().map_or(0, |b| b.len())
+            + old_bytes.as_ref().map_or(0, |b| b.len());
+        let mut buf = Vec::with_capacity(est);
+
+        encode::write_map_len(&mut buf, n_fields).unwrap();
+
+        encode::write_str(&mut buf, "type").unwrap();
+        encode::write_str(&mut buf, "change").unwrap();
+
+        encode::write_str(&mut buf, "subscription_id").unwrap();
+        encode::write_str(&mut buf, &self.subscription_id).unwrap();
+
+        encode::write_str(&mut buf, "change_type").unwrap();
+        encode::write_str(&mut buf, p.change_type.as_str()).unwrap();
+
+        if let Some(rb) = rows_bytes {
+            encode::write_str(&mut buf, "rows").unwrap();
+            buf.extend_from_slice(rb); // zero-copy splice
+        }
+        if let Some(ob) = old_bytes {
+            encode::write_str(&mut buf, "old_values").unwrap();
+            buf.extend_from_slice(ob); // zero-copy splice
+        }
+        buf
+    }
+
+    /// Serialise to a complete JSON object without re-encoding row data.
+    ///
+    /// Layout: `{"type":"change","subscription_id":"…","change_type":"…"[,...]}`
+    ///
+    /// Row bytes come from the `Arc`-shared cache — zero per-subscriber copy.
+    #[cfg(feature = "serde")]
+    pub fn to_json(&self) -> Vec<u8> {
+        let p = &self.payload;
+        let (rows_bytes, old_bytes) = p.json_cached();
+
+        let est = 80
+            + self.subscription_id.len()
+            + rows_bytes.as_ref().map_or(0, |b| b.len())
+            + old_bytes.as_ref().map_or(0, |b| b.len());
+        let mut buf = Vec::with_capacity(est);
+
+        buf.extend_from_slice(b"{\"type\":\"change\",\"subscription_id\":\"");
+        // Escape the subscription_id JSON-safely (ids are alphanumeric, but be safe).
+        let escaped = self.subscription_id.replace('\\', "\\\\").replace('"', "\\\"");
+        buf.extend_from_slice(escaped.as_bytes());
+        buf.extend_from_slice(b"\",\"change_type\":\"");
+        buf.extend_from_slice(p.change_type.as_str().as_bytes());
+        buf.push(b'"');
+
+        if let Some(rb) = rows_bytes {
+            buf.extend_from_slice(b",\"rows\":");
+            buf.extend_from_slice(rb); // zero-copy splice
+        }
+        if let Some(ob) = old_bytes {
+            buf.extend_from_slice(b",\"old_values\":");
+            buf.extend_from_slice(ob); // zero-copy splice
+        }
+        buf.push(b'}');
+        buf
+    }
+}
+
+impl ChangeType {
+    /// Wire-format string for the change type.
+    #[inline]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ChangeType::Insert => "insert",
+            ChangeType::Update => "update",
+            ChangeType::Delete => "delete",
+        }
+    }
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::models::rows::Row;
     use datafusion_common::ScalarValue;
     use std::collections::BTreeMap;
+    use std::sync::Arc;
 
     fn create_test_row(id: i64, message: &str) -> Row {
         let mut values = BTreeMap::new();
@@ -747,6 +928,100 @@ mod tests {
                 (k.clone(), json_val)
             })
             .collect()
+    }
+
+    fn make_shared_payload() -> Arc<SharedChangePayload> {
+        let mut new_row = HashMap::new();
+        new_row.insert("id".to_string(), KalamCellValue::text("42"));
+        new_row.insert("message".to_string(), KalamCellValue::text("hello"));
+
+        let mut old_row = HashMap::new();
+        old_row.insert("id".to_string(), KalamCellValue::text("41"));
+        old_row.insert("message".to_string(), KalamCellValue::text("before"));
+
+        Arc::new(SharedChangePayload::new(
+            ChangeType::Update,
+            Some(vec![new_row]),
+            Some(vec![old_row]),
+        ))
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn test_wire_notification_to_json_reuses_cached_payload_bytes() {
+        let payload = make_shared_payload();
+        let first = WireNotification {
+            subscription_id: "sub-a".to_string(),
+            payload: Arc::clone(&payload),
+        };
+        let second = WireNotification {
+            subscription_id: "sub-b".to_string(),
+            payload,
+        };
+
+        assert!(second.payload.json_cache.get().is_none());
+
+        let first_json = first.to_json();
+        let first_cache = second.payload.json_cache.get().expect("json cache initialized");
+        let first_rows_ptr = first_cache.0.as_ref().expect("rows cached").as_ptr();
+        let first_old_ptr = first_cache.1.as_ref().expect("old_values cached").as_ptr();
+
+        let second_json = second.to_json();
+        let second_cache = second.payload.json_cache.get().expect("json cache reused");
+        assert_eq!(first_rows_ptr, second_cache.0.as_ref().expect("rows cached").as_ptr());
+        assert_eq!(first_old_ptr, second_cache.1.as_ref().expect("old_values cached").as_ptr());
+
+        let first_value: serde_json::Value = serde_json::from_slice(&first_json).unwrap();
+        let second_value: serde_json::Value = serde_json::from_slice(&second_json).unwrap();
+        assert_eq!(first_value["type"], "change");
+        assert_eq!(first_value["subscription_id"], "sub-a");
+        assert_eq!(second_value["subscription_id"], "sub-b");
+        assert_eq!(first_value["change_type"], "update");
+        assert_eq!(first_value["rows"][0]["message"], "hello");
+        assert_eq!(first_value["old_values"][0]["message"], "before");
+    }
+
+    #[cfg(feature = "msgpack")]
+    #[test]
+    fn test_wire_notification_to_msgpack_reuses_cached_payload_bytes() {
+        let payload = make_shared_payload();
+        let first = WireNotification {
+            subscription_id: "sub-a".to_string(),
+            payload: Arc::clone(&payload),
+        };
+        let second = WireNotification {
+            subscription_id: "sub-b".to_string(),
+            payload,
+        };
+
+        assert!(second.payload.msgpack_cache.get().is_none());
+
+        let first_msgpack = first.to_msgpack();
+        let first_cache = second
+            .payload
+            .msgpack_cache
+            .get()
+            .expect("msgpack cache initialized");
+        let first_rows_ptr = first_cache.0.as_ref().expect("rows cached").as_ptr();
+        let first_old_ptr = first_cache.1.as_ref().expect("old_values cached").as_ptr();
+
+        let second_msgpack = second.to_msgpack();
+        let second_cache = second
+            .payload
+            .msgpack_cache
+            .get()
+            .expect("msgpack cache reused");
+        assert_eq!(first_rows_ptr, second_cache.0.as_ref().expect("rows cached").as_ptr());
+        assert_eq!(first_old_ptr, second_cache.1.as_ref().expect("old_values cached").as_ptr());
+
+        let first_value: serde_json::Value = rmp_serde::from_slice(&first_msgpack).unwrap();
+        let second_value: serde_json::Value = rmp_serde::from_slice(&second_msgpack).unwrap();
+        assert_eq!(first_value["type"], "change");
+        assert_eq!(first_value["subscription_id"], "sub-a");
+        assert_eq!(second_value["subscription_id"], "sub-b");
+        assert_eq!(first_value["change_type"], "update");
+        assert_eq!(first_value["rows"][0]["message"], "hello");
+        assert_eq!(first_value["old_values"][0]["message"], "before");
     }
 
     #[test]

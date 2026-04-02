@@ -3934,6 +3934,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "tokio-tungstenite",
  "tracing",
  "uuid",
 ]
@@ -3984,6 +3985,7 @@ dependencies = [
  "nanoid",
  "once_cell",
  "parking_lot",
+ "rmp",
  "rmp-serde",
  "serde",
  "serde_json",

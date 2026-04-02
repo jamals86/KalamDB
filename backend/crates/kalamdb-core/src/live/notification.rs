@@ -16,11 +16,12 @@ use super::helpers::filter_eval::matches as filter_matches;
 use super::manager::ConnectionsManager;
 use super::models::{ChangeNotification, ChangeType, SubscriptionHandle};
 use crate::error::KalamDbError;
-use crate::providers::arrow_json_conversion::{row_to_json_map, scalar_value_to_json};
 use kalamdb_commons::constants::SystemColumnNames;
+use kalamdb_commons::conversions::arrow_json_conversion::scalar_value_to_json;
 use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::rows::Row;
-use kalamdb_commons::models::{KalamCellValue, LiveQueryId, TableId, UserId};
+use kalamdb_commons::models::{LiveQueryId, TableId, UserId};
+use kalamdb_commons::websocket::{RowData, SharedChangePayload, WireNotification};
 use kalamdb_raft::ClusterClient;
 use kalamdb_raft::NotifyFollowersRequest;
 use kalamdb_system::NotificationService as NotificationServiceTrait;
@@ -61,90 +62,129 @@ fn extract_seq(change_notification: &ChangeNotification) -> Option<SeqId> {
         })
 }
 
-/// Project a Row to only include the requested columns + `_seq`, then convert
-/// each ScalarValue to KalamCellValue. When projections is None (SELECT *),
-/// converts all columns. Avoids creating intermediate KalamCellValues for
-/// columns that would be discarded by projection.
-#[inline]
-fn project_row_to_json(
+/// Convert a Row to a projected RowData map (`HashMap<String, KalamCellValue>`).
+/// Includes `_seq` always. When `projections` is `None`, includes all columns.
+fn project_row(
     row: &Row,
     projections: &Option<Arc<Vec<String>>>,
-) -> Result<HashMap<String, KalamCellValue>, KalamDbError> {
-    match projections {
-        None => row_to_json_map(row),
-        Some(cols) => {
-            let mut projected = HashMap::with_capacity(cols.len() + 1);
-            for col in cols.iter() {
-                if let Some(sv) = row.values.get(col.as_str()) {
-                    projected.insert(col.clone(), scalar_value_to_json(sv)?);
-                }
-            }
-            if let Some(sv) = row.values.get(SystemColumnNames::SEQ) {
-                if !projected.contains_key(SystemColumnNames::SEQ) {
-                    projected.insert(SystemColumnNames::SEQ.to_string(), scalar_value_to_json(sv)?);
-                }
-            }
-            Ok(projected)
-        },
+) -> Result<RowData, KalamDbError> {
+    let mut map = HashMap::new();
+    for (col, sv) in &row.values {
+        let include = match projections {
+            None => true,
+            Some(proj) => col == SystemColumnNames::SEQ || proj.iter().any(|p| p == col),
+        };
+        if include {
+            let cell = scalar_value_to_json(sv)
+                .map_err(|e| KalamDbError::SerializationError(e.to_string()))?;
+            map.insert(col.clone(), cell);
+        }
     }
+    Ok(map)
 }
 
-/// Build a `Notification` directly from Row data, converting only the columns
-/// needed for the wire format. For INSERT/DELETE, converts only projected columns.
-/// For UPDATE, computes delta on ScalarValues and converts only changed + PK + `_seq`.
-#[inline]
-fn build_notification_from_rows(
-    sub_id: String,
+/// Compute UPDATE delta rows from old/new Row data.
+/// `new_map` contains all non-null projected columns + PK + `_seq`.
+/// `old_map` contains only changed columns + PK + `_seq`.
+fn project_update_delta(
+    old_row: &Row,
+    new_row: &Row,
+    pk_columns: &[String],
+    projections: &Option<Arc<Vec<String>>>,
+) -> Result<(RowData, RowData), KalamDbError> {
+    let mut new_map = HashMap::new();
+    let mut old_map = HashMap::new();
+
+    // Always include _seq and PK columns
+    for key in std::iter::once(SystemColumnNames::SEQ).chain(pk_columns.iter().map(String::as_str)) {
+        if let Some(sv) = new_row.values.get(key) {
+            new_map.insert(
+                key.to_string(),
+                scalar_value_to_json(sv).map_err(|e| KalamDbError::SerializationError(e.to_string()))?,
+            );
+        }
+        if let Some(sv) = old_row.values.get(key) {
+            old_map.insert(
+                key.to_string(),
+                scalar_value_to_json(sv).map_err(|e| KalamDbError::SerializationError(e.to_string()))?,
+            );
+        }
+    }
+
+    let owned_keys;
+    let col_names: Box<dyn Iterator<Item = &str>> = match projections {
+        None => {
+            owned_keys = new_row.values.keys().collect::<Vec<_>>();
+            Box::new(owned_keys.iter().map(|s| s.as_str()))
+        },
+        Some(cols) => Box::new(cols.iter().map(String::as_str)),
+    };
+
+    for col in col_names {
+        if col.starts_with('_') || pk_columns.iter().any(|pk| pk == col) {
+            continue;
+        }
+        let new_sv = new_row.values.get(col);
+        let old_sv = old_row.values.get(col);
+        if let Some(nv) = new_sv {
+            if !nv.is_null() {
+                new_map.insert(
+                    col.to_string(),
+                    scalar_value_to_json(nv).map_err(|e| KalamDbError::SerializationError(e.to_string()))?,
+                );
+            }
+        }
+        let changed = match (old_sv, new_sv) {
+            (Some(ov), Some(nv)) => ov != nv,
+            (None, Some(_)) => true,
+            _ => false,
+        };
+        if changed {
+            if let Some(ov) = old_sv {
+                old_map.insert(
+                    col.to_string(),
+                    scalar_value_to_json(ov).map_err(|e| KalamDbError::SerializationError(e.to_string()))?,
+                );
+            }
+        }
+    }
+
+    Ok((new_map, old_map))
+}
+
+/// Build the `SharedChangePayload` for a notification.
+/// Converts Row data to `RowData` (`HashMap<String, KalamCellValue>`) once per
+/// projection group; the result is shared via `Arc` across all subscribers.
+fn build_shared_payload(
     change_type: &ChangeType,
     new_row: &Row,
     old_row: Option<&Row>,
     pk_columns: &[String],
     projections: &Option<Arc<Vec<String>>>,
-) -> Result<kalamdb_commons::Notification, KalamDbError> {
+) -> Result<SharedChangePayload, KalamDbError> {
     match change_type {
-        ChangeType::Insert => {
-            let row_json = project_row_to_json(new_row, projections)?;
-            Ok(kalamdb_commons::Notification::insert(sub_id, vec![row_json]))
-        },
+        ChangeType::Insert => Ok(SharedChangePayload::new(
+            kalamdb_commons::websocket::ChangeType::Insert,
+            Some(vec![project_row(new_row, projections)?]),
+            None,
+        )),
         ChangeType::Update => {
-            let old = old_row.unwrap_or(new_row);
-            let (delta_new, delta_old) =
-                compute_update_delta(old, new_row, pk_columns, projections)?;
-            Ok(kalamdb_commons::Notification::update(sub_id, vec![delta_new], vec![delta_old]))
+            let (new_rd, old_rd) =
+                project_update_delta(old_row.unwrap_or(new_row), new_row, pk_columns, projections)?;
+            Ok(SharedChangePayload::new(
+                kalamdb_commons::websocket::ChangeType::Update,
+                Some(vec![new_rd]),
+                Some(vec![old_rd]),
+            ))
         },
-        ChangeType::Delete => {
-            let row_json = project_row_to_json(new_row, projections)?;
-            Ok(kalamdb_commons::Notification::delete(sub_id, vec![row_json]))
-        },
+        ChangeType::Delete => Ok(SharedChangePayload::new(
+            kalamdb_commons::websocket::ChangeType::Delete,
+            None,
+            Some(vec![project_row(new_row, projections)?]),
+        )),
     }
 }
 
-#[inline]
-fn clone_notification_for_subscription(
-    notification: &kalamdb_commons::Notification,
-    subscription_id: String,
-) -> kalamdb_commons::Notification {
-    match notification {
-        kalamdb_commons::Notification::Change {
-            change_type,
-            rows,
-            old_values,
-            ..
-        } => kalamdb_commons::Notification::Change {
-            subscription_id,
-            change_type: change_type.clone(),
-            rows: rows.clone(),
-            old_values: old_values.clone(),
-        },
-        kalamdb_commons::Notification::Error { code, message, .. } => {
-            kalamdb_commons::Notification::Error {
-                subscription_id,
-                code: code.clone(),
-                message: message.clone(),
-            }
-        },
-    }
-}
 
 /// Try to deliver a notification to a subscriber, handling flow control.
 /// Returns `true` if the notification was sent to the channel.
@@ -152,7 +192,7 @@ fn clone_notification_for_subscription(
 fn try_deliver(
     live_id: &LiveQueryId,
     handle: &SubscriptionHandle,
-    notification: Arc<kalamdb_commons::Notification>,
+    notification: Arc<WireNotification>,
     seq_value: Option<SeqId>,
 ) -> bool {
     let flow_control = &handle.flow_control;
@@ -190,67 +230,6 @@ fn try_deliver(
             false
         },
     }
-}
-
-/// Compute UPDATE delta directly from Row ScalarValues, converting only the
-/// columns that appear in the output (changed + PK + `_seq`).
-/// Returns `(delta_new, delta_old)` where delta_new has non-null columns + PK + `_seq`,
-/// and delta_old has only changed columns + PK + `_seq`.
-#[inline]
-fn compute_update_delta(
-    old_row: &Row,
-    new_row: &Row,
-    pk_columns: &[String],
-    projections: &Option<Arc<Vec<String>>>,
-) -> Result<(HashMap<String, KalamCellValue>, HashMap<String, KalamCellValue>), KalamDbError> {
-    let mut delta_new = HashMap::new();
-    let mut delta_old = HashMap::new();
-
-    // Always include _seq and PK columns for row identification
-    for key in std::iter::once(SystemColumnNames::SEQ).chain(pk_columns.iter().map(|s| s.as_str()))
-    {
-        if let Some(v) = new_row.values.get(key) {
-            delta_new.insert(key.to_string(), scalar_value_to_json(v)?);
-        }
-        if let Some(v) = old_row.values.get(key) {
-            delta_old.insert(key.to_string(), scalar_value_to_json(v)?);
-        }
-    }
-
-    // Single loop body — column source differs by projection mode
-    let owned_keys;
-    let col_iter: Box<dyn Iterator<Item = &str>> = match projections {
-        None => {
-            owned_keys = new_row.values.keys().collect::<Vec<_>>();
-            Box::new(owned_keys.iter().map(|s| s.as_str()))
-        },
-        Some(cols) => Box::new(cols.iter().map(|s| s.as_str())),
-    };
-
-    for col_name in col_iter {
-        if col_name.starts_with('_') || pk_columns.iter().any(|pk| pk == col_name) {
-            continue;
-        }
-        let new_sv = new_row.values.get(col_name);
-        let old_sv = old_row.values.get(col_name);
-        if let Some(nv) = new_sv {
-            if !nv.is_null() {
-                delta_new.insert(col_name.to_string(), scalar_value_to_json(nv)?);
-            }
-        }
-        let changed = match (old_sv, new_sv) {
-            (Some(ov), Some(nv)) => ov != nv,
-            (None, Some(_)) => true,
-            _ => false,
-        };
-        if changed {
-            if let Some(ov) = old_sv {
-                delta_old.insert(col_name.to_string(), scalar_value_to_json(ov)?);
-            }
-        }
-    }
-
-    Ok((delta_new, delta_old))
 }
 
 /// Service for notifying subscribers of changes
@@ -563,7 +542,7 @@ impl NotificationService {
 ///
 /// Groups subscribers by projection pointer identity so that subscribers with
 /// identical projections (common case: all SELECT *) share a single
-/// `Arc<Notification>`, avoiding redundant Row→JSON conversion.
+/// `Arc<SharedChangePayload>`, avoiding redundant Row→RowData conversion.
 fn dispatch_chunk(
     handles: &[(LiveQueryId, SubscriptionHandle)],
     new_row: &Row,
@@ -572,13 +551,12 @@ fn dispatch_chunk(
     pk_columns: &[String],
     seq_value: Option<SeqId>,
 ) -> Result<usize, KalamDbError> {
-    // Cache: projection pointer → built notification
-    // For N subscribers with identical projections, we build once.
-    let mut cache: HashMap<usize, Arc<kalamdb_commons::Notification>> = HashMap::new();
+    // Cache: projection pointer → shared payload (built once per projection group).
+    let mut cache: HashMap<usize, Arc<SharedChangePayload>> = HashMap::new();
     let mut count = 0usize;
 
     for (live_id, handle) in handles {
-        // Filter check (operates on ScalarValue — no JSON conversion)
+        // Filter check (operates on ScalarValue — no serialization)
         if let Some(ref filter_expr) = handle.filter_expr {
             match filter_matches(filter_expr, new_row) {
                 Ok(true) => {},
@@ -596,25 +574,25 @@ fn dispatch_chunk(
             None => 0,
         };
 
-        let notification = if let Some(cached) = cache.get(&proj_key) {
-            // Same projection set — reuse converted row payload, only rewrite subscription_id.
-            Arc::new(clone_notification_for_subscription(
-                cached.as_ref(),
-                live_id.subscription_id().to_string(),
-            ))
+        let payload = if let Some(cached) = cache.get(&proj_key) {
+            Arc::clone(cached)
         } else {
-            let sub_id = live_id.subscription_id().to_string();
-            let n = Arc::new(build_notification_from_rows(
-                sub_id,
+            let p = Arc::new(build_shared_payload(
                 change_type,
                 new_row,
                 old_row,
                 pk_columns,
                 &handle.projections,
             )?);
-            cache.insert(proj_key, Arc::clone(&n));
-            n
+            cache.insert(proj_key, Arc::clone(&p));
+            p
         };
+
+        // Per-subscriber: only allocate the subscription_id string + Arc clone of payload
+        let notification = Arc::new(WireNotification {
+            subscription_id: live_id.subscription_id().to_string(),
+            payload,
+        });
 
         if try_deliver(live_id, handle, notification, seq_value) {
             count += 1;
@@ -655,7 +633,6 @@ mod tests {
     use kalamdb_commons::models::rows::Row;
     use kalamdb_commons::models::{ConnectionId, NamespaceId, TableName};
     use kalamdb_commons::NodeId;
-    use kalamdb_commons::Notification;
     use std::collections::BTreeMap;
     use std::time::Duration;
 
@@ -731,23 +708,18 @@ mod tests {
         service.notify_forwarded_shared(table_id, change).await;
 
         let delivered = rx_ok.recv().await.expect("matching subscriber gets message");
-        match delivered.as_ref() {
-            Notification::Change {
-                subscription_id,
-                rows,
-                old_values,
-                ..
-            } => {
-                assert_eq!(subscription_id, "sub_ok");
-                assert!(old_values.is_none());
-                let payload = rows.as_ref().expect("rows present for insert");
-                assert_eq!(payload.len(), 1);
-                assert!(payload[0].contains_key("id"));
-                assert!(!payload[0].contains_key("body"));
-                assert!(payload[0].contains_key(SystemColumnNames::SEQ));
-            },
-            _ => panic!("expected change notification"),
-        }
+        let wire = delivered.as_ref();
+        assert_eq!(wire.subscription_id, "sub_ok");
+        assert_eq!(wire.payload.change_type, kalamdb_commons::websocket::ChangeType::Insert);
+        assert!(wire.payload.old_values.is_none());
+        assert!(wire.payload.rows.is_some());
+        // Verify projected columns via JSON serialization
+        let json: serde_json::Value = serde_json::from_slice(&wire.to_json()).unwrap();
+        let rows = json["rows"].as_array().expect("rows array");
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].get("id").is_some());
+        assert!(rows[0].get("body").is_none());
+        assert!(rows[0].get(SystemColumnNames::SEQ).is_some());
 
         assert!(rx_skip.try_recv().is_err(), "filtered subscriber should not receive");
     }
@@ -783,23 +755,17 @@ mod tests {
         service.notify_forwarded(user_id, table_id, change).await;
 
         let delivered = rx.recv().await.expect("projected subscriber gets message");
-        match delivered.as_ref() {
-            Notification::Change {
-                subscription_id,
-                rows,
-                old_values,
-                ..
-            } => {
-                assert_eq!(subscription_id, "sub_user");
-                assert!(old_values.is_none());
-                let payload = rows.as_ref().expect("rows present for insert");
-                assert_eq!(payload.len(), 1);
-                assert!(payload[0].contains_key("id"));
-                assert!(!payload[0].contains_key("body"));
-                assert!(payload[0].contains_key(SystemColumnNames::SEQ));
-            },
-            _ => panic!("expected change notification"),
-        }
+        let wire = delivered.as_ref();
+        assert_eq!(wire.subscription_id, "sub_user");
+        assert_eq!(wire.payload.change_type, kalamdb_commons::websocket::ChangeType::Insert);
+        assert!(wire.payload.old_values.is_none());
+        assert!(wire.payload.rows.is_some());
+        let json: serde_json::Value = serde_json::from_slice(&wire.to_json()).unwrap();
+        let rows = json["rows"].as_array().expect("rows array");
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].get("id").is_some());
+        assert!(rows[0].get("body").is_none());
+        assert!(rows[0].get(SystemColumnNames::SEQ).is_some());
     }
 
     #[tokio::test]
@@ -867,14 +833,7 @@ mod tests {
             .expect("worker should dispatch within timeout")
             .expect("message should be present");
 
-        match delivered.as_ref() {
-            Notification::Change {
-                subscription_id, ..
-            } => {
-                assert_eq!(subscription_id, "sub_async");
-            },
-            _ => panic!("expected change notification"),
-        }
+        assert_eq!(delivered.subscription_id, "sub_async");
 
         assert!(NotificationServiceTrait::has_subscribers(&*service, None, &table_id));
     }
