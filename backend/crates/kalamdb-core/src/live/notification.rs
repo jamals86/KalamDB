@@ -190,7 +190,6 @@ fn build_shared_payload(
 /// Returns `true` if the notification was sent to the channel.
 #[inline]
 fn try_deliver(
-    live_id: &LiveQueryId,
     handle: &SubscriptionHandle,
     notification: Arc<WireNotification>,
     seq_value: Option<SeqId>,
@@ -216,14 +215,14 @@ fn try_deliver(
             match e {
                 TrySendError::Full(_) => {
                     log::warn!(
-                        "Notification channel full for live_id={}, dropping notification",
-                        live_id
+                        "Notification channel full for subscription_id={}, dropping notification",
+                        handle.subscription_id
                     );
                 },
                 TrySendError::Closed(_) => {
                     log::debug!(
-                        "Notification channel closed for live_id={}, connection likely disconnected",
-                        live_id
+                        "Notification channel closed for subscription_id={}, connection likely disconnected",
+                        handle.subscription_id
                     );
                 },
             }
@@ -484,20 +483,15 @@ impl NotificationService {
         let new_row = Arc::new(change_notification.row_data);
         let old_row = change_notification.old_data.map(Arc::new);
 
-        // Collect handles (clone is cheap: all fields are Arc-wrapped)
-        let handles: Vec<(LiveQueryId, SubscriptionHandle)> = all_handles
-            .iter()
-            .map(|entry| (entry.key().clone(), entry.value().clone()))
-            .collect();
-
-        if handles.is_empty() {
+        let handle_count = all_handles.len();
+        if handle_count == 0 {
             return Ok(0);
         }
 
-        // Small fan-out: inline dispatch (no spawn overhead)
-        if handles.len() <= SHARED_NOTIFY_CHUNK_SIZE {
+        // Small fan-out: inline dispatch directly from DashMap refs (no clone/spawn overhead)
+        if handle_count <= SHARED_NOTIFY_CHUNK_SIZE {
             return dispatch_chunk(
-                &handles,
+                all_handles.iter().map(|entry| entry.value().clone()),
                 &new_row,
                 old_row.as_deref(),
                 &change_type,
@@ -507,6 +501,10 @@ impl NotificationService {
         }
 
         // Large fan-out: parallel chunked dispatch
+        // Large fan-out: collect handles once, then parallel chunked dispatch
+        let handles: Vec<SubscriptionHandle> =
+            all_handles.iter().map(|entry| entry.value().clone()).collect();
+
         let mut join_handles = Vec::with_capacity(
             (handles.len() + SHARED_NOTIFY_CHUNK_SIZE - 1) / SHARED_NOTIFY_CHUNK_SIZE,
         );
@@ -519,7 +517,7 @@ impl NotificationService {
             let pk = Arc::clone(&pk_columns);
 
             join_handles.push(tokio::spawn(async move {
-                dispatch_chunk(&chunk, &nr, or.as_deref(), &ct, &pk, seq_value)
+                dispatch_chunk(chunk.into_iter(), &nr, or.as_deref(), &ct, &pk, seq_value)
             }));
         }
 
@@ -543,26 +541,33 @@ impl NotificationService {
 /// Groups subscribers by projection pointer identity so that subscribers with
 /// identical projections (common case: all SELECT *) share a single
 /// `Arc<SharedChangePayload>`, avoiding redundant Row→RowData conversion.
-fn dispatch_chunk(
-    handles: &[(LiveQueryId, SubscriptionHandle)],
+fn dispatch_chunk<I>(
+    handles: I,
     new_row: &Row,
     old_row: Option<&Row>,
     change_type: &ChangeType,
     pk_columns: &[String],
     seq_value: Option<SeqId>,
-) -> Result<usize, KalamDbError> {
+) -> Result<usize, KalamDbError>
+where
+    I: IntoIterator<Item = SubscriptionHandle>,
+{
     // Cache: projection pointer → shared payload (built once per projection group).
     let mut cache: HashMap<usize, Arc<SharedChangePayload>> = HashMap::new();
     let mut count = 0usize;
 
-    for (live_id, handle) in handles {
+    for handle in handles {
         // Filter check (operates on ScalarValue — no serialization)
         if let Some(ref filter_expr) = handle.filter_expr {
             match filter_matches(filter_expr, new_row) {
                 Ok(true) => {},
                 Ok(false) => continue,
                 Err(e) => {
-                    log::error!("Filter error for live_id={}: {}", live_id, e);
+                    log::error!(
+                        "Filter error for subscription_id={}: {}",
+                        handle.subscription_id,
+                        e
+                    );
                     continue;
                 },
             }
@@ -590,11 +595,11 @@ fn dispatch_chunk(
 
         // Per-subscriber: only allocate the subscription_id string + Arc clone of payload
         let notification = Arc::new(WireNotification {
-            subscription_id: live_id.subscription_id().to_string(),
+            subscription_id: Arc::clone(&handle.subscription_id),
             payload,
         });
 
-        if try_deliver(live_id, handle, notification, seq_value) {
+        if try_deliver(&handle, notification, seq_value) {
             count += 1;
         }
     }
@@ -649,12 +654,14 @@ mod tests {
     }
 
     fn make_shared_handle(
+        subscription_id: &str,
         tx: Arc<crate::live::models::NotificationSender>,
         flow_control: Arc<SubscriptionFlowControl>,
         filter_expr: Option<&str>,
         projections: Option<Vec<&str>>,
     ) -> SubscriptionHandle {
         SubscriptionHandle {
+            subscription_id: Arc::from(subscription_id),
             filter_expr: filter_expr
                 .map(|sql| parse_where_clause(sql).expect("filter should parse"))
                 .map(Arc::new),
@@ -687,6 +694,7 @@ mod tests {
             LiveQueryId::new(UserId::new("u1"), conn_id.clone(), "sub_ok".to_string()),
             table_id.clone(),
             make_shared_handle(
+                "sub_ok",
                 Arc::new(tx_ok),
                 Arc::clone(&flow_ok),
                 Some("id >= 10"),
@@ -701,7 +709,13 @@ mod tests {
             &conn_id,
             LiveQueryId::new(UserId::new("u2"), conn_id.clone(), "sub_skip".to_string()),
             table_id.clone(),
-            make_shared_handle(Arc::new(tx_skip), Arc::clone(&flow_skip), Some("id >= 100"), None),
+            make_shared_handle(
+                "sub_skip",
+                Arc::new(tx_skip),
+                Arc::clone(&flow_skip),
+                Some("id >= 100"),
+                None,
+            ),
         );
 
         let change = ChangeNotification::insert(table_id.clone(), make_row(42, "hello", 42));
@@ -748,7 +762,7 @@ mod tests {
             &conn_id,
             live_id,
             table_id.clone(),
-            make_shared_handle(Arc::new(tx), flow, None, Some(vec!["id"])),
+            make_shared_handle("sub_user", Arc::new(tx), flow, None, Some(vec!["id"])),
         );
 
         let change = ChangeNotification::insert(table_id.clone(), make_row(42, "hello", 42));

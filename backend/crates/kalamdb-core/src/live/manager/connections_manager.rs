@@ -921,6 +921,7 @@ mod tests {
         let flow_control = Arc::new(SubscriptionFlowControl::new());
         flow_control.mark_initial_complete();
         SubscriptionHandle {
+            subscription_id: Arc::from("test-subscription"),
             filter_expr: None,
             projections: None,
             notification_tx,
@@ -935,7 +936,7 @@ mod tests {
     fn make_wire_notification(sub_id: &str) -> WireNotification {
         use kalamdb_commons::websocket::SharedChangePayload;
         WireNotification {
-            subscription_id: sub_id.to_string(),
+            subscription_id: Arc::from(sub_id),
             payload: Arc::new(SharedChangePayload::new(
                 kalamdb_commons::websocket::ChangeType::Insert,
                 Some(vec![]),

@@ -805,7 +805,7 @@ impl SharedChangePayload {
 /// row data — and its serialised bytes — are never copied for N subscribers.
 #[derive(Debug, Clone)]
 pub struct WireNotification {
-    pub subscription_id: String,
+    pub subscription_id: std::sync::Arc<str>,
     pub payload: std::sync::Arc<SharedChangePayload>,
 }
 
@@ -951,11 +951,11 @@ mod tests {
     fn test_wire_notification_to_json_reuses_cached_payload_bytes() {
         let payload = make_shared_payload();
         let first = WireNotification {
-            subscription_id: "sub-a".to_string(),
+            subscription_id: std::sync::Arc::from("sub-a"),
             payload: Arc::clone(&payload),
         };
         let second = WireNotification {
-            subscription_id: "sub-b".to_string(),
+            subscription_id: std::sync::Arc::from("sub-b"),
             payload,
         };
 
@@ -981,16 +981,30 @@ mod tests {
         assert_eq!(first_value["old_values"][0]["message"], "before");
     }
 
+    #[test]
+    fn test_wire_notification_keeps_shared_subscription_id_arc() {
+        let subscription_id = std::sync::Arc::<str>::from("sub-shared");
+        let notification = WireNotification {
+            subscription_id: std::sync::Arc::clone(&subscription_id),
+            payload: Arc::new(SharedChangePayload::new(ChangeType::Insert, Some(vec![]), None)),
+        };
+
+        assert!(std::sync::Arc::ptr_eq(
+            &subscription_id,
+            &notification.subscription_id
+        ));
+    }
+
     #[cfg(feature = "msgpack")]
     #[test]
     fn test_wire_notification_to_msgpack_reuses_cached_payload_bytes() {
         let payload = make_shared_payload();
         let first = WireNotification {
-            subscription_id: "sub-a".to_string(),
+            subscription_id: std::sync::Arc::from("sub-a"),
             payload: Arc::clone(&payload),
         };
         let second = WireNotification {
-            subscription_id: "sub-b".to_string(),
+            subscription_id: std::sync::Arc::from("sub-b"),
             payload,
         };
 

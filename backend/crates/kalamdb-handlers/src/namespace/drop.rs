@@ -3,7 +3,11 @@
 //! When a namespace is dropped, its DataFusion schema becomes unavailable.
 //! Any queries referencing tables in the dropped namespace will fail.
 
-use crate::helpers::guards::require_admin;
+use crate::helpers::audit;
+use crate::helpers::guards::{block_anonymous_write, require_admin};
+use crate::table::drop::{
+    capture_storage_cleanup_details, cleanup_dropped_table_partitions, schedule_drop_table_cleanup,
+};
 use kalamdb_commons::models::{NamespaceId, TableId};
 use kalamdb_core::app_context::AppContext;
 use kalamdb_core::error::KalamDbError;
@@ -79,20 +83,38 @@ impl TypedStatementHandler<DropNamespaceStatement> for DropNamespaceHandler {
 
         for table in tables_in_namespace {
             let table_id = TableId::new(table.namespace_id.clone(), table.table_name.clone());
+            let table_type = table.table_type;
+
+            let app_ctx = self.app_context.clone();
+            let tid = table_id.clone();
+            let storage_details = tokio::task::spawn_blocking(move || {
+                capture_storage_cleanup_details(&app_ctx, &tid, table_type)
+            })
+            .await
+            .map_err(|e| KalamDbError::ExecutionError(format!("Task join error: {}", e)))??;
 
             self.app_context
                 .applier()
                 .drop_table(table_id.clone())
                 .await
                 .map_err(|e| KalamDbError::ExecutionError(format!("DROP TABLE failed: {}", e)))?;
+            let cleanup_job_id = schedule_drop_table_cleanup(
+                &self.app_context,
+                &table_id,
+                table_type,
+                storage_details,
+            )
+            .await?;
 
-            use crate::helpers::audit;
             let audit_entry = audit::log_ddl_operation(
                 context,
                 "DROP",
                 "TABLE",
                 &table_id.full_name(),
-                Some("CASCADE from DROP NAMESPACE".to_string()),
+                Some(format!(
+                    "CASCADE from DROP NAMESPACE. Type: {:?}, Cleanup Job: {}",
+                    table_type, cleanup_job_id
+                )),
                 None,
             );
             audit::persist_audit_entry(&self.app_context, &audit_entry).await?;
@@ -109,7 +131,6 @@ impl TypedStatementHandler<DropNamespaceStatement> for DropNamespaceHandler {
         self.deregister_namespace_schema(&namespace_id);
 
         // Log DDL operation
-        use crate::helpers::audit;
         let audit_entry = audit::log_ddl_operation(
             context,
             "DROP",
@@ -129,8 +150,6 @@ impl TypedStatementHandler<DropNamespaceStatement> for DropNamespaceHandler {
         _statement: &DropNamespaceStatement,
         context: &ExecutionContext,
     ) -> Result<(), KalamDbError> {
-        use crate::helpers::guards::block_anonymous_write;
-
         // T050: Block anonymous users from DDL operations
         block_anonymous_write(context, "DROP NAMESPACE")?;
 
@@ -141,9 +160,15 @@ impl TypedStatementHandler<DropNamespaceStatement> for DropNamespaceHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::models::UserId;
+    use kalamdb_commons::models::datatypes::KalamDataType;
+    use kalamdb_commons::models::schemas::{ColumnDefinition, TableDefinition, TableOptions};
+    use kalamdb_commons::models::{TableName, UserId};
+    use kalamdb_commons::schemas::TableType;
     use kalamdb_commons::Role;
     use kalamdb_core::test_helpers::{create_test_session_simple, test_app_context_simple};
+    use kalamdb_store::EntityStore;
+    use kalamdb_system::Namespace;
+    use std::time::{SystemTime, UNIX_EPOCH};
     use std::sync::Arc;
 
     fn init_app_context() -> Arc<AppContext> {
@@ -152,6 +177,14 @@ mod tests {
 
     fn create_test_context() -> ExecutionContext {
         ExecutionContext::new(UserId::new("test_user"), Role::Dba, create_test_session_simple())
+    }
+
+    fn unique_suffix() -> String {
+        let millis = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_millis();
+        format!("{}_{}", std::process::id(), millis)
     }
 
     #[tokio::test]
@@ -209,5 +242,76 @@ mod tests {
         if let Ok(ExecutionResult::Success { message }) = result {
             assert!(message.contains("does not exist"));
         }
+    }
+
+    #[tokio::test]
+    async fn test_drop_namespace_cascade_cleanup_releases_user_table_partitions() {
+        let app_ctx = test_app_context_simple();
+        let suffix = unique_suffix();
+        let namespace_id = NamespaceId::new(format!("drop_ns_{}", suffix));
+        let table_name = TableName::new(format!("docs_{}", suffix));
+        let table_id = TableId::new(namespace_id.clone(), table_name.clone());
+
+        app_ctx
+            .system_tables()
+            .namespaces()
+            .create_namespace(Namespace {
+                namespace_id: namespace_id.clone(),
+                name: namespace_id.as_str().to_string(),
+                created_at: chrono::Utc::now().timestamp_millis(),
+                options: Some("{}".to_string()),
+                table_count: 0,
+            })
+            .expect("create namespace");
+
+        let columns = vec![
+            ColumnDefinition::primary_key(1, "id", 1, KalamDataType::BigInt),
+            ColumnDefinition::simple(2, "body", 2, KalamDataType::Text),
+        ];
+        let mut table_def = TableDefinition::new(
+            namespace_id.clone(),
+            table_name.clone(),
+            TableType::User,
+            columns,
+            TableOptions::user(),
+            None,
+        )
+        .expect("create table definition");
+        app_ctx
+            .system_columns_service()
+            .add_system_columns(&mut table_def)
+            .expect("add system columns");
+        app_ctx
+            .schema_registry()
+            .register_table(table_def)
+            .expect("register table");
+
+        let store =
+            kalamdb_tables::new_indexed_user_table_store(app_ctx.storage_backend(), &table_id, "id");
+        let main_partition = store.partition();
+        let pk_partition = store.indexes()[0].partition();
+        assert!(app_ctx.storage_backend().partition_exists(&main_partition));
+        assert!(app_ctx.storage_backend().partition_exists(&pk_partition));
+
+        app_ctx
+            .schema_registry()
+            .delete_table_definition(&table_id)
+            .expect("delete table definition");
+        app_ctx
+            .system_tables()
+            .namespaces()
+            .delete_namespace(&namespace_id)
+            .expect("delete namespace metadata");
+        cleanup_dropped_table_partitions(&app_ctx, &table_id, TableType::User)
+            .await
+            .expect("cleanup dropped table partitions");
+        assert!(
+            !app_ctx.storage_backend().partition_exists(&main_partition),
+            "main user-table partition should be dropped during namespace cascade cleanup"
+        );
+        assert!(
+            !app_ctx.storage_backend().partition_exists(&pk_partition),
+            "user-table PK index partition should be dropped during namespace cascade cleanup"
+        );
     }
 }

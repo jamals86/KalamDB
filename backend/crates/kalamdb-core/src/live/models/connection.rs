@@ -71,6 +71,8 @@ pub enum ConnectionEvent {
 /// ~48 bytes per handle (vs ~800+ bytes for full SubscriptionState)
 #[derive(Debug, Clone)]
 pub struct SubscriptionHandle {
+    /// Stable subscription identifier shared across all notifications for this subscriber.
+    pub subscription_id: Arc<str>,
     /// Shared filter expression (Arc for zero-copy across indices)
     pub filter_expr: Option<Arc<Expr>>,
     /// Column projections for filtering notification payload (None = all columns)
@@ -478,7 +480,7 @@ mod tests {
 
     fn make_notification(subscription_id: &str) -> Arc<WireNotification> {
         Arc::new(WireNotification {
-            subscription_id: subscription_id.to_string(),
+            subscription_id: Arc::from(subscription_id),
             payload: Arc::new(SharedChangePayload::new(
                 ChangeType::Insert,
                 Some(Vec::new()),

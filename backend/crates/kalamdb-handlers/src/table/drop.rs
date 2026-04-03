@@ -3,7 +3,8 @@
 //! This module provides both the DROP TABLE handler and reusable cleanup functions
 //! for table deletion operations (used by both DDL handler and CleanupExecutor).
 
-use crate::helpers::guards::block_system_namespace_modification;
+use crate::helpers::audit;
+use crate::helpers::guards::{block_anonymous_write, block_system_namespace_modification};
 use kalamdb_commons::models::TableId;
 use kalamdb_commons::schemas::TableType;
 use kalamdb_core::app_context::AppContext;
@@ -22,62 +23,101 @@ pub struct DropTableHandler {
     app_context: Arc<AppContext>,
 }
 
+pub(crate) fn capture_storage_cleanup_details(
+    app_context: &Arc<AppContext>,
+    table_id: &TableId,
+    table_type: TableType,
+) -> Result<StorageCleanupDetails, KalamDbError> {
+    let registry = app_context.schema_registry();
+    let cached = registry.get(table_id).ok_or_else(|| {
+        KalamDbError::InvalidOperation(format!("Table cache entry not found for {}", table_id))
+    })?;
+
+    let storage_id = cached.storage_id.clone();
+
+    let storage = app_context
+        .storage_registry()
+        .get_storage(&storage_id)
+        .map_err(|e| KalamDbError::Other(format!("Failed to get storage: {}", e)))?
+        .ok_or_else(|| {
+            KalamDbError::InvalidOperation(format!("Storage '{}' not found", storage_id.as_str()))
+        })?;
+
+    let relative_template = match table_type {
+        TableType::User => storage.user_tables_template.clone(),
+        TableType::Shared | TableType::Stream => storage.shared_tables_template.clone(),
+        TableType::System => {
+            return Err(KalamDbError::InvalidOperation(
+                "System tables do not use storage templates".to_string(),
+            ))
+        },
+    };
+
+    let base_dir = {
+        let trimmed = storage.base_directory.trim();
+        if trimmed.is_empty() {
+            app_context.storage_registry().default_storage_path().to_string()
+        } else {
+            storage.base_directory.clone()
+        }
+    };
+
+    Ok(StorageCleanupDetails {
+        storage_id,
+        base_directory: base_dir,
+        relative_path_template: relative_template,
+    })
+}
+
+pub(crate) async fn schedule_drop_table_cleanup(
+    app_context: &Arc<AppContext>,
+    table_id: &TableId,
+    table_type: TableType,
+    storage_details: StorageCleanupDetails,
+) -> Result<String, KalamDbError> {
+    cleanup_dropped_table_partitions(app_context, table_id, table_type).await?;
+    enqueue_drop_table_cleanup_job(app_context, table_id, table_type, storage_details).await
+}
+
+pub(crate) async fn cleanup_dropped_table_partitions(
+    app_context: &Arc<AppContext>,
+    table_id: &TableId,
+    table_type: TableType,
+) -> Result<(), KalamDbError> {
+    cleanup_table_data_internal(app_context, table_id, table_type).await?;
+    Ok(())
+}
+
+async fn enqueue_drop_table_cleanup_job(
+    app_context: &Arc<AppContext>,
+    table_id: &TableId,
+    table_type: TableType,
+    storage_details: StorageCleanupDetails,
+) -> Result<String, KalamDbError> {
+    let params = CleanupParams {
+        table_id: table_id.clone(),
+        table_type,
+        operation: CleanupOperation::DropTable,
+        storage: storage_details,
+    };
+
+    let idempotency_key = format!(
+        "drop-{}-{}",
+        table_id.namespace_id().as_str(),
+        table_id.table_name().as_str()
+    );
+
+    let job_manager = app_context.job_manager();
+    let job_id = job_manager
+        .create_job_typed(JobType::Cleanup, params, Some(idempotency_key), None)
+        .await?;
+
+    Ok(job_id.to_string())
+}
+
 impl DropTableHandler {
     pub fn new(app_context: Arc<AppContext>) -> Self {
         Self { app_context }
-    }
-
-    fn capture_storage_cleanup_details(
-        &self,
-        table_id: &TableId,
-        table_type: TableType,
-    ) -> Result<StorageCleanupDetails, KalamDbError> {
-        let registry = self.app_context.schema_registry();
-        let cached = registry.get(table_id).ok_or_else(|| {
-            KalamDbError::InvalidOperation(format!("Table cache entry not found for {}", table_id))
-        })?;
-
-        let storage_id = cached.storage_id.clone();
-
-        // Get storage from registry (cached lookup)
-        let storage = self
-            .app_context
-            .storage_registry()
-            .get_storage(&storage_id)
-            .map_err(|e| KalamDbError::Other(format!("Failed to get storage: {}", e)))?
-            .ok_or_else(|| {
-                KalamDbError::InvalidOperation(format!(
-                    "Storage '{}' not found",
-                    storage_id.as_str()
-                ))
-            })?;
-
-        // Get the appropriate template for this table type
-        let relative_template = match table_type {
-            TableType::User => storage.user_tables_template.clone(),
-            TableType::Shared | TableType::Stream => storage.shared_tables_template.clone(),
-            TableType::System => {
-                return Err(KalamDbError::InvalidOperation(
-                    "System tables do not use storage templates".to_string(),
-                ))
-            },
-        };
-
-        // Get base directory
-        let base_dir = {
-            let trimmed = storage.base_directory.trim();
-            if trimmed.is_empty() {
-                self.app_context.storage_registry().default_storage_path().to_string()
-            } else {
-                storage.base_directory.clone()
-            }
-        };
-
-        Ok(StorageCleanupDetails {
-            storage_id,
-            base_directory: base_dir,
-            relative_path_template: relative_template,
-        })
     }
 }
 
@@ -184,10 +224,7 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
         let tid = table_id.clone();
         let at = actual_type;
         let storage_details = tokio::task::spawn_blocking(move || {
-            // capture_storage_cleanup_details uses SchemaRegistry + StorageRegistry caches
-            // which can fall through to sync RocksDB on cache miss
-            let handler = DropTableHandler::new(app_ctx);
-            handler.capture_storage_cleanup_details(&tid, at)
+            capture_storage_cleanup_details(&app_ctx, &tid, at)
         })
         .await
         .map_err(|e| KalamDbError::ExecutionError(format!("Task join error: {}", e)))??;
@@ -268,29 +305,14 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
             .await
             .map_err(|e| KalamDbError::ExecutionError(format!("DROP TABLE failed: {}", e)))?;
 
-        // Release RocksDB partitions immediately so DROP TABLE reduces the
-        // physical storage footprint and descriptor pressure before the
-        // asynchronous cleanup job handles cold-storage cleanup.
-        cleanup_table_data_internal(&self.app_context, &table_id, actual_type).await?;
+        let job_id = schedule_drop_table_cleanup(
+            &self.app_context,
+            &table_id,
+            actual_type,
+            storage_details,
+        )
+        .await?;
 
-        // Create cleanup job for async data removal (with retry on failure)
-        let params = CleanupParams {
-            table_id: table_id.clone(),
-            table_type: actual_type,
-            operation: CleanupOperation::DropTable,
-            storage: storage_details,
-        };
-
-        let idempotency_key =
-            format!("drop-{}-{}", statement.namespace_id.as_str(), statement.table_name.as_str());
-
-        let job_manager = self.app_context.job_manager();
-        let job_id = job_manager
-            .create_job_typed(JobType::Cleanup, params, Some(idempotency_key), None)
-            .await?;
-
-        // Log DDL operation
-        use crate::helpers::audit;
         let audit_entry = audit::log_ddl_operation(
             context,
             "DROP",
@@ -306,7 +328,7 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
             statement.namespace_id.as_str(),
             statement.table_name.as_str(),
             actual_type,
-            job_id.as_str()
+            job_id
         );
 
         Ok(ExecutionResult::Success {
@@ -314,7 +336,7 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
                 "Table {}.{} dropped successfully. Cleanup job: {}",
                 statement.namespace_id.as_str(),
                 statement.table_name.as_str(),
-                job_id.as_str()
+                job_id
             ),
         })
     }
@@ -324,8 +346,6 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
         _statement: &DropTableStatement,
         context: &ExecutionContext,
     ) -> Result<(), KalamDbError> {
-        use crate::helpers::guards::block_anonymous_write;
-
         // T050: Block anonymous users from DDL operations
         block_anonymous_write(context, "DROP TABLE")?;
 

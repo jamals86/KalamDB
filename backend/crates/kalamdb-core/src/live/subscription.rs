@@ -112,6 +112,7 @@ impl SubscriptionService {
         // Wrap filter_expr and projections in Arc for zero-copy sharing between state and handle
         let filter_expr_arc = filter_expr.map(Arc::new);
         let projections_arc = projections.map(Arc::new);
+        let subscription_id = Arc::<str>::from(request.id.as_str());
 
         // Create SubscriptionState with all necessary data (stored in ConnectionState)
         let flow_control = Arc::new(SubscriptionFlowControl::new());
@@ -133,6 +134,7 @@ impl SubscriptionService {
 
         // Create lightweight handle for the index (~48 bytes vs ~800+ bytes)
         let subscription_handle = SubscriptionHandle {
+            subscription_id,
             filter_expr: filter_expr_arc,
             projections: projections_arc,
             notification_tx,

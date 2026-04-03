@@ -149,7 +149,7 @@ mod tests {
 		row.insert("body".to_string(), KalamCellValue::text("hello"));
 
 		WireNotification {
-			subscription_id: subscription_id.to_string(),
+			subscription_id: Arc::from(subscription_id),
 			payload: Arc::new(SharedChangePayload::new(
 				ChangeType::Insert,
 				Some(vec![row]),
