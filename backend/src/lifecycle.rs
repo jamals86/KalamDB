@@ -8,6 +8,7 @@ use crate::{middleware, routes};
 use actix_web::{web, App, HttpServer};
 use anyhow::Result;
 use kalamdb_api::limiter::RateLimiter;
+use kalamdb_auth::CachedUsersRepo;
 use kalamdb_commons::{AuthType, Role, StorageId, UserId};
 use kalamdb_configs::ServerConfig;
 use kalamdb_core::live::ConnectionsManager;
@@ -112,12 +113,13 @@ pub struct ApplicationComponents {
 pub async fn prepare_components(
     config: &ServerConfig,
     app_context: Arc<kalamdb_core::app_context::AppContext>,
+    use_root_password_env: bool,
 ) -> Result<ApplicationComponents> {
     let live_query_manager = app_context.live_query_manager();
     let session_factory = app_context.session_factory();
     let users_provider = app_context.system_tables().users();
     let user_repo: Arc<dyn kalamdb_auth::UserRepository> =
-        Arc::new(kalamdb_api::repositories::CachedUsersRepo::new(users_provider));
+        Arc::new(CachedUsersRepo::new(users_provider));
 
     let handler_registry = Arc::new(HandlerRegistry::new(app_context.clone()));
     kalamdb_handlers::register_all_handlers(
@@ -126,8 +128,7 @@ pub async fn prepare_components(
         config.auth.enforce_password_complexity,
     );
 
-    let sql_executor =
-        Arc::new(SqlExecutor::new(app_context.clone(), handler_registry));
+    let sql_executor = Arc::new(SqlExecutor::new(app_context.clone(), handler_registry));
 
     app_context.set_sql_executor(sql_executor.clone());
     live_query_manager.set_sql_executor(sql_executor.clone());
@@ -153,8 +154,12 @@ pub async fn prepare_components(
     let connection_registry = app_context.connection_registry();
 
     let users_provider_for_init = app_context.system_tables().users();
-    create_default_system_user(users_provider_for_init.clone(), config.auth.root_password.clone())
-        .await?;
+    create_default_system_user(
+        users_provider_for_init.clone(),
+        config.auth.root_password.clone(),
+        use_root_password_env,
+    )
+    .await?;
     if config.retention.enable_dba_stats {
         if let Err(error) = start_stats_recorder(app_context.clone()).await {
             log::error!("Failed to start DBA stats recorder: {}", error);
@@ -339,7 +344,7 @@ pub async fn bootstrap(
         phase_start.elapsed().as_secs_f64() * 1000.0
     );
 
-    let components = prepare_components(config, app_context.clone()).await?;
+    let components = prepare_components(config, app_context.clone(), true).await?;
 
     Ok((components, app_context))
 }
@@ -423,7 +428,7 @@ pub async fn bootstrap_isolated(
         storages_provider.insert_storage(default_storage)?;
     }
 
-    let components = prepare_components(config, app_context.clone()).await?;
+    let components = prepare_components(config, app_context.clone(), false).await?;
 
     debug!(
         "🚀 Server bootstrap (isolated) completed in {:.2}ms",
@@ -927,6 +932,7 @@ pub async fn run_detached(
 async fn create_default_system_user(
     users_provider: Arc<kalamdb_system::UsersTableProvider>,
     config_root_password: Option<String>,
+    use_root_password_env: bool,
 ) -> Result<()> {
     use kalamdb_commons::constants::AuthConstants;
     use kalamdb_system::User;
@@ -953,8 +959,11 @@ async fn create_default_system_user(
 
             // Check for root password from environment variable or config file.
             // Priority: KALAMDB_ROOT_PASSWORD env var > config auth.root_password > empty (localhost-only)
-            let root_password_from_env =
-                std::env::var("KALAMDB_ROOT_PASSWORD").ok().filter(|p| !p.is_empty());
+            let root_password_from_env = if use_root_password_env {
+                std::env::var("KALAMDB_ROOT_PASSWORD").ok().filter(|p| !p.is_empty())
+            } else {
+                None
+            };
             let root_password_from_config = config_root_password.clone().filter(|p| !p.is_empty());
             let root_password = root_password_from_env.or(root_password_from_config);
 

@@ -25,7 +25,9 @@ use super::super::models::{
 };
 use dashmap::DashMap;
 use kalamdb_commons::models::{ConnectionId, ConnectionInfo, LiveQueryId, TableId, UserId};
-use kalamdb_commons::{NodeId, Notification};
+use kalamdb_commons::NodeId;
+#[cfg(any(test, feature = "test-helpers"))]
+use kalamdb_commons::WireNotification;
 use log::{debug, info, warn};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -429,7 +431,11 @@ impl ConnectionsManager {
             .unwrap_or_else(|| Arc::clone(&self.empty_subscriptions))
     }
 
-    /// Check if any subscriptions exist for a table (across all users and shared)
+    // ==================== Test-Only Methods ====================
+
+    /// Check if any subscriptions exist for a table (across all users and shared).
+    /// O(N) scan — only used in tests.
+    #[cfg(any(test, feature = "test-helpers"))]
     pub fn has_subscriptions_for_table(&self, table_ref: &str) -> bool {
         let mut parts = table_ref.splitn(2, '.');
         let first = parts.next().unwrap_or("");
@@ -467,18 +473,11 @@ impl ConnectionsManager {
         }
     }
 
-    // ==================== Notification Delivery ====================
+    // ==================== Notification Delivery (test-only) ====================
 
-    /// Send notification to a specific subscription
-    pub fn notify_subscription(&self, live_id: &LiveQueryId, notification: Notification) {
-        // let span = tracing::debug_span!(
-        //     "live_query.push",
-        //     live_id = %live_id,
-        //     delivered = Empty
-        // );
-        // let _span_guard = span.entered();
-        // let mut delivered = false;
-
+    /// Send notification to a specific subscription (bypasses filter/flow control).
+    #[cfg(any(test, feature = "test-helpers"))]
+    pub fn notify_subscription(&self, live_id: &LiveQueryId, notification: WireNotification) {
         if let Some(conn_id) = self.live_id_to_connection.get(live_id) {
             if let Some(shared_state) = self.connections.get(conn_id.value()) {
                 let notification = Arc::new(notification);
@@ -487,18 +486,13 @@ impl ConnectionsManager {
                         warn!("Notification channel full for {}, dropping notification", live_id);
                     }
                 }
-                //else {
-                //    delivered = true;
-                //}
             }
         }
-
-        // tracing::Span::current().record("delivered", delivered);
     }
 
-    /// Send notification to all shared table subscriptions for a table
-    #[inline]
-    pub fn notify_shared_table(&self, table_id: &TableId, notification: Notification) {
+    /// Send notification to all shared table subscriptions for a table (bypasses filter/flow control).
+    #[cfg(any(test, feature = "test-helpers"))]
+    pub fn notify_shared_table(&self, table_id: &TableId, notification: WireNotification) {
         if let Some(handles) = self.shared_table_subscriptions.get(table_id) {
             let notification = Arc::new(notification);
             for handle in handles.iter() {
@@ -512,23 +506,14 @@ impl ConnectionsManager {
         }
     }
 
-    /// Send notification to all subscriptions for a table (for a specific user)
-    #[inline]
+    /// Send notification to all subscriptions for a table for a specific user (bypasses filter/flow control).
+    #[cfg(any(test, feature = "test-helpers"))]
     pub fn notify_table_for_user(
         &self,
         user_id: &UserId,
         table_id: &TableId,
-        notification: Notification,
+        notification: WireNotification,
     ) {
-        // let span = tracing::debug_span!(
-        //     "live_query.push",
-        //     user_id = %user_id,
-        //     table_id = %table_id,
-        //     delivered_count = Empty,
-        //     dropped_count = Empty
-        // );
-        // let _span_guard = span.entered();
-
         if let Some(handles) =
             self.user_table_subscriptions.get(&(user_id.clone(), table_id.clone()))
         {
@@ -542,6 +527,34 @@ impl ConnectionsManager {
                 }
             }
         }
+    }
+
+    /// Send a notification directly to all authenticated connections for a user.
+    ///
+    /// This bypasses subscription indexing and is intended only for transport-layer
+    /// tests that need to exercise the connection notification channel itself.
+    #[cfg(any(test, feature = "test-helpers"))]
+    pub fn notify_connections_for_user(
+        &self,
+        user_id: &UserId,
+        notification: WireNotification,
+    ) -> bool {
+        let notification = Arc::new(notification);
+        let mut sent = false;
+
+        for state in self.connections.iter() {
+            if state.user_id() == Some(user_id) {
+                if state
+                    .notification_tx
+                    .try_send(Arc::clone(&notification))
+                    .is_ok()
+                {
+                    sent = true;
+                }
+            }
+        }
+
+        sent
     }
 
     // ==================== Shutdown ====================
@@ -610,14 +623,6 @@ impl ConnectionsManager {
 
     pub fn node_id(&self) -> &NodeId {
         &self.node_id
-    }
-
-    pub fn total_connections(&self) -> usize {
-        self.connection_count()
-    }
-
-    pub fn total_subscriptions(&self) -> usize {
-        self.subscription_count()
     }
 
     // ==================== Background Tasks ====================
@@ -911,11 +916,12 @@ mod tests {
 
     /// Helper: create a SubscriptionHandle with pre-completed flow control
     fn create_test_handle(
-        notification_tx: Arc<tokio::sync::mpsc::Sender<Arc<Notification>>>,
+        notification_tx: Arc<tokio::sync::mpsc::Sender<Arc<WireNotification>>>,
     ) -> SubscriptionHandle {
         let flow_control = Arc::new(SubscriptionFlowControl::new());
         flow_control.mark_initial_complete();
         SubscriptionHandle {
+            subscription_id: Arc::from("test-subscription"),
             filter_expr: None,
             projections: None,
             notification_tx,
@@ -925,6 +931,18 @@ mod tests {
 
     fn make_table_id(ns: &str, table: &str) -> TableId {
         TableId::new(NamespaceId::from(ns), TableName::from(table))
+    }
+
+    fn make_wire_notification(sub_id: &str) -> WireNotification {
+        use kalamdb_commons::websocket::SharedChangePayload;
+        WireNotification {
+            subscription_id: Arc::from(sub_id),
+            payload: Arc::new(SharedChangePayload::new(
+                kalamdb_commons::websocket::ChangeType::Insert,
+                Some(vec![]),
+                None,
+            )),
+        }
     }
 
     #[tokio::test]
@@ -1074,8 +1092,7 @@ mod tests {
         assert_eq!(registry.subscription_count(), subscriber_count);
 
         // Send a notification to all shared table subscribers
-        let notification =
-            Notification::insert("test".to_string(), vec![std::collections::HashMap::new()]);
+        let notification = make_wire_notification("test");
         registry.notify_shared_table(&table_id, notification);
 
         // All subscribers should receive it
@@ -1117,8 +1134,7 @@ mod tests {
         let handles = registry.get_shared_subscriptions_for_table(&table_id);
         assert_eq!(handles.len(), subscriber_count);
 
-        let notification =
-            Notification::insert("perf".to_string(), vec![std::collections::HashMap::new()]);
+        let notification = make_wire_notification("perf");
 
         let start = std::time::Instant::now();
         registry.notify_shared_table(&table_id, notification);
@@ -1187,8 +1203,7 @@ mod tests {
             "expected all parallel subscriptions to register"
         );
 
-        let notification =
-            Notification::insert("parallel".to_string(), vec![std::collections::HashMap::new()]);
+        let notification = make_wire_notification("parallel");
         registry.notify_shared_table(&table_id, notification);
 
         for mut rx in receivers {
@@ -1236,8 +1251,7 @@ mod tests {
         assert_eq!(registry.subscription_count(), 2);
 
         // Shared table notification should only go to shared subscriber
-        let shared_notif =
-            Notification::insert("shared".to_string(), vec![std::collections::HashMap::new()]);
+        let shared_notif = make_wire_notification("shared");
         registry.notify_shared_table(&shared_table, shared_notif);
         assert!(rx1.try_recv().is_ok(), "shared subscriber should receive");
         assert!(
@@ -1246,8 +1260,7 @@ mod tests {
         );
 
         // User table notification should only go to user subscriber
-        let user_notif =
-            Notification::insert("user".to_string(), vec![std::collections::HashMap::new()]);
+        let user_notif = make_wire_notification("user");
         registry.notify_table_for_user(&user_id, &user_table, user_notif);
         assert!(
             rx1.try_recv().is_err(),

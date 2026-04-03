@@ -241,6 +241,7 @@ fn hash_start_index(key: &str, len: usize) -> usize {
     if len == 0 {
         return 0;
     }
+
     let mut hasher = DefaultHasher::new();
     key.hash(&mut hasher);
     (hasher.finish() as usize) % len
@@ -381,7 +382,10 @@ async fn await_auth_response(
         match tokio::time::timeout(remaining, ws_stream.next()).await {
             Ok(Some(Ok(Message::Text(text)))) => {
                 match serde_json::from_str::<ServerMessage>(&text) {
-                    Ok(ServerMessage::AuthSuccess { protocol: negotiated, .. }) => {
+                    Ok(ServerMessage::AuthSuccess {
+                        protocol: negotiated,
+                        ..
+                    }) => {
                         return Ok(negotiated.serialization);
                     },
                     Ok(ServerMessage::AuthError { message }) => {
@@ -536,23 +540,17 @@ pub(crate) async fn send_client_message(
             let payload = serde_json::to_string(msg).map_err(|e| {
                 KalamLinkError::WebSocketError(format!("Failed to serialize message: {}", e))
             })?;
-            ws_stream
-                .send(Message::Text(payload.into()))
-                .await
-                .map_err(|e| {
-                    KalamLinkError::WebSocketError(format!("Failed to send message: {}", e))
-                })
+            ws_stream.send(Message::Text(payload.into())).await.map_err(|e| {
+                KalamLinkError::WebSocketError(format!("Failed to send message: {}", e))
+            })
         },
         crate::models::SerializationType::MessagePack => {
             let payload = rmp_serde::to_vec_named(msg).map_err(|e| {
                 KalamLinkError::WebSocketError(format!("Failed to serialize msgpack: {}", e))
             })?;
-            ws_stream
-                .send(Message::Binary(payload.into()))
-                .await
-                .map_err(|e| {
-                    KalamLinkError::WebSocketError(format!("Failed to send binary message: {}", e))
-                })
+            ws_stream.send(Message::Binary(payload.into())).await.map_err(|e| {
+                KalamLinkError::WebSocketError(format!("Failed to send binary message: {}", e))
+            })
         },
     }
 }
@@ -562,10 +560,7 @@ mod tests {
     use super::*;
     use crate::auth::AuthProvider;
     use crate::error::KalamLinkError;
-    use tokio_tungstenite::tungstenite::{
-        client::IntoClientRequest,
-        http::header::AUTHORIZATION,
-    };
+    use tokio_tungstenite::tungstenite::{client::IntoClientRequest, http::header::AUTHORIZATION};
 
     #[test]
     fn test_ws_url_conversion() {
@@ -641,16 +636,10 @@ mod tests {
     fn test_apply_ws_auth_headers_sets_bearer_header_for_jwt() {
         let mut request = "ws://localhost:3000/v1/ws".into_client_request().unwrap();
 
-        apply_ws_auth_headers(
-            &mut request,
-            &AuthProvider::jwt_token("token-123".to_string()),
-        )
+        apply_ws_auth_headers(&mut request, &AuthProvider::jwt_token("token-123".to_string()))
             .expect("jwt auth should be applied via Authorization header");
 
-        assert_eq!(
-            request.headers().get(AUTHORIZATION).unwrap(),
-            "Bearer token-123"
-        );
+        assert_eq!(request.headers().get(AUTHORIZATION).unwrap(), "Bearer token-123");
     }
 
     #[test]

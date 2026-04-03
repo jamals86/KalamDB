@@ -108,7 +108,8 @@ pub use string_interner::{intern, stats as interner_stats, SystemColumns, SYSTEM
 pub use system_tables::{StoragePartition, SystemTable};
 #[cfg(feature = "full")]
 pub use websocket::{
-    ChangeNotification, ChangeType as WsChangeType, Notification, WebSocketMessage,
+    ChangeNotification, ChangeType as WsChangeType, Notification, SharedChangePayload,
+    WebSocketMessage, WireNotification,
 };
 #[cfg(feature = "websocket-auth")]
 pub use websocket_auth::WsAuthCredentials;

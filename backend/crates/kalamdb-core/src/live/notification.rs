@@ -16,17 +16,16 @@ use super::helpers::filter_eval::matches as filter_matches;
 use super::manager::ConnectionsManager;
 use super::models::{ChangeNotification, ChangeType, SubscriptionHandle};
 use crate::error::KalamDbError;
-use crate::providers::arrow_json_conversion::row_to_json_map;
-use datafusion::scalar::ScalarValue;
 use kalamdb_commons::constants::SystemColumnNames;
+use kalamdb_commons::conversions::arrow_json_conversion::scalar_value_to_json;
 use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::rows::Row;
 use kalamdb_commons::models::{LiveQueryId, TableId, UserId};
+use kalamdb_commons::websocket::{RowData, SharedChangePayload, WireNotification};
 use kalamdb_raft::ClusterClient;
 use kalamdb_raft::NotifyFollowersRequest;
 use kalamdb_system::NotificationService as NotificationServiceTrait;
-use std::borrow::Cow;
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use tokio::sync::{mpsc, OnceCell};
@@ -51,6 +50,7 @@ struct NotificationTask {
 
 #[inline]
 fn extract_seq(change_notification: &ChangeNotification) -> Option<SeqId> {
+    use datafusion::scalar::ScalarValue;
     change_notification
         .row_data
         .values
@@ -62,103 +62,173 @@ fn extract_seq(change_notification: &ChangeNotification) -> Option<SeqId> {
         })
 }
 
-/// Apply column projections to a Row, returning only the requested columns.
-/// Uses Cow to avoid cloning when no projections are needed (SELECT *).
-#[inline]
-fn apply_projections<'a>(row: &'a Row, projections: &Option<Arc<Vec<String>>>) -> Cow<'a, Row> {
-    match projections {
-        None => Cow::Borrowed(row),
-        Some(cols) => {
-            let mut filtered_values: BTreeMap<String, ScalarValue> = cols
-                .iter()
-                .filter_map(|col| row.values.get(col).map(|v| (col.clone(), v.clone())))
-                .collect();
+/// Convert a Row to a projected RowData map (`HashMap<String, KalamCellValue>`).
+/// Includes `_seq` always. When `projections` is `None`, includes all columns.
+fn project_row(
+    row: &Row,
+    projections: &Option<Arc<Vec<String>>>,
+) -> Result<RowData, KalamDbError> {
+    let mut map = HashMap::new();
+    for (col, sv) in &row.values {
+        let include = match projections {
+            None => true,
+            Some(proj) => col == SystemColumnNames::SEQ || proj.iter().any(|p| p == col),
+        };
+        if include {
+            let cell = scalar_value_to_json(sv)
+                .map_err(|e| KalamDbError::SerializationError(e.to_string()))?;
+            map.insert(col.clone(), cell);
+        }
+    }
+    Ok(map)
+}
 
-            if let Some(seq_value) = row.values.get(SystemColumnNames::SEQ) {
-                filtered_values
-                    .entry(SystemColumnNames::SEQ.to_string())
-                    .or_insert_with(|| seq_value.clone());
-            }
+/// Compute UPDATE delta rows from old/new Row data.
+/// `new_map` contains all non-null projected columns + PK + `_seq`.
+/// `old_map` contains only changed columns + PK + `_seq`.
+fn project_update_delta(
+    old_row: &Row,
+    new_row: &Row,
+    pk_columns: &[String],
+    projections: &Option<Arc<Vec<String>>>,
+) -> Result<(RowData, RowData), KalamDbError> {
+    let mut new_map = HashMap::new();
+    let mut old_map = HashMap::new();
 
-            Cow::Owned(Row::new(filtered_values))
+    // Always include _seq and PK columns
+    for key in std::iter::once(SystemColumnNames::SEQ).chain(pk_columns.iter().map(String::as_str)) {
+        if let Some(sv) = new_row.values.get(key) {
+            new_map.insert(
+                key.to_string(),
+                scalar_value_to_json(sv).map_err(|e| KalamDbError::SerializationError(e.to_string()))?,
+            );
+        }
+        if let Some(sv) = old_row.values.get(key) {
+            old_map.insert(
+                key.to_string(),
+                scalar_value_to_json(sv).map_err(|e| KalamDbError::SerializationError(e.to_string()))?,
+            );
+        }
+    }
+
+    let owned_keys;
+    let col_names: Box<dyn Iterator<Item = &str>> = match projections {
+        None => {
+            owned_keys = new_row.values.keys().collect::<Vec<_>>();
+            Box::new(owned_keys.iter().map(|s| s.as_str()))
         },
+        Some(cols) => Box::new(cols.iter().map(String::as_str)),
+    };
+
+    for col in col_names {
+        if col.starts_with('_') || pk_columns.iter().any(|pk| pk == col) {
+            continue;
+        }
+        let new_sv = new_row.values.get(col);
+        let old_sv = old_row.values.get(col);
+        if let Some(nv) = new_sv {
+            if !nv.is_null() {
+                new_map.insert(
+                    col.to_string(),
+                    scalar_value_to_json(nv).map_err(|e| KalamDbError::SerializationError(e.to_string()))?,
+                );
+            }
+        }
+        let changed = match (old_sv, new_sv) {
+            (Some(ov), Some(nv)) => ov != nv,
+            (None, Some(_)) => true,
+            _ => false,
+        };
+        if changed {
+            if let Some(ov) = old_sv {
+                old_map.insert(
+                    col.to_string(),
+                    scalar_value_to_json(ov).map_err(|e| KalamDbError::SerializationError(e.to_string()))?,
+                );
+            }
+        }
+    }
+
+    Ok((new_map, old_map))
+}
+
+/// Build the `SharedChangePayload` for a notification.
+/// Converts Row data to `RowData` (`HashMap<String, KalamCellValue>`) once per
+/// projection group; the result is shared via `Arc` across all subscribers.
+fn build_shared_payload(
+    change_type: &ChangeType,
+    new_row: &Row,
+    old_row: Option<&Row>,
+    pk_columns: &[String],
+    projections: &Option<Arc<Vec<String>>>,
+) -> Result<SharedChangePayload, KalamDbError> {
+    match change_type {
+        ChangeType::Insert => Ok(SharedChangePayload::new(
+            kalamdb_commons::websocket::ChangeType::Insert,
+            Some(vec![project_row(new_row, projections)?]),
+            None,
+        )),
+        ChangeType::Update => {
+            let (new_rd, old_rd) =
+                project_update_delta(old_row.unwrap_or(new_row), new_row, pk_columns, projections)?;
+            Ok(SharedChangePayload::new(
+                kalamdb_commons::websocket::ChangeType::Update,
+                Some(vec![new_rd]),
+                Some(vec![old_rd]),
+            ))
+        },
+        ChangeType::Delete => Ok(SharedChangePayload::new(
+            kalamdb_commons::websocket::ChangeType::Delete,
+            None,
+            Some(vec![project_row(new_row, projections)?]),
+        )),
     }
 }
 
-/// Compute the delta between old and new JSON row maps for UPDATE notifications.
-///
-/// Returns `(delta_new, delta_old)` where:
-/// - `delta_new` contains all non-null columns from the new row + `_seq` + any
-///   user-defined PK columns. This means subscribers always receive every non-null
-///   value in the updated row, not just the columns that changed — useful when the
-///   table is used as a change trigger rather than a diff source.
-/// - `delta_old` contains only the changed columns + `_seq` + PK columns (old values).
-///
-/// `pk_columns` lists the user-defined primary key column name(s) that must always be
-/// included so clients can identify the row. `_seq` is always included automatically.
-/// `_deleted` is **not** included — DELETE events are sent as separate notifications.
+
+/// Try to deliver a notification to a subscriber, handling flow control.
+/// Returns `true` if the notification was sent to the channel.
 #[inline]
-fn compute_json_update_delta(
-    old_json: &std::collections::HashMap<String, kalamdb_commons::models::KalamCellValue>,
-    new_json: &std::collections::HashMap<String, kalamdb_commons::models::KalamCellValue>,
-    pk_columns: &[String],
-) -> (
-    std::collections::HashMap<String, kalamdb_commons::models::KalamCellValue>,
-    std::collections::HashMap<String, kalamdb_commons::models::KalamCellValue>,
-) {
-    let mut delta_new = std::collections::HashMap::new();
-    let mut delta_old = std::collections::HashMap::new();
+fn try_deliver(
+    handle: &SubscriptionHandle,
+    notification: Arc<WireNotification>,
+    seq_value: Option<SeqId>,
+) -> bool {
+    let flow_control = &handle.flow_control;
 
-    // Always include _seq for row identification
-    let seq_col = SystemColumnNames::SEQ.to_string();
-    if let Some(v) = new_json.get(&seq_col) {
-        delta_new.insert(seq_col.clone(), v.clone());
-    }
-    if let Some(v) = old_json.get(&seq_col) {
-        delta_old.insert(seq_col.clone(), v.clone());
-    }
-
-    // Always include user-defined PK column(s) for row identification
-    for pk_col in pk_columns {
-        if let Some(v) = new_json.get(pk_col) {
-            delta_new.insert(pk_col.clone(), v.clone());
-        }
-        if let Some(v) = old_json.get(pk_col) {
-            delta_old.insert(pk_col.clone(), v.clone());
-        }
-    }
-
-    // Include all non-null, non-system columns in delta_new (full snapshot for
-    // subscribers). delta_old still only tracks columns that actually changed.
-    for (col_name, new_val) in new_json {
-        // Skip _seq (already handled) and other system columns (_deleted, etc.)
-        if col_name.starts_with('_') {
-            continue;
-        }
-        // Skip PK columns (already handled above)
-        if pk_columns.contains(col_name) {
-            continue;
-        }
-
-        // Always include non-null columns in the new delta
-        if !new_val.is_null() {
-            delta_new.insert(col_name.clone(), new_val.clone());
-        }
-
-        // Only include in old delta if the value actually changed
-        let old_val = old_json.get(col_name);
-        let changed = match old_val {
-            Some(old_v) => old_v != new_val,
-            None => true,
-        };
-        if changed {
-            if let Some(old_v) = old_val {
-                delta_old.insert(col_name.clone(), old_v.clone());
+    if !flow_control.is_initial_complete() {
+        if let Some(snapshot_seq) = flow_control.snapshot_end_seq() {
+            if let Some(seq) = seq_value {
+                if seq.as_i64() <= snapshot_seq {
+                    return false;
+                }
             }
         }
+        flow_control.buffer_notification(Arc::clone(&notification), seq_value);
+        return false;
     }
 
-    (delta_new, delta_old)
+    match handle.notification_tx.try_send(notification) {
+        Ok(()) => true,
+        Err(e) => {
+            use tokio::sync::mpsc::error::TrySendError;
+            match e {
+                TrySendError::Full(_) => {
+                    log::warn!(
+                        "Notification channel full for subscription_id={}, dropping notification",
+                        handle.subscription_id
+                    );
+                },
+                TrySendError::Closed(_) => {
+                    log::debug!(
+                        "Notification channel closed for subscription_id={}, connection likely disconnected",
+                        handle.subscription_id
+                    );
+                },
+            }
+            false
+        },
+    }
 }
 
 /// Service for notifying subscribers of changes
@@ -259,7 +329,7 @@ impl NotificationService {
 
     /// Process a single notification task (leadership check + fan-out).
     async fn process_notification(&self, task: NotificationTask, worker_idx: usize) {
-        // Step 0: Leadership check (Raft cluster mode)
+        // Leadership check (Raft cluster mode)
         if let Some(weak_ctx) = self.app_context.get() {
             if let Some(ctx) = weak_ctx.upgrade() {
                 let is_leader = match task.user_id.as_ref() {
@@ -268,15 +338,9 @@ impl NotificationService {
                 };
 
                 if !is_leader {
-                    log::trace!(
-                        "[worker-{}] Skipping notification on follower node for table {}",
-                        worker_idx,
-                        task.table_id
-                    );
                     return;
                 }
 
-                // Leader: broadcast to all other cluster nodes via gRPC
                 if ctx.is_cluster_mode() {
                     if let Some(cluster_client) = self.cluster_client.get() {
                         Self::broadcast_to_followers(
@@ -291,73 +355,30 @@ impl NotificationService {
             }
         }
 
-        // Step 1: Route to live query subscriptions
-        if let Some(ref user_id) = task.user_id {
-            let handles = self.registry.get_subscriptions_for_table(user_id, &task.table_id);
-            if handles.is_empty() {
-                log::debug!(
-                    "[worker-{}] No subscriptions for user={}, table={} (skipping)",
-                    worker_idx,
-                    user_id,
-                    task.table_id
-                );
-                return;
-            }
-            log::debug!(
-                "[worker-{}] Found {} subscriptions for user={}, table={}",
-                worker_idx,
-                handles.len(),
-                user_id,
-                task.table_id
-            );
-
-            if let Err(e) = self
-                .notify_table_change_with_handles(&task.table_id, task.notification, handles)
-                .await
-            {
-                log::warn!(
-                    "[worker-{}] Failed to notify subscribers for table {}: {}",
-                    worker_idx,
-                    task.table_id,
-                    e
-                );
-            }
+        // Route to subscriptions
+        let handles = if let Some(ref user_id) = task.user_id {
+            self.registry.get_subscriptions_for_table(user_id, &task.table_id)
         } else {
-            let handles = self.registry.get_shared_subscriptions_for_table(&task.table_id);
-            if handles.is_empty() {
-                log::debug!(
-                    "[worker-{}] No shared subscriptions for table={} (skipping)",
-                    worker_idx,
-                    task.table_id
-                );
-                return;
-            }
-            log::debug!(
-                "[worker-{}] Found {} shared subscriptions for table={}",
-                worker_idx,
-                handles.len(),
-                task.table_id
-            );
+            self.registry.get_shared_subscriptions_for_table(&task.table_id)
+        };
 
-            if let Err(e) = self
-                .notify_shared_table_streaming(&task.table_id, task.notification, handles)
-                .await
-            {
-                log::warn!(
-                    "[worker-{}] Failed to notify shared table subscribers for table {}: {}",
-                    worker_idx,
-                    task.table_id,
-                    e
-                );
-            }
+        if handles.is_empty() {
+            return;
+        }
+
+        if let Err(e) =
+            Self::dispatch_to_subscribers(&task.table_id, task.notification, handles).await
+        {
+            log::warn!(
+                "[worker-{}] Failed to notify subscribers for table {}: {}",
+                worker_idx,
+                task.table_id,
+                e
+            );
         }
     }
 
     /// Handle a notification forwarded from the leader node.
-    ///
-    /// This bypasses the leadership check because the leader already validated
-    /// ownership and is broadcasting to followers.  The follower dispatches
-    /// to any locally-connected WebSocket subscribers.
     pub async fn notify_forwarded(
         &self,
         user_id: UserId,
@@ -366,22 +387,9 @@ impl NotificationService {
     ) {
         let handles = self.registry.get_subscriptions_for_table(&user_id, &table_id);
         if handles.is_empty() {
-            log::trace!(
-                "notify_forwarded: no local subscriptions for user={}, table={}",
-                user_id,
-                table_id
-            );
             return;
         }
-        log::debug!(
-            "notify_forwarded: dispatching to {} local subscriptions for user={}, table={}",
-            handles.len(),
-            user_id,
-            table_id
-        );
-        if let Err(e) =
-            self.notify_table_change_with_handles(&table_id, notification, handles).await
-        {
+        if let Err(e) = Self::dispatch_to_subscribers(&table_id, notification, handles).await {
             log::warn!("Failed to dispatch forwarded notification for table {}: {}", table_id, e);
         }
     }
@@ -394,18 +402,9 @@ impl NotificationService {
     ) {
         let handles = self.registry.get_shared_subscriptions_for_table(&table_id);
         if handles.is_empty() {
-            log::trace!(
-                "notify_forwarded_shared: no local shared subscriptions for table={}",
-                table_id
-            );
             return;
         }
-        log::debug!(
-            "notify_forwarded_shared: dispatching to {} local shared subscriptions for table={}",
-            handles.len(),
-            table_id
-        );
-        if let Err(e) = self.notify_shared_table_streaming(&table_id, notification, handles).await {
+        if let Err(e) = Self::dispatch_to_subscribers(&table_id, notification, handles).await {
             log::warn!(
                 "Failed to dispatch forwarded shared notification for table {}: {}",
                 table_id,
@@ -467,440 +466,157 @@ impl NotificationService {
         }
     }
 
-    // /// Notify live query subscribers of a table change
-    // pub async fn notify_table_change(
-    //     &self,
-    //     user_id: &UserId,
-    //     table_id: &TableId,
-    //     change_notification: ChangeNotification,
-    // ) -> Result<usize, KalamDbError> {
-    //     // Fetch handles and delegate to common implementation
-    //     let handles = self.registry.get_subscriptions_for_table(user_id, table_id);
-    //     self.notify_table_change_with_handles(user_id, table_id, change_notification, handles)
-    //         .await
-    // }
-
-    /// Notify live query subscribers with pre-fetched handles
-    /// Avoids double DashMap lookup when handles are already available
-    async fn notify_table_change_with_handles(
-        &self,
+    /// Unified dispatch: filters, builds notifications, and delivers to subscribers.
+    ///
+    /// Groups subscribers by projection pointer identity so identical projections
+    /// share a single `Arc<Notification>` (avoids N duplicate JSON conversions for
+    /// SELECT * subscribers). For large subscriber counts (>SHARED_NOTIFY_CHUNK_SIZE),
+    /// uses parallel chunked fan-out via `tokio::spawn`.
+    async fn dispatch_to_subscribers(
         table_id: &TableId,
         change_notification: ChangeNotification,
         all_handles: Arc<dashmap::DashMap<LiveQueryId, SubscriptionHandle>>,
     ) -> Result<usize, KalamDbError> {
-        log::debug!(
-            "notify_table_change called for table: '{}', change_type: {:?}",
-            table_id,
-            change_notification.change_type
-        );
-
-        // Send notifications and increment changes
-        let mut notification_count = 0usize;
-        let filtering_row = &change_notification.row_data;
-        let mut full_row_json: Option<
-            std::collections::HashMap<String, kalamdb_commons::models::KalamCellValue>,
-        > = None;
-        let mut full_old_json: Option<
-            std::collections::HashMap<String, kalamdb_commons::models::KalamCellValue>,
-        > = None;
-        let seq_value = extract_seq(&change_notification);
-        for entry in all_handles.iter() {
-            let live_id = entry.key();
-            let handle = entry.value();
-            let should_notify = if let Some(ref filter_expr) = handle.filter_expr {
-                match filter_matches(filter_expr, filtering_row) {
-                    Ok(true) => true,
-                    Ok(false) => {
-                        log::trace!(
-                            "Filter didn't match for live_id={}, skipping notification",
-                            live_id
-                        );
-                        false
-                    },
-                    Err(e) => {
-                        log::error!("Filter evaluation error for live_id={}: {}", live_id, e);
-                        false
-                    },
-                }
-            } else {
-                true
-            };
-
-            if !should_notify {
-                continue;
-            }
-
-            let projections = &handle.projections;
-            let tx = &handle.notification_tx;
-
-            let use_full_row = projections.is_none();
-            let row_json = if use_full_row {
-                match full_row_json {
-                    Some(ref json) => json.clone(),
-                    None => match row_to_json_map(&change_notification.row_data) {
-                        Ok(json) => {
-                            full_row_json = Some(json.clone());
-                            json
-                        },
-                        Err(e) => {
-                            log::error!(
-                                "Failed to convert row to JSON for live_id={}: {}",
-                                live_id,
-                                e
-                            );
-                            continue;
-                        },
-                    },
-                }
-            } else {
-                // Apply projections to row data (filters columns based on subscription)
-                // Uses Cow to avoid cloning when no projections (SELECT *)
-                let projected_row_data =
-                    apply_projections(&change_notification.row_data, projections);
-                match row_to_json_map(&projected_row_data) {
-                    Ok(json) => json,
-                    Err(e) => {
-                        log::error!("Failed to convert row to JSON for live_id={}: {}", live_id, e);
-                        continue;
-                    },
-                }
-            };
-
-            let old_json = if let Some(old) = change_notification.old_data.as_ref() {
-                if use_full_row {
-                    match full_old_json {
-                        Some(ref json) => Some(json.clone()),
-                        None => match row_to_json_map(old) {
-                            Ok(json) => {
-                                full_old_json = Some(json.clone());
-                                Some(json)
-                            },
-                            Err(e) => {
-                                log::error!(
-                                    "Failed to convert old row to JSON for live_id={}: {}",
-                                    live_id,
-                                    e
-                                );
-                                continue;
-                            },
-                        },
-                    }
-                } else {
-                    let projected_old_data = apply_projections(old, projections);
-                    match row_to_json_map(&projected_old_data) {
-                        Ok(json) => Some(json),
-                        Err(e) => {
-                            log::error!(
-                                "Failed to convert old row to JSON for live_id={}: {}",
-                                live_id,
-                                e
-                            );
-                            continue;
-                        },
-                    }
-                }
-            } else {
-                None
-            };
-
-            // Build the notification with JSON data.
-            // Use the original subscription_id (client-assigned name, e.g. "latency_1")
-            // NOT the full LiveQueryId ("user-conn-sub").  This keeps the
-            // subscription_id consistent between Ack and change events so the
-            // client can send the correct ID back in Unsubscribe messages.
-            let sub_id = live_id.subscription_id().to_string();
-            let notification = match change_notification.change_type {
-                ChangeType::Insert => kalamdb_commons::Notification::insert(sub_id, vec![row_json]),
-                ChangeType::Update => {
-                    // Compute delta: send only changed columns + PK + _seq
-                    let full_old = old_json.unwrap_or_default();
-                    let (delta_new, delta_old) = compute_json_update_delta(
-                        &full_old,
-                        &row_json,
-                        &change_notification.pk_columns,
-                    );
-                    kalamdb_commons::Notification::update(sub_id, vec![delta_new], vec![delta_old])
-                },
-                ChangeType::Delete => kalamdb_commons::Notification::delete(sub_id, vec![row_json]),
-            };
-
-            // Send notification through channel (non-blocking, bounded)
-            let notification = Arc::new(notification);
-            let flow_control = &handle.flow_control;
-
-            if !flow_control.is_initial_complete() {
-                if let Some(snapshot_seq) = flow_control.snapshot_end_seq() {
-                    if let Some(seq) = seq_value {
-                        if seq.as_i64() <= snapshot_seq {
-                            continue;
-                        }
-                    }
-                }
-
-                flow_control.buffer_notification(Arc::clone(&notification), seq_value);
-                continue;
-            }
-
-            if let Err(e) = tx.try_send(notification) {
-                use tokio::sync::mpsc::error::TrySendError;
-                match e {
-                    TrySendError::Full(_) => {
-                        log::warn!(
-                            "Notification channel full for live_id={}, dropping notification",
-                            live_id
-                        );
-                    },
-                    TrySendError::Closed(_) => {
-                        log::debug!(
-                            "Notification channel closed for live_id={}, connection likely disconnected",
-                            live_id
-                        );
-                    },
-                }
-            }
-
-            notification_count += 1;
-        }
-
-        Ok(notification_count)
-    }
-
-    /// Streaming notification dispatch for shared tables with many subscribers.
-    ///
-    /// Optimized for high subscriber counts (hundreds to thousands):
-    /// 1. Pre-computes row JSON ONCE (avoids N × ScalarValue→JSON conversions)
-    /// 2. Fans out to subscribers in parallel chunks via `tokio::spawn`
-    /// 3. Projection filtering operates on pre-computed JSON (no re-conversion)
-    /// 4. Each chunk runs concurrently, preventing single-task bottleneck
-    ///
-    /// Complexity: O(N/chunk_size) parallelism, O(1) JSON pre-computation.
-    async fn notify_shared_table_streaming(
-        &self,
-        table_id: &TableId,
-        change_notification: ChangeNotification,
-        all_handles: Arc<dashmap::DashMap<LiveQueryId, SubscriptionHandle>>,
-    ) -> Result<usize, KalamDbError> {
-        let handle_count = all_handles.len();
-        log::debug!(
-            "notify_shared_table_streaming: table='{}', change_type={:?}, subscribers={}",
-            table_id,
-            change_notification.change_type,
-            handle_count
-        );
-
-        // === Phase 1: Pre-compute JSON once ===
-        // This is the most expensive operation — do it exactly once instead of
-        // lazily per-subscriber (which still triggers N HashMap clones).
-        let full_row_json = row_to_json_map(&change_notification.row_data).map_err(|e| {
-            log::error!("Failed to convert row to JSON for shared notification: {}", e);
-            e
-        })?;
-        let full_row_json = Arc::new(full_row_json);
-
-        let full_old_json = match change_notification.old_data.as_ref() {
-            Some(old) => {
-                let json = row_to_json_map(old).map_err(|e| {
-                    log::error!("Failed to convert old row to JSON for shared notification: {}", e);
-                    e
-                })?;
-                Some(Arc::new(json))
-            },
-            None => None,
-        };
-
         let seq_value = extract_seq(&change_notification);
         let change_type = change_notification.change_type.clone();
-        let pk_columns = Arc::new(change_notification.pk_columns.clone());
-        // Wrap row in Arc for sharing with filter evaluation across chunks
-        let filtering_row = Arc::new(change_notification.row_data);
+        let pk_columns = Arc::new(change_notification.pk_columns);
+        let new_row = Arc::new(change_notification.row_data);
+        let old_row = change_notification.old_data.map(Arc::new);
 
-        // === Phase 2: Collect handles for parallel processing ===
-        // DashMap iteration yields temporary references; collect into owned Vec.
-        // Clone is cheap: all SubscriptionHandle fields are Arc-wrapped.
-        let handles: Vec<(LiveQueryId, SubscriptionHandle)> = all_handles
-            .iter()
-            .map(|entry| (entry.key().clone(), entry.value().clone()))
-            .collect();
-
-        if handles.is_empty() {
+        let handle_count = all_handles.len();
+        if handle_count == 0 {
             return Ok(0);
         }
 
-        // === Phase 3: Parallel chunked fan-out ===
+        // Small fan-out: inline dispatch directly from DashMap refs (no clone/spawn overhead)
+        if handle_count <= SHARED_NOTIFY_CHUNK_SIZE {
+            return dispatch_chunk(
+                all_handles.iter().map(|entry| entry.value().clone()),
+                &new_row,
+                old_row.as_deref(),
+                &change_type,
+                &pk_columns,
+                seq_value,
+            );
+        }
+
+        // Large fan-out: parallel chunked dispatch
+        // Large fan-out: collect handles once, then parallel chunked dispatch
+        let handles: Vec<SubscriptionHandle> =
+            all_handles.iter().map(|entry| entry.value().clone()).collect();
+
         let mut join_handles = Vec::with_capacity(
             (handles.len() + SHARED_NOTIFY_CHUNK_SIZE - 1) / SHARED_NOTIFY_CHUNK_SIZE,
         );
 
         for chunk in handles.chunks(SHARED_NOTIFY_CHUNK_SIZE) {
-            let chunk: Vec<(LiveQueryId, SubscriptionHandle)> = chunk.to_vec();
-            let row_json = Arc::clone(&full_row_json);
-            let old_json = full_old_json.as_ref().map(Arc::clone);
+            let chunk = chunk.to_vec();
+            let nr = Arc::clone(&new_row);
+            let or = old_row.as_ref().map(Arc::clone);
             let ct = change_type.clone();
-            let filter_row = Arc::clone(&filtering_row);
-            let seq = seq_value;
-            let pk_cols_ref = Arc::clone(&pk_columns);
+            let pk = Arc::clone(&pk_columns);
 
             join_handles.push(tokio::spawn(async move {
-                let mut count = 0usize;
-                for (live_id, handle) in &chunk {
-                    // Filter check
-                    if let Some(ref filter_expr) = handle.filter_expr {
-                        match filter_matches(filter_expr, &filter_row) {
-                            Ok(true) => {},
-                            Ok(false) => continue,
-                            Err(e) => {
-                                log::error!("Filter error for live_id={}: {}", live_id, e);
-                                continue;
-                            },
-                        }
-                    }
-
-                    // Build per-subscriber row JSON:
-                    // - No projections: clone pre-computed full JSON
-                    // - With projections: filter columns from pre-computed JSON
-                    //   (avoids ScalarValue→JSON re-conversion)
-                    let subscriber_row_json = match &handle.projections {
-                        None => (*row_json).clone(),
-                        Some(cols) => {
-                            let mut projected: std::collections::HashMap<_, _> = cols
-                                .iter()
-                                .filter_map(|col| {
-                                    row_json.get(col).map(|v| (col.clone(), v.clone()))
-                                })
-                                .collect();
-                            if let Some(seq_value) = row_json.get(SystemColumnNames::SEQ) {
-                                projected
-                                    .entry(SystemColumnNames::SEQ.to_string())
-                                    .or_insert_with(|| seq_value.clone());
-                            }
-                            projected
-                        },
-                    };
-
-                    let subscriber_old_json =
-                        old_json.as_ref().map(|oj| match &handle.projections {
-                            None => (**oj).clone(),
-                            Some(cols) => {
-                                let mut projected: std::collections::HashMap<_, _> = cols
-                                    .iter()
-                                    .filter_map(|col| oj.get(col).map(|v| (col.clone(), v.clone())))
-                                    .collect();
-                                if let Some(seq_value) = oj.get(SystemColumnNames::SEQ) {
-                                    projected
-                                        .entry(SystemColumnNames::SEQ.to_string())
-                                        .or_insert_with(|| seq_value.clone());
-                                }
-                                projected
-                            },
-                        });
-
-                    // Build notification with per-subscriber subscription_id
-                    let sub_id = live_id.subscription_id().to_string();
-                    let notification = match ct {
-                        ChangeType::Insert => {
-                            kalamdb_commons::Notification::insert(sub_id, vec![subscriber_row_json])
-                        },
-                        ChangeType::Update => {
-                            // Compute delta: send only changed columns + PK + _seq
-                            let full_old = subscriber_old_json.unwrap_or_default();
-                            let (delta_new, delta_old) = compute_json_update_delta(
-                                &full_old,
-                                &subscriber_row_json,
-                                &pk_cols_ref,
-                            );
-                            kalamdb_commons::Notification::update(
-                                sub_id,
-                                vec![delta_new],
-                                vec![delta_old],
-                            )
-                        },
-                        ChangeType::Delete => {
-                            kalamdb_commons::Notification::delete(sub_id, vec![subscriber_row_json])
-                        },
-                    };
-
-                    let notification = Arc::new(notification);
-                    let flow_control = &handle.flow_control;
-
-                    // Flow control: buffer during initial data load
-                    if !flow_control.is_initial_complete() {
-                        if let Some(snapshot_seq) = flow_control.snapshot_end_seq() {
-                            if let Some(seq) = seq {
-                                if seq.as_i64() <= snapshot_seq {
-                                    continue;
-                                }
-                            }
-                        }
-                        flow_control.buffer_notification(Arc::clone(&notification), seq);
-                        continue;
-                    }
-
-                    // Send through channel (non-blocking)
-                    if let Err(e) = handle.notification_tx.try_send(notification) {
-                        use tokio::sync::mpsc::error::TrySendError;
-                        match e {
-                            TrySendError::Full(_) => {
-                                log::warn!(
-                                    "Notification channel full for live_id={}, dropping",
-                                    live_id
-                                );
-                            },
-                            TrySendError::Closed(_) => {
-                                log::debug!(
-                                    "Notification channel closed for live_id={}, disconnected",
-                                    live_id
-                                );
-                            },
-                        }
-                    }
-
-                    count += 1;
-                }
-                count
+                dispatch_chunk(chunk.into_iter(), &nr, or.as_deref(), &ct, &pk, seq_value)
             }));
         }
 
-        // Await all chunks
-        let mut total_count = 0usize;
+        let mut total = 0usize;
         for jh in join_handles {
             match jh.await {
-                Ok(count) => total_count += count,
+                Ok(Ok(count)) => total += count,
+                Ok(Err(e)) => {
+                    log::error!("Notification dispatch error for table {}: {}", table_id, e);
+                },
+                Err(e) => log::error!("Notification chunk task panicked: {}", e),
+            }
+        }
+
+        Ok(total)
+    }
+}
+
+/// Dispatch notifications to a slice of subscribers.
+///
+/// Groups subscribers by projection pointer identity so that subscribers with
+/// identical projections (common case: all SELECT *) share a single
+/// `Arc<SharedChangePayload>`, avoiding redundant Row→RowData conversion.
+fn dispatch_chunk<I>(
+    handles: I,
+    new_row: &Row,
+    old_row: Option<&Row>,
+    change_type: &ChangeType,
+    pk_columns: &[String],
+    seq_value: Option<SeqId>,
+) -> Result<usize, KalamDbError>
+where
+    I: IntoIterator<Item = SubscriptionHandle>,
+{
+    // Cache: projection pointer → shared payload (built once per projection group).
+    let mut cache: HashMap<usize, Arc<SharedChangePayload>> = HashMap::new();
+    let mut count = 0usize;
+
+    for handle in handles {
+        // Filter check (operates on ScalarValue — no serialization)
+        if let Some(ref filter_expr) = handle.filter_expr {
+            match filter_matches(filter_expr, new_row) {
+                Ok(true) => {},
+                Ok(false) => continue,
                 Err(e) => {
-                    log::error!("Shared notification chunk task panicked: {}", e);
+                    log::error!(
+                        "Filter error for subscription_id={}: {}",
+                        handle.subscription_id,
+                        e
+                    );
+                    continue;
                 },
             }
         }
 
-        log::debug!(
-            "notify_shared_table_streaming: delivered {} notifications to {} subscribers for table '{}'",
-            total_count,
-            handle_count,
-            table_id
-        );
+        // Projection cache key: Arc pointer address for Some, 0 for None (SELECT *)
+        let proj_key = match &handle.projections {
+            Some(arc) => Arc::as_ptr(arc) as usize,
+            None => 0,
+        };
 
-        Ok(total_count)
+        let payload = if let Some(cached) = cache.get(&proj_key) {
+            Arc::clone(cached)
+        } else {
+            let p = Arc::new(build_shared_payload(
+                change_type,
+                new_row,
+                old_row,
+                pk_columns,
+                &handle.projections,
+            )?);
+            cache.insert(proj_key, Arc::clone(&p));
+            p
+        };
+
+        // Per-subscriber: only allocate the subscription_id string + Arc clone of payload
+        let notification = Arc::new(WireNotification {
+            subscription_id: Arc::clone(&handle.subscription_id),
+            payload,
+        });
+
+        if try_deliver(&handle, notification, seq_value) {
+            count += 1;
+        }
     }
+
+    Ok(count)
 }
 
 impl NotificationServiceTrait for NotificationService {
     type Notification = ChangeNotification;
 
     fn has_subscribers(&self, user_id: Option<&UserId>, table_id: &TableId) -> bool {
-        // Only check live query subscriptions.
-        // Topic publishing is now handled synchronously in table providers via TopicPublisher trait,
-        // so we no longer need to check for topic subscribers here.
         if let Some(uid) = user_id {
             if self.registry.has_subscriptions(uid, table_id) {
                 return true;
             }
         }
-
-        // Also check shared table subscriptions (user_id is None for shared tables)
-        if self.registry.has_shared_subscriptions(table_id) {
-            return true;
-        }
-
-        false
+        self.registry.has_shared_subscriptions(table_id)
     }
 
     fn notify_table_change(
@@ -922,7 +638,6 @@ mod tests {
     use kalamdb_commons::models::rows::Row;
     use kalamdb_commons::models::{ConnectionId, NamespaceId, TableName};
     use kalamdb_commons::NodeId;
-    use kalamdb_commons::Notification;
     use std::collections::BTreeMap;
     use std::time::Duration;
 
@@ -939,12 +654,14 @@ mod tests {
     }
 
     fn make_shared_handle(
+        subscription_id: &str,
         tx: Arc<crate::live::models::NotificationSender>,
         flow_control: Arc<SubscriptionFlowControl>,
         filter_expr: Option<&str>,
         projections: Option<Vec<&str>>,
     ) -> SubscriptionHandle {
         SubscriptionHandle {
+            subscription_id: Arc::from(subscription_id),
             filter_expr: filter_expr
                 .map(|sql| parse_where_clause(sql).expect("filter should parse"))
                 .map(Arc::new),
@@ -977,6 +694,7 @@ mod tests {
             LiveQueryId::new(UserId::new("u1"), conn_id.clone(), "sub_ok".to_string()),
             table_id.clone(),
             make_shared_handle(
+                "sub_ok",
                 Arc::new(tx_ok),
                 Arc::clone(&flow_ok),
                 Some("id >= 10"),
@@ -991,30 +709,31 @@ mod tests {
             &conn_id,
             LiveQueryId::new(UserId::new("u2"), conn_id.clone(), "sub_skip".to_string()),
             table_id.clone(),
-            make_shared_handle(Arc::new(tx_skip), Arc::clone(&flow_skip), Some("id >= 100"), None),
+            make_shared_handle(
+                "sub_skip",
+                Arc::new(tx_skip),
+                Arc::clone(&flow_skip),
+                Some("id >= 100"),
+                None,
+            ),
         );
 
         let change = ChangeNotification::insert(table_id.clone(), make_row(42, "hello", 42));
         service.notify_forwarded_shared(table_id, change).await;
 
         let delivered = rx_ok.recv().await.expect("matching subscriber gets message");
-        match delivered.as_ref() {
-            Notification::Change {
-                subscription_id,
-                rows,
-                old_values,
-                ..
-            } => {
-                assert_eq!(subscription_id, "sub_ok");
-                assert!(old_values.is_none());
-                let payload = rows.as_ref().expect("rows present for insert");
-                assert_eq!(payload.len(), 1);
-                assert!(payload[0].contains_key("id"));
-                assert!(!payload[0].contains_key("body"));
-                assert!(payload[0].contains_key(SystemColumnNames::SEQ));
-            },
-            _ => panic!("expected change notification"),
-        }
+        let wire = delivered.as_ref();
+        assert_eq!(wire.subscription_id.as_ref(), "sub_ok");
+        assert_eq!(wire.payload.change_type, kalamdb_commons::websocket::ChangeType::Insert);
+        assert!(wire.payload.old_values.is_none());
+        assert!(wire.payload.rows.is_some());
+        // Verify projected columns via JSON serialization
+        let json: serde_json::Value = serde_json::from_slice(&wire.to_json()).unwrap();
+        let rows = json["rows"].as_array().expect("rows array");
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].get("id").is_some());
+        assert!(rows[0].get("body").is_none());
+        assert!(rows[0].get(SystemColumnNames::SEQ).is_some());
 
         assert!(rx_skip.try_recv().is_err(), "filtered subscriber should not receive");
     }
@@ -1043,30 +762,24 @@ mod tests {
             &conn_id,
             live_id,
             table_id.clone(),
-            make_shared_handle(Arc::new(tx), flow, None, Some(vec!["id"])),
+            make_shared_handle("sub_user", Arc::new(tx), flow, None, Some(vec!["id"])),
         );
 
         let change = ChangeNotification::insert(table_id.clone(), make_row(42, "hello", 42));
         service.notify_forwarded(user_id, table_id, change).await;
 
         let delivered = rx.recv().await.expect("projected subscriber gets message");
-        match delivered.as_ref() {
-            Notification::Change {
-                subscription_id,
-                rows,
-                old_values,
-                ..
-            } => {
-                assert_eq!(subscription_id, "sub_user");
-                assert!(old_values.is_none());
-                let payload = rows.as_ref().expect("rows present for insert");
-                assert_eq!(payload.len(), 1);
-                assert!(payload[0].contains_key("id"));
-                assert!(!payload[0].contains_key("body"));
-                assert!(payload[0].contains_key(SystemColumnNames::SEQ));
-            },
-            _ => panic!("expected change notification"),
-        }
+        let wire = delivered.as_ref();
+        assert_eq!(wire.subscription_id.as_ref(), "sub_user");
+        assert_eq!(wire.payload.change_type, kalamdb_commons::websocket::ChangeType::Insert);
+        assert!(wire.payload.old_values.is_none());
+        assert!(wire.payload.rows.is_some());
+        let json: serde_json::Value = serde_json::from_slice(&wire.to_json()).unwrap();
+        let rows = json["rows"].as_array().expect("rows array");
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].get("id").is_some());
+        assert!(rows[0].get("body").is_none());
+        assert!(rows[0].get(SystemColumnNames::SEQ).is_some());
     }
 
     #[tokio::test]
@@ -1090,7 +803,13 @@ mod tests {
             &conn_id,
             LiveQueryId::new(UserId::new("u3"), conn_id.clone(), "sub_buffer".to_string()),
             table_id.clone(),
-            make_shared_handle(Arc::new(tx), Arc::clone(&flow), None, None),
+            make_shared_handle(
+                "sub_buffer",
+                Arc::new(tx),
+                Arc::clone(&flow),
+                None,
+                None,
+            ),
         );
 
         // seq=11 is newer than snapshot end seq=10, should be buffered (not sent yet)
@@ -1123,7 +842,7 @@ mod tests {
             &conn_id,
             LiveQueryId::new(UserId::new("u4"), conn_id.clone(), "sub_async".to_string()),
             table_id.clone(),
-            make_shared_handle(Arc::new(tx), flow, None, None),
+            make_shared_handle("sub_async", Arc::new(tx), flow, None, None),
         );
 
         let change = ChangeNotification::insert(table_id.clone(), make_row(1, "async", 1));
@@ -1134,14 +853,7 @@ mod tests {
             .expect("worker should dispatch within timeout")
             .expect("message should be present");
 
-        match delivered.as_ref() {
-            Notification::Change {
-                subscription_id, ..
-            } => {
-                assert_eq!(subscription_id, "sub_async");
-            },
-            _ => panic!("expected change notification"),
-        }
+        assert_eq!(delivered.subscription_id.as_ref(), "sub_async");
 
         assert!(NotificationServiceTrait::has_subscribers(&*service, None, &table_id));
     }
