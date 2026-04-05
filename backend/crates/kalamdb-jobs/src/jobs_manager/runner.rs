@@ -744,48 +744,50 @@ impl JobsManager {
             // Phase 2: Execute LEADER actions (ONLY on leader)
             // ============================================
             if is_leader {
-                let node_ids = self.active_cluster_node_ids();
-                let quorum_result = self
-                    .wait_for_job_nodes_quorum(
-                        &job_id,
-                        &node_ids,
-                        Duration::from_secs(JOB_NODE_QUORUM_TIMEOUT_SECS),
-                    )
-                    .await?;
+                if job_type.has_local_work() {
+                    let node_ids = self.active_cluster_node_ids();
+                    let quorum_result = self
+                        .wait_for_job_nodes_quorum(
+                            &job_id,
+                            &node_ids,
+                            Duration::from_secs(JOB_NODE_QUORUM_TIMEOUT_SECS),
+                        )
+                        .await?;
 
-                match quorum_result {
-                    JobNodeQuorumResult::Failed { failed_nodes } => {
-                        let reason = format!(
-                            "Local phase failed on nodes: {}",
-                            failed_nodes
-                                .iter()
-                                .map(|id| id.to_string())
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        );
-                        self.mark_job_failed(&job_id, reason).await?;
-                        return Ok(());
-                    },
-                    JobNodeQuorumResult::TimedOut { completed, total } => {
-                        self.log_job_event(
-                            &job_id,
-                            &Level::Warn,
-                            &format!(
-                                "Quorum timeout (completed {}/{}); proceeding with leader actions",
-                                completed, total
-                            ),
-                        );
-                    },
-                    JobNodeQuorumResult::QuorumReached { completed, total } => {
-                        log_job!(
-                            self,
-                            &job_id,
-                            Level::Trace,
-                            "Quorum reached (completed {}/{})",
-                            completed,
-                            total
-                        );
-                    },
+                    match quorum_result {
+                        JobNodeQuorumResult::Failed { failed_nodes } => {
+                            let reason = format!(
+                                "Local phase failed on nodes: {}",
+                                failed_nodes
+                                    .iter()
+                                    .map(|id| id.to_string())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            );
+                            self.mark_job_failed(&job_id, reason).await?;
+                            return Ok(());
+                        },
+                        JobNodeQuorumResult::TimedOut { completed, total } => {
+                            self.log_job_event(
+                                &job_id,
+                                &Level::Warn,
+                                &format!(
+                                    "Quorum timeout (completed {}/{}); proceeding with leader actions",
+                                    completed, total
+                                ),
+                            );
+                        },
+                        JobNodeQuorumResult::QuorumReached { completed, total } => {
+                            log_job!(
+                                self,
+                                &job_id,
+                                Level::Trace,
+                                "Quorum reached (completed {}/{})",
+                                completed,
+                                total
+                            );
+                        },
+                    }
                 }
 
                 if job_type.has_leader_actions() {
@@ -1058,48 +1060,50 @@ impl JobsManager {
     async fn resume_leader_actions(&self, job: Job) -> Result<(), KalamDbError> {
         let job_id = job.job_id.clone();
 
-        let node_ids = self.active_cluster_node_ids();
-        let quorum_result = self
-            .wait_for_job_nodes_quorum(
-                &job_id,
-                &node_ids,
-                Duration::from_secs(JOB_NODE_QUORUM_TIMEOUT_SECS),
-            )
-            .await?;
+        if job.job_type.has_local_work() {
+            let node_ids = self.active_cluster_node_ids();
+            let quorum_result = self
+                .wait_for_job_nodes_quorum(
+                    &job_id,
+                    &node_ids,
+                    Duration::from_secs(JOB_NODE_QUORUM_TIMEOUT_SECS),
+                )
+                .await?;
 
-        match quorum_result {
-            JobNodeQuorumResult::Failed { failed_nodes } => {
-                let reason = format!(
-                    "Local phase failed on nodes: {}",
-                    failed_nodes.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(", ")
-                );
-                self.mark_job_failed(&job_id, reason).await?;
-                return Ok(());
-            },
-            JobNodeQuorumResult::TimedOut { completed, total } => {
-                // If completed=0, job was never started on workers (failover of queued job)
-                // Use debug level to reduce noise, otherwise warn
-                let level = if completed == 0 {
-                    Level::Debug
-                } else {
-                    Level::Warn
-                };
-                self.log_job_event(
-                    &job_id,
-                    &level,
-                    &format!(
-                        "Quorum timeout (completed {}/{}); proceeding with leader actions",
-                        completed, total
-                    ),
-                );
-            },
-            JobNodeQuorumResult::QuorumReached { completed, total } => {
-                self.log_job_event(
-                    &job_id,
-                    &Level::Debug,
-                    &format!("Quorum reached (completed {}/{})", completed, total),
-                );
-            },
+            match quorum_result {
+                JobNodeQuorumResult::Failed { failed_nodes } => {
+                    let reason = format!(
+                        "Local phase failed on nodes: {}",
+                        failed_nodes.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(", ")
+                    );
+                    self.mark_job_failed(&job_id, reason).await?;
+                    return Ok(());
+                },
+                JobNodeQuorumResult::TimedOut { completed, total } => {
+                    // If completed=0, job was never started on workers (failover of queued job)
+                    // Use debug level to reduce noise, otherwise warn
+                    let level = if completed == 0 {
+                        Level::Debug
+                    } else {
+                        Level::Warn
+                    };
+                    self.log_job_event(
+                        &job_id,
+                        &level,
+                        &format!(
+                            "Quorum timeout (completed {}/{}); proceeding with leader actions",
+                            completed, total
+                        ),
+                    );
+                },
+                JobNodeQuorumResult::QuorumReached { completed, total } => {
+                    self.log_job_event(
+                        &job_id,
+                        &Level::Debug,
+                        &format!("Quorum reached (completed {}/{})", completed, total),
+                    );
+                },
+            }
         }
 
         if job.job_type.has_leader_actions() {

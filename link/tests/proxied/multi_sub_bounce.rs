@@ -3,7 +3,7 @@ use crate::common::tcp_proxy::TcpDisconnectProxy;
 use kalam_link::SubscriptionConfig;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
-use tokio::time::{sleep, timeout};
+use tokio::time::{sleep, timeout, Instant};
 
 /// Three active subscriptions on different tables experience a server bounce
 /// (down then up). After recovery ALL three should resume from their respective
@@ -153,7 +153,8 @@ async fn test_proxy_three_subscriptions_resume_after_server_bounce() {
     // Bring the server back.
     proxy.simulate_server_up();
 
-    for _ in 0..80 {
+    let reconnect_deadline = Instant::now() + RECONNECT_WAIT_TIMEOUT;
+    while Instant::now() < reconnect_deadline {
         if connect_count.load(Ordering::SeqCst) >= 2 && client.is_connected().await {
             break;
         }

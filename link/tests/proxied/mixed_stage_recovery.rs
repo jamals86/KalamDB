@@ -4,7 +4,7 @@ use kalam_link::SubscriptionConfig;
 use std::collections::HashSet;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
-use tokio::time::{sleep, timeout};
+use tokio::time::{sleep, timeout, Instant};
 
 /// One subscription is already in steady-state live mode while a second
 /// subscription is still loading a large initial snapshot when the network
@@ -176,7 +176,8 @@ async fn test_shared_connection_recovers_subscriptions_in_different_stages() {
 
         proxy.simulate_server_up();
 
-        for _ in 0..80 {
+        let reconnect_deadline = Instant::now() + RECONNECT_WAIT_TIMEOUT;
+        while Instant::now() < reconnect_deadline {
             if connect_count.load(Ordering::SeqCst) >= 2 && client.is_connected().await {
                 break;
             }

@@ -1323,12 +1323,12 @@ Postgres Extension:
 - Lock on the create table statement maybe we can create regular or any table and then we can alter it to be a kalam table with options and also migrate the data which is currently there
 - since these ar eused in both pg_kalam and cluster rename:  KALAMDB_CLUSTER_RPC_ADDR,KALAMDB_CLUSTER_API_ADDR
 - KALAMDB_PG_AUTH_TOKEN is only temporary for now come up with a new auth which we can generate 
-- Check ability to use this syntax: CREATE TABLE compression_test
-(
-...
-)  USING kalamdb
-   WITH (type = 'user', migrate = true, compress = 5, ...);
 - Can we support migrating a current table from postgres to kalamdb using something like: SELECT set_kalam_table('schema.table1', migrate => true, compress => 5, ...); this will convert the current table to a kalamdb table and move the data as well without needing to create a new table and move the data there
 - for parquet stick with only one compression for now
 - Remove the requirement the auth first we can rely on headers instead which will make the connection faster
-- system.live is now the in-memory view for active subscriptions; it no longer persists live subscription state to RocksDB or Raft
+- \cluster list should also display status of each node, the memory and cpu usage of each one of the nodes as well, we need to fetch them from the node we alredy have a communication between the cluster nodes that we formed we can use it here to fetch the status and store them in memory so each one knows about the other followers/masters, it should also display uptime, this should be visible also in the dashboard admin ui and in the cluster page, we already have GetNodeInfoRequest and GetNodeInfoResponse in the raft proto we can use them to fetch.
+- New command \ps to view all running jobs in the system which in fact do select * from system.jobs but with a better formatting
+- We should be able to view all pg sessions opened, learn from how postgres displays the session and add them to the cli as: \sessions which will print all the active grpc sessions between the pg-extension and our server
+- cli: \help doesnt contain all commands there add them for example \cluster commands
+- Check if we still need json between raft commands why not json is only for endpoint and never use it internaly in the server-backend code internally
+

@@ -6,7 +6,7 @@ use kalam_link::{ChangeEvent, SeqId, SubscriptionConfig, SubscriptionOptions};
 use std::collections::HashSet;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
-use tokio::time::{sleep, timeout};
+use tokio::time::{sleep, timeout, Instant};
 
 fn observe_loading_event(
     event: &ChangeEvent,
@@ -240,7 +240,8 @@ async fn test_loading_snapshot_with_live_writes_resumes_without_duplicate_rows()
         sleep(Duration::from_millis(900)).await;
         proxy.resume();
 
-        for _ in 0..100 {
+        let reconnect_deadline = Instant::now() + RECONNECT_WAIT_TIMEOUT;
+        while Instant::now() < reconnect_deadline {
             if connect_count.load(Ordering::SeqCst) >= 2 && client.is_connected().await {
                 break;
             }

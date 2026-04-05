@@ -245,7 +245,7 @@ async fn test_forward_sql_no_auth_header_returns_401() {
     let request = ForwardSqlRequest {
         sql: "INSERT INTO users (name) VALUES ('eve')".to_string(),
         namespace_id: None,
-        params_json: vec![],
+        params: vec![],
         authorization_header: None, // ← no auth
         request_id: None,
     };
@@ -277,7 +277,7 @@ async fn test_forward_sql_empty_auth_header_returns_401() {
     let request = ForwardSqlRequest {
         sql: "SELECT * FROM system.users".to_string(),
         namespace_id: None,
-        params_json: vec![],
+        params: vec![],
         authorization_header: Some("   ".to_string()), // ← whitespace-only
         request_id: None,
     };
@@ -307,7 +307,7 @@ async fn test_forward_sql_basic_auth_is_rejected() {
     let request = ForwardSqlRequest {
         sql: "DROP TABLE users".to_string(),
         namespace_id: None,
-        params_json: vec![],
+        params: vec![],
         authorization_header: Some(basic.to_string()),
         request_id: None,
     };
@@ -342,7 +342,7 @@ async fn test_forward_sql_forged_bearer_token_is_rejected() {
     let request = ForwardSqlRequest {
         sql: "CREATE TABLE secret_exfil (data TEXT)".to_string(),
         namespace_id: None,
-        params_json: vec![],
+        params: vec![],
         authorization_header: Some(forged_jwt.to_string()),
         request_id: None,
     };
@@ -390,7 +390,7 @@ async fn test_forward_sql_rejects_all_malformed_auth_variants() {
         let req = ForwardSqlRequest {
             sql: "SELECT 1".to_string(),
             namespace_id: None,
-            params_json: vec![],
+            params: vec![],
             authorization_header: Some((*auth).to_string()),
             request_id: None,
         };
@@ -439,7 +439,7 @@ async fn test_forward_sql_valid_token_empty_sql_is_not_executed() {
     let req_no_auth = ForwardSqlRequest {
         sql: String::new(),
         namespace_id: None,
-        params_json: vec![],
+        params: vec![],
         authorization_header: None,
         request_id: None,
     };
@@ -455,7 +455,7 @@ async fn test_forward_sql_valid_token_empty_sql_is_not_executed() {
     let req_empty_sql = ForwardSqlRequest {
         sql: String::new(),
         namespace_id: None,
-        params_json: vec![],
+        params: vec![],
         authorization_header: Some("Bearer valid-test-token".to_string()),
         request_id: None,
     };
@@ -471,21 +471,19 @@ async fn test_forward_sql_valid_token_empty_sql_is_not_executed() {
     assert_eq!(rejected.load(Ordering::SeqCst), 1, "Rejected count must remain 1");
 }
 
-/// An oversized payload (8 MiB `params_json`) must not crash the server or
+/// An oversized payload (8 MiB SQL) must not crash the server or
 /// bypass auth checks.  The auth gate runs first and rejects the request
-/// before any deserialization of the payload.
+/// before any execution of the payload.
 #[tokio::test]
 async fn test_forward_sql_oversized_payload_rejected_before_parsing() {
     let (handler, allowed, rejected, _) = SecurityStubHandler::new();
     let handler: Arc<dyn ClusterMessageHandler> = handler;
     let mut client = start_grpc_server_with_handler(handler, PORT_FORWARD_SQL_OVERSIZED).await;
 
-    let oversized_params = vec![0xFF_u8; 8 * 1024 * 1024]; // 8 MiB
-
     let request = ForwardSqlRequest {
-        sql: "INSERT INTO users SELECT * FROM users".to_string(),
+        sql: "A".repeat(8 * 1024 * 1024), // 8 MiB SQL
         namespace_id: None,
-        params_json: oversized_params,
+        params: vec![],
         authorization_header: None, // ← no auth
         request_id: None,
     };
@@ -540,7 +538,7 @@ async fn test_forward_sql_token_replay_is_rejected() {
         let req = ForwardSqlRequest {
             sql: "UPDATE users SET role='system' WHERE name='attacker'".to_string(),
             namespace_id: None,
-            params_json: vec![],
+            params: vec![],
             authorization_header: Some(stolen_token.to_string()),
             request_id: Some(format!("replay-attempt-{}", attempt)),
         };
@@ -631,7 +629,7 @@ async fn test_handler_rejects_none_auth() {
         .handle_forward_sql(kalamdb_raft::ForwardSqlRequest {
             sql: "INSERT INTO audit (msg) VALUES ('test')".to_string(),
             namespace_id: None,
-            params_json: vec![],
+            params: vec![],
             authorization_header: None,
             request_id: None,
         })
@@ -651,7 +649,7 @@ async fn test_handler_rejects_basic_auth() {
         .handle_forward_sql(kalamdb_raft::ForwardSqlRequest {
             sql: "DELETE FROM users WHERE 1=1".to_string(),
             namespace_id: None,
-            params_json: vec![],
+            params: vec![],
             authorization_header: Some("Basic cm9vdDpyb290".to_string()),
             request_id: None,
         })
@@ -675,7 +673,7 @@ async fn test_handler_rejects_forged_bearer() {
         .handle_forward_sql(kalamdb_raft::ForwardSqlRequest {
             sql: "SELECT secret FROM system.config".to_string(),
             namespace_id: None,
-            params_json: vec![],
+            params: vec![],
             authorization_header: Some(forged.to_string()),
             request_id: None,
         })
@@ -695,7 +693,7 @@ async fn test_handler_allows_valid_bearer() {
         .handle_forward_sql(kalamdb_raft::ForwardSqlRequest {
             sql: "INSERT INTO logs (msg) VALUES ('hello')".to_string(),
             namespace_id: None,
-            params_json: vec![],
+            params: vec![],
             authorization_header: Some("Bearer valid-test-token".to_string()),
             request_id: None,
         })
@@ -728,7 +726,7 @@ async fn test_handler_sql_injection_bypasses_auth_but_reaches_sql_layer() {
             .handle_forward_sql(kalamdb_raft::ForwardSqlRequest {
                 sql: (*payload).to_string(),
                 namespace_id: None,
-                params_json: vec![],
+                params: vec![],
                 authorization_header: Some("Bearer valid-test-token".to_string()),
                 request_id: None,
             })
@@ -761,7 +759,7 @@ async fn test_noop_handler_forward_sql_returns_error() {
         .handle_forward_sql(kalamdb_raft::ForwardSqlRequest {
             sql: "DROP TABLE everything".to_string(),
             namespace_id: None,
-            params_json: vec![],
+            params: vec![],
             authorization_header: Some("Bearer valid-test-token".to_string()),
             request_id: None,
         })

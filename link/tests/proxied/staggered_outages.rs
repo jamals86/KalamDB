@@ -131,21 +131,9 @@ async fn test_shared_connection_recovers_across_staggered_outages() {
             sleep(*outage_duration).await;
             proxy.resume();
 
-            for _ in 0..80 {
-                if connect_count.load(Ordering::SeqCst) >= expected_connects
-                    && client.is_connected().await
-                {
-                    break;
-                }
-                sleep(Duration::from_millis(100)).await;
-            }
-
-            assert!(client.is_connected().await, "client should reconnect after {} outage", label);
-            assert!(
-                connect_count.load(Ordering::SeqCst) >= expected_connects,
-                "client should emit a new connect event after {} outage",
-                label
-            );
+            let reconnect_context = format!("staggered {} outage", label);
+            wait_for_reconnect(&client, &connect_count, expected_connects, &reconnect_context)
+                .await;
 
             let live_id = format!("live-{}-{}", index, label);
             writer

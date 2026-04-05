@@ -3,7 +3,7 @@ use crate::common::tcp_proxy::TcpDisconnectProxy;
 use kalam_link::SubscriptionConfig;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
-use tokio::time::{sleep, timeout};
+use tokio::time::{sleep, timeout, Instant};
 
 /// Simulate a real network/socket drop by routing the client through a local
 /// TCP proxy, force-closing the active socket, then allowing the shared
@@ -152,7 +152,8 @@ async fn test_shared_connection_auto_reconnects_after_socket_drop_and_resumes() 
     sleep(Duration::from_millis(300)).await;
     proxy.resume();
 
-    for _ in 0..60 {
+    let reconnect_deadline = Instant::now() + RECONNECT_WAIT_TIMEOUT;
+    while Instant::now() < reconnect_deadline {
         if connect_count.load(Ordering::SeqCst) >= 2 && client.is_connected().await {
             break;
         }

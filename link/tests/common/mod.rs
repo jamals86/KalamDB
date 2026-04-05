@@ -13,6 +13,7 @@ use std::time::Duration;
 use tempfile::TempDir;
 use tokio::runtime::{Handle, Runtime};
 use tokio::sync::Mutex as TokioMutex;
+use tokio::time::{sleep, Instant};
 
 static SERVER_URL: OnceLock<String> = OnceLock::new();
 static ISOLATED_SERVER_URL: OnceLock<String> = OnceLock::new();
@@ -27,6 +28,9 @@ struct AutoTestServer {
     data_dir: PathBuf,
     _running: RunningTestHttpServer,
 }
+
+const AUTO_SERVER_READY_TIMEOUT: Duration = Duration::from_secs(15);
+const AUTO_SERVER_RETRY_INTERVAL: Duration = Duration::from_millis(100);
 
 fn should_auto_start_test_server() -> bool {
     if std::env::var("KALAMDB_SERVER_URL").is_ok() {
@@ -124,37 +128,72 @@ async fn ensure_server_setup(
     base_url: &str,
     root_password: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let client = Client::new();
-    let status = client.get(format!("{}/v1/api/auth/status", base_url)).send().await?;
+    let client = Client::builder().timeout(Duration::from_secs(2)).build()?;
+    let deadline = Instant::now() + AUTO_SERVER_READY_TIMEOUT;
+    let mut last_err = String::new();
 
-    if !status.status().is_success() {
-        return Err(format!("Failed to check setup status: {}", status.status()).into());
+    while Instant::now() < deadline {
+        let status_response = match client.get(format!("{}/v1/api/auth/status", base_url)).send().await {
+            Ok(response) => response,
+            Err(err) => {
+                last_err = format!("auth status request failed: {}", err);
+                sleep(AUTO_SERVER_RETRY_INTERVAL).await;
+                continue;
+            },
+        };
+
+        if !status_response.status().is_success() {
+            last_err = format!("auth status returned {}", status_response.status());
+            sleep(AUTO_SERVER_RETRY_INTERVAL).await;
+            continue;
+        }
+
+        let body: serde_json::Value = match status_response.json().await {
+            Ok(body) => body,
+            Err(err) => {
+                last_err = format!("failed to decode auth status: {}", err);
+                sleep(AUTO_SERVER_RETRY_INTERVAL).await;
+                continue;
+            },
+        };
+
+        let needs_setup = body.get("needs_setup").and_then(|v| v.as_bool()).unwrap_or(false);
+        if !needs_setup {
+            return Ok(());
+        }
+
+        let setup_response = match client
+            .post(format!("{}/v1/api/auth/setup", base_url))
+            .json(&json!({
+                "username": "admin",
+                "password": root_password,
+                "root_password": root_password,
+                "email": null
+            }))
+            .send()
+            .await
+        {
+            Ok(response) => response,
+            Err(err) => {
+                last_err = format!("auth setup request failed: {}", err);
+                sleep(AUTO_SERVER_RETRY_INTERVAL).await;
+                continue;
+            },
+        };
+
+        if setup_response.status().is_success() {
+            return Ok(());
+        }
+
+        let text = setup_response
+            .text()
+            .await
+            .unwrap_or_else(|err| format!("<failed to read setup body: {}>", err));
+        last_err = format!("auth setup failed: {}", text);
+        sleep(AUTO_SERVER_RETRY_INTERVAL).await;
     }
 
-    let body: serde_json::Value = status.json().await?;
-    let needs_setup = body.get("needs_setup").and_then(|v| v.as_bool()).unwrap_or(false);
-
-    if !needs_setup {
-        return Ok(());
-    }
-
-    let setup_response = client
-        .post(format!("{}/v1/api/auth/setup", base_url))
-        .json(&json!({
-            "username": "admin",
-            "password": root_password,
-            "root_password": root_password,
-            "email": null
-        }))
-        .send()
-        .await?;
-
-    if !setup_response.status().is_success() {
-        let text = setup_response.text().await?;
-        return Err(format!("Failed to complete setup: {}", text).into());
-    }
-
-    Ok(())
+    Err(format!("Failed to complete server setup for {}: {}", base_url, last_err).into())
 }
 
 async fn fetch_access_token(
@@ -162,27 +201,56 @@ async fn fetch_access_token(
     username: &str,
     password: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    let response = Client::new()
-        .post(format!("{}/v1/api/auth/login", base_url))
-        .json(&json!({
-            "username": username,
-            "password": password
-        }))
-        .send()
-        .await?;
+    let client = Client::builder().timeout(Duration::from_secs(2)).build()?;
+    let deadline = Instant::now() + AUTO_SERVER_READY_TIMEOUT;
+    let mut last_err = String::new();
 
-    if !response.status().is_success() {
-        let text = response.text().await?;
-        return Err(format!("Login failed: {}", text).into());
+    while Instant::now() < deadline {
+        let response = match client
+            .post(format!("{}/v1/api/auth/login", base_url))
+            .json(&json!({
+                "username": username,
+                "password": password
+            }))
+            .send()
+            .await
+        {
+            Ok(response) => response,
+            Err(err) => {
+                last_err = format!("login request failed: {}", err);
+                sleep(AUTO_SERVER_RETRY_INTERVAL).await;
+                continue;
+            },
+        };
+
+        if !response.status().is_success() {
+            let text = response
+                .text()
+                .await
+                .unwrap_or_else(|err| format!("<failed to read login body: {}>", err));
+            last_err = format!("login failed: {}", text);
+            sleep(AUTO_SERVER_RETRY_INTERVAL).await;
+            continue;
+        }
+
+        let body: serde_json::Value = match response.json().await {
+            Ok(body) => body,
+            Err(err) => {
+                last_err = format!("failed to decode login response: {}", err);
+                sleep(AUTO_SERVER_RETRY_INTERVAL).await;
+                continue;
+            },
+        };
+
+        let token = body
+            .get("access_token")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "Missing access_token in login response".to_string())?;
+
+        return Ok(token.to_string());
     }
 
-    let body: serde_json::Value = response.json().await?;
-    let token = body
-        .get("access_token")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| "Missing access_token in login response".to_string())?;
-
-    Ok(token.to_string())
+    Err(format!("Failed to fetch access token for {}: {}", base_url, last_err).into())
 }
 
 async fn root_access_token_for_base_url(

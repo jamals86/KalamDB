@@ -54,6 +54,11 @@ async fn execute_sql(sql: &str) -> Result<(), String> {
     }
 }
 
+fn is_retryable_consumer_poll_error(message: &str) -> bool {
+    let normalized = message.to_ascii_lowercase();
+    normalized.contains("error decoding") || normalized.contains("network")
+}
+
 async fn wait_for_topic_ready(topic: &str, expected_routes: usize) {
     let sql = format!("SELECT routes FROM system.topics WHERE topic_id = '{}'", topic);
     let deadline = std::time::Instant::now() + Duration::from_secs(30);
@@ -321,7 +326,7 @@ async fn test_topic_high_load_concurrent_publishers() {
                     },
                     Err(err) => {
                         let msg = err.to_string();
-                        if msg.contains("error decoding") || msg.contains("network") {
+                        if is_retryable_consumer_poll_error(&msg) {
                             tokio::time::sleep(Duration::from_millis(200)).await;
                             continue;
                         }
@@ -850,7 +855,7 @@ async fn test_topic_high_load_two_consumers_same_group_single_delivery() {
                     },
                     Err(err) => {
                         let message = err.to_string();
-                        if message.contains("error decoding") || message.contains("network") {
+                        if is_retryable_consumer_poll_error(&message) {
                             tokio::time::sleep(Duration::from_millis(100)).await;
                             continue;
                         }
@@ -997,7 +1002,7 @@ async fn test_topic_fan_out_different_groups_receive_all() {
                         },
                         Err(e) => {
                             let msg = e.to_string();
-                            if msg.contains("error decoding") || msg.contains("network") {
+                            if is_retryable_consumer_poll_error(&msg) {
                                 tokio::time::sleep(Duration::from_millis(100)).await;
                                 continue;
                             }
@@ -1136,7 +1141,7 @@ async fn test_topic_four_consumers_same_group_no_duplicates() {
                     },
                     Err(e) => {
                         let msg = e.to_string();
-                        if msg.contains("error decoding") || msg.contains("network") {
+                        if is_retryable_consumer_poll_error(&msg) {
                             tokio::time::sleep(Duration::from_millis(80)).await;
                             continue;
                         }
@@ -1306,7 +1311,7 @@ async fn test_topic_ack_failure_recovery_no_message_loss_with_latency() {
                 },
                 Err(err) => {
                     let message = err.to_string();
-                    if message.contains("error decoding") || message.contains("network") {
+                    if is_retryable_consumer_poll_error(&message) {
                         tokio::time::sleep(Duration::from_millis(80)).await;
                         continue;
                     }
@@ -1360,7 +1365,7 @@ async fn test_topic_ack_failure_recovery_no_message_loss_with_latency() {
             },
             Err(err) => {
                 let message = err.to_string();
-                if message.contains("error decoding") || message.contains("network") {
+                if is_retryable_consumer_poll_error(&message) {
                     tokio::time::sleep(Duration::from_millis(80)).await;
                     continue;
                 }

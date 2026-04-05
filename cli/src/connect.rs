@@ -386,6 +386,13 @@ pub async fn create_session(
         println!();
         println!("No authentication credentials found.");
         println!("Please enter your credentials to connect to: {}", server_url);
+        if is_localhost_url(server_url) {
+            println!("This server is already configured, so setup is not available here.");
+            println!(
+                "If you started it with scripts/cluster.sh, sign in as 'root' with the configured root password"
+            );
+            println!("(default cluster password: kalamdb123).");
+        }
         println!();
 
         // Prompt for username

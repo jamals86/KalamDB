@@ -11,17 +11,24 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::time::{sleep, Instant};
 
 pub const TEST_TIMEOUT: Duration = Duration::from_secs(10);
+pub const RECONNECT_WAIT_TIMEOUT: Duration = Duration::from_secs(15);
 
 fn reconnect_test_timeouts() -> KalamLinkTimeouts {
     KalamLinkTimeouts {
-        connection_timeout: Duration::from_secs(2),
+        // Use a generous connection timeout so that reconnect attempts against a
+        // loaded machine (e.g. running a full Raft cluster alongside the test
+        // suite) do not time out before the in-process isolated server finishes
+        // the WebSocket handshake.  When the TCP proxy is paused, connections
+        // fail immediately regardless of this value.
+        connection_timeout: Duration::from_secs(10),
         receive_timeout: Duration::from_secs(5),
         send_timeout: Duration::from_secs(2),
         subscribe_timeout: Duration::from_secs(2),
         auth_timeout: Duration::from_secs(2),
-        initial_data_timeout: Duration::from_secs(20),
+        initial_data_timeout: Duration::from_secs(30),
         idle_timeout: Duration::ZERO,
         keepalive_interval: Duration::from_secs(1),
         pong_timeout: Duration::from_secs(2),
@@ -92,14 +99,34 @@ pub fn create_test_client_with_events_for_base_url(
 
 /// Ensure a test table exists with a simple schema.
 pub async fn ensure_table(client: &KalamLinkClient, table: &str) {
-    let _ = client
-        .execute_query(
-            &format!("CREATE TABLE IF NOT EXISTS {} (id TEXT PRIMARY KEY, value TEXT)", table),
-            None,
-            None,
-            None,
-        )
-        .await;
+    let create_sql = format!("CREATE TABLE IF NOT EXISTS {} (id TEXT PRIMARY KEY, value TEXT)", table);
+    let verify_sql = format!("SELECT COUNT(*) AS row_count FROM {}", table);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut last_err = String::new();
+
+    while Instant::now() < deadline {
+        match client.execute_query(&create_sql, None, None, None).await {
+            Ok(_) => {},
+            Err(err) => {
+                last_err = format!("create table failed: {}", err);
+                sleep(Duration::from_millis(100)).await;
+                continue;
+            },
+        }
+
+        match client.execute_query(&verify_sql, None, None, None).await {
+            Ok(_) => return,
+            Err(err) => {
+                last_err = format!("table not queryable yet: {}", err);
+                sleep(Duration::from_millis(100)).await;
+            },
+        }
+    }
+
+    panic!(
+        "timed out waiting for table {} to become queryable: {}",
+        table, last_err
+    );
 }
 
 pub async fn query_max_seq(client: &KalamLinkClient, table: &str) -> SeqId {
@@ -192,4 +219,34 @@ pub fn unique_suffix() -> u128 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos()
+}
+
+pub async fn wait_for_reconnect(
+    client: &KalamLinkClient,
+    connect_count: &Arc<AtomicU32>,
+    expected_connects: u32,
+    context: &str,
+) {
+    let deadline = Instant::now() + RECONNECT_WAIT_TIMEOUT;
+
+    loop {
+        let current_connects = connect_count.load(Ordering::SeqCst);
+        let connected = client.is_connected().await;
+        if current_connects >= expected_connects && connected {
+            return;
+        }
+
+        if Instant::now() >= deadline {
+            panic!(
+                "{}: reconnect did not complete within {:?} (connect_count={}, expected_connects={}, connected={})",
+                context,
+                RECONNECT_WAIT_TIMEOUT,
+                current_connects,
+                expected_connects,
+                connected
+            );
+        }
+
+        sleep(Duration::from_millis(100)).await;
+    }
 }

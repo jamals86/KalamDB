@@ -6,18 +6,52 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use kalamdb_auth::{authenticate, AuthRequest, CoreUsersRepo, UserRepository};
-use kalamdb_commons::models::{ConnectionInfo, NamespaceId};
+use kalamdb_commons::conversions::{
+    mask_sensitive_rows_for_role, record_batch_to_json_arrays, schema_fields_from_arrow_schema,
+};
+use kalamdb_commons::models::{ConnectionInfo, KalamCellValue, NamespaceId, Username};
+use kalamdb_commons::schemas::SchemaField;
+use kalamdb_commons::Role;
 use kalamdb_raft::{
-    ClusterMessageHandler, ForwardSqlRequest, ForwardSqlResponsePayload, GetNodeInfoRequest,
-    GetNodeInfoResponse, PingRequest, RaftExecutor,
+    forward_sql_param, ClusterMessageHandler, ForwardSqlParam, ForwardSqlRequest,
+    ForwardSqlResponsePayload, GetNodeInfoRequest, GetNodeInfoResponse, PingRequest,
+    RaftExecutor,
 };
 use kalamdb_session::{AuthMethod, AuthSession};
-use serde_json::Value as JsonValue;
+use serde::Serialize;
 
 use crate::app_context::AppContext;
-use crate::providers::arrow_json_conversion::json_value_to_scalar_strict;
 use crate::sql::context::ExecutionContext;
 use crate::sql::ExecutionResult;
+
+// ── Response types (match SqlResponse JSON shape, no intermediate Value tree) ──
+
+#[derive(Serialize)]
+struct ForwardedResponse<'a> {
+    status: &'static str,
+    results: &'a [ForwardedResult],
+    took: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<ForwardedError<'a>>,
+}
+
+#[derive(Serialize)]
+struct ForwardedResult {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    schema: Vec<SchemaField>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rows: Option<Vec<Vec<KalamCellValue>>>,
+    row_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
+    as_user: Username,
+}
+
+#[derive(Serialize)]
+struct ForwardedError<'a> {
+    code: &'a str,
+    message: &'a str,
+}
 
 /// Core implementation of cluster message handling.
 pub struct CoreClusterHandler {
@@ -35,62 +69,109 @@ impl CoreClusterHandler {
         message: &str,
         started_at: Instant,
     ) -> ForwardSqlResponsePayload {
-        let body = serde_json::json!({
-            "status": "error",
-            "results": [],
-            "took": started_at.elapsed().as_secs_f64() * 1000.0,
-            "error": {
-                "code": error_code,
-                "message": message,
-            }
-        });
-        let body = serde_json::to_vec(&body).unwrap_or_else(|_| {
+        let resp = ForwardedResponse {
+            status: "error",
+            results: &[],
+            took: started_at.elapsed().as_secs_f64() * 1000.0,
+            error: Some(ForwardedError { code: error_code, message }),
+        };
+        let body = serde_json::to_vec(&resp).unwrap_or_else(|_| {
             b"{\"status\":\"error\",\"results\":[],\"took\":0,\"error\":{\"code\":\"INTERNAL_ERROR\",\"message\":\"Failed to serialize error payload\"}}".to_vec()
         });
-
         ForwardSqlResponsePayload { status_code, body }
     }
 
-    fn execution_result_to_json(result: ExecutionResult) -> serde_json::Value {
+    fn forwarded_param_to_scalar(
+        param: &ForwardSqlParam,
+    ) -> Result<datafusion::scalar::ScalarValue, String> {
+        match param.value.as_ref() {
+            Some(forward_sql_param::Value::NullValue(_)) => Ok(datafusion::scalar::ScalarValue::Utf8(None)),
+            Some(forward_sql_param::Value::BoolValue(v)) => Ok(datafusion::scalar::ScalarValue::Boolean(Some(*v))),
+            Some(forward_sql_param::Value::Int64Value(v)) => Ok(datafusion::scalar::ScalarValue::Int64(Some(*v))),
+            Some(forward_sql_param::Value::Float64Value(v)) => Ok(datafusion::scalar::ScalarValue::Float64(Some(*v))),
+            Some(forward_sql_param::Value::StringValue(v)) => Ok(datafusion::scalar::ScalarValue::Utf8(Some(v.clone()))),
+            None => Err("Missing parameter value".to_string()),
+        }
+    }
+
+    fn execution_result_to_forwarded(
+        result: ExecutionResult,
+        as_user: &Username,
+        user_role: Role,
+    ) -> Result<ForwardedResult, String> {
         match result {
-            ExecutionResult::Success { message } => {
-                serde_json::json!({"row_count": 0, "message": message})
-            },
-            ExecutionResult::Rows { row_count, .. } => serde_json::json!({"row_count": row_count}),
-            ExecutionResult::Inserted { rows_affected } => serde_json::json!({
-                "row_count": rows_affected,
-                "message": format!("Inserted {} row(s)", rows_affected),
+            ExecutionResult::Success { message } => Ok(ForwardedResult {
+                schema: Vec::new(),
+                rows: None,
+                row_count: 0,
+                message: Some(message),
+                as_user: as_user.clone(),
             }),
-            ExecutionResult::Updated { rows_affected } => serde_json::json!({
-                "row_count": rows_affected,
-                "message": format!("Updated {} row(s)", rows_affected),
-            }),
-            ExecutionResult::Deleted { rows_affected } => serde_json::json!({
-                "row_count": rows_affected,
-                "message": format!("Deleted {} row(s)", rows_affected),
-            }),
-            ExecutionResult::Flushed {
-                tables,
-                bytes_written,
-            } => serde_json::json!({
-                "row_count": tables.len(),
-                "message": format!("Flushed {} table(s), {} bytes written", tables.len(), bytes_written),
-            }),
-            ExecutionResult::Subscription {
-                subscription_id,
-                channel,
-                select_query,
-            } => serde_json::json!({
-                "row_count": 1,
-                "subscription": {
-                    "id": subscription_id,
-                    "channel": channel,
-                    "sql": select_query,
+            ExecutionResult::Rows { batches, row_count, schema } => {
+                let arrow_schema = batches.first().map(|b| b.schema()).or(schema);
+                let schema_fields = arrow_schema
+                    .as_ref()
+                    .map(schema_fields_from_arrow_schema)
+                    .unwrap_or_default();
+
+                let mut rows = Vec::new();
+                for batch in &batches {
+                    let mut batch_rows = record_batch_to_json_arrays(batch)
+                        .map_err(|e| format!("Failed to convert batch: {}", e))?;
+                    rows.append(&mut batch_rows);
                 }
+
+                mask_sensitive_rows_for_role(&mut rows, &schema_fields, user_role);
+
+                Ok(ForwardedResult {
+                    schema: schema_fields,
+                    rows: Some(rows),
+                    row_count,
+                    message: None,
+                    as_user: as_user.clone(),
+                })
+            },
+            ExecutionResult::Inserted { rows_affected } => Ok(ForwardedResult {
+                schema: Vec::new(),
+                rows: None,
+                row_count: rows_affected,
+                message: Some(format!("Inserted {} row(s)", rows_affected)),
+                as_user: as_user.clone(),
             }),
-            ExecutionResult::JobKilled { job_id, status } => serde_json::json!({
-                "row_count": 1,
-                "message": format!("Job {} killed: {}", job_id, status),
+            ExecutionResult::Updated { rows_affected } => Ok(ForwardedResult {
+                schema: Vec::new(),
+                rows: None,
+                row_count: rows_affected,
+                message: Some(format!("Updated {} row(s)", rows_affected)),
+                as_user: as_user.clone(),
+            }),
+            ExecutionResult::Deleted { rows_affected } => Ok(ForwardedResult {
+                schema: Vec::new(),
+                rows: None,
+                row_count: rows_affected,
+                message: Some(format!("Deleted {} row(s)", rows_affected)),
+                as_user: as_user.clone(),
+            }),
+            ExecutionResult::Flushed { tables, bytes_written } => Ok(ForwardedResult {
+                schema: Vec::new(),
+                rows: None,
+                row_count: tables.len(),
+                message: Some(format!("Flushed {} table(s), {} bytes written", tables.len(), bytes_written)),
+                as_user: as_user.clone(),
+            }),
+            ExecutionResult::Subscription { subscription_id, channel, select_query } => Ok(ForwardedResult {
+                schema: Vec::new(),
+                rows: None,
+                row_count: 1,
+                message: Some(format!("Subscription {} on channel {} for query: {}", subscription_id, channel, select_query)),
+                as_user: as_user.clone(),
+            }),
+            ExecutionResult::JobKilled { job_id, status } => Ok(ForwardedResult {
+                schema: Vec::new(),
+                rows: None,
+                row_count: 1,
+                message: Some(format!("Job {} killed: {}", job_id, status)),
+                as_user: as_user.clone(),
             }),
         }
     }
@@ -144,10 +225,13 @@ impl ClusterMessageHandler for CoreClusterHandler {
             ));
         }
 
+        let authenticated_username = auth_result.user.username.clone();
+        let authenticated_role = auth_result.user.role;
+
         let mut session = AuthSession::with_username_and_auth_details(
             auth_result.user.user_id,
-            auth_result.user.username,
-            auth_result.user.role,
+            authenticated_username.clone(),
+            authenticated_role,
             connection_info,
             auth_result.method,
         );
@@ -173,38 +257,20 @@ impl ClusterMessageHandler for CoreClusterHandler {
             exec_ctx = exec_ctx.with_namespace_id(namespace_id);
         }
 
-        let parsed_params: Option<Vec<JsonValue>> = if req.params_json.is_empty() {
-            None
-        } else {
-            match serde_json::from_slice(&req.params_json) {
-                Ok(v) => v,
+        let mut scalar_params = Vec::with_capacity(req.params.len());
+        for (idx, param) in req.params.iter().enumerate() {
+            let scalar = match Self::forwarded_param_to_scalar(param) {
+                Ok(value) => value,
                 Err(e) => {
                     return Ok(Self::error_payload(
                         400,
-                        "INVALID_INPUT",
-                        &format!("Invalid params_json payload: {}", e),
+                        "INVALID_PARAMETER",
+                        &format!("Parameter ${} invalid: {}", idx + 1, e),
                         started_at,
                     ));
                 },
-            }
-        };
-
-        let mut scalar_params = Vec::new();
-        if let Some(params) = parsed_params.as_ref() {
-            for (idx, param) in params.iter().enumerate() {
-                let scalar = match json_value_to_scalar_strict(param) {
-                    Ok(value) => value,
-                    Err(e) => {
-                        return Ok(Self::error_payload(
-                            400,
-                            "INVALID_PARAMETER",
-                            &format!("Parameter ${} invalid: {}", idx + 1, e),
-                            started_at,
-                        ));
-                    },
-                };
-                scalar_params.push(scalar);
-            }
+            };
+            scalar_params.push(scalar);
         }
 
         let statements = match kalamdb_sql::split_statements(&req.sql) {
@@ -257,15 +323,31 @@ impl ClusterMessageHandler for CoreClusterHandler {
                     ));
                 },
             };
-            results.push(Self::execution_result_to_json(exec_result));
+            let result = match Self::execution_result_to_forwarded(
+                exec_result,
+                &authenticated_username,
+                authenticated_role,
+            ) {
+                Ok(r) => r,
+                Err(err) => {
+                    return Ok(Self::error_payload(
+                        500,
+                        "INTERNAL_ERROR",
+                        &format!("Failed to serialize forwarded SQL result: {}", err),
+                        started_at,
+                    ));
+                },
+            };
+            results.push(result);
         }
 
-        let body = serde_json::json!({
-            "status": "success",
-            "results": results,
-            "took": started_at.elapsed().as_secs_f64() * 1000.0,
-        });
-        let body = serde_json::to_vec(&body)
+        let resp = ForwardedResponse {
+            status: "success",
+            results: &results,
+            took: started_at.elapsed().as_secs_f64() * 1000.0,
+            error: None,
+        };
+        let body = serde_json::to_vec(&resp)
             .map_err(|e| format!("Failed to serialize forwarded SQL success payload: {}", e))?;
 
         Ok(ForwardSqlResponsePayload {
@@ -318,5 +400,101 @@ impl ClusterMessageHandler for CoreClusterHandler {
             os: self_node.os.clone(),
             arch: self_node.arch.clone(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CoreClusterHandler;
+    use crate::sql::ExecutionResult;
+    use arrow::array::{Int64Array, StringArray};
+    use arrow::datatypes::{DataType, Field, Schema};
+    use arrow::record_batch::RecordBatch;
+    use datafusion::scalar::ScalarValue;
+    use kalamdb_commons::conversions::with_kalam_data_type_metadata;
+    use kalamdb_commons::models::datatypes::KalamDataType;
+    use kalamdb_commons::models::Role;
+    use kalamdb_commons::models::Username;
+    use kalamdb_raft::ForwardSqlParam;
+    use std::sync::Arc;
+
+    #[test]
+    fn forwarded_rows_include_schema_and_rows() {
+        let schema = Arc::new(Schema::new(vec![with_kalam_data_type_metadata(
+            Field::new("count", DataType::Int64, false),
+            &KalamDataType::BigInt,
+        )]));
+        let batch = RecordBatch::try_new(
+            Arc::clone(&schema),
+            vec![Arc::new(Int64Array::from(vec![0_i64]))],
+        )
+        .expect("build record batch");
+
+        let result = CoreClusterHandler::execution_result_to_forwarded(
+            ExecutionResult::Rows {
+                batches: vec![batch],
+                row_count: 1,
+                schema: Some(schema),
+            },
+            &Username::from("root"),
+            Role::System,
+        )
+        .expect("serialize rows result");
+
+        assert_eq!(result.schema[0].name, "count");
+        assert_eq!(result.row_count, 1);
+        let rows = result.rows.unwrap();
+        assert_eq!(rows[0][0].as_str(), Some("0"));
+        assert_eq!(result.as_user.as_str(), "root");
+    }
+
+    #[test]
+    fn forwarded_rows_mask_sensitive_fields_for_non_admins() {
+        let schema = Arc::new(Schema::new(vec![with_kalam_data_type_metadata(
+            Field::new("password_hash", DataType::Utf8, false),
+            &KalamDataType::Text,
+        )]));
+        let batch = RecordBatch::try_new(
+            Arc::clone(&schema),
+            vec![Arc::new(StringArray::from(vec!["secret-hash"]))],
+        )
+        .expect("build record batch");
+
+        let result = CoreClusterHandler::execution_result_to_forwarded(
+            ExecutionResult::Rows {
+                batches: vec![batch],
+                row_count: 1,
+                schema: Some(schema),
+            },
+            &Username::from("alice"),
+            Role::User,
+        )
+        .expect("serialize masked rows result");
+
+        let rows = result.rows.unwrap();
+        assert_eq!(rows[0][0].as_str(), Some("***"));
+    }
+
+    #[test]
+    fn forwarded_typed_params_decode_to_scalars() {
+        let null_scalar = CoreClusterHandler::forwarded_param_to_scalar(&ForwardSqlParam::null())
+            .expect("decode null param");
+        let bool_scalar =
+            CoreClusterHandler::forwarded_param_to_scalar(&ForwardSqlParam::boolean(true))
+                .expect("decode bool param");
+        let int_scalar = CoreClusterHandler::forwarded_param_to_scalar(&ForwardSqlParam::int64(7))
+            .expect("decode int param");
+        let float_scalar =
+            CoreClusterHandler::forwarded_param_to_scalar(&ForwardSqlParam::float64(2.5))
+                .expect("decode float param");
+        let text_scalar =
+            CoreClusterHandler::forwarded_param_to_scalar(&ForwardSqlParam::text("abc"))
+                .expect("decode string param");
+
+        assert_eq!(null_scalar, ScalarValue::Utf8(None));
+        assert_eq!(bool_scalar, ScalarValue::Boolean(Some(true)));
+        assert_eq!(int_scalar, ScalarValue::Int64(Some(7)));
+        assert_eq!(float_scalar, ScalarValue::Float64(Some(2.5)));
+        assert_eq!(text_scalar, ScalarValue::Utf8(Some("abc".to_string())));
     }
 }

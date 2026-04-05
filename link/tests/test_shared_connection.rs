@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::time::{sleep, timeout};
+use tokio::time::{sleep, timeout, Instant};
 
 mod common;
 
@@ -81,14 +81,34 @@ fn create_test_client_with_events_for_base_url(
 
 /// Ensure a test table exists with a simple schema.
 async fn ensure_table(client: &KalamLinkClient, table: &str) {
-    let _ = client
-        .execute_query(
-            &format!("CREATE TABLE IF NOT EXISTS {} (id TEXT PRIMARY KEY, value TEXT)", table),
-            None,
-            None,
-            None,
-        )
-        .await;
+    let create_sql = format!("CREATE TABLE IF NOT EXISTS {} (id TEXT PRIMARY KEY, value TEXT)", table);
+    let verify_sql = format!("SELECT COUNT(*) AS row_count FROM {}", table);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut last_err = String::new();
+
+    while Instant::now() < deadline {
+        match client.execute_query(&create_sql, None, None, None).await {
+            Ok(_) => {},
+            Err(err) => {
+                last_err = format!("create table failed: {}", err);
+                sleep(Duration::from_millis(100)).await;
+                continue;
+            },
+        }
+
+        match client.execute_query(&verify_sql, None, None, None).await {
+            Ok(_) => return,
+            Err(err) => {
+                last_err = format!("table not queryable yet: {}", err);
+                sleep(Duration::from_millis(100)).await;
+            },
+        }
+    }
+
+    panic!(
+        "timed out waiting for table {} to become queryable: {}",
+        table, last_err
+    );
 }
 
 async fn query_max_seq(client: &KalamLinkClient, table: &str) -> SeqId {

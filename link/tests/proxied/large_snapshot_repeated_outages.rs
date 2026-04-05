@@ -110,15 +110,7 @@ async fn test_large_initial_snapshot_survives_repeated_outages() {
             .expect("insert first outage row");
 
         proxy.simulate_server_up();
-
-        for _ in 0..80 {
-            if connect_count.load(Ordering::SeqCst) >= 2 && client.is_connected().await {
-                break;
-            }
-            sleep(Duration::from_millis(100)).await;
-        }
-
-        assert!(client.is_connected().await, "client should reconnect after first outage");
+        wait_for_reconnect(&client, &connect_count, 2, "large snapshot first outage").await;
 
         for _ in 0..6 {
             match timeout(Duration::from_millis(350), sub.next()).await {
@@ -169,15 +161,7 @@ async fn test_large_initial_snapshot_survives_repeated_outages() {
 
         sleep(Duration::from_millis(900)).await;
         proxy.resume();
-
-        for _ in 0..100 {
-            if connect_count.load(Ordering::SeqCst) >= 3 && client.is_connected().await {
-                break;
-            }
-            sleep(Duration::from_millis(100)).await;
-        }
-
-        assert!(client.is_connected().await, "client should reconnect after second outage");
+        wait_for_reconnect(&client, &connect_count, 3, "large snapshot second outage").await;
 
         writer
             .execute_query(

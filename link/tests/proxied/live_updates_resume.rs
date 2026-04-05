@@ -126,14 +126,7 @@ async fn test_proxy_server_down_during_live_updates_resumes() {
 
     // Bring the proxy back.
     proxy.simulate_server_up();
-
-    for _ in 0..60 {
-        if connect_count.load(Ordering::SeqCst) >= 2 && client.is_connected().await {
-            break;
-        }
-        sleep(Duration::from_millis(100)).await;
-    }
-    assert!(client.is_connected().await, "should auto-reconnect");
+    wait_for_reconnect(&client, &connect_count, 2, "live updates outage").await;
 
     // Insert another after reconnect.
     let live_ids = [

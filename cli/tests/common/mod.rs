@@ -310,13 +310,7 @@ impl TestAuthManager {
         base_url: &str,
         root_password: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        if self
-            .token_for_url_cached(base_url, admin_username(), admin_password())
-            .await
-            .is_ok()
-        {
-            return Ok(());
-        }
+        invalidate_cached_token_for_credentials(base_url, admin_username(), admin_password());
 
         let root_token = self.token_for_url_cached(base_url, "root", root_password).await?;
         let client = Client::new();
@@ -1597,8 +1591,14 @@ pub async fn execute_sql_via_http_as(
     let mut last_parsed: Option<serde_json::Value> = None;
 
     for attempt in 0..5 {
+        let base_url = if is_cluster_mode() {
+            leader_url().unwrap_or_else(|| server_url().to_string())
+        } else {
+            server_url().to_string()
+        };
+
         let response = client
-            .post(format!("{}/v1/api/sql", server_url()))
+            .post(format!("{}/v1/api/sql", base_url))
             .header("Authorization", format!("Bearer {}", token))
             .json(&json!({ "sql": sql }))
             .send()
@@ -2629,7 +2629,8 @@ fn execute_sql_via_cli_as_with_args_and_urls(
                             retry_after_attempt = true;
                             break;
                         }
-                        if err_msg.to_lowercase().contains("invalid username or password")
+                        if (err_msg.to_lowercase().contains("invalid username or password")
+                            || err_msg.to_lowercase().contains("user not found"))
                             && (username == admin_username() || username == default_username())
                         {
                             let _ = force_reset_admin_for_url(url);
