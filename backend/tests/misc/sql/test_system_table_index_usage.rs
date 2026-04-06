@@ -311,7 +311,7 @@ async fn test_system_live_basic() {
     let server = TestServer::new_shared().await;
 
     let manager = server.app_context.live_query_manager();
-    let registry = manager.registry();
+    let registry = server.app_context.connection_registry();
     let ns = consolidated_helpers::unique_namespace("system_live_basic");
     let user_id = UserId::new("root");
     let conn_id = ConnectionId::new("conn_live_basic");

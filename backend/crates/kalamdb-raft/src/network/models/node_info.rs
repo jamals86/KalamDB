@@ -79,6 +79,7 @@ pub struct GetNodeInfoResponse {
     pub arch: Option<String>,
 
     /// Current KalamDB process memory usage in megabytes.
+    /// On macOS this is physical footprint; elsewhere it is RSS.
     #[prost(uint64, optional, tag = "14")]
     pub memory_usage_mb: Option<u64>,
 

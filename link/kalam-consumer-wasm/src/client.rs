@@ -1,10 +1,12 @@
 use base64::Engine;
-use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
-use kalam_consumer::models::{AckResponse, ConsumeMessage, ConsumeResponse, RowData, Username};
+use link_common::models::{AckResponse, ConsumeMessage, ConsumeResponse, RowData, Username};
 
-use crate::helpers::{fetch_json_response, response_text, topic_request_error};
+use crate::helpers::{
+    fetch_json_response, js_value_to_json_string, response_text, serialize_json_to_js_value,
+    topic_request_error,
+};
 
 #[wasm_bindgen]
 pub struct KalamConsumerClient {
@@ -16,9 +18,7 @@ impl KalamConsumerClient {
     #[wasm_bindgen(constructor)]
     pub fn new(url: String) -> Result<KalamConsumerClient, JsValue> {
         if !url.starts_with("http://") && !url.starts_with("https://") {
-            return Err(JsValue::from_str(
-                "Base URL must start with http:// or https://",
-            ));
+            return Err(JsValue::from_str("Base URL must start with http:// or https://"));
         }
 
         Ok(Self {
@@ -31,10 +31,9 @@ impl KalamConsumerClient {
         auth_header: Option<String>,
         request: JsValue,
     ) -> Result<JsValue, JsValue> {
-        let request_value: serde_json::Value = serde_wasm_bindgen::from_value(request)
+        let body = js_value_to_json_string(&request, "Consume request")?;
+        let request_value: serde_json::Value = serde_json::from_str(&body)
             .map_err(|error| JsValue::from_str(&format!("Invalid consume request: {}", error)))?;
-        let body = serde_json::to_string(&request_value)
-            .map_err(|error| JsValue::from_str(&format!("Failed to serialize consume request: {}", error)))?;
 
         let response = fetch_json_response(
             &format!("{}/v1/api/topics/consume", self.url),
@@ -62,11 +61,7 @@ impl KalamConsumerClient {
             .unwrap_or(0) as u32;
         let response = decode_consume_response(&text, topic, group_id, fallback_partition)?;
 
-        response
-            .serialize(&serde_wasm_bindgen::Serializer::json_compatible())
-            .map_err(|error| {
-                JsValue::from_str(&format!("Failed to serialize consume response: {}", error))
-            })
+        serialize_json_to_js_value(&response, "consume response")
     }
 
     pub async fn ack(
@@ -74,10 +69,9 @@ impl KalamConsumerClient {
         auth_header: Option<String>,
         request: JsValue,
     ) -> Result<JsValue, JsValue> {
-        let request_value: serde_json::Value = serde_wasm_bindgen::from_value(request)
+        let body = js_value_to_json_string(&request, "Ack request")?;
+        let request_value: serde_json::Value = serde_json::from_str(&body)
             .map_err(|error| JsValue::from_str(&format!("Invalid ack request: {}", error)))?;
-        let body = serde_json::to_string(&request_value)
-            .map_err(|error| JsValue::from_str(&format!("Failed to serialize ack request: {}", error)))?;
 
         let response = fetch_json_response(
             &format!("{}/v1/api/topics/ack", self.url),
@@ -91,28 +85,22 @@ impl KalamConsumerClient {
             return Err(topic_request_error(status, &text, "Ack failed"));
         }
 
-        let raw: serde_json::Value = serde_json::from_str(&text)
-            .map_err(|error| JsValue::from_str(&format!("Failed to parse ack response: {}", error)))?;
+        let raw: serde_json::Value = serde_json::from_str(&text).map_err(|error| {
+            JsValue::from_str(&format!("Failed to parse ack response: {}", error))
+        })?;
         let fallback_offset = request_value
             .get("upto_offset")
             .and_then(serde_json::Value::as_u64)
             .unwrap_or(0);
         let response = AckResponse {
-            success: raw
-                .get("success")
-                .and_then(serde_json::Value::as_bool)
-                .unwrap_or(true),
+            success: raw.get("success").and_then(serde_json::Value::as_bool).unwrap_or(true),
             acknowledged_offset: raw
                 .get("acknowledged_offset")
                 .and_then(serde_json::Value::as_u64)
                 .unwrap_or(fallback_offset),
         };
 
-        response
-            .serialize(&serde_wasm_bindgen::Serializer::json_compatible())
-            .map_err(|error| {
-                JsValue::from_str(&format!("Failed to serialize ack response: {}", error))
-            })
+        serialize_json_to_js_value(&response, "ack response")
     }
 }
 
@@ -122,8 +110,9 @@ fn decode_consume_response(
     group_id: &str,
     fallback_partition: u32,
 ) -> Result<ConsumeResponse, JsValue> {
-    let raw: serde_json::Value = serde_json::from_str(text)
-        .map_err(|error| JsValue::from_str(&format!("Failed to parse consume response: {}", error)))?;
+    let raw: serde_json::Value = serde_json::from_str(text).map_err(|error| {
+        JsValue::from_str(&format!("Failed to parse consume response: {}", error))
+    })?;
     let messages = raw
         .get("messages")
         .and_then(serde_json::Value::as_array)
@@ -137,14 +126,8 @@ fn decode_consume_response(
 
     Ok(ConsumeResponse {
         messages,
-        next_offset: raw
-            .get("next_offset")
-            .and_then(serde_json::Value::as_u64)
-            .unwrap_or(0),
-        has_more: raw
-            .get("has_more")
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(false),
+        next_offset: raw.get("next_offset").and_then(serde_json::Value::as_u64).unwrap_or(0),
+        has_more: raw.get("has_more").and_then(serde_json::Value::as_bool).unwrap_or(false),
     })
 }
 
@@ -164,18 +147,12 @@ fn decode_consume_message(
             .get("source_table")
             .and_then(serde_json::Value::as_str)
             .map(ToOwned::to_owned),
-        op: raw
-            .get("op")
-            .and_then(serde_json::Value::as_str)
-            .map(ToOwned::to_owned),
+        op: raw.get("op").and_then(serde_json::Value::as_str).map(ToOwned::to_owned),
         timestamp_ms: raw
             .get("timestamp_ms")
             .and_then(serde_json::Value::as_u64)
             .or_else(|| raw.get("ts").and_then(serde_json::Value::as_u64)),
-        offset: raw
-            .get("offset")
-            .and_then(serde_json::Value::as_u64)
-            .unwrap_or(0),
+        offset: raw.get("offset").and_then(serde_json::Value::as_u64).unwrap_or(0),
         partition_id: raw
             .get("partition_id")
             .and_then(serde_json::Value::as_u64)
@@ -186,10 +163,7 @@ fn decode_consume_message(
             .unwrap_or(topic)
             .to_string(),
         group_id: group_id.to_string(),
-        username: raw
-            .get("username")
-            .and_then(serde_json::Value::as_str)
-            .map(Username::from),
+        username: raw.get("username").and_then(serde_json::Value::as_str).map(Username::from),
         value: decode_payload_value(raw.get("payload")),
     }
 }

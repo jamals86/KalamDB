@@ -18,11 +18,3 @@ pub struct SubscriptionResult {
     /// Contains column name, data type, and index for each field
     pub schema: Vec<SchemaField>,
 }
-
-/// Registry statistics for both WebSocket connections and topic consumers
-#[derive(Debug, Clone)]
-pub struct RegistryStats {
-    pub total_connections: usize,
-    pub total_subscriptions: usize,
-    pub node_id: String,
-}

@@ -11,8 +11,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Sequence ID for MVCC versioning (Snowflake layout: timestamp | worker | seq)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
-#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct SeqId(i64);
 
 impl SeqId {

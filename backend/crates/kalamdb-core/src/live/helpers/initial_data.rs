@@ -608,7 +608,7 @@ mod tests {
             InitialDataFetcher::new(app_context.base_session_context(), schema_registry.clone());
         let sql_executor = Arc::new(SqlExecutor::new(
             app_context.clone(),
-            Arc::new(HandlerRegistry::new(app_context.clone())),
+            Arc::new(HandlerRegistry::new()),
         ));
         fetcher.set_sql_executor(sql_executor);
 
@@ -755,7 +755,7 @@ mod tests {
             InitialDataFetcher::new(app_context.base_session_context(), schema_registry.clone());
         let sql_executor = Arc::new(SqlExecutor::new(
             app_context.clone(),
-            Arc::new(HandlerRegistry::new(app_context.clone())),
+            Arc::new(HandlerRegistry::new()),
         ));
         fetcher.set_sql_executor(sql_executor);
         let user_id = UserId::new("userb");
@@ -936,7 +936,7 @@ mod tests {
             InitialDataFetcher::new(app_context.base_session_context(), schema_registry.clone());
         let sql_executor = Arc::new(SqlExecutor::new(
             app_context.clone(),
-            Arc::new(HandlerRegistry::new(app_context.clone())),
+            Arc::new(HandlerRegistry::new()),
         ));
         fetcher.set_sql_executor(sql_executor);
         let user_id = UserId::new("userc");

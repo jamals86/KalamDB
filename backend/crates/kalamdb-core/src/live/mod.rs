@@ -25,7 +25,7 @@ pub use kalamdb_commons::NodeId;
 pub use models::{
     BufferedNotification, ChangeNotification, ChangeType, ConnectionEvent, ConnectionRegistration,
     ConnectionState, EventReceiver, EventSender, InitialLoadState, NotificationReceiver,
-    NotificationSender, RegistryStats, SharedConnectionState,
+    NotificationSender, SharedConnectionState,
     SubscriptionFlowControl, SubscriptionHandle, SubscriptionResult, SubscriptionState,
     EVENT_CHANNEL_CAPACITY, NOTIFICATION_CHANNEL_CAPACITY,
 };
@@ -37,7 +37,6 @@ pub use manager::{ConnectionsManager, LiveQueryManager};
 pub use helpers::{
     filter_eval::{matches as filter_matches, parse_where_clause},
     initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult},
-    query_parser::QueryParser,
 };
 
 // Re-export from other modules

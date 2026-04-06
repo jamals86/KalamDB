@@ -8,8 +8,6 @@ use crate::models::RowData;
 /// Contains the message payload (decoded from base64), metadata about the
 /// source operation, and positioning information for acknowledgment.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(all(feature = "wasm", feature = "consumer"), derive(tsify_next::Tsify))]
-#[cfg_attr(all(feature = "wasm", feature = "consumer"), tsify(into_wasm_abi, from_wasm_abi))]
 pub struct ConsumeMessage {
     /// Unique message identifier
     #[serde(skip_serializing_if = "Option::is_none")]

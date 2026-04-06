@@ -1,6 +1,7 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
+use serde::Serialize;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
@@ -53,6 +54,18 @@ pub(crate) fn create_promise() -> (js_sys::Promise, js_sys::Function, js_sys::Fu
     });
 
     (promise, resolve_fn.unwrap(), reject_fn.unwrap())
+}
+
+pub(crate) fn serialize_json_to_js_value<T: Serialize>(
+    value: &T,
+    context: &str,
+) -> Result<JsValue, JsValue> {
+    let json = serde_json::to_string(value).map_err(|error| {
+        JsValue::from_str(&format!("Failed to serialize {}: {}", context, error))
+    })?;
+    js_sys::JSON::parse(&json).map_err(|_| {
+        JsValue::from_str(&format!("Failed to convert {} into a JavaScript value", context))
+    })
 }
 
 // ── Cross-platform fetch ────────────────────────────────────────────────────

@@ -10,7 +10,7 @@ use std::sync::Arc;
 async fn test_system_live_metadata() {
     let server = TestServer::new_shared().await;
     let manager = server.app_context.live_query_manager();
-    let registry = manager.registry();
+    let registry = server.app_context.connection_registry();
     let ns = consolidated_helpers::unique_namespace("live_queries_meta");
 
     // 1. Register Connection
@@ -127,7 +127,7 @@ async fn test_system_live_metadata() {
 async fn test_cleanup_connection_removes_live_rows_and_registry_state() {
     let server = TestServer::new_shared().await;
     let manager = server.app_context.live_query_manager();
-    let registry = manager.registry();
+    let registry = server.app_context.connection_registry();
     let rate_limiter = Arc::new(RateLimiter::new());
     let ns = consolidated_helpers::unique_namespace("live_queries_cleanup");
 

@@ -94,12 +94,11 @@ impl SubscriptionService {
             .as_ref()
             .map(serde_json::to_string)
             .transpose()
-            .into_serialization_error("Failed to serialize options")?
-            .map(Arc::<str>::from);
+            .into_serialization_error("Failed to serialize options")?;
         let created_at_ms = Utc::now().timestamp_millis();
         let runtime_metadata = Arc::new(SubscriptionRuntimeMetadata::new(
-            Arc::from(request.sql.as_str()),
-            options_json,
+            request.sql.as_str(),
+            options_json.as_deref(),
             created_at_ms,
         ));
 
@@ -130,7 +129,7 @@ impl SubscriptionService {
 
         // Create lightweight handle for the index (~48 bytes vs ~800+ bytes)
         let subscription_handle = SubscriptionHandle {
-            subscription_id,
+            subscription_id: Arc::clone(&subscription_id),
             filter_expr: filter_expr_arc,
             projections: projections_arc,
             notification_tx,
@@ -142,7 +141,7 @@ impl SubscriptionService {
         // If we index after Raft, INSERT commands might be applied before the subscription
         // is indexed, causing notifications to be missed.
         // Add subscription to connection state
-        connection_state.insert_subscription(request.id.clone(), subscription_state);
+        connection_state.insert_subscription(subscription_id, subscription_state);
 
         // Add lightweight handle to registry's table index for efficient lookups
         if table_type == TableType::Shared {

@@ -6,8 +6,6 @@ use super::kalam_data_type::KalamDataType;
 pub type FieldFlags = BTreeSet<FieldFlag>;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
-#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 #[serde(rename_all = "snake_case")]
 pub enum FieldFlag {
     #[serde(rename = "pk")]
@@ -34,8 +32,6 @@ pub enum FieldFlag {
 /// }
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
-#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct SchemaField {
     /// Column name
     pub name: String,

@@ -4,7 +4,7 @@ Topic consumer and agent runtime package for KalamDB.
 
 Use `@kalamdb/client` for app-facing SQL, live rows, subscriptions, and file uploads. Add `@kalamdb/consumer` only when you need topic polling, acknowledgments, or the high-level worker runtime.
 
-`@kalamdb/consumer` ships its own worker-focused WASM bundle and layers it on top of `@kalamdb/client`, so app-only installs can keep using the lighter main client package alone.
+`@kalamdb/consumer` ships its own worker-focused WASM bundle and layers it on top of `@kalamdb/client`, but that worker bundle is intentionally limited to topic consume and ack transport instead of re-shipping the main client WASM surface. App-only installs can keep using the lighter main client package alone.
 
 > Status: **Beta**.
 

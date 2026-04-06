@@ -13,9 +13,9 @@ use crate::models::{
 };
 
 use super::auth::WasmAuthProvider;
-use super::wasm_debug_log;
 use super::helpers::{
-    create_promise, decode_ws_binary_payload, decode_ws_message, send_ws_message, subscription_hash,
+    create_promise, decode_ws_binary_payload, decode_ws_message, send_ws_message,
+    serialize_json_to_js_value, subscription_hash,
 };
 use super::reconnect::{self, reconnect_internal_with_auth, resubscribe_all};
 use super::state::{
@@ -25,6 +25,7 @@ use super::state::{
 use super::validation::{
     quote_table_name, validate_column_name, validate_row_id, validate_sql_identifier,
 };
+use super::wasm_debug_log;
 
 /// WASM-compatible KalamDB client with auto-reconnection support
 ///
@@ -926,7 +927,10 @@ impl KalamClient {
                         let _ = cb.call1(&JsValue::NULL, &JsValue::from_str(&json));
                     }
                     if let Err(_e) = ws_clone_for_auth.send_with_str(&json) {
-                        wasm_debug_log!(&format!("KalamClient: Failed to send auth message: {:?}", _e));
+                        wasm_debug_log!(&format!(
+                            "KalamClient: Failed to send auth message: {:?}",
+                            _e
+                        ));
                     }
                 }
             } else {
@@ -1092,7 +1096,10 @@ impl KalamClient {
                         return;
                     },
                     ServerMessage::AuthError { message: error_msg } => {
-                        wasm_debug_log!(&format!("KalamClient: Authentication failed - {}", error_msg));
+                        wasm_debug_log!(&format!(
+                            "KalamClient: Authentication failed - {}",
+                            error_msg
+                        ));
                         *auth_handled_clone.borrow_mut() = true;
                         if let Some(cb) = on_error_for_msg.borrow().as_ref() {
                             let err_obj = js_sys::Object::new();
@@ -1526,7 +1533,6 @@ impl KalamClient {
                 })
             })
             .collect();
-        // serde_wasm_bindgen is available via tsify; fall back to JsValue::from_str
         JsValue::from_str(&serde_json::to_string(&list).unwrap_or_else(|_| "[]".to_string()))
     }
 
@@ -1570,8 +1576,7 @@ impl KalamClient {
         wasm_debug_log!("KalamClient: Login successful, switched to JWT authentication");
 
         // Return full LoginResponse as JsValue
-        serde_wasm_bindgen::to_value(&login_response)
-            .map_err(|e| JsValue::from_str(&format!("Failed to serialize login response: {}", e)))
+        serialize_json_to_js_value(&login_response, "login response")
     }
 
     /// Refresh the access token using a refresh token
@@ -1620,8 +1625,7 @@ impl KalamClient {
         wasm_debug_log!("KalamClient: Token refreshed, updated JWT authentication");
 
         // Return full LoginResponse as JsValue
-        serde_wasm_bindgen::to_value(&login_response)
-            .map_err(|e| JsValue::from_str(&format!("Failed to serialize refresh response: {}", e)))
+        serialize_json_to_js_value(&login_response, "refresh response")
     }
 
     /// Internal: Execute SQL via HTTP POST to /v1/api/sql (T063F)
@@ -1862,7 +1866,10 @@ fn install_auto_reconnect_listener(
         let current_attempts = *reconnect_attempts.borrow();
         if let Some(max) = opts.max_reconnect_attempts {
             if current_attempts >= max {
-                wasm_debug_log!(&format!("KalamClient: Max reconnection attempts ({}) reached", max));
+                wasm_debug_log!(&format!(
+                    "KalamClient: Max reconnection attempts ({}) reached",
+                    max
+                ));
                 return;
             }
         }

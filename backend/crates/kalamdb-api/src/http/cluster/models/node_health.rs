@@ -23,7 +23,8 @@ pub struct NodeHealth {
     pub catchup_progress_pct: Option<u8>,
     /// Machine hostname for display
     pub hostname: Option<String>,
-    /// Current KalamDB process memory usage in megabytes
+    /// Current KalamDB process memory usage in megabytes.
+    /// On macOS this is physical footprint; elsewhere it is RSS.
     pub memory_usage_mb: Option<u64>,
     /// Current KalamDB process CPU usage percentage
     pub cpu_usage_percent: Option<f32>,

@@ -4,8 +4,6 @@ use serde::{Deserialize, Serialize};
 ///
 /// Mirrors `SerializationType` from `kalamdb-commons`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
-#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 #[serde(rename_all = "snake_case")]
 pub enum SerializationType {
     /// JSON text frames (default, backward-compatible).
@@ -20,8 +18,6 @@ pub enum SerializationType {
 ///
 /// Mirrors `CompressionType` from `kalamdb-commons`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
-#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 #[serde(rename_all = "snake_case")]
 pub enum CompressionType {
     /// No compression.
@@ -35,8 +31,6 @@ pub enum CompressionType {
 ///
 /// Mirrors `ProtocolOptions` from `kalamdb-commons`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
-#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct ProtocolOptions {
     /// Serialization format for messages after auth.
     pub serialization: SerializationType,

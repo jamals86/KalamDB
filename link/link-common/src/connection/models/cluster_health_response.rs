@@ -2,8 +2,6 @@ use serde::{Deserialize, Serialize};
 
 /// Per-node health details from the cluster health endpoint.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
-#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct ClusterNodeHealth {
     pub node_id: u64,
     pub role: String,
@@ -22,8 +20,6 @@ pub struct ClusterNodeHealth {
 
 /// Cluster health response from the server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
-#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct ClusterHealthResponse {
     pub status: String,
     #[serde(default)]

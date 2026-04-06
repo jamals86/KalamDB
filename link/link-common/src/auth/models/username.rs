@@ -12,11 +12,7 @@ use std::fmt;
 /// assert_eq!(username.as_str(), "alice");
 /// ```
 ///
-/// # TypeScript
-/// Generated via tsify as a branded `string` newtype.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
-#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct Username(String);
 
 impl Username {

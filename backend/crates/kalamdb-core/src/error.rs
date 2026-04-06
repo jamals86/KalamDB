@@ -230,6 +230,17 @@ impl From<kalamdb_filestore::FilestoreError> for KalamDbError {
     }
 }
 
+impl From<kalamdb_sql::parser::query_parser::QueryParseError> for KalamDbError {
+    fn from(err: kalamdb_sql::parser::query_parser::QueryParseError) -> Self {
+        match err {
+            kalamdb_sql::parser::query_parser::QueryParseError::ParseError(msg)
+            | kalamdb_sql::parser::query_parser::QueryParseError::InvalidSql(msg) => {
+                KalamDbError::InvalidSql(msg)
+            },
+        }
+    }
+}
+
 // Convert DataFusion errors
 impl From<datafusion::error::DataFusionError> for KalamDbError {
     fn from(err: datafusion::error::DataFusionError) -> Self {
@@ -245,43 +256,43 @@ impl From<datafusion::arrow::error::ArrowError> for KalamDbError {
 }
 
 // Convert schema_registry::RegistryError to KalamDbError
-impl From<crate::schema_registry::error::RegistryError> for KalamDbError {
-    fn from(err: crate::schema_registry::error::RegistryError) -> Self {
+impl From<crate::schema_registry::RegistryError> for KalamDbError {
+    fn from(err: crate::schema_registry::RegistryError) -> Self {
         match err {
-            crate::schema_registry::error::RegistryError::TableNotFound { namespace, table } => {
+            crate::schema_registry::RegistryError::TableNotFound { namespace, table } => {
                 KalamDbError::TableNotFound(format!("{}.{}", namespace, table))
             },
-            crate::schema_registry::error::RegistryError::StorageNotFound { storage_id } => {
+            crate::schema_registry::RegistryError::StorageNotFound { storage_id } => {
                 KalamDbError::NotFound(format!("Storage not found: {}", storage_id))
             },
-            crate::schema_registry::error::RegistryError::SchemaConversion { message } => {
+            crate::schema_registry::RegistryError::SchemaConversion { message } => {
                 KalamDbError::SchemaError(message)
             },
-            crate::schema_registry::error::RegistryError::SchemaError(msg) => {
+            crate::schema_registry::RegistryError::SchemaError(msg) => {
                 KalamDbError::SchemaError(msg)
             },
-            crate::schema_registry::error::RegistryError::ArrowError { message } => {
+            crate::schema_registry::RegistryError::ArrowError { message } => {
                 KalamDbError::Other(format!("Registry Arrow error: {}", message))
             },
-            crate::schema_registry::error::RegistryError::DataFusionError { message } => {
+            crate::schema_registry::RegistryError::DataFusionError { message } => {
                 KalamDbError::Other(format!("Registry DataFusion error: {}", message))
             },
-            crate::schema_registry::error::RegistryError::StorageError { message } => {
+            crate::schema_registry::RegistryError::StorageError { message } => {
                 KalamDbError::Other(format!("Registry storage error: {}", message))
             },
-            crate::schema_registry::error::RegistryError::InvalidConfig { message } => {
+            crate::schema_registry::RegistryError::InvalidConfig { message } => {
                 KalamDbError::ConfigError(message)
             },
-            crate::schema_registry::error::RegistryError::CacheFailed { message } => {
+            crate::schema_registry::RegistryError::CacheFailed { message } => {
                 KalamDbError::Other(format!("Cache failed: {}", message))
             },
-            crate::schema_registry::error::RegistryError::ViewError { message } => {
+            crate::schema_registry::RegistryError::ViewError { message } => {
                 KalamDbError::Other(format!("View error: {}", message))
             },
-            crate::schema_registry::error::RegistryError::InvalidOperation(msg) => {
+            crate::schema_registry::RegistryError::InvalidOperation(msg) => {
                 KalamDbError::InvalidOperation(msg)
             },
-            crate::schema_registry::error::RegistryError::Other(msg) => {
+            crate::schema_registry::RegistryError::Other(msg) => {
                 KalamDbError::Other(format!("Registry error: {}", msg))
             },
         }

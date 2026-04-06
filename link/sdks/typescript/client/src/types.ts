@@ -1,48 +1,169 @@
 /**
  * Type definitions for the @kalamdb/client SDK
  *
- * Model types are auto-generated from Rust via tsify-next and exported from the
- * WASM bindings. Client-only types (no Rust equivalent) are defined here.
+ * Public SDK types are defined here so the published package does not depend
+ * on generated wasm model declarations for its TypeScript surface.
  */
 
 /* ================================================================== */
-/*  Re-exported WASM-generated types (single source of truth in Rust) */
+/*  Shared transport/model types                                       */
 /* ================================================================== */
 
 /**
- * `JsonValue` is used by tsify for `serde_json::Value` fields.
- * In TypeScript, this corresponds to any valid JSON value.
+ * Any JSON-compatible value exchanged with the SDK.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type JsonValue = any;
 
-import type { FieldFlag as WasmFieldFlag } from '../wasm/kalam_client.js';
 import type { SeqId as TypedSeqId } from './seq_id.js';
 
-export type {
-  BatchControl,
-  BatchStatus,
-  ChangeTypeRaw,
-  ErrorDetail,
-  HealthCheckResponse,
-  HttpVersion,
-  KalamDataType,
-  LoginResponse,
-  LoginUserInfo,
-  QueryResponse,
-  QueryResult,
-  ResponseStatus,
-  SchemaField,
-  ServerMessage,
-  TimestampFormat,
-  UploadProgress,
-} from '../wasm/kalam_client.js';
+type WireSeqId = TypedSeqId | number | string;
+type WireRowData = Record<string, JsonValue>;
+
+type CompressionType = 'none' | 'gzip';
+type SerializationType = 'json' | 'msgpack';
+
+interface ProtocolOptions {
+  serialization: SerializationType;
+  compression: CompressionType;
+}
 
 // SeqId: SDK-level typed wrapper (replaces WASM's plain `number` alias)
 export { SeqId } from './seq_id.js';
 
-export type FieldFlag = WasmFieldFlag;
+export type FieldFlag = 'pk' | 'nn' | 'uq';
 export type FieldFlags = FieldFlag[];
+
+export type BatchStatus = 'loading' | 'loading_batch' | 'ready';
+
+export interface BatchControl {
+  batch_num: number;
+  has_more: boolean;
+  status: BatchStatus;
+  last_seq_id?: WireSeqId;
+  snapshot_end_seq?: WireSeqId;
+}
+
+export type ChangeTypeRaw = 'insert' | 'update' | 'delete';
+
+export interface ErrorDetail {
+  code: string;
+  message: string;
+  details?: string;
+}
+
+export interface HealthCheckResponse {
+  status: string;
+  version?: string;
+  api_version: string;
+  build_date?: string;
+}
+
+export type HttpVersion = 'http1' | 'http2' | 'auto';
+
+export type KalamDataType =
+  | 'Boolean'
+  | 'Int'
+  | 'BigInt'
+  | 'Double'
+  | 'Float'
+  | 'Text'
+  | 'Timestamp'
+  | 'Date'
+  | 'DateTime'
+  | 'Time'
+  | 'Json'
+  | 'Bytes'
+  | { Embedding: number }
+  | 'Uuid'
+  | { Decimal: { precision: number; scale: number } }
+  | 'SmallInt'
+  | 'File';
+
+export interface LoginUserInfo {
+  id: string;
+  username: string;
+  role: string;
+  email?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LoginResponse {
+  user: LoginUserInfo;
+  expires_at: string;
+  access_token: string;
+  refresh_token?: string;
+  refresh_expires_at?: string;
+}
+
+export interface SchemaField {
+  name: string;
+  data_type: KalamDataType;
+  index: number;
+  flags?: FieldFlags;
+}
+
+export interface QueryResult {
+  schema?: SchemaField[];
+  rows?: JsonValue[][] | WireRowData[];
+  named_rows?: WireRowData[];
+  row_count: number;
+  message?: string;
+}
+
+export type ResponseStatus = 'success' | 'error';
+
+export interface QueryResponse {
+  status: ResponseStatus;
+  results?: QueryResult[];
+  took?: number;
+  error?: ErrorDetail;
+}
+
+export type TimestampFormat =
+  | 'iso8601'
+  | 'iso8601-date'
+  | 'iso8601-datetime'
+  | 'unix-ms'
+  | 'unix-sec'
+  | 'relative'
+  | 'rfc2822'
+  | 'rfc3339';
+
+export interface UploadProgress {
+  file_index: number;
+  total_files: number;
+  file_name: string;
+  bytes_sent: number;
+  total_bytes: number;
+  percent: number;
+}
+
+export type ServerMessage =
+  | { type: 'auth_success'; user_id: string; role: string; protocol: ProtocolOptions }
+  | { type: 'auth_error'; message: string }
+  | {
+      type: 'subscription_ack';
+      subscription_id: string;
+      total_rows: number;
+      batch_control: BatchControl;
+      schema: SchemaField[];
+    }
+  | {
+      type: 'initial_data_batch';
+      subscription_id: string;
+      rows: WireRowData[];
+      batch_control: BatchControl;
+    }
+  | {
+      type: 'change';
+      subscription_id: string;
+      change_type: ChangeTypeRaw;
+      rows?: WireRowData[];
+      old_values?: WireRowData[];
+    }
+  | { type: 'error'; subscription_id: string; code: string; message: string };
 
 /**
  * Type-safe subscription options exposed by the SDK.
@@ -56,7 +177,7 @@ export interface SubscriptionOptions {
   /** Number of newest rows to fetch for the initial snapshot. */
   last_rows?: number;
   /** Resume from a specific sequence ID. */
-  from?: TypedSeqId | number | string;
+  from?: WireSeqId;
 }
 
 /* ================================================================== */
@@ -137,7 +258,7 @@ export type LogListener = (entry: LogEntry) => void;
 /**
  * Subscription callback function type
  */
-export type SubscriptionCallback = (event: import('../wasm/kalam_client.js').ServerMessage) => void;
+export type SubscriptionCallback = (event: ServerMessage) => void;
 
 /**
  * Typed subscription callback for convenience.
@@ -154,14 +275,14 @@ export type SubscriptionCallback = (event: import('../wasm/kalam_client.js').Ser
  * ```
  */
 export type TypedSubscriptionCallback<T extends Record<string, unknown>> = (
-  event: import('../wasm/kalam_client.js').ServerMessage & { rows?: T[]; old_values?: T[] },
+  event: ServerMessage & { rows?: T[]; old_values?: T[] },
 ) => void;
 
 /**
  * Subscription error event shape.
  */
 export type SubscriptionErrorEvent = Extract<
-  import('../wasm/kalam_client.js').ServerMessage,
+  ServerMessage,
   { type: 'error' }
 >;
 

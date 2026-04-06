@@ -541,7 +541,7 @@ mod tests {
 
     fn make_shared_handle(
         subscription_id: &str,
-        tx: Arc<crate::live::models::NotificationSender>,
+        tx: crate::live::models::NotificationSender,
         flow_control: Arc<SubscriptionFlowControl>,
         filter_expr: Option<&str>,
         projections: Option<Vec<&str>>,
@@ -557,7 +557,7 @@ mod tests {
             notification_tx: tx,
             flow_control: Some(flow_control),
             runtime_metadata: Arc::new(SubscriptionRuntimeMetadata::new(
-                Arc::from("SELECT * FROM shared.events"),
+                "SELECT * FROM shared.events",
                 None,
                 1,
             )),
@@ -586,7 +586,7 @@ mod tests {
             table_id.clone(),
             make_shared_handle(
                 "sub_ok",
-                Arc::new(tx_ok),
+                tx_ok,
                 Arc::clone(&flow_ok),
                 Some("id >= 10"),
                 Some(vec!["id"]),
@@ -602,7 +602,7 @@ mod tests {
             table_id.clone(),
             make_shared_handle(
                 "sub_skip",
-                Arc::new(tx_skip),
+                tx_skip,
                 Arc::clone(&flow_skip),
                 Some("id >= 100"),
                 None,
@@ -656,7 +656,7 @@ mod tests {
             &conn_id,
             live_id,
             table_id.clone(),
-            make_shared_handle("sub_user", Arc::new(tx), flow, None, Some(vec!["id"])),
+            make_shared_handle("sub_user", tx, flow, None, Some(vec!["id"])),
         );
 
         let change = ChangeNotification::insert(table_id.clone(), make_row(42, "hello", 42));
@@ -700,7 +700,7 @@ mod tests {
             &conn_id,
             LiveQueryId::new(UserId::new("u3"), conn_id.clone(), "sub_buffer".to_string()),
             table_id.clone(),
-            make_shared_handle("sub_buffer", Arc::new(tx), Arc::clone(&flow), None, None),
+            make_shared_handle("sub_buffer", tx, Arc::clone(&flow), None, None),
         );
 
         // seq=11 is newer than snapshot end seq=10, should be buffered (not sent yet)
@@ -735,7 +735,7 @@ mod tests {
             &conn_id,
             LiveQueryId::new(UserId::new("u4"), conn_id.clone(), "sub_async".to_string()),
             table_id.clone(),
-            make_shared_handle("sub_async", Arc::new(tx), flow, None, None),
+            make_shared_handle("sub_async", tx, flow, None, None),
         );
 
         let change = ChangeNotification::insert(table_id.clone(), make_row(1, "async", 1));

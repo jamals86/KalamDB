@@ -121,7 +121,7 @@ pub async fn prepare_components(
     let user_repo: Arc<dyn kalamdb_auth::UserRepository> =
         Arc::new(CachedUsersRepo::new(users_provider));
 
-    let handler_registry = Arc::new(HandlerRegistry::new(app_context.clone()));
+    let handler_registry = Arc::new(HandlerRegistry::new());
     kalamdb_handlers::register_all_handlers(
         &handler_registry,
         app_context.clone(),

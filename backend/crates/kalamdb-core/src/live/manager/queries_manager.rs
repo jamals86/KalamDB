@@ -16,9 +16,8 @@ use crate::live::helpers::filter_eval::parse_where_clause;
 use crate::live::helpers::initial_data::{
     InitialDataFetcher, InitialDataOptions, InitialDataResult,
 };
-use crate::live::helpers::query_parser::QueryParser;
 use crate::live::manager::ConnectionsManager;
-use crate::live::models::{RegistryStats, SharedConnectionState, SubscriptionResult};
+use crate::live::models::{SharedConnectionState, SubscriptionResult};
 use crate::live::subscription::SubscriptionService;
 use crate::sql::executor::SqlExecutor;
 use datafusion::execution::context::SessionContext;
@@ -28,6 +27,7 @@ use kalamdb_commons::models::{ConnectionId, LiveQueryId, NamespaceId, TableId, T
 use kalamdb_commons::schemas::{SchemaField, TableDefinition};
 use kalamdb_commons::websocket::SubscriptionRequest;
 use kalamdb_commons::{NodeId, Role};
+use kalamdb_sql::parser::query_parser::QueryParser;
 use kalamdb_system::LiveQuery as SystemLiveQuery;
 use std::sync::Arc;
 
@@ -423,11 +423,6 @@ impl LiveQueryManager {
             .await
     }
 
-    /// Extract table name from SQL query
-    pub fn extract_table_name_from_query(&self, query: &str) -> Result<String, KalamDbError> {
-        QueryParser::extract_table_name(query).map_err(|e| KalamDbError::InvalidSql(e.to_string()))
-    }
-
     /// Unregister a WebSocket connection
     pub async fn unregister_connection(
         &self,
@@ -474,78 +469,6 @@ impl LiveQueryManager {
     /// Snapshot active live queries from in-memory connection state.
     pub fn snapshot_live_queries(&self) -> Vec<SystemLiveQuery> {
         self.registry.snapshot_live_queries(self.node_id)
-    }
-
-    /// Get all subscriptions for a user
-    pub async fn get_user_subscriptions(
-        &self,
-        user_id: &UserId,
-    ) -> Result<Vec<SystemLiveQuery>, KalamDbError> {
-        Ok(self
-            .snapshot_live_queries()
-            .into_iter()
-            .filter(|live_query| &live_query.user_id == user_id)
-            .collect())
-    }
-
-    /// Get a specific live query
-    pub async fn get_live_query(
-        &self,
-        live_id: &str,
-    ) -> Result<Option<SystemLiveQuery>, KalamDbError> {
-        let live_query_id = LiveQueryId::from_string(live_id).map_err(|e| {
-            KalamDbError::InvalidOperation(format!("Invalid live query ID '{}': {}", live_id, e))
-        })?;
-
-        Ok(self
-            .snapshot_live_queries()
-            .into_iter()
-            .find(|live_query| live_query.live_id == live_query_id))
-    }
-
-    /// Get registry statistics
-    pub async fn get_stats(&self) -> RegistryStats {
-        RegistryStats {
-            total_connections: self.registry.connection_count(),
-            total_subscriptions: self.registry.subscription_count(),
-            node_id: self.node_id.to_string(),
-        }
-    }
-
-    /// Get the connections manager
-    pub fn registry(&self) -> Arc<ConnectionsManager> {
-        Arc::clone(&self.registry)
-    }
-
-    /// Handle auth expiry for a connection
-    pub async fn handle_auth_expiry(
-        &self,
-        connection_id: &ConnectionId,
-    ) -> Result<(), KalamDbError> {
-        let connection_state = self.registry.get_connection(connection_id).ok_or_else(|| {
-            KalamDbError::NotFound(format!("Connection not found: {}", connection_id))
-        })?;
-
-        let user_id = connection_state.user_id().cloned().ok_or_else(|| {
-            KalamDbError::NotFound(format!("User not found for connection: {}", connection_id))
-        })?;
-
-        let _removed_ids = self.unregister_connection(&user_id, connection_id).await?;
-
-        Ok(())
-    }
-
-    // ==================== Backward Compatibility ====================
-    // These methods support older interfaces that use connection_id instead of SharedConnectionState
-
-    /// Get the total number of connections
-    pub fn connection_count(&self) -> usize {
-        self.registry.connection_count()
-    }
-
-    /// Get the total number of subscriptions
-    pub fn subscription_count(&self) -> usize {
-        self.registry.subscription_count()
     }
 }
 

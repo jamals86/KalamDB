@@ -17,8 +17,6 @@ use serde::{Deserialize, Serialize};
 /// }
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(all(feature = "wasm", feature = "consumer"), derive(tsify_next::Tsify))]
-#[cfg_attr(all(feature = "wasm", feature = "consumer"), tsify(into_wasm_abi, from_wasm_abi))]
 pub struct ConsumeRequest {
     /// Topic to consume from (e.g., "orders" or "chat.messages")
     pub topic: String,

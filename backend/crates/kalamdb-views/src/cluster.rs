@@ -91,7 +91,7 @@ impl ClusterView {
     /// - hostname TEXT (nullable - node metadata)
     /// - version TEXT (nullable)
     /// - memory_mb BIGINT (nullable)
-    /// - memory_usage_mb BIGINT (nullable)
+    /// - memory_usage_mb BIGINT (nullable - physical footprint on macOS, RSS elsewhere)
     /// - cpu_usage_percent FLOAT (nullable)
     /// - uptime_seconds BIGINT (nullable)
     /// - uptime_human TEXT (nullable)

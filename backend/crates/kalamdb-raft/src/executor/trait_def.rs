@@ -54,7 +54,8 @@ pub struct ClusterNodeInfo {
     pub version: Option<String>,
     /// Total system memory in megabytes
     pub memory_mb: Option<u64>,
-    /// Current KalamDB process memory usage in megabytes
+    /// Current KalamDB process memory usage in megabytes.
+    /// On macOS this is physical footprint; elsewhere it is RSS.
     pub memory_usage_mb: Option<u64>,
     /// Current KalamDB process CPU usage percentage
     pub cpu_usage_percent: Option<f32>,

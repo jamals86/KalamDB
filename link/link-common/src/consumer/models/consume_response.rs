@@ -6,8 +6,6 @@ use super::consume_message::ConsumeMessage;
 ///
 /// Contains the batch of messages and metadata for pagination.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(all(feature = "wasm", feature = "consumer"), derive(tsify_next::Tsify))]
-#[cfg_attr(all(feature = "wasm", feature = "consumer"), tsify(into_wasm_abi, from_wasm_abi))]
 pub struct ConsumeResponse {
     /// Consumed messages in this batch
     pub messages: Vec<ConsumeMessage>,

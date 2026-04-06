@@ -11,8 +11,6 @@ pub struct LoginRequest {
 
 /// User information returned in login response
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
-#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct LoginUserInfo {
     /// User ID
     pub id: String,
@@ -30,8 +28,6 @@ pub struct LoginUserInfo {
 
 /// Login response from the server
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
-#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct LoginResponse {
     /// Authenticated user information
     pub user: LoginUserInfo,

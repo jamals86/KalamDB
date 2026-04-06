@@ -15,6 +15,4 @@ pub use connection::{
     EVENT_CHANNEL_CAPACITY, NOTIFICATION_CHANNEL_CAPACITY,
 };
 
-pub use subscription::{
-    ChangeNotification, ChangeType, RegistryStats, SubscriptionResult,
-};
+pub use subscription::{ChangeNotification, ChangeType, SubscriptionResult};

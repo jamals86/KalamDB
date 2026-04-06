@@ -1,7 +1,7 @@
 //! FileRef model for FILE datatype in the KalamDB SDK.
 //!
 //! This is the **canonical client-side** definition of a file reference.
-//! Every SDK (TypeScript via tsify / WASM, Dart via flutter_rust_bridge)
+//! Every SDK (TypeScript via the wasm/JSON wrapper, Dart via flutter_rust_bridge)
 //! should derive its `FileRef` type from this struct rather than
 //! re-implementing parsing, URL generation, and utility methods.
 
@@ -25,8 +25,6 @@ use serde::{Deserialize, Serialize};
 /// }
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
-#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct FileRef {
     /// Unique file identifier (Snowflake ID).
     pub id: String,

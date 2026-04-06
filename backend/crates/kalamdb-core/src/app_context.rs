@@ -4,7 +4,6 @@
 //! Uses constants from kalamdb_commons for table prefixes.
 
 use crate::applier::UnifiedApplier;
-use crate::error_extensions::KalamDbResultExt;
 use crate::job_waker::JobWaker;
 use crate::live::notification::NotificationService;
 use crate::live::ConnectionsManager;
@@ -27,7 +26,7 @@ use kalamdb_pg::KalamPgService;
 use kalamdb_raft::CommandExecutor;
 use kalamdb_sharding::{GroupId, ShardRouter};
 use kalamdb_store::StorageBackend;
-use kalamdb_system::{ClusterCoordinator, Job, Namespace, SystemTablesRegistry};
+use kalamdb_system::{ClusterCoordinator, Namespace, SystemTablesRegistry};
 use kalamdb_tables::{SharedTableStore, UserTableStore};
 use once_cell::sync::OnceCell;
 use std::sync::Arc;
@@ -96,7 +95,7 @@ pub struct AppContext {
     executor: Arc<dyn CommandExecutor>,
 
     // ===== System Columns Service =====
-    system_columns_service: Arc<crate::system_columns::SystemColumnsService>,
+    system_columns_service: Arc<crate::schema_registry::SystemColumnsService>,
 
     // ===== Slow Query Logger =====
     slow_query_logger: Arc<crate::slow_query_logger::SlowQueryLogger>,
@@ -334,7 +333,7 @@ impl AppContext {
             // Extract worker_id from node_id for Snowflake ID generation
             let worker_id = Self::extract_worker_id(&node_id);
             let system_columns_service =
-                Arc::new(crate::system_columns::SystemColumnsService::new(worker_id));
+                Arc::new(crate::schema_registry::SystemColumnsService::new(worker_id));
 
             // Create unified manifest service (hot cache + RocksDB + cold storage)
             let mut manifest_service_obj = crate::manifest::ManifestService::new(
@@ -679,7 +678,7 @@ impl AppContext {
         let slow_query_logger = Arc::new(crate::slow_query_logger::SlowQueryLogger::new_test());
 
         // Create system columns service with worker_id=0 for tests
-        let system_columns_service = Arc::new(crate::system_columns::SystemColumnsService::new(0));
+        let system_columns_service = Arc::new(crate::schema_registry::SystemColumnsService::new(0));
 
         // Create unified manifest service for tests
         let manifest_service = Arc::new(crate::manifest::ManifestService::new_with_registries(
@@ -1000,7 +999,7 @@ impl AppContext {
     ///
     /// Returns an Arc reference to the SystemColumnsService that manages
     /// all system column operations (_seq, _deleted).
-    pub fn system_columns_service(&self) -> Arc<crate::system_columns::SystemColumnsService> {
+    pub fn system_columns_service(&self) -> Arc<crate::schema_registry::SystemColumnsService> {
         self.system_columns_service.clone()
     }
 
@@ -1062,29 +1061,6 @@ impl AppContext {
     /// Get the shared SqlExecutor (panics if not yet initialized)
     pub fn sql_executor(&self) -> Arc<SqlExecutor> {
         self.try_sql_executor().expect("SqlExecutor not initialized in AppContext")
-    }
-
-    // ===== Convenience methods for backward compatibility =====
-
-    /// Insert a job into the jobs table
-    ///
-    /// Convenience wrapper for system_tables().jobs().create_job()
-    pub fn insert_job(&self, job: &Job) -> Result<(), crate::error::KalamDbError> {
-        self.system_tables()
-            .jobs()
-            .create_job(job.clone())
-            .map(|_| ())  // Discard the message, just return ()
-            .into_kalamdb_error("Failed to insert job")
-    }
-
-    /// Scan all jobs from the jobs table
-    ///
-    /// Convenience wrapper for system_tables().jobs().list_jobs()
-    pub fn scan_all_jobs(&self) -> Result<Vec<Job>, crate::error::KalamDbError> {
-        self.system_tables()
-            .jobs()
-            .list_jobs()
-            .into_kalamdb_error("Failed to scan jobs")
     }
 
     /// Get server uptime in seconds

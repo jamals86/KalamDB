@@ -25,8 +25,6 @@ miniz_oxide = { workspace = true }
 wasm-bindgen = { workspace = true, optional = true }
 wasm-bindgen-futures = { workspace = true, optional = true }
 js-sys = { workspace = true, optional = true }
-tsify-next = { workspace = true, optional = true }
-serde-wasm-bindgen = { workspace = true, optional = true }
 web-sys = { workspace = true, features = [
 	"console",
 	"WebSocket",
@@ -57,12 +55,8 @@ healthcheck = []
 cluster = []
 consumer = []
 file-uploads = ["bytes", "http-body", "http-body-util", "reqwest/multipart", "reqwest/stream"]
-native-sdk = ["tokio-runtime", "auth-flows"]
-native-bench = ["native-sdk", "healthcheck", "setup", "consumer"]
-native-cli = ["native-sdk", "healthcheck", "setup", "cluster", "consumer", "file-uploads"]
-native-full = ["native-cli"]
 http2 = ["reqwest/http2"]
-wasm = ["wasm-bindgen", "wasm-bindgen-futures", "js-sys", "web-sys", "tsify-next", "serde-wasm-bindgen"]
+wasm = ["wasm-bindgen", "wasm-bindgen-futures", "js-sys", "web-sys"]
 e2e-tests = []
 
 [lib]
