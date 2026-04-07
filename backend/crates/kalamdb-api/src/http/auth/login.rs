@@ -16,6 +16,7 @@ use std::sync::Arc;
 use super::map_auth_error_to_response;
 use super::models::{AuthErrorResponse, LoginRequest, LoginResponse, UserInfo};
 use crate::limiter::RateLimiter;
+use kalamdb_jobs::health_monitor::record_activity_now;
 
 /// POST /v1/api/auth/login
 ///
@@ -29,6 +30,8 @@ pub async fn login_handler(
     rate_limiter: web::Data<Arc<RateLimiter>>,
     body: web::Json<LoginRequest>,
 ) -> HttpResponse {
+    record_activity_now();
+
     // Extract client IP with anti-spoofing checks for localhost validation
     let connection_info = extract_client_ip_secure(&req);
 

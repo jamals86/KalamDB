@@ -84,10 +84,24 @@ pub struct ConnectionsManager {
 
     // === Metrics ===
     total_connections: AtomicUsize,
+    peak_connections: AtomicUsize,
     total_subscriptions: AtomicUsize,
+    peak_subscriptions: AtomicUsize,
 }
 
 impl ConnectionsManager {
+    /// Release retained DashMap bucket capacity once the live registry is fully idle.
+    pub fn trim_idle_capacity(&self) {
+        if self.connection_count() > 0 || self.subscription_count() > 0 {
+            return;
+        }
+
+        self.connections.shrink_to_fit();
+        self.user_table_subscriptions.shrink_to_fit();
+        self.shared_table_subscriptions.shrink_to_fit();
+        self.empty_subscriptions.shrink_to_fit();
+    }
+
     /// Default maximum connections (100,000 concurrent connections)
     pub const DEFAULT_MAX_CONNECTIONS: usize = 100_000;
 
@@ -130,7 +144,9 @@ impl ConnectionsManager {
             shutdown_token,
             is_shutting_down: AtomicBool::new(false),
             total_connections: AtomicUsize::new(0),
+            peak_connections: AtomicUsize::new(0),
             total_subscriptions: AtomicUsize::new(0),
+            peak_subscriptions: AtomicUsize::new(0),
         });
 
         // Start background heartbeat checker
@@ -192,7 +208,8 @@ impl ConnectionsManager {
 
         let shared_state = Arc::new(state);
         self.connections.insert(connection_id.clone(), Arc::clone(&shared_state));
-        let _count = self.total_connections.fetch_add(1, Ordering::AcqRel) + 1;
+        let count = self.total_connections.fetch_add(1, Ordering::AcqRel) + 1;
+        self.peak_connections.fetch_max(count, Ordering::AcqRel);
 
         Some(ConnectionRegistration {
             connection_id,
@@ -252,6 +269,10 @@ impl ConnectionsManager {
             );
         }
 
+        if self.connection_count() == 0 && self.subscription_count() == 0 {
+            self.trim_idle_capacity();
+        }
+
         removed_live_ids
     }
 
@@ -289,7 +310,8 @@ impl ConnectionsManager {
             });
         let _ = connection_id;
 
-        self.total_subscriptions.fetch_add(1, Ordering::AcqRel);
+        let count = self.total_subscriptions.fetch_add(1, Ordering::AcqRel) + 1;
+        self.peak_subscriptions.fetch_max(count, Ordering::AcqRel);
     }
 
     /// Add subscription to shared_table_subscriptions index (for shared tables)
@@ -321,7 +343,8 @@ impl ConnectionsManager {
             });
         let _ = connection_id;
 
-        self.total_subscriptions.fetch_add(1, Ordering::AcqRel);
+        let count = self.total_subscriptions.fetch_add(1, Ordering::AcqRel) + 1;
+        self.peak_subscriptions.fetch_max(count, Ordering::AcqRel);
     }
 
     /// Remove subscription from indices (called by LiveQueryManager after removing from ConnectionState)
@@ -488,8 +511,20 @@ impl ConnectionsManager {
         self.total_connections.load(Ordering::Acquire)
     }
 
+    pub fn peak_connection_count(&self) -> usize {
+        self.peak_connections.load(Ordering::Acquire)
+    }
+
     pub fn subscription_count(&self) -> usize {
         self.total_subscriptions.load(Ordering::Acquire)
+    }
+
+    pub fn peak_subscription_count(&self) -> usize {
+        self.peak_subscriptions.load(Ordering::Acquire)
+    }
+
+    pub fn max_connection_limit(&self) -> usize {
+        self.max_connections
     }
 
     pub fn node_id(&self) -> &NodeId {
@@ -672,9 +707,27 @@ mod tests {
         );
         assert!(reg.is_some());
         assert_eq!(registry.connection_count(), 1);
+        assert_eq!(registry.peak_connection_count(), 1);
 
         registry.unregister_connection(&conn_id);
         assert_eq!(registry.connection_count(), 0);
+        assert_eq!(registry.peak_connection_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_trim_idle_capacity_after_last_connection_removed() {
+        let registry = create_test_registry();
+        let conn_id = ConnectionId::new("trim_idle_conn");
+
+        registry
+            .register_connection(conn_id.clone(), ConnectionInfo::new(None))
+            .unwrap();
+        registry.unregister_connection(&conn_id);
+
+        registry.trim_idle_capacity();
+
+        assert_eq!(registry.connection_count(), 0);
+        assert_eq!(registry.subscription_count(), 0);
     }
 
     #[tokio::test]
@@ -910,6 +963,7 @@ mod tests {
         registry.index_shared_subscription(&conn_id, live_id.clone(), table_id.clone(), handle);
 
         assert_eq!(registry.subscription_count(), 1);
+        assert_eq!(registry.peak_subscription_count(), 1);
         assert!(registry.has_shared_subscriptions(&table_id));
         assert!(!registry.has_subscriptions(&UserId::new("u1"), &table_id));
 
@@ -921,6 +975,7 @@ mod tests {
         // Unindex
         registry.unindex_shared_subscription(&live_id, &table_id);
         assert_eq!(registry.subscription_count(), 0);
+        assert_eq!(registry.peak_subscription_count(), 1);
         assert!(!registry.has_shared_subscriptions(&table_id));
 
         let subs_after = registry.get_shared_subscriptions_for_table(&table_id);

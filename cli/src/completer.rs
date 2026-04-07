@@ -176,6 +176,7 @@ impl AutoCompleter {
             "\\?",
             "\\history",
             "\\h",
+            "\\sessions",
             "\\stats",
             "\\metrics",
             "\\flush",

@@ -1,6 +1,21 @@
 use dashmap::DashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+fn current_timestamp_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as i64)
+        .unwrap_or_default()
+}
+
+fn normalize_optional(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
 
 /// Current lifecycle state of a transaction handle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,16 +37,25 @@ pub struct RemotePgSession {
     transaction_state: Option<TransactionState>,
     /// Whether the current transaction has performed writes.
     transaction_has_writes: bool,
+    opened_at_ms: i64,
+    last_seen_at_ms: i64,
+    client_addr: Option<String>,
+    last_method: Option<String>,
 }
 
 impl RemotePgSession {
     pub fn new(session_id: impl Into<String>) -> Self {
+        let now_ms = current_timestamp_ms();
         Self {
             session_id: session_id.into(),
             current_schema: None,
             transaction_id: None,
             transaction_state: None,
             transaction_has_writes: false,
+            opened_at_ms: now_ms,
+            last_seen_at_ms: now_ms,
+            client_addr: None,
+            last_method: None,
         }
     }
 
@@ -55,20 +79,62 @@ impl RemotePgSession {
         self.transaction_has_writes
     }
 
+    pub fn opened_at_ms(&self) -> i64 {
+        self.opened_at_ms
+    }
+
+    pub fn last_seen_at_ms(&self) -> i64 {
+        self.last_seen_at_ms
+    }
+
+    pub fn client_addr(&self) -> Option<&str> {
+        self.client_addr.as_deref()
+    }
+
+    pub fn last_method(&self) -> Option<&str> {
+        self.last_method.as_deref()
+    }
+
     pub fn with_current_schema(mut self, current_schema: Option<&str>) -> Self {
-        self.current_schema = current_schema
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToOwned::to_owned);
+        self.current_schema = normalize_optional(current_schema);
         self
     }
 
     pub fn with_transaction_id(mut self, transaction_id: Option<&str>) -> Self {
-        self.transaction_id = transaction_id
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToOwned::to_owned);
+        self.transaction_id = normalize_optional(transaction_id);
         self
+    }
+
+    fn record_activity(
+        &mut self,
+        current_schema: Option<&str>,
+        client_addr: Option<&str>,
+        last_method: Option<&str>,
+        touched_at_ms: i64,
+    ) {
+        if let Some(current_schema) = normalize_optional(current_schema) {
+            self.current_schema = Some(current_schema);
+        }
+
+        if let Some(client_addr) = normalize_optional(client_addr) {
+            self.client_addr = Some(client_addr);
+        }
+
+        if let Some(last_method) = normalize_optional(last_method) {
+            self.last_method = Some(last_method);
+        }
+
+        self.last_seen_at_ms = touched_at_ms;
+    }
+}
+
+impl TransactionState {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            TransactionState::Active => "active",
+            TransactionState::Committed => "committed",
+            TransactionState::RolledBack => "rolled_back",
+        }
     }
 }
 
@@ -90,6 +156,25 @@ impl SessionRegistry {
             .clone()
     }
 
+    /// Open a session if missing and record activity metadata.
+    pub fn open_or_get_with_context(
+        &self,
+        session_id: &str,
+        current_schema: Option<&str>,
+        client_addr: Option<&str>,
+        last_method: Option<&str>,
+    ) -> RemotePgSession {
+        let session_id = session_id.trim().to_string();
+        let now_ms = current_timestamp_ms();
+
+        let mut session = self
+            .sessions
+            .entry(session_id.clone())
+            .or_insert_with(|| RemotePgSession::new(session_id));
+        session.record_activity(current_schema, client_addr, last_method, now_ms);
+        session.clone()
+    }
+
     /// Update schema and transaction metadata for an existing session.
     pub fn update(
         &self,
@@ -103,6 +188,7 @@ impl SessionRegistry {
             .with_current_schema(current_schema)
             .with_transaction_id(transaction_id);
         *session = updated.clone();
+        session.last_seen_at_ms = current_timestamp_ms();
         Some(updated)
     }
 
@@ -134,6 +220,7 @@ impl SessionRegistry {
         session.transaction_id = Some(tx_id.clone());
         session.transaction_state = Some(TransactionState::Active);
         session.transaction_has_writes = false;
+        session.last_seen_at_ms = current_timestamp_ms();
         Ok(tx_id)
     }
 
@@ -176,6 +263,7 @@ impl SessionRegistry {
         let tx_id = session.transaction_id.take().unwrap_or_default();
         session.transaction_state = None;
         session.transaction_has_writes = false;
+        session.last_seen_at_ms = current_timestamp_ms();
         Ok(tx_id)
     }
 
@@ -200,6 +288,7 @@ impl SessionRegistry {
                 let tx_id = session.transaction_id.take().unwrap_or_default();
                 session.transaction_state = None;
                 session.transaction_has_writes = false;
+                session.last_seen_at_ms = current_timestamp_ms();
                 return Ok(tx_id);
             },
             Some(TransactionState::Committed) => {
@@ -223,6 +312,7 @@ impl SessionRegistry {
         let tx_id = session.transaction_id.take().unwrap_or_default();
         session.transaction_state = None;
         session.transaction_has_writes = false;
+        session.last_seen_at_ms = current_timestamp_ms();
         Ok(tx_id)
     }
 
@@ -232,12 +322,18 @@ impl SessionRegistry {
             if session.transaction_state == Some(TransactionState::Active) {
                 session.transaction_has_writes = true;
             }
+            session.last_seen_at_ms = current_timestamp_ms();
         }
     }
 
     /// Return the number of tracked sessions.
     pub fn len(&self) -> usize {
         self.sessions.len()
+    }
+
+    /// Return a point-in-time snapshot of all tracked sessions.
+    pub fn snapshot(&self) -> Vec<RemotePgSession> {
+        self.sessions.iter().map(|entry| entry.value().clone()).collect()
     }
 
     /// Remove a session from the registry.
@@ -256,7 +352,38 @@ mod tests {
         let session = registry.open_or_get("pg-1");
         assert_eq!(session.session_id(), "pg-1");
         assert!(session.transaction_id().is_none());
+        assert!(session.opened_at_ms() > 0);
+        assert_eq!(session.last_method(), None);
         assert_eq!(registry.len(), 1);
+    }
+
+    #[test]
+    fn open_or_get_with_context_records_activity_metadata() {
+        let registry = SessionRegistry::default();
+
+        let session = registry.open_or_get_with_context(
+            "pg-42",
+            Some("tenant_a"),
+            Some("127.0.0.1:54321"),
+            Some("OpenSession"),
+        );
+
+        assert_eq!(session.current_schema(), Some("tenant_a"));
+        assert_eq!(session.client_addr(), Some("127.0.0.1:54321"));
+        assert_eq!(session.last_method(), Some("OpenSession"));
+        assert!(session.last_seen_at_ms() >= session.opened_at_ms());
+    }
+
+    #[test]
+    fn snapshot_returns_all_sessions() {
+        let registry = SessionRegistry::default();
+        registry.open_or_get_with_context("pg-1", None, None, Some("OpenSession"));
+        registry.open_or_get_with_context("pg-2", Some("app"), None, Some("Scan"));
+
+        let snapshot = registry.snapshot();
+        assert_eq!(snapshot.len(), 2);
+        assert!(snapshot.iter().any(|session| session.session_id() == "pg-1"));
+        assert!(snapshot.iter().any(|session| session.session_id() == "pg-2"));
     }
 
     #[test]

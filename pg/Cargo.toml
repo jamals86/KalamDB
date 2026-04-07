@@ -42,14 +42,18 @@ serde_json = { workspace = true }
 tokio = { version = "1", default-features = false, features = ["rt"] }
 
 [dev-dependencies]
+bytes = { workspace = true }
 kalamdb-commons = { path = "../backend/crates/kalamdb-commons", default-features = false, features = ["rows"] }
+kalamdb-pg = { path = "../backend/crates/kalamdb-pg", features = ["server"] }
 ntest = { workspace = true }
 kalam-pg-api = { path = "crates/kalam-pg-api" }
 kalam-pg-client = { path = "crates/kalam-pg-client" }
 kalam-pg-common = { path = "crates/kalam-pg-common" }
 kalam-pg-fdw = { path = "crates/kalam-pg-fdw" }
 tokio = { workspace = true }
+tokio-stream = { workspace = true }
 tokio-postgres = { workspace = true }
+tonic = { workspace = true }
 futures-util = { workspace = true }
 reqwest = { workspace = true }
 serde_json = { workspace = true }

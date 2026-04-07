@@ -45,6 +45,7 @@ use super::models::{ErrorCode, QueryRequest, SqlResponse};
 use super::request::{parse_incoming_payload, took_ms, validate_sql_length};
 use super::statements::{authorized_username, split_and_prepare_statements};
 use crate::limiter::RateLimiter;
+use kalamdb_jobs::health_monitor::record_activity_now;
 
 // ---------------------------------------------------------------------------
 // Main handler
@@ -73,6 +74,7 @@ pub async fn execute_sql_v1(
     sql_executor: web::Data<Arc<SqlExecutor>>,
     rate_limiter: Option<web::Data<Arc<RateLimiter>>>,
 ) -> impl Responder {
+    record_activity_now();
     let start_time = Instant::now();
     let session: AuthSession = extractor.into();
 

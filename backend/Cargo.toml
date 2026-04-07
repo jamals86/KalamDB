@@ -96,6 +96,11 @@ name = "test_scenarios"
 path = "tests/scenarios/test_scenarios.rs"
 required-features = ["e2e-tests"]
 
+[[test]]
+name = "endurance_test"
+path = "tests/endurance_test.rs"
+required-features = ["e2e-tests"]
+
 
 # [[test]]
 # name = "test_cluster"

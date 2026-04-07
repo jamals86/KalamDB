@@ -3876,6 +3876,7 @@ version = "0.4.2-rc1"
 dependencies = [
  "arrow",
  "async-trait",
+ "bytes",
  "datafusion-common",
  "futures-util",
  "kalam-pg-api",
@@ -3883,6 +3884,7 @@ dependencies = [
  "kalam-pg-common",
  "kalam-pg-fdw",
  "kalamdb-commons",
+ "kalamdb-pg",
  "ntest",
  "pgrx",
  "regex",
@@ -3890,6 +3892,8 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-postgres",
+ "tokio-stream",
+ "tonic",
 ]
 
 [[package]]

@@ -28,6 +28,7 @@ use kalamdb_sharding::{GroupId, ShardRouter};
 use kalamdb_store::StorageBackend;
 use kalamdb_system::{ClusterCoordinator, Namespace, SystemTablesRegistry};
 use kalamdb_tables::{SharedTableStore, UserTableStore};
+use kalamdb_views::sessions::{PgSessionSnapshot, SessionsSnapshotCallback};
 use once_cell::sync::OnceCell;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -248,6 +249,7 @@ impl AppContext {
             // Get virtual view references for callback wiring later
             let stats_view = system_schema.stats_view();
             let live_view = system_schema.live_view();
+            let sessions_view = system_schema.sessions_view();
 
             // Register all system tables in DataFusion
             // Use config-driven DataFusion settings for parallelism
@@ -486,6 +488,34 @@ impl AppContext {
                 let pg_service = Arc::new(
                     KalamPgService::new(mtls, pg_auth_token).with_operation_executor(pg_executor),
                 );
+                let session_registry = pg_service.session_registry();
+                let sessions_snapshot_callback: SessionsSnapshotCallback = Arc::new(move || {
+                    let mut snapshot = session_registry
+                        .snapshot()
+                        .into_iter()
+                        .map(|session| PgSessionSnapshot {
+                            session_id: session.session_id().to_string(),
+                            current_schema: session.current_schema().map(ToOwned::to_owned),
+                            transaction_id: session.transaction_id().map(ToOwned::to_owned),
+                            transaction_state: session
+                                .transaction_state()
+                                .map(|state| state.as_str().to_string()),
+                            transaction_has_writes: session.transaction_has_writes(),
+                            client_addr: session.client_addr().map(ToOwned::to_owned),
+                            opened_at_ms: session.opened_at_ms(),
+                            last_seen_at_ms: session.last_seen_at_ms(),
+                            last_method: session.last_method().map(ToOwned::to_owned),
+                        })
+                        .collect::<Vec<_>>();
+                    snapshot.sort_by(|left, right| {
+                        right
+                            .last_seen_at_ms
+                            .cmp(&left.last_seen_at_ms)
+                            .then_with(|| left.session_id.cmp(&right.session_id))
+                    });
+                    snapshot
+                });
+                sessions_view.set_snapshot_callback(sessions_snapshot_callback);
                 raft_executor.set_pg_service(pg_service);
                 log::info!("Wired gRPC ClusterClient and CoreClusterHandler for cluster RPC");
             }

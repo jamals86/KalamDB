@@ -204,6 +204,7 @@ Special commands starting with backslash (`\`):
 | `\help` / `\?` | Show available commands |
 | `\quit` / `\q` | Exit the CLI |
 | `\info` / `\session` | Show session info |
+| `\sessions` | Show active pg-extension gRPC sessions |
 | `\format <table\|json\|csv>` | Set output format |
 | `\dt` / `\tables` | List tables |
 | `\d <table>` / `\describe <table>` | Describe a table |

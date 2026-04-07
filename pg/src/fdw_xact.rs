@@ -13,7 +13,8 @@
 //! side (future work). Phase 1 tracks transaction state and coordinates the
 //! lifecycle so the RPC contract is in place.
 
-use std::sync::Mutex;
+use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex};
 
 use pgrx::pg_sys;
 
@@ -21,12 +22,13 @@ use pgrx::pg_sys;
 ///
 /// This is stored in a process-global static because each PG backend is a
 /// single-threaded process.
-static CURRENT_TX: Mutex<Option<ActiveTransaction>> = Mutex::new(None);
+static CURRENT_TX: LazyLock<Mutex<HashMap<String, ActiveTransaction>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Whether we have already registered the xact callback for this backend.
-static XACT_CALLBACK_REGISTERED: Mutex<bool> = Mutex::new(false);
+static XACT_CALLBACK_REGISTERED: LazyLock<Mutex<bool>> = LazyLock::new(|| Mutex::new(false));
 
-/// State for the active KalamDB transaction in this PostgreSQL backend.
+/// State for an active KalamDB transaction in this PostgreSQL backend.
 struct ActiveTransaction {
     session_id: String,
     transaction_id: String,
@@ -43,7 +45,7 @@ pub fn ensure_transaction(session_id: &str) -> Result<String, kalam_pg_common::K
     // Check if we already have an active transaction
     {
         let guard = CURRENT_TX.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(ref tx) = *guard {
+        if let Some(tx) = guard.get(session_id) {
             return Ok(tx.transaction_id.clone());
         }
     }
@@ -52,7 +54,7 @@ pub fn ensure_transaction(session_id: &str) -> Result<String, kalam_pg_common::K
     register_xact_callback();
 
     // Begin a new transaction via the remote client
-    let state = crate::remote_state::get_remote_extension_state().ok_or_else(|| {
+    let state = crate::remote_state::get_remote_extension_state_for_session(session_id).ok_or_else(|| {
         kalam_pg_common::KalamPgError::Execution(
             "remote extension state not initialized".to_string(),
         )
@@ -63,10 +65,13 @@ pub fn ensure_transaction(session_id: &str) -> Result<String, kalam_pg_common::K
         .block_on(async { state.client().begin_transaction(session_id).await })?;
 
     let mut guard = CURRENT_TX.lock().unwrap_or_else(|e| e.into_inner());
-    *guard = Some(ActiveTransaction {
-        session_id: session_id.to_string(),
-        transaction_id: transaction_id.clone(),
-    });
+    guard.insert(
+        session_id.to_string(),
+        ActiveTransaction {
+            session_id: session_id.to_string(),
+            transaction_id: transaction_id.clone(),
+        },
+    );
 
     Ok(transaction_id)
 }
@@ -139,55 +144,63 @@ unsafe extern "C-unwind" fn xact_callback(
         crate::write_buffer::discard_all();
     }
 
-    let tx = {
+    let txs = {
         let mut guard = CURRENT_TX.lock().unwrap_or_else(|e| e.into_inner());
-        guard.take()
+        std::mem::take(&mut *guard)
     };
 
-    let Some(tx) = tx else {
+    if txs.is_empty() {
         return; // No active KalamDB transaction for this PG transaction
-    };
+    }
 
-    let state = match crate::remote_state::get_remote_extension_state() {
-        Some(s) => s,
-        None => return, // Remote state not available, nothing to finalize
-    };
+    for tx in txs.into_values() {
+        let state = match crate::remote_state::get_remote_extension_state_for_session(&tx.session_id) {
+            Some(state) => state,
+            None => continue,
+        };
 
-    if is_commit {
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            state.runtime().block_on(async {
-                state.client().commit_transaction(&tx.session_id, &tx.transaction_id).await
-            })
-        }));
-        match result {
-            Ok(Err(e)) => {
-                eprintln!(
-                    "pg_kalam: failed to commit KalamDB transaction {}: {}",
-                    tx.transaction_id, e
-                );
-            },
-            Err(_panic) => {
-                eprintln!("pg_kalam: panic committing KalamDB transaction {}", tx.transaction_id,);
-            },
-            Ok(Ok(_)) => {},
-        }
-    } else {
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            state.runtime().block_on(async {
-                state.client().rollback_transaction(&tx.session_id, &tx.transaction_id).await
-            })
-        }));
-        match result {
-            Ok(Err(e)) => {
-                eprintln!(
-                    "pg_kalam: failed to rollback KalamDB transaction {}: {}",
-                    tx.transaction_id, e
-                );
-            },
-            Err(_panic) => {
-                eprintln!("pg_kalam: panic rolling back KalamDB transaction {}", tx.transaction_id,);
-            },
-            Ok(Ok(_)) => {},
+        if is_commit {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                state.runtime().block_on(async {
+                    state.client().commit_transaction(&tx.session_id, &tx.transaction_id).await
+                })
+            }));
+            match result {
+                Ok(Err(e)) => {
+                    eprintln!(
+                        "pg_kalam: failed to commit KalamDB transaction {}: {}",
+                        tx.transaction_id, e
+                    );
+                },
+                Err(_panic) => {
+                    eprintln!(
+                        "pg_kalam: panic committing KalamDB transaction {}",
+                        tx.transaction_id,
+                    );
+                },
+                Ok(Ok(_)) => {},
+            }
+        } else {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                state.runtime().block_on(async {
+                    state.client().rollback_transaction(&tx.session_id, &tx.transaction_id).await
+                })
+            }));
+            match result {
+                Ok(Err(e)) => {
+                    eprintln!(
+                        "pg_kalam: failed to rollback KalamDB transaction {}: {}",
+                        tx.transaction_id, e
+                    );
+                },
+                Err(_panic) => {
+                    eprintln!(
+                        "pg_kalam: panic rolling back KalamDB transaction {}",
+                        tx.transaction_id,
+                    );
+                },
+                Ok(Ok(_)) => {},
+            }
         }
     }
 }

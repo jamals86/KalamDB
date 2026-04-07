@@ -177,6 +177,10 @@ impl CLISession {
             Command::Info => {
                 self.show_session_info().await;
             },
+            Command::Sessions => {
+                self.execute("SELECT * FROM system.sessions ORDER BY last_seen_at DESC, session_id")
+                    .await?;
+            },
             Command::Stats => {
                 self.execute(
                     "SELECT metric_name, metric_value FROM system.stats ORDER BY metric_name LIMIT 5000",
@@ -251,6 +255,7 @@ impl CLISession {
             ("\\help, \\?", "Show this help"),
             ("\\quit, \\q", "Exit CLI"),
             ("\\info", "Session info"),
+            ("\\sessions", "PG gRPC sessions"),
             ("\\format <type>", "table|json|csv"),
             ("\\history, \\h", "Browse history"),
         ];

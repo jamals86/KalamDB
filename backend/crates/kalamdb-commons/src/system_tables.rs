@@ -60,6 +60,8 @@ pub enum SystemTable {
     Stats,
     /// system.live - Active in-memory live subscriptions (computed on-demand)
     Live,
+    /// system.sessions - Active PostgreSQL gRPC sessions (computed on-demand)
+    Sessions,
     /// system.settings - Server configuration settings (computed on-demand)
     Settings,
     /// system.server_logs - Server log entries (computed from log files)
@@ -96,6 +98,7 @@ impl SystemTable {
             // Views
             SystemTable::Stats => "stats",
             SystemTable::Live => "live",
+            SystemTable::Sessions => "sessions",
             SystemTable::Settings => "settings",
             SystemTable::ServerLogs => "server_logs",
             SystemTable::Cluster => "cluster",
@@ -118,6 +121,7 @@ impl SystemTable {
             self,
             SystemTable::Stats
                 | SystemTable::Live
+                | SystemTable::Sessions
                 | SystemTable::Settings
                 | SystemTable::ServerLogs
                 | SystemTable::Cluster
@@ -147,6 +151,7 @@ impl SystemTable {
             // Views have no column family
             SystemTable::Stats
             | SystemTable::Live
+            | SystemTable::Sessions
             | SystemTable::Settings
             | SystemTable::ServerLogs
             | SystemTable::Cluster
@@ -184,6 +189,7 @@ impl SystemTable {
             "topic_offsets" | "system_topic_offsets" => Ok(SystemTable::TopicOffsets),
             // Views
             "stats" => Ok(SystemTable::Stats),
+            "sessions" => Ok(SystemTable::Sessions),
             "settings" => Ok(SystemTable::Settings),
             "server_logs" => Ok(SystemTable::ServerLogs),
             "cluster" => Ok(SystemTable::Cluster),
@@ -218,6 +224,7 @@ impl SystemTable {
         &[
             SystemTable::Stats,
             SystemTable::Live,
+            SystemTable::Sessions,
             SystemTable::Settings,
             SystemTable::ServerLogs,
             SystemTable::Cluster,
@@ -247,6 +254,7 @@ impl SystemTable {
             // Views
             SystemTable::Stats,
             SystemTable::Live,
+            SystemTable::Sessions,
             SystemTable::Settings,
             SystemTable::ServerLogs,
             SystemTable::Cluster,
@@ -301,6 +309,7 @@ impl SystemTable {
             // Views have no partition
             SystemTable::Stats
             | SystemTable::Live
+            | SystemTable::Sessions
             | SystemTable::Settings
             | SystemTable::ServerLogs
             | SystemTable::Cluster
@@ -480,6 +489,7 @@ mod tests {
         assert_eq!(SystemTable::AuditLog.table_name(), "audit_log");
         // Views
         assert_eq!(SystemTable::Stats.table_name(), "stats");
+        assert_eq!(SystemTable::Sessions.table_name(), "sessions");
         assert_eq!(SystemTable::Cluster.table_name(), "cluster");
         assert_eq!(SystemTable::ClusterGroups.table_name(), "cluster_groups");
     }
@@ -492,6 +502,7 @@ mod tests {
         assert!(!SystemTable::Manifest.is_view());
         // Views are views
         assert!(SystemTable::Stats.is_view());
+        assert!(SystemTable::Sessions.is_view());
         assert!(SystemTable::Settings.is_view());
         assert!(SystemTable::ServerLogs.is_view());
         assert!(SystemTable::Cluster.is_view());
@@ -508,6 +519,7 @@ mod tests {
         assert_eq!(SystemTable::AuditLog.column_family_name(), Some("system_audit_log"));
         // Views have no column family
         assert_eq!(SystemTable::Stats.column_family_name(), None);
+        assert_eq!(SystemTable::Sessions.column_family_name(), None);
         assert_eq!(SystemTable::Cluster.column_family_name(), None);
     }
 
@@ -520,6 +532,7 @@ mod tests {
         assert_eq!(SystemTable::from_name("storages").unwrap(), SystemTable::Storages);
         // Views
         assert_eq!(SystemTable::from_name("stats").unwrap(), SystemTable::Stats);
+        assert_eq!(SystemTable::from_name("sessions").unwrap(), SystemTable::Sessions);
         assert_eq!(SystemTable::from_name("system.cluster").unwrap(), SystemTable::Cluster);
         assert_eq!(
             SystemTable::from_name("system.cluster_groups").unwrap(),
@@ -570,6 +583,7 @@ mod tests {
         assert!(SystemTable::is_system_table("system.users"));
         assert!(SystemTable::is_system_table("storages"));
         assert!(SystemTable::is_system_table("stats"));
+        assert!(SystemTable::is_system_table("sessions"));
         assert!(SystemTable::is_system_table("system.cluster"));
         assert!(SystemTable::is_system_table("system.cluster_groups"));
         assert!(!SystemTable::is_system_table("my_custom_table"));
@@ -580,18 +594,20 @@ mod tests {
         assert_eq!(SystemTable::Users.to_string(), "system.users");
         assert_eq!(SystemTable::Jobs.to_string(), "system.jobs");
         assert_eq!(SystemTable::Stats.to_string(), "system.stats");
+        assert_eq!(SystemTable::Sessions.to_string(), "system.sessions");
     }
 
     #[test]
     fn test_all() {
         let all = SystemTable::all();
-        assert_eq!(all.len(), 21); // 11 tables + 10 views
+        assert_eq!(all.len(), 22); // 11 tables + 11 views
         assert!(all.contains(&SystemTable::Users));
         assert!(all.contains(&SystemTable::Storages));
         assert!(all.contains(&SystemTable::AuditLog));
         assert!(all.contains(&SystemTable::TopicOffsets));
         assert!(all.contains(&SystemTable::Stats));
         assert!(all.contains(&SystemTable::Live));
+        assert!(all.contains(&SystemTable::Sessions));
         assert!(all.contains(&SystemTable::Cluster));
         assert!(all.contains(&SystemTable::ClusterGroups));
         assert!(all.contains(&SystemTable::Tables));
@@ -608,7 +624,7 @@ mod tests {
     #[test]
     fn test_all_views() {
         let views = SystemTable::all_views();
-        assert_eq!(views.len(), 10);
+        assert_eq!(views.len(), 11);
         assert!(views.iter().all(|v| v.is_view()));
     }
 
@@ -619,6 +635,7 @@ mod tests {
         assert!(SystemTable::Jobs.partition().is_some());
         // Views have no partitions
         assert!(SystemTable::Stats.partition().is_none());
+        assert!(SystemTable::Sessions.partition().is_none());
         assert!(SystemTable::Cluster.partition().is_none());
         assert!(SystemTable::ClusterGroups.partition().is_none());
     }

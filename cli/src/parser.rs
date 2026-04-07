@@ -47,6 +47,7 @@ pub enum Command {
     },
     DeleteCredentials,
     Info,
+    Sessions,
     /// Show system statistics (from system.stats)
     Stats,
     /// Open interactive history menu
@@ -101,6 +102,7 @@ impl CommandParser {
         match command {
             "\\quit" | "\\q" => Ok(Command::Quit),
             "\\help" | "\\?" => Ok(Command::Help),
+            "\\sessions" => Ok(Command::Sessions),
             "\\stats" | "\\metrics" => Ok(Command::Stats),
             "\\flush" => Ok(Command::Flush),
             "\\cluster" => {
@@ -375,6 +377,12 @@ mod tests {
         let parser = CommandParser::new();
         assert_eq!(parser.parse("\\stats").unwrap(), Command::Stats);
         assert_eq!(parser.parse("\\metrics").unwrap(), Command::Stats);
+    }
+
+    #[test]
+    fn test_parse_sessions() {
+        let parser = CommandParser::new();
+        assert_eq!(parser.parse("\\sessions").unwrap(), Command::Sessions);
     }
 
     #[test]

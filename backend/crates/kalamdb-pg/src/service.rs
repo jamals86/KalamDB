@@ -926,6 +926,22 @@ impl KalamPgService {
     pub fn session_registry(&self) -> Arc<SessionRegistry> {
         Arc::clone(&self.session_registry)
     }
+
+    fn record_session_activity<T>(
+        &self,
+        session_id: &str,
+        current_schema: Option<&str>,
+        method: &str,
+        request: &Request<T>,
+    ) -> RemotePgSession {
+        let client_addr = request.remote_addr().map(|addr| addr.to_string());
+        self.session_registry.open_or_get_with_context(
+            session_id,
+            current_schema,
+            client_addr.as_deref(),
+            Some(method),
+        )
+    }
 }
 
 #[cfg(feature = "server")]
@@ -942,6 +958,7 @@ impl PgService for KalamPgService {
     ) -> Result<Response<OpenSessionResponse>, Status> {
         self.authorize(&request)?;
 
+        let remote_addr = request.remote_addr().map(|addr| addr.to_string());
         let request = request.into_inner();
         let session_id = request.session_id.trim();
         if session_id.is_empty() {
@@ -954,13 +971,12 @@ impl PgService for KalamPgService {
             .map(str::trim)
             .filter(|value| !value.is_empty());
 
-        let _ = self.session_registry.open_or_get(session_id);
-        let session = self
-            .session_registry
-            .update(session_id, current_schema, None)
-            .unwrap_or_else(|| {
-                RemotePgSession::new(session_id).with_current_schema(current_schema)
-            });
+        let session = self.session_registry.open_or_get_with_context(
+            session_id,
+            current_schema,
+            remote_addr.as_deref(),
+            Some("OpenSession"),
+        );
 
         Ok(Response::new(OpenSessionResponse {
             session_id: session.session_id().to_string(),
@@ -991,6 +1007,11 @@ impl PgService for KalamPgService {
         request: Request<ScanRpcRequest>,
     ) -> Result<Response<ScanRpcResponse>, Status> {
         self.authorize(&request)?;
+        let session_id = request.get_ref().session_id.trim();
+        if session_id.is_empty() {
+            return Err(Status::invalid_argument("session_id must not be empty"));
+        }
+        self.record_session_activity(session_id, None, "Scan", &request);
         let inner = request.into_inner();
         log::debug!("PG scan: {}.{} type={}", inner.namespace, inner.table_name, inner.table_type);
         let domain_req = operation_executor::scan_request_from_rpc(&inner)?;
@@ -1004,6 +1025,12 @@ impl PgService for KalamPgService {
         request: Request<InsertRpcRequest>,
     ) -> Result<Response<InsertRpcResponse>, Status> {
         self.authorize(&request)?;
+        let session_id = request.get_ref().session_id.trim();
+        if session_id.is_empty() {
+            return Err(Status::invalid_argument("session_id must not be empty"));
+        }
+        self.record_session_activity(session_id, None, "Insert", &request);
+        self.session_registry.mark_transaction_writes(session_id);
         let inner = request.into_inner();
         log::debug!(
             "PG insert: {}.{} rows={}",
@@ -1023,6 +1050,12 @@ impl PgService for KalamPgService {
         request: Request<UpdateRpcRequest>,
     ) -> Result<Response<UpdateRpcResponse>, Status> {
         self.authorize(&request)?;
+        let session_id = request.get_ref().session_id.trim();
+        if session_id.is_empty() {
+            return Err(Status::invalid_argument("session_id must not be empty"));
+        }
+        self.record_session_activity(session_id, None, "Update", &request);
+        self.session_registry.mark_transaction_writes(session_id);
         let inner = request.into_inner();
         log::debug!("PG update: {}.{} pk={}", inner.namespace, inner.table_name, inner.pk_value);
         let domain_req = operation_executor::update_request_from_rpc(&inner)?;
@@ -1037,6 +1070,12 @@ impl PgService for KalamPgService {
         request: Request<DeleteRpcRequest>,
     ) -> Result<Response<DeleteRpcResponse>, Status> {
         self.authorize(&request)?;
+        let session_id = request.get_ref().session_id.trim();
+        if session_id.is_empty() {
+            return Err(Status::invalid_argument("session_id must not be empty"));
+        }
+        self.record_session_activity(session_id, None, "Delete", &request);
+        self.session_registry.mark_transaction_writes(session_id);
         let inner = request.into_inner();
         log::debug!("PG delete: {}.{} pk={}", inner.namespace, inner.table_name, inner.pk_value);
         let domain_req = operation_executor::delete_request_from_rpc(&inner)?;
@@ -1051,6 +1090,7 @@ impl PgService for KalamPgService {
         request: Request<BeginTransactionRequest>,
     ) -> Result<Response<BeginTransactionResponse>, Status> {
         self.authorize(&request)?;
+        let remote_addr = request.remote_addr().map(|addr| addr.to_string());
         let inner = request.into_inner();
         let session_id = inner.session_id.trim();
         if session_id.is_empty() {
@@ -1058,7 +1098,12 @@ impl PgService for KalamPgService {
         }
 
         // Ensure session exists
-        self.session_registry.open_or_get(session_id);
+        self.session_registry.open_or_get_with_context(
+            session_id,
+            None,
+            remote_addr.as_deref(),
+            Some("BeginTransaction"),
+        );
 
         let transaction_id = self
             .session_registry
@@ -1075,6 +1120,7 @@ impl PgService for KalamPgService {
         request: Request<CommitTransactionRequest>,
     ) -> Result<Response<CommitTransactionResponse>, Status> {
         self.authorize(&request)?;
+        let remote_addr = request.remote_addr().map(|addr| addr.to_string());
         let inner = request.into_inner();
         let session_id = inner.session_id.trim();
         let transaction_id = inner.transaction_id.trim();
@@ -1084,6 +1130,13 @@ impl PgService for KalamPgService {
         if transaction_id.is_empty() {
             return Err(Status::invalid_argument("transaction_id must not be empty"));
         }
+
+        self.session_registry.open_or_get_with_context(
+            session_id,
+            None,
+            remote_addr.as_deref(),
+            Some("CommitTransaction"),
+        );
 
         let committed_id = self
             .session_registry
@@ -1102,12 +1155,20 @@ impl PgService for KalamPgService {
         request: Request<RollbackTransactionRequest>,
     ) -> Result<Response<RollbackTransactionResponse>, Status> {
         self.authorize(&request)?;
+        let remote_addr = request.remote_addr().map(|addr| addr.to_string());
         let inner = request.into_inner();
         let session_id = inner.session_id.trim();
         let transaction_id = inner.transaction_id.trim();
         if session_id.is_empty() {
             return Err(Status::invalid_argument("session_id must not be empty"));
         }
+
+        self.session_registry.open_or_get_with_context(
+            session_id,
+            None,
+            remote_addr.as_deref(),
+            Some("RollbackTransaction"),
+        );
 
         let rolled_back_id = self
             .session_registry
@@ -1126,11 +1187,23 @@ impl PgService for KalamPgService {
         request: Request<ExecuteSqlRpcRequest>,
     ) -> Result<Response<ExecuteSqlRpcResponse>, Status> {
         self.authorize(&request)?;
+        let remote_addr = request.remote_addr().map(|addr| addr.to_string());
         let inner = request.into_inner();
         let sql = inner.sql.trim();
+        let session_id = inner.session_id.trim();
         if sql.is_empty() {
             return Err(Status::invalid_argument("sql must not be empty"));
         }
+        if session_id.is_empty() {
+            return Err(Status::invalid_argument("session_id must not be empty"));
+        }
+
+        self.session_registry.open_or_get_with_context(
+            session_id,
+            None,
+            remote_addr.as_deref(),
+            Some("ExecuteSql"),
+        );
 
         log::debug!("PG execute_sql: {}", sql);
         let result = self.operation_executor()?.execute_sql(sql).await?;
@@ -1145,11 +1218,23 @@ impl PgService for KalamPgService {
         request: Request<ExecuteQueryRpcRequest>,
     ) -> Result<Response<ExecuteQueryRpcResponse>, Status> {
         self.authorize(&request)?;
+        let remote_addr = request.remote_addr().map(|addr| addr.to_string());
         let inner = request.into_inner();
         let sql = inner.sql.trim();
+        let session_id = inner.session_id.trim();
         if sql.is_empty() {
             return Err(Status::invalid_argument("sql must not be empty"));
         }
+        if session_id.is_empty() {
+            return Err(Status::invalid_argument("session_id must not be empty"));
+        }
+
+        self.session_registry.open_or_get_with_context(
+            session_id,
+            None,
+            remote_addr.as_deref(),
+            Some("ExecuteQuery"),
+        );
 
         log::debug!("PG execute_query: {}", sql);
         let (message, ipc_batches) = self.operation_executor()?.execute_query(sql).await?;
