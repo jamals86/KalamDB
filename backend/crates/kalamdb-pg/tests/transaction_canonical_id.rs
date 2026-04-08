@@ -33,17 +33,12 @@ async fn canonical_transaction_id_is_preserved_from_begin_through_commit() {
         .transaction_coordinator()
         .get_overlay(&parsed_transaction_id)
         .expect("overlay exists before commit");
-    let table_entries = overlay
-        .table_entries(&table_ids[0])
-        .expect("table overlay entries");
+    let table_entries = overlay.table_entries(&table_ids[0]).expect("table overlay entries");
     assert!(table_entries
         .values()
         .all(|entry| entry.transaction_id == parsed_transaction_id));
 
     let committed_transaction_id = commit_transaction(&service, session_id, &transaction_id).await;
     assert_eq!(committed_transaction_id, transaction_id);
-    assert!(app_ctx
-        .transaction_coordinator()
-        .get_handle(&parsed_transaction_id)
-        .is_none());
+    assert!(app_ctx.transaction_coordinator().get_handle(&parsed_transaction_id).is_none());
 }

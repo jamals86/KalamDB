@@ -22,7 +22,8 @@ async fn transaction_scan_reads_staged_writes_before_rollback() {
     assert_eq!(visible_rows.len(), 1);
     assert_eq!(visible_rows[0].get("name").and_then(|value| value.as_str()), Some("alpha"));
 
-    let rolled_back_transaction_id = rollback_transaction(&service, session_id, &transaction_id).await;
+    let rolled_back_transaction_id =
+        rollback_transaction(&service, session_id, &transaction_id).await;
     assert_eq!(rolled_back_transaction_id, transaction_id);
 
     let post_rollback_rows = scan_shared_rows(&service, &table_ids[0], session_id).await;

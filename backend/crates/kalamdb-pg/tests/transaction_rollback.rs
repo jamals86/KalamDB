@@ -19,7 +19,8 @@ async fn transaction_rollback_discards_staged_rows_across_two_tables() {
     insert_shared_row(&service, &table_ids[0], session_id, 1, "alpha").await;
     insert_shared_row(&service, &table_ids[1], session_id, 2, "beta").await;
 
-    let rolled_back_transaction_id = rollback_transaction(&service, session_id, &transaction_id).await;
+    let rolled_back_transaction_id =
+        rollback_transaction(&service, session_id, &transaction_id).await;
     assert_eq!(rolled_back_transaction_id, transaction_id);
 
     let first_rows = scan_shared_rows(&service, &table_ids[0], session_id).await;

@@ -1,6 +1,6 @@
 # Implementation Plan: PostgreSQL-Style Transactions for KalamDB
 
-**Branch**: `027-pg-transactions` | **Date**: 2025-01-20 | **Last Updated**: 2026-04-07 | **Spec**: [spec.md](spec.md)
+**Branch**: `027-pg-transactions` | **Date**: 2025-01-20 | **Last Updated**: 2026-04-08 | **Spec**: [spec.md](spec.md)
 **Input**: Feature specification from `/specs/027-pg-transactions/spec.md`
 
 ## Summary

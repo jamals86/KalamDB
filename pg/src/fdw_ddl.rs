@@ -11,7 +11,7 @@ use kalam_pg_common::KalamPgError;
 use kalam_pg_fdw::ServerOptions;
 use kalamdb_commons::TableType;
 use pgrx::pg_sys;
-use std::ffi::CStr;
+use std::ffi::{CStr, CString};
 use std::str::FromStr;
 
 /// Default foreign server name used when handling `CREATE TABLE ... USING kalamdb`.
@@ -162,6 +162,50 @@ unsafe extern "C-unwind" fn kalam_process_utility(
                 );
             }
         },
+        pg_sys::NodeTag::T_TransactionStmt => {
+            let tx_stmt = utility_stmt as *mut pg_sys::TransactionStmt;
+            let tx_kind = (*tx_stmt).kind;
+
+            match tx_kind {
+                pg_sys::TransactionStmtKind::TRANS_STMT_COMMIT => {
+                    if let Err(error) = crate::fdw_xact::commit_explicit_transaction_block() {
+                        report_sql_error(&format!("pg_kalam commit: {}", error));
+                    }
+                },
+                pg_sys::TransactionStmtKind::TRANS_STMT_ROLLBACK => {
+                    if let Err(error) = crate::fdw_xact::rollback_explicit_transaction_block() {
+                        report_sql_error(&format!("pg_kalam rollback: {}", error));
+                    }
+                },
+                _ => {},
+            }
+
+            call_prev(
+                pstmt,
+                query_string,
+                read_only_tree,
+                context,
+                params,
+                query_env,
+                dest,
+                qc,
+            );
+
+            match tx_kind {
+                pg_sys::TransactionStmtKind::TRANS_STMT_BEGIN
+                | pg_sys::TransactionStmtKind::TRANS_STMT_START => {
+                    crate::fdw_xact::set_explicit_transaction_block(true);
+                },
+                pg_sys::TransactionStmtKind::TRANS_STMT_COMMIT
+                | pg_sys::TransactionStmtKind::TRANS_STMT_ROLLBACK
+                | pg_sys::TransactionStmtKind::TRANS_STMT_PREPARE
+                | pg_sys::TransactionStmtKind::TRANS_STMT_COMMIT_PREPARED
+                | pg_sys::TransactionStmtKind::TRANS_STMT_ROLLBACK_PREPARED => {
+                    crate::fdw_xact::set_explicit_transaction_block(false);
+                },
+                _ => {},
+            }
+        },
         _ => {
             call_prev(pstmt, query_string, read_only_tree, context, params, query_env, dest, qc);
         },
@@ -195,6 +239,39 @@ fn call_prev(
             );
         }
     }
+}
+
+unsafe fn report_sql_error(message: &str) -> ! {
+    use pgrx::pg_sys::elog::PgLogLevel;
+    use pgrx::pg_sys::errcodes::PgSqlErrorCode;
+
+    const PERCENT_S: &CStr = c"%s";
+    const DOMAIN: *const std::os::raw::c_char = std::ptr::null_mut();
+
+    unsafe extern "C-unwind" {
+        fn errcode(sqlerrcode: std::os::raw::c_int) -> std::os::raw::c_int;
+        fn errmsg(fmt: *const std::os::raw::c_char, ...) -> std::os::raw::c_int;
+        fn errstart(
+            elevel: std::os::raw::c_int,
+            domain: *const std::os::raw::c_char,
+        ) -> bool;
+        fn errfinish(
+            filename: *const std::os::raw::c_char,
+            lineno: std::os::raw::c_int,
+            funcname: *const std::os::raw::c_char,
+        );
+    }
+
+    if errstart(PgLogLevel::ERROR as _, DOMAIN) {
+        errcode(PgSqlErrorCode::ERRCODE_INTERNAL_ERROR as _);
+        let c_message = CString::new(message).unwrap_or_else(|_| {
+            CString::new("pg_kalam transaction error").expect("static message")
+        });
+        errmsg(PERCENT_S.as_ptr(), c_message.as_ptr());
+        errfinish(c"pg_kalam".as_ptr(), 0, c"report_sql_error".as_ptr());
+    }
+
+    std::hint::unreachable_unchecked()
 }
 
 // ---------------------------------------------------------------------------

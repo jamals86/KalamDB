@@ -32,6 +32,7 @@ use kalamdb_tables::{SharedTableStore, UserTableStore};
 use kalamdb_views::sessions::{PgSessionSnapshot, SessionsSnapshotCallback};
 use kalamdb_views::transactions::{TransactionSnapshot, TransactionsSnapshotCallback};
 use once_cell::sync::OnceCell;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -503,18 +504,49 @@ impl AppContext {
                     KalamPgService::new(mtls, pg_auth_token).with_operation_executor(pg_executor),
                 );
                 let session_registry = pg_service.session_registry();
+                let app_ctx_for_sessions = Arc::clone(&app_ctx);
                 let sessions_snapshot_callback: SessionsSnapshotCallback = Arc::new(move || {
+                    let active_pg_transactions = app_ctx_for_sessions
+                        .try_transaction_coordinator()
+                        .map(|transaction_coordinator| {
+                            transaction_coordinator
+                                .active_metrics()
+                                .into_iter()
+                                .filter(|metric| {
+                                    matches!(
+                                        metric.origin,
+                                        kalamdb_commons::models::TransactionOrigin::PgRpc
+                                    )
+                                })
+                                .map(|metric| {
+                                    (
+                                        metric.owner_id.to_string(),
+                                        (
+                                            metric.transaction_id.to_string(),
+                                            metric.state.as_str().to_string(),
+                                            metric.write_count > 0,
+                                        ),
+                                    )
+                                })
+                                .collect::<HashMap<_, _>>()
+                        })
+                        .unwrap_or_default();
                     let mut snapshot = session_registry
                         .snapshot()
                         .into_iter()
                         .map(|session| PgSessionSnapshot {
+                            transaction_id: active_pg_transactions
+                                .get(session.session_id())
+                                .map(|(transaction_id, _, _)| transaction_id.clone()),
+                            transaction_state: active_pg_transactions
+                                .get(session.session_id())
+                                .map(|(_, transaction_state, _)| transaction_state.clone()),
+                            transaction_has_writes: active_pg_transactions
+                                .get(session.session_id())
+                                .map(|(_, _, transaction_has_writes)| *transaction_has_writes)
+                                .unwrap_or(false),
                             session_id: session.session_id().to_string(),
                             current_schema: session.current_schema().map(ToOwned::to_owned),
-                            transaction_id: session.transaction_id().map(ToOwned::to_owned),
-                            transaction_state: session
-                                .transaction_state()
-                                .map(|state| state.as_str().to_string()),
-                            transaction_has_writes: session.transaction_has_writes(),
                             client_addr: session.client_addr().map(ToOwned::to_owned),
                             opened_at_ms: session.opened_at_ms(),
                             last_seen_at_ms: session.last_seen_at_ms(),

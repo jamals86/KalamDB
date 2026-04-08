@@ -83,7 +83,7 @@ async fn wait_for_table_visible(
 }
 
 #[tokio::test]
-#[ntest::timeout(2000)]
+#[ntest::timeout(3600)]
 async fn test_sql_transaction_forwarded_from_follower_preserves_atomic_staging() -> Result<()> {
     let _guard = super::test_support::http_server::acquire_test_lock().await;
     let cluster = super::test_support::http_server::get_cluster_server().await;

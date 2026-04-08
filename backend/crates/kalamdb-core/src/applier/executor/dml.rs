@@ -10,6 +10,7 @@
 //! - Unified: Same code path for standalone and cluster modes
 //! - Provider-agnostic: Handles User, Stream, and Shared table types
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use kalamdb_commons::ids::{StreamTableRowId, UserTableRowId};
@@ -30,6 +31,7 @@ use crate::applier::executor::utils::fileref_util::{
 use crate::providers::base::{find_row_by_pk, BaseTableProvider};
 use crate::providers::{SharedTableProvider, StreamTableProvider, UserTableProvider};
 use crate::transactions::{CommitSideEffectPlan, FanoutOwnerScope};
+use kalamdb_tables::utils::base as table_base;
 use kalamdb_tables::{StreamTableRow, UserTableRow};
 
 /// Executor for DML operations (Data Plane)
@@ -485,14 +487,166 @@ impl DmlExecutor {
         }
     }
 
+    async fn prevalidate_user_transaction_batch(
+        &self,
+        transaction_id: &TransactionId,
+        mutations: &[StagedMutation],
+    ) -> Result<(), ApplierError> {
+        let mut seen_insert_keys = HashSet::with_capacity(mutations.len());
+        let mut cached_provider: Option<(
+            TableId,
+            Arc<dyn datafusion::datasource::TableProvider + Send + Sync>,
+        )> = None;
+
+        for mutation in mutations {
+            if mutation.operation_kind != OperationKind::Insert {
+                continue;
+            }
+
+            if &mutation.transaction_id != transaction_id {
+                return Err(ApplierError::Validation(format!(
+                    "staged mutation transaction mismatch: expected '{}', got '{}'",
+                    transaction_id, mutation.transaction_id
+                )));
+            }
+
+            let user_id = mutation.user_id.clone().ok_or_else(|| {
+                ApplierError::Validation(
+                    "user transaction batch mutation missing user_id".to_string(),
+                )
+            })?;
+
+            let provider_arc = if cached_provider
+                .as_ref()
+                .map(|(table_id, _)| table_id == &mutation.table_id)
+                .unwrap_or(false)
+            {
+                Arc::clone(&cached_provider.as_ref().expect("cached provider").1)
+            } else {
+                let provider_arc = self.load_provider(&mutation.table_id, "Table provider").await?;
+                cached_provider = Some((mutation.table_id.clone(), Arc::clone(&provider_arc)));
+                provider_arc
+            };
+            let provider = provider_arc
+                .as_any()
+                .downcast_ref::<UserTableProvider>()
+                .ok_or_else(|| {
+                    ApplierError::Execution(format!(
+                        "Provider type mismatch for user table {}",
+                        mutation.table_id
+                    ))
+                })?;
+
+            let batch_key = format!(
+                "{}|{}|{}",
+                mutation.table_id,
+                user_id.as_str(),
+                mutation.primary_key
+            );
+            if !seen_insert_keys.insert(batch_key) {
+                return Err(ApplierError::Execution(format!(
+                    "Failed to insert batch row: Already exists: Primary key violation: value '{}' appears multiple times in the transaction batch for column '{}'",
+                    mutation.primary_key,
+                    provider.primary_key_field_name()
+                )));
+            }
+
+            table_base::ensure_unique_pk_value(provider, Some(&user_id), &mutation.payload)
+                .await
+                .map_err(|error| {
+                    ApplierError::Execution(format!(
+                        "Failed to insert batch row: {}",
+                        error
+                    ))
+                })?;
+        }
+
+        Ok(())
+    }
+
+    async fn prevalidate_shared_transaction_batch(
+        &self,
+        transaction_id: &TransactionId,
+        mutations: &[StagedMutation],
+    ) -> Result<(), ApplierError> {
+        let mut seen_insert_keys = HashSet::with_capacity(mutations.len());
+        let mut cached_provider: Option<(
+            TableId,
+            Arc<dyn datafusion::datasource::TableProvider + Send + Sync>,
+        )> = None;
+
+        for mutation in mutations {
+            if mutation.operation_kind != OperationKind::Insert {
+                continue;
+            }
+
+            if &mutation.transaction_id != transaction_id {
+                return Err(ApplierError::Validation(format!(
+                    "staged mutation transaction mismatch: expected '{}', got '{}'",
+                    transaction_id, mutation.transaction_id
+                )));
+            }
+
+            let provider_arc = if cached_provider
+                .as_ref()
+                .map(|(table_id, _)| table_id == &mutation.table_id)
+                .unwrap_or(false)
+            {
+                Arc::clone(&cached_provider.as_ref().expect("cached provider").1)
+            } else {
+                let provider_arc = self
+                    .load_provider(&mutation.table_id, "Shared table provider")
+                    .await?;
+                cached_provider = Some((mutation.table_id.clone(), Arc::clone(&provider_arc)));
+                provider_arc
+            };
+            let provider = provider_arc
+                .as_any()
+                .downcast_ref::<SharedTableProvider>()
+                .ok_or_else(|| {
+                    ApplierError::Execution(format!(
+                        "Provider type mismatch for shared table {}",
+                        mutation.table_id
+                    ))
+                })?;
+
+            let batch_key = format!("{}|{}", mutation.table_id, mutation.primary_key);
+            if !seen_insert_keys.insert(batch_key) {
+                return Err(ApplierError::Execution(format!(
+                    "Failed to insert batch row: Already exists: Primary key violation: value '{}' appears multiple times in the transaction batch for column '{}'",
+                    mutation.primary_key,
+                    provider.primary_key_field_name()
+                )));
+            }
+
+            table_base::ensure_unique_pk_value(provider, None, &mutation.payload)
+                .await
+                .map_err(|error| {
+                    ApplierError::Execution(format!(
+                        "Failed to insert batch row: {}",
+                        error
+                    ))
+                })?;
+        }
+
+        Ok(())
+    }
+
     pub async fn apply_user_transaction_batch(
         &self,
         transaction_id: &TransactionId,
         mutations: &[StagedMutation],
     ) -> Result<TransactionApplyResult, ApplierError> {
+        self.prevalidate_user_transaction_batch(transaction_id, mutations)
+            .await?;
+
         let commit_seq = self.app_context.commit_sequence_tracker().allocate_next();
         let mut affected_rows = 0;
         let mut side_effect_plan = CommitSideEffectPlan::new(transaction_id.clone());
+        let mut cached_provider: Option<(
+            TableId,
+            Arc<dyn datafusion::datasource::TableProvider + Send + Sync>,
+        )> = None;
 
         for mutation in mutations {
             if &mutation.transaction_id != transaction_id {
@@ -506,7 +660,17 @@ impl DmlExecutor {
                 ApplierError::Validation("user transaction batch mutation missing user_id".to_string())
             })?;
 
-            let provider_arc = self.load_provider(&mutation.table_id, "Table provider").await?;
+            let provider_arc = if cached_provider
+                .as_ref()
+                .map(|(table_id, _)| table_id == &mutation.table_id)
+                .unwrap_or(false)
+            {
+                Arc::clone(&cached_provider.as_ref().expect("cached provider").1)
+            } else {
+                let provider_arc = self.load_provider(&mutation.table_id, "Table provider").await?;
+                cached_provider = Some((mutation.table_id.clone(), Arc::clone(&provider_arc)));
+                provider_arc
+            };
             let provider = provider_arc
                 .as_any()
                 .downcast_ref::<UserTableProvider>()
@@ -520,7 +684,7 @@ impl DmlExecutor {
             let applied = match mutation.operation_kind {
                 OperationKind::Insert => {
                     let (row_key, notification) = provider
-                        .insert_deferred(&user_id, mutation.payload.clone())
+                        .insert_deferred_prevalidated(&user_id, mutation.payload.clone())
                         .await
                         .map_err(|e| {
                             ApplierError::Execution(format!("Failed to insert batch row: {}", e))
@@ -608,9 +772,93 @@ impl DmlExecutor {
         transaction_id: &TransactionId,
         mutations: &[StagedMutation],
     ) -> Result<TransactionApplyResult, ApplierError> {
+        self.prevalidate_shared_transaction_batch(transaction_id, mutations)
+            .await?;
+
         let commit_seq = self.app_context.commit_sequence_tracker().allocate_next();
         let mut affected_rows = 0;
         let mut side_effect_plan = CommitSideEffectPlan::new(transaction_id.clone());
+
+        if let Some(first_mutation) = mutations.first() {
+            let all_inserts_same_table = mutations.iter().all(|mutation| {
+                &mutation.transaction_id == transaction_id
+                    && mutation.operation_kind == OperationKind::Insert
+                    && mutation.table_id == first_mutation.table_id
+            });
+
+            if all_inserts_same_table {
+                let provider_arc = self
+                    .load_provider(&first_mutation.table_id, "Shared table provider")
+                    .await?;
+                let provider = provider_arc
+                    .as_any()
+                    .downcast_ref::<SharedTableProvider>()
+                    .ok_or_else(|| {
+                        ApplierError::Execution(format!(
+                            "Provider type mismatch for shared table {}",
+                            first_mutation.table_id
+                        ))
+                    })?;
+
+                let applied = provider
+                    .insert_batch_deferred_prevalidated(
+                        mutations.iter().map(|mutation| mutation.payload.clone()).collect(),
+                    )
+                    .await
+                    .map_err(|e| {
+                        ApplierError::Execution(format!("Failed to insert batch rows: {}", e))
+                    })?;
+
+                if applied.len() != mutations.len() {
+                    return Err(ApplierError::Execution(format!(
+                        "Shared transaction batch insert length mismatch: expected {}, got {}",
+                        mutations.len(),
+                        applied.len()
+                    )));
+                }
+
+                for (_mutation, (row_key, notification)) in mutations.iter().zip(applied.into_iter()) {
+                    provider.patch_commit_seq_for_row_key(&row_key, commit_seq).await.map_err(
+                        |e| ApplierError::Execution(format!("Failed to stamp commit_seq: {}", e)),
+                    )?;
+
+                    affected_rows += 1;
+                    side_effect_plan.record_manifest_update();
+
+                    if let Some(notification) = notification {
+                        if self.publish_transaction_notification(None, &notification).await {
+                            side_effect_plan.record_publisher_event();
+                        }
+
+                        if NotificationServiceTrait::has_subscribers(
+                            self.app_context.notification_service().as_ref(),
+                            None,
+                            &notification.table_id,
+                        ) {
+                            side_effect_plan.push_notification(FanoutOwnerScope::Shared, notification);
+                        }
+                    }
+                }
+
+                let notifications_sent = self
+                    .app_context
+                    .notification_service()
+                    .dispatch_commit_plan(&side_effect_plan);
+
+                return Ok(TransactionApplyResult {
+                    rows_affected: affected_rows,
+                    commit_seq,
+                    notifications_sent,
+                    manifest_updates: side_effect_plan.manifest_updates,
+                    publisher_events: side_effect_plan.publisher_events,
+                });
+            }
+        }
+
+        let mut cached_provider: Option<(
+            TableId,
+            Arc<dyn datafusion::datasource::TableProvider + Send + Sync>,
+        )> = None;
 
         for mutation in mutations {
             if &mutation.transaction_id != transaction_id {
@@ -620,7 +868,19 @@ impl DmlExecutor {
                 )));
             }
 
-            let provider_arc = self.load_provider(&mutation.table_id, "Shared table provider").await?;
+            let provider_arc = if cached_provider
+                .as_ref()
+                .map(|(table_id, _)| table_id == &mutation.table_id)
+                .unwrap_or(false)
+            {
+                Arc::clone(&cached_provider.as_ref().expect("cached provider").1)
+            } else {
+                let provider_arc = self
+                    .load_provider(&mutation.table_id, "Shared table provider")
+                    .await?;
+                cached_provider = Some((mutation.table_id.clone(), Arc::clone(&provider_arc)));
+                provider_arc
+            };
             let provider = provider_arc
                 .as_any()
                 .downcast_ref::<SharedTableProvider>()
@@ -634,7 +894,7 @@ impl DmlExecutor {
             let applied = match mutation.operation_kind {
                 OperationKind::Insert => {
                     let (row_key, notification) = provider
-                        .insert_deferred(mutation.payload.clone())
+                        .insert_deferred_prevalidated(mutation.payload.clone())
                         .await
                         .map_err(|e| {
                             ApplierError::Execution(format!("Failed to insert batch row: {}", e))

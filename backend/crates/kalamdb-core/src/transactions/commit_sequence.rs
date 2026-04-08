@@ -61,4 +61,8 @@ impl CommitSequenceSource for CommitSequenceTracker {
     fn current_committed(&self) -> u64 {
         self.current_committed()
     }
+
+    fn allocate_next(&self) -> u64 {
+        self.allocate_next()
+    }
 }

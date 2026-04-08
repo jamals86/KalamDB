@@ -13,10 +13,7 @@ fn current_timestamp_ms() -> i64 {
 }
 
 fn normalize_optional(value: Option<&str>) -> Option<String> {
-    value
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
+    value.map(str::trim).filter(|value| !value.is_empty()).map(ToOwned::to_owned)
 }
 
 /// Mutable session state shared across PostgreSQL requests that belong to the same backend.
@@ -192,11 +189,7 @@ impl SessionRegistry {
             .get_mut(session_id)
             .ok_or_else(|| format!("session '{}' not found", session_id))?;
 
-        if session
-            .transaction_state
-            .map(|state| state.is_open())
-            .unwrap_or(false)
-        {
+        if session.transaction_state.map(|state| state.is_open()).unwrap_or(false) {
             // Auto-rollback stale transaction left by a crashed/disconnected client.
             // This is a safety net — the FDW xact_callback should normally commit/rollback,
             // but network failures or panics can leave orphaned transactions.
@@ -211,11 +204,7 @@ impl SessionRegistry {
         }
 
         let tx_id = if transaction_id.trim().is_empty() {
-            format!(
-                "{}-{}",
-                Uuid::now_v7(),
-                self.tx_counter.fetch_add(1, Ordering::Relaxed)
-            )
+            format!("{}-{}", Uuid::now_v7(), self.tx_counter.fetch_add(1, Ordering::Relaxed))
         } else {
             transaction_id.trim().to_string()
         };
@@ -353,11 +342,7 @@ impl SessionRegistry {
             if session.transaction_state == Some(TransactionState::OpenRead) {
                 session.transaction_state = Some(TransactionState::OpenWrite);
             }
-            if session
-                .transaction_state
-                .map(|state| state.is_open())
-                .unwrap_or(false)
-            {
+            if session.transaction_state.map(|state| state.is_open()).unwrap_or(false) {
                 session.transaction_has_writes = true;
             }
             session.last_seen_at_ms = current_timestamp_ms();
@@ -377,6 +362,27 @@ impl SessionRegistry {
     /// Get a point-in-time snapshot of a tracked session.
     pub fn get(&self, session_id: &str) -> Option<RemotePgSession> {
         self.sessions.get(session_id).map(|session| session.clone())
+    }
+
+    /// Clear transaction metadata for an existing session without removing it.
+    pub fn clear_transaction_state_if_matches(
+        &self,
+        session_id: &str,
+        expected_transaction_id: Option<&str>,
+    ) -> Option<RemotePgSession> {
+        let mut session = self.sessions.get_mut(session_id)?;
+
+        if let Some(expected_transaction_id) = expected_transaction_id {
+            if session.transaction_id.as_deref() != Some(expected_transaction_id) {
+                return Some(session.clone());
+            }
+        }
+
+        session.transaction_id = None;
+        session.transaction_state = None;
+        session.transaction_has_writes = false;
+        session.last_seen_at_ms = current_timestamp_ms();
+        Some(session.clone())
     }
 
     /// Close a session and clear any tracked transaction metadata before removal.
@@ -400,6 +406,7 @@ impl SessionRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uuid::Uuid;
 
     #[test]
     fn open_or_get_creates_session() {
@@ -447,7 +454,7 @@ mod tests {
         registry.open_or_get("pg-1");
 
         let tx_id = registry.begin_transaction("pg-1").unwrap();
-        assert!(tx_id.starts_with("tx-pg-1-"));
+        assert!(Uuid::parse_str(&tx_id).is_ok());
 
         let committed = registry.commit_transaction("pg-1", &tx_id).unwrap();
         assert_eq!(committed, tx_id);

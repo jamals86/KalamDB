@@ -68,23 +68,24 @@ async fn pg_transaction_rejects_cross_group_access_without_losing_existing_overl
         message.contains("already bound to data raft group"),
         "expected cross-group rejection, got: {message}"
     );
-    assert!(message.contains(&bound_group.to_string()), "expected bound group in error: {message}");
     assert!(
-        message.contains("data:shared:00"),
-        "expected shared group in error: {message}"
+        message.contains(&bound_group.to_string()),
+        "expected bound group in error: {message}"
     );
+    assert!(message.contains("data:shared:00"), "expected shared group in error: {message}");
 
     let same_tx_rows = scan_user_rows(&service, &user_table, session_id, user_id).await;
     assert_eq!(same_tx_rows.len(), 1);
-    assert_eq!(
-        same_tx_rows[0].get("name").and_then(|value| value.as_str()),
-        Some("alpha")
-    );
-    assert!(scan_user_rows(&service, &user_table, observer_session_id, user_id).await.is_empty());
+    assert_eq!(same_tx_rows[0].get("name").and_then(|value| value.as_str()), Some("alpha"));
+    assert!(scan_user_rows(&service, &user_table, observer_session_id, user_id)
+        .await
+        .is_empty());
     assert!(scan_shared_rows(&service, &shared_table, observer_session_id).await.is_empty());
 
     let rolled_back_id = rollback_transaction(&service, session_id, &transaction_id).await;
     assert_eq!(rolled_back_id, transaction_id);
-    assert!(scan_user_rows(&service, &user_table, observer_session_id, user_id).await.is_empty());
+    assert!(scan_user_rows(&service, &user_table, observer_session_id, user_id)
+        .await
+        .is_empty());
     assert!(scan_shared_rows(&service, &shared_table, observer_session_id).await.is_empty());
 }

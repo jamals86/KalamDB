@@ -10,6 +10,7 @@ use kalamdb_system::{
     NotificationService as NotificationServiceTrait, SchemaRegistry as SchemaRegistryTrait,
     TopicPublisher as TopicPublisherTrait,
 };
+use kalamdb_transactions::CommitSequenceSource;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -37,6 +38,9 @@ pub struct TableServices {
     /// Cluster coordinator for leader checks
     pub cluster_coordinator: Arc<dyn ClusterCoordinatorTrait>,
 
+    /// Commit-sequence source for stamping direct DML writes that bypass the applier fast path.
+    pub commit_sequence_source: Arc<dyn CommitSequenceSource>,
+
     /// Topic publisher for synchronous CDC publishing (optional, None when topics are not configured)
     pub topic_publisher: Option<Arc<dyn TopicPublisherTrait>>,
 }
@@ -50,6 +54,7 @@ impl TableServices {
         manifest_service: Arc<dyn ManifestServiceTrait>,
         notification_service: Arc<dyn NotificationServiceTrait<Notification = ChangeNotification>>,
         cluster_coordinator: Arc<dyn ClusterCoordinatorTrait>,
+        commit_sequence_source: Arc<dyn CommitSequenceSource>,
         topic_publisher: Option<Arc<dyn TopicPublisherTrait>>,
     ) -> Self {
         Self {
@@ -59,6 +64,7 @@ impl TableServices {
             manifest_service,
             notification_service,
             cluster_coordinator,
+            commit_sequence_source,
             topic_publisher,
         }
     }
@@ -171,6 +177,7 @@ impl TableProviderCore {
             manifest_service: self.services.manifest_service.clone(),
             notification_service: self.services.notification_service.clone(),
             cluster_coordinator: self.services.cluster_coordinator.clone(),
+            commit_sequence_source: self.services.commit_sequence_source.clone(),
             topic_publisher: self.services.topic_publisher.clone(),
         });
         Self {
@@ -213,6 +220,11 @@ impl TableProviderCore {
     /// Cluster coordinator accessor
     pub fn cluster_coordinator(&self) -> &Arc<dyn ClusterCoordinatorTrait> {
         &self.services.cluster_coordinator
+    }
+
+    /// Commit sequence source accessor.
+    pub fn commit_sequence_source(&self) -> &Arc<dyn CommitSequenceSource> {
+        &self.services.commit_sequence_source
     }
 
     /// Table definition accessor

@@ -1,6 +1,6 @@
 use super::common::{
-    count_rows, create_user_foreign_table, postgres_error_text, set_user_id, unique_name,
-    wait_for_table_queryable, TestEnv,
+    await_user_shard_leader, count_rows, create_user_foreign_table, postgres_error_text,
+    retry_transient_user_leader_error, set_user_id, unique_name, TestEnv,
 };
 
 #[tokio::test]
@@ -18,15 +18,14 @@ async fn e2e_duplicate_primary_key_insert_fails() {
     )
     .await;
     set_user_id(&pg, "dup-user").await;
+    await_user_shard_leader("dup-user").await;
 
-    super::common::delete_all(&pg, &qualified_table, "id").await;
-
-    pg.execute(
-        &format!("INSERT INTO {qualified_table} (id, name, age) VALUES ($1, $2, $3)"),
-        &[&"dup-1", &"Alice", &30_i32],
-    )
-    .await
-    .expect("first insert should succeed");
+    let first_insert_sql =
+        format!("INSERT INTO {qualified_table} (id, name, age) VALUES ('dup-1', 'Alice', 30)");
+    retry_transient_user_leader_error("first duplicate test insert", || {
+        pg.batch_execute(&first_insert_sql)
+    })
+    .await;
 
     let err = pg
         .execute(
@@ -74,6 +73,7 @@ async fn e2e_insert_without_backing_kalamdb_table_fails() {
     env.kalamdb_sql(&format!("DROP USER TABLE IF EXISTS app.{table}")).await;
 
     set_user_id(&pg, "user-1").await;
+    await_user_shard_leader("user-1").await;
 
     let err = pg
         .execute(
@@ -106,14 +106,13 @@ async fn e2e_user_table_scan_without_user_id_fails_clearly() {
     )
     .await;
     set_user_id(&writer, "scan-user").await;
-    wait_for_table_queryable(&writer, &format!("e2e.{table}")).await;
-    writer
-        .execute(
-            &format!("INSERT INTO e2e.{table} (id, name, age) VALUES ($1, $2, $3)"),
-            &[&"scan-1", &"Alice", &30_i32],
-        )
-        .await
-        .expect("seed user table row");
+    await_user_shard_leader("scan-user").await;
+    let seed_insert_sql =
+        format!("INSERT INTO e2e.{table} (id, name, age) VALUES ('scan-1', 'Alice', 30)");
+    retry_transient_user_leader_error("seed user table row", || {
+        writer.batch_execute(&seed_insert_sql)
+    })
+    .await;
 
     let reader = env.pg_connect().await;
 

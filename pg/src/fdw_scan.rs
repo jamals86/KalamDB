@@ -236,8 +236,12 @@ unsafe fn begin_foreign_scan_impl(node: *mut pg_sys::ForeignScanState) -> Result
     let executor = remote_state.executor()?;
     let runtime = remote_state.runtime();
 
-    // Lazily begin a KalamDB transaction for this PostgreSQL transaction
-    let _ = crate::fdw_xact::ensure_transaction(remote_state.session_id())?;
+    // Autocommit SELECTs do not need a remote transaction. Keep remote
+    // transactions only for explicit BEGIN/COMMIT blocks so transaction
+    // bookkeeping stays aligned with PostgreSQL statement boundaries.
+    if crate::fdw_xact::is_explicit_transaction_block_active() {
+        let _ = crate::fdw_xact::ensure_transaction(remote_state.session_id())?;
+    }
 
     // Build column mapping from PG TupleDesc to Arrow schema
     let tupdesc = (*(*node).ss.ss_ScanTupleSlot).tts_tupleDescriptor;

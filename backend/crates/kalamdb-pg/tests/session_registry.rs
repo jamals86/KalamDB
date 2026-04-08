@@ -168,6 +168,24 @@ fn session_registry_close_session_clears_transaction_state() {
 }
 
 #[test]
+fn session_registry_clear_transaction_state_requires_matching_tx_id() {
+    let registry = SessionRegistry::default();
+    registry.open_or_get("s1");
+
+    let tx_id = registry.begin_transaction("s1").expect("begin");
+    registry.clear_transaction_state_if_matches("s1", Some("different-tx"));
+
+    let session = registry.open_or_get("s1");
+    assert_eq!(session.transaction_id(), Some(tx_id.as_str()));
+    assert_eq!(session.transaction_state(), Some(TransactionState::OpenRead));
+
+    registry.clear_transaction_state_if_matches("s1", Some(&tx_id));
+    let cleared = registry.open_or_get("s1");
+    assert_eq!(cleared.transaction_id(), None);
+    assert_eq!(cleared.transaction_state(), None);
+}
+
+#[test]
 fn session_registry_begin_on_nonexistent_session_fails() {
     let registry = SessionRegistry::default();
     let err = registry.begin_transaction("nonexistent").expect_err("no session");

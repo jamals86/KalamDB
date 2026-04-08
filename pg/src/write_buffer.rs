@@ -11,7 +11,7 @@
 //! Send/Sync requirements but contention is impossible.
 //!
 //! ## Flush triggers
-//! - Buffer reaches `FLUSH_THRESHOLD` rows → immediate flush
+//! - Buffer reaches `FLUSH_THRESHOLD` rows in autocommit mode → immediate flush
 //! - `EndForeignModify` → flush remaining rows for this table
 //! - `PRE_COMMIT` xact callback → flush ALL pending writes before commit
 //! - `BeginForeignScan` on same table → flush for read-your-writes consistency
@@ -100,7 +100,10 @@ pub fn buffer_insert(
 
     batch.rows.push(row);
 
-    if batch.len() >= FLUSH_THRESHOLD {
+    if batch.len() >= FLUSH_THRESHOLD
+        && !crate::fdw_xact::is_explicit_transaction_block_active()
+        && !crate::fdw_xact::has_active_transaction()
+    {
         batch.flush()?;
     }
 

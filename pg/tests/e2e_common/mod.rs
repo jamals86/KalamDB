@@ -4,10 +4,14 @@
 // instance and a locally running KalamDB server.
 #![allow(dead_code)]
 
+pub mod tcp_proxy;
+
 use std::process::Command;
+use std::hash::{Hash, Hasher};
+use std::ops::{Deref, DerefMut};
 use std::sync::OnceLock;
 use std::time::Duration;
-use std::{env, fmt};
+use std::{env, fmt, future::Future};
 
 use reqwest::Client;
 use serde_json::Value;
@@ -85,7 +89,7 @@ fn kalamdb_auth_config() -> KalamDbAuthConfig {
     }
 }
 
-fn kalamdb_grpc_target() -> (String, u16) {
+pub fn kalamdb_grpc_target() -> (String, u16) {
     let host = env::var("KALAMDB_GRPC_HOST")
         .ok()
         .filter(|value| !value.is_empty())
@@ -108,6 +112,50 @@ pub struct TestEnv {
     pg_user: String,
 }
 
+pub struct OwnedPgClient {
+    client: Option<tokio_postgres::Client>,
+    connection_task: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl OwnedPgClient {
+    fn new(client: tokio_postgres::Client, connection_task: tokio::task::JoinHandle<()>) -> Self {
+        Self {
+            client: Some(client),
+            connection_task: Some(connection_task),
+        }
+    }
+
+    pub async fn disconnect(mut self) {
+        self.client.take();
+        if let Some(connection_task) = self.connection_task.take() {
+            let _ = connection_task.await;
+        }
+    }
+}
+
+impl Deref for OwnedPgClient {
+    type Target = tokio_postgres::Client;
+
+    fn deref(&self) -> &Self::Target {
+        self.client.as_ref().expect("pg client already disconnected")
+    }
+}
+
+impl DerefMut for OwnedPgClient {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.client.as_mut().expect("pg client already disconnected")
+    }
+}
+
+impl Drop for OwnedPgClient {
+    fn drop(&mut self) {
+        self.client.take();
+        if let Some(connection_task) = self.connection_task.take() {
+            connection_task.abort();
+        }
+    }
+}
+
 static ENV: OnceLock<TestEnv> = OnceLock::new();
 
 impl TestEnv {
@@ -119,7 +167,7 @@ impl TestEnv {
         ENV.get_or_init(|| env)
     }
 
-    pub async fn pg_connect(&self) -> tokio_postgres::Client {
+    pub async fn pg_connect(&self) -> OwnedPgClient {
         self.pg_connect_to(TEST_DB)
             .await
             .expect("connect to pgrx PostgreSQL (is it running on port 28816?)")
@@ -299,6 +347,8 @@ impl TestEnv {
                 .await
                 .expect("create test database");
         }
+
+        postgres.disconnect().await;
     }
 
     async fn ensure_extension_bootstrap(&self) {
@@ -336,13 +386,18 @@ impl TestEnv {
             .await
             .expect("release pg_kalam bootstrap advisory lock");
 
+        pg.disconnect().await;
+
         bootstrap_result
     }
 
     async fn wait_for_pg(&self) {
         for i in 0..10 {
             match self.pg_connect_to("postgres").await {
-                Ok(_client) => return,
+                Ok(client) => {
+                    client.disconnect().await;
+                    return;
+                }
                 Err(_) => {
                     if i == 0 {
                         eprintln!("  waiting for PostgreSQL on port {PG_PORT}...");
@@ -360,7 +415,7 @@ impl TestEnv {
     async fn pg_connect_to(
         &self,
         dbname: &str,
-    ) -> Result<tokio_postgres::Client, tokio_postgres::Error> {
+    ) -> Result<OwnedPgClient, tokio_postgres::Error> {
         let (client, conn) = Config::new()
             .host(PG_HOST)
             .port(PG_PORT)
@@ -368,12 +423,12 @@ impl TestEnv {
             .dbname(dbname)
             .connect(NoTls)
             .await?;
-        tokio::spawn(async move {
+        let connection_task = tokio::spawn(async move {
             if let Err(e) = conn.await {
                 eprintln!("pg connection error: {e}");
             }
         });
-        Ok(client)
+        Ok(OwnedPgClient::new(client, connection_task))
     }
 }
 
@@ -418,6 +473,7 @@ pub async fn create_shared_foreign_table(
     );
     client.batch_execute(&sql).await.expect("create foreign table");
     TestEnv::global().await.wait_for_kalamdb_table_exists("e2e", table).await;
+    wait_for_table_queryable(client, &format!("e2e.{table}")).await;
 }
 
 pub async fn create_user_foreign_table(
@@ -442,9 +498,112 @@ pub async fn set_user_id(client: &tokio_postgres::Client, user_id: &str) {
     client.batch_execute(&sql).await.expect("set user_id");
 }
 
+fn sql_row_count(result: &Value) -> i64 {
+    result["results"]
+        .as_array()
+        .and_then(|results| results.first())
+        .and_then(|entry| entry["row_count"].as_i64())
+        .unwrap_or_default()
+}
+
+async fn cluster_user_shard_count(env: &TestEnv) -> u32 {
+    let result = env
+        .kalamdb_sql("SELECT group_id FROM system.cluster_groups WHERE group_type = 'user_data'")
+        .await;
+    let count = sql_row_count(&result);
+    if count <= 0 {
+        panic!("system.cluster_groups did not report any user shards");
+    }
+    count as u32
+}
+
+fn user_shard_group_id(user_id: &str, num_user_shards: u32) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    user_id.hash(&mut hasher);
+    let shard = (hasher.finish() % num_user_shards as u64) as u32;
+    100 + shard as u64
+}
+
+pub async fn await_user_shard_leader(user_id: &str) {
+    let env = TestEnv::global().await;
+    let num_user_shards = cluster_user_shard_count(env).await;
+    let group_id = user_shard_group_id(user_id, num_user_shards);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let mut triggered_elections = 0;
+
+    loop {
+        let result = env
+            .kalamdb_sql(&format!(
+                "SELECT group_id FROM system.cluster_groups WHERE group_id = {group_id} AND current_leader IS NOT NULL"
+            ))
+            .await;
+
+        if sql_row_count(&result) == 1 {
+            return;
+        }
+
+        if std::time::Instant::now() >= deadline {
+            panic!("user shard leader not ready for {user_id} ({group_id})");
+        }
+
+        if triggered_elections < 3 {
+            env.kalamdb_sql("CLUSTER TRIGGER ELECTION").await;
+            triggered_elections += 1;
+        }
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+}
+
+pub fn is_transient_user_leader_error(error: &tokio_postgres::Error) -> bool {
+    let mut message = if let Some(db_error) = error.as_db_error() {
+        db_error.message().to_string()
+    } else {
+        error.to_string()
+    };
+
+    if let Some(db_error) = error.as_db_error() {
+        if let Some(detail) = db_error.detail() {
+            message.push_str(" | ");
+            message.push_str(detail);
+        }
+        if let Some(hint) = db_error.hint() {
+            message.push_str(" | ");
+            message.push_str(hint);
+        }
+    }
+
+    message.contains("Not leader for group data:user")
+        || message.contains("leader is node None")
+        || message.contains("Leader unknown")
+}
+
+pub async fn retry_transient_user_leader_error<T, F, Fut>(description: &str, mut op: F) -> T
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<T, tokio_postgres::Error>>,
+{
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+
+    loop {
+        match op().await {
+            Ok(value) => return value,
+            Err(error) if is_transient_user_leader_error(&error) => {
+                if std::time::Instant::now() >= deadline {
+                    panic!(
+                        "{description} did not succeed before user-shard leader was ready: {error}"
+                    );
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+            Err(error) => panic!("{description} failed: {error}"),
+        }
+    }
+}
+
 pub async fn wait_for_table_queryable(client: &tokio_postgres::Client, table: &str) {
     let sql = format!("SELECT 1 FROM {table} LIMIT 0");
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
 
     loop {
         match client.simple_query(&sql).await {

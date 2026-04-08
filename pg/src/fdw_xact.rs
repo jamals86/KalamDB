@@ -25,10 +25,15 @@ use pgrx::pg_sys;
 static CURRENT_TX: LazyLock<Mutex<HashMap<String, ActiveTransaction>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+/// Whether the current PostgreSQL backend is inside an explicit BEGIN/COMMIT
+/// block issued by the client.
+static EXPLICIT_TX_BLOCK_ACTIVE: LazyLock<Mutex<bool>> = LazyLock::new(|| Mutex::new(false));
+
 /// Whether we have already registered the xact callback for this backend.
 static XACT_CALLBACK_REGISTERED: LazyLock<Mutex<bool>> = LazyLock::new(|| Mutex::new(false));
 
 /// State for an active KalamDB transaction in this PostgreSQL backend.
+#[derive(Clone)]
 struct ActiveTransaction {
     session_id: String,
     transaction_id: String,
@@ -76,6 +81,20 @@ pub fn ensure_transaction(session_id: &str) -> Result<String, kalam_pg_common::K
     Ok(transaction_id)
 }
 
+pub fn set_explicit_transaction_block(active: bool) {
+    let mut guard = EXPLICIT_TX_BLOCK_ACTIVE.lock().unwrap_or_else(|e| e.into_inner());
+    *guard = active;
+}
+
+pub fn is_explicit_transaction_block_active() -> bool {
+    (unsafe { pg_sys::IsTransactionBlock() })
+        || *EXPLICIT_TX_BLOCK_ACTIVE.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+pub fn has_active_transaction() -> bool {
+    !CURRENT_TX.lock().unwrap_or_else(|e| e.into_inner()).is_empty()
+}
+
 /// Register the PostgreSQL xact callback (idempotent).
 fn register_xact_callback() {
     let mut registered = XACT_CALLBACK_REGISTERED.lock().unwrap_or_else(|e| e.into_inner());
@@ -88,6 +107,168 @@ fn register_xact_callback() {
     }
 
     *registered = true;
+}
+
+fn take_active_transactions() -> Vec<ActiveTransaction> {
+    let mut guard = CURRENT_TX.lock().unwrap_or_else(|e| e.into_inner());
+    std::mem::take(&mut *guard).into_values().collect()
+}
+
+fn active_transactions_snapshot() -> Vec<ActiveTransaction> {
+    CURRENT_TX
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .values()
+        .cloned()
+        .collect()
+}
+
+fn clear_active_transactions() {
+    CURRENT_TX.lock().unwrap_or_else(|e| e.into_inner()).clear();
+}
+
+fn commit_transactions(transactions: &[ActiveTransaction]) -> Result<(), String> {
+    for tx in transactions {
+        let state = crate::remote_state::get_remote_extension_state_for_session(&tx.session_id)
+            .ok_or_else(|| {
+                format!(
+                    "remote extension state not initialized for session '{}'",
+                    tx.session_id
+                )
+            })?;
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            state.runtime().block_on(async {
+                state
+                    .client()
+                    .commit_transaction(&tx.session_id, &tx.transaction_id)
+                    .await
+            })
+        }));
+
+        match result {
+            Ok(Ok(_)) => {},
+            Ok(Err(error)) => {
+                return Err(format!(
+                    "failed to commit KalamDB transaction {}: {}",
+                    tx.transaction_id, error
+                ));
+            },
+            Err(_panic) => {
+                return Err(format!(
+                    "panic committing KalamDB transaction {}",
+                    tx.transaction_id
+                ));
+            },
+        }
+    }
+
+    Ok(())
+}
+
+fn rollback_transactions(transactions: &[ActiveTransaction]) {
+    for tx in transactions {
+        let Some(state) = crate::remote_state::get_remote_extension_state_for_session(&tx.session_id)
+        else {
+            continue;
+        };
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            state.runtime().block_on(async {
+                state
+                    .client()
+                    .rollback_transaction(&tx.session_id, &tx.transaction_id)
+                    .await
+            })
+        }));
+
+        match result {
+            Ok(Ok(_)) => {},
+            Ok(Err(error)) => {
+                eprintln!(
+                    "pg_kalam: failed to rollback KalamDB transaction {}: {}",
+                    tx.transaction_id, error
+                );
+            },
+            Err(_panic) => {
+                eprintln!(
+                    "pg_kalam: panic rolling back KalamDB transaction {}",
+                    tx.transaction_id,
+                );
+            },
+        }
+    }
+}
+
+fn try_rollback_transactions(transactions: &[ActiveTransaction]) -> Result<(), String> {
+    for tx in transactions {
+        let state = crate::remote_state::get_remote_extension_state_for_session(&tx.session_id)
+            .ok_or_else(|| {
+                format!(
+                    "remote extension state not initialized for session '{}'",
+                    tx.session_id
+                )
+            })?;
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            state.runtime().block_on(async {
+                state
+                    .client()
+                    .rollback_transaction(&tx.session_id, &tx.transaction_id)
+                    .await
+            })
+        }));
+
+        match result {
+            Ok(Ok(_)) => {},
+            Ok(Err(error)) => {
+                return Err(format!(
+                    "failed to rollback KalamDB transaction {}: {}",
+                    tx.transaction_id, error
+                ));
+            },
+            Err(_panic) => {
+                return Err(format!(
+                    "panic rolling back KalamDB transaction {}",
+                    tx.transaction_id
+                ));
+            },
+        }
+    }
+
+    Ok(())
+}
+
+pub fn commit_explicit_transaction_block() -> Result<(), String> {
+    let transactions = active_transactions_snapshot();
+    if transactions.is_empty() {
+        set_explicit_transaction_block(false);
+        return Ok(());
+    }
+
+    crate::write_buffer::flush_all().map_err(|error| {
+        format!("failed to flush writes before explicit COMMIT: {}", error)
+    })?;
+
+    commit_transactions(&transactions)?;
+    clear_active_transactions();
+    set_explicit_transaction_block(false);
+    Ok(())
+}
+
+pub fn rollback_explicit_transaction_block() -> Result<(), String> {
+    crate::write_buffer::discard_all();
+
+    let transactions = active_transactions_snapshot();
+    if transactions.is_empty() {
+        set_explicit_transaction_block(false);
+        return Ok(());
+    }
+
+    try_rollback_transactions(&transactions)?;
+    clear_active_transactions();
+    set_explicit_transaction_block(false);
+    Ok(())
 }
 
 /// PostgreSQL transaction callback invoked at commit/abort.
@@ -105,7 +286,8 @@ unsafe extern "C-unwind" fn xact_callback(
     event: pg_sys::XactEvent::Type,
     _arg: *mut std::ffi::c_void,
 ) {
-    // Flush write buffer at PRE_COMMIT (before the transaction commit RPC).
+    // Finalize remote transactions at PRE_COMMIT so failures can still abort the
+    // PostgreSQL transaction before it becomes visible to the client.
     if matches!(event, pg_sys::XactEvent::XACT_EVENT_PRE_COMMIT) {
         let flush_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             crate::write_buffer::flush_all()
@@ -113,94 +295,73 @@ unsafe extern "C-unwind" fn xact_callback(
         match flush_result {
             Ok(Ok(())) => {},
             Ok(Err(e)) => {
+                let transactions = take_active_transactions();
                 crate::write_buffer::discard_all();
+                rollback_transactions(&transactions);
                 pgrx::error!("pg_kalam: failed to flush writes, aborting transaction: {}", e);
             },
             Err(_panic) => {
+                let transactions = take_active_transactions();
                 crate::write_buffer::discard_all();
+                rollback_transactions(&transactions);
                 pgrx::error!("pg_kalam: panic during write flush, aborting transaction");
             },
         }
+
+        let transactions = take_active_transactions();
+        if transactions.is_empty() {
+            return;
+        }
+
+        if let Err(error) = commit_transactions(&transactions) {
+            rollback_transactions(&transactions);
+            pgrx::error!(
+                "pg_kalam: {}, aborting transaction before PostgreSQL commit",
+                error
+            );
+        }
+
         return;
     }
 
-    // Only act on final commit/abort events.
-    // Ignore PRE_PREPARE, PREPARE — they fire before the actual
-    // COMMIT/ABORT and must not consume the transaction state.
-    let is_commit = matches!(
-        event,
-        pg_sys::XactEvent::XACT_EVENT_COMMIT | pg_sys::XactEvent::XACT_EVENT_PARALLEL_COMMIT
-    );
+    // Ignore PRE_PREPARE, PREPARE — PRE_COMMIT already finalized any active
+    // remote transaction, and ABORT handles the error path.
     let is_abort = matches!(
         event,
         pg_sys::XactEvent::XACT_EVENT_ABORT | pg_sys::XactEvent::XACT_EVENT_PARALLEL_ABORT
+    );
+    let is_commit = matches!(
+        event,
+        pg_sys::XactEvent::XACT_EVENT_COMMIT | pg_sys::XactEvent::XACT_EVENT_PARALLEL_COMMIT
     );
     if !is_commit && !is_abort {
         return;
     }
 
-    // On abort, discard any remaining buffered writes
     if is_abort {
+        set_explicit_transaction_block(false);
         crate::write_buffer::discard_all();
-    }
-
-    let txs = {
-        let mut guard = CURRENT_TX.lock().unwrap_or_else(|e| e.into_inner());
-        std::mem::take(&mut *guard)
-    };
-
-    if txs.is_empty() {
-        return; // No active KalamDB transaction for this PG transaction
-    }
-
-    for tx in txs.into_values() {
-        let state = match crate::remote_state::get_remote_extension_state_for_session(&tx.session_id) {
-            Some(state) => state,
-            None => continue,
-        };
-
-        if is_commit {
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                state.runtime().block_on(async {
-                    state.client().commit_transaction(&tx.session_id, &tx.transaction_id).await
-                })
-            }));
-            match result {
-                Ok(Err(e)) => {
-                    eprintln!(
-                        "pg_kalam: failed to commit KalamDB transaction {}: {}",
-                        tx.transaction_id, e
-                    );
-                },
-                Err(_panic) => {
-                    eprintln!(
-                        "pg_kalam: panic committing KalamDB transaction {}",
-                        tx.transaction_id,
-                    );
-                },
-                Ok(Ok(_)) => {},
-            }
-        } else {
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                state.runtime().block_on(async {
-                    state.client().rollback_transaction(&tx.session_id, &tx.transaction_id).await
-                })
-            }));
-            match result {
-                Ok(Err(e)) => {
-                    eprintln!(
-                        "pg_kalam: failed to rollback KalamDB transaction {}: {}",
-                        tx.transaction_id, e
-                    );
-                },
-                Err(_panic) => {
-                    eprintln!(
-                        "pg_kalam: panic rolling back KalamDB transaction {}",
-                        tx.transaction_id,
-                    );
-                },
-                Ok(Ok(_)) => {},
-            }
+        let transactions = take_active_transactions();
+        if !transactions.is_empty() {
+            rollback_transactions(&transactions);
         }
+        return;
+    }
+
+    set_explicit_transaction_block(false);
+    let transactions = take_active_transactions();
+    if transactions.is_empty() {
+        return;
+    }
+
+    // PRE_COMMIT should have finalized everything already. If PostgreSQL reaches
+    // COMMIT with leftover remote transactions, fall back to best-effort commit
+    // to avoid leaking session state, but we can no longer surface the error.
+    if let Err(error) = commit_transactions(&transactions) {
+        eprintln!(
+            "pg_kalam: late COMMIT fallback failed for {} transaction(s): {}",
+            transactions.len(),
+            error
+        );
     }
 }

@@ -587,6 +587,7 @@ mod tests {
             Arc::clone(app_context.notification_service())
                 as Arc<dyn NotificationService<Notification = ChangeNotification>>,
             app_context.clone(),
+            app_context.commit_sequence_tracker(),
             Some(app_context.topic_publisher() as Arc<dyn kalamdb_system::TopicPublisher>),
         ));
         let arrow_schema =
@@ -736,6 +737,7 @@ mod tests {
             Arc::clone(app_context.notification_service())
                 as Arc<dyn NotificationService<Notification = ChangeNotification>>,
             app_context.clone(),
+            app_context.commit_sequence_tracker(),
             Some(app_context.topic_publisher() as Arc<dyn kalamdb_system::TopicPublisher>),
         ));
         let arrow_schema =
@@ -918,6 +920,7 @@ mod tests {
             Arc::clone(app_context.notification_service())
                 as Arc<dyn NotificationService<Notification = ChangeNotification>>,
             app_context.clone(),
+            app_context.commit_sequence_tracker(),
             Some(app_context.topic_publisher() as Arc<dyn kalamdb_system::TopicPublisher>),
         ));
         let arrow_schema =

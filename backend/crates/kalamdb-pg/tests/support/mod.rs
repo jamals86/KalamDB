@@ -6,11 +6,12 @@ use std::sync::Arc;
 
 use arrow::record_batch::RecordBatch;
 use arrow_ipc::reader::StreamReader;
+use datafusion_common::ScalarValue;
 use kalamdb_commons::conversions::arrow_json_conversion::record_batch_to_json_rows;
 use kalamdb_commons::models::datatypes::KalamDataType;
-use kalamdb_commons::models::KalamCellValue;
 use kalamdb_commons::models::rows::Row;
 use kalamdb_commons::models::schemas::{ColumnDefinition, TableDefinition, TableOptions};
+use kalamdb_commons::models::KalamCellValue;
 use kalamdb_commons::models::{NamespaceId, TableId, TableName, TransactionId};
 use kalamdb_commons::schemas::ColumnDefault;
 use kalamdb_commons::{TableAccess, TableType};
@@ -22,10 +23,9 @@ use kalamdb_pg::{
     KalamPgService, OpenSessionRequest, PgService, RollbackTransactionRequest, ScanRpcRequest,
     ScanRpcResponse,
 };
-use datafusion_common::ScalarValue;
+use tokio::time::{sleep, Duration};
 use tonic::Request;
 use uuid::Uuid;
-use tokio::time::{sleep, Duration};
 
 pub fn request<T>(payload: T) -> Request<T> {
     Request::new(payload)

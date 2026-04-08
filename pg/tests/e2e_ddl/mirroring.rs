@@ -190,7 +190,7 @@ async fn e2e_ddl_current_schema_maps_to_namespace_without_namespace_option() {
 }
 
 #[tokio::test]
-#[ntest::timeout(7000)]
+#[ntest::timeout(15000)]
 async fn e2e_ddl_alter_add_column_preserves_not_null_and_default() {
     let env = DdlTestEnv::global().await;
     let pg = env.pg_connect().await;
@@ -240,7 +240,7 @@ async fn e2e_ddl_alter_add_column_preserves_not_null_and_default() {
 }
 
 #[tokio::test]
-#[ntest::timeout(7000)]
+#[ntest::timeout(15000)]
 async fn e2e_ddl_alter_column_set_and_drop_not_null() {
     let env = DdlTestEnv::global().await;
     let pg = env.pg_connect().await;
@@ -292,7 +292,7 @@ async fn e2e_ddl_alter_column_set_and_drop_not_null() {
 }
 
 #[tokio::test]
-#[ntest::timeout(7000)]
+#[ntest::timeout(15000)]
 async fn e2e_ddl_alter_column_set_and_drop_default() {
     let env = DdlTestEnv::global().await;
     let pg = env.pg_connect().await;

@@ -609,7 +609,7 @@ mod tests {
     #[test]
     fn test_all() {
         let all = SystemTable::all();
-        assert_eq!(all.len(), 22); // 11 tables + 11 views
+        assert_eq!(all.len(), 23); // 11 tables + 12 views
         assert!(all.contains(&SystemTable::Users));
         assert!(all.contains(&SystemTable::Storages));
         assert!(all.contains(&SystemTable::AuditLog));
@@ -633,7 +633,7 @@ mod tests {
     #[test]
     fn test_all_views() {
         let views = SystemTable::all_views();
-        assert_eq!(views.len(), 11);
+        assert_eq!(views.len(), 12);
         assert!(views.iter().all(|v| v.is_view()));
     }
 

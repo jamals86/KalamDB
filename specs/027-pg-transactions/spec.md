@@ -2,8 +2,8 @@
 
 **Feature Branch**: `027-pg-transactions`  
 **Created**: 2026-03-23  
-**Last Updated**: 2026-04-07  
-**Status**: Draft (Session Foundation Complete)
+**Last Updated**: 2026-04-08  
+**Status**: Completed (Implemented and validated)
 **Input**: User description: "I want to add transactions to kalamdb it should be similar to postgres transaction, the main cause is to be able to run transactions from pg_kalam to the kalamdb-server"
 
 ## User Scenarios & Testing *(mandatory)*

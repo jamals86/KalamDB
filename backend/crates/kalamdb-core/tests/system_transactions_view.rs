@@ -2,21 +2,28 @@ mod support;
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
+use datafusion_common::ScalarValue;
 use kalamdb_commons::conversions::arrow_json_conversion::record_batch_to_json_rows;
 use kalamdb_commons::models::KalamCellValue;
+use kalamdb_commons::models::rows::Row;
 use kalamdb_commons::models::pg_operations::InsertRequest;
+use kalamdb_commons::models::TransactionId;
 use kalamdb_commons::TableType;
+use kalamdb_configs::ServerConfig;
 use kalamdb_core::operations::service::OperationService;
 use kalamdb_core::sql::context::ExecutionResult;
+use kalamdb_core::transactions::ExecutionOwnerKey;
 use kalamdb_pg::{
-    BeginTransactionRequest, KalamPgService, OpenSessionRequest, OperationExecutor, PgService,
-    RollbackTransactionRequest,
+    BeginTransactionRequest, InsertRpcRequest, KalamPgService, OpenSessionRequest,
+    OperationExecutor, PgService, RollbackTransactionRequest, ScanRpcRequest,
 };
 use kalamdb_raft::RaftExecutor;
 use support::{
-    create_cluster_app_context, create_executor, create_shared_table, execute_ok, insert_sql,
-    observer_exec_ctx, request_exec_ctx, request_transaction_state, row, unique_namespace,
+    create_cluster_app_context, create_cluster_app_context_with_config, create_executor,
+    create_shared_table, execute_ok, insert_sql, observer_exec_ctx, request_exec_ctx,
+    request_transaction_state, row, unique_namespace,
 };
 use tonic::Request;
 
@@ -43,6 +50,35 @@ fn i64_field(row: &HashMap<String, KalamCellValue>, field: &str) -> i64 {
     row.get(field)
     .and_then(|value| value.as_i64().or_else(|| value.as_str().and_then(|raw| raw.parse().ok())))
         .unwrap_or_else(|| panic!("missing i64 field {field}: {row:?}"))
+}
+
+fn optional_string_field(
+    row: &HashMap<String, KalamCellValue>,
+    field: &str,
+) -> Option<String> {
+    row.get(field).and_then(|value| value.as_str()).map(ToString::to_string)
+}
+
+fn shared_insert_request(
+    table_id: &kalamdb_commons::TableId,
+    session_id: &str,
+    id: i64,
+    name: &str,
+) -> InsertRpcRequest {
+    let row_json = serde_json::to_string(&Row::new(std::collections::BTreeMap::from([
+        ("id".to_string(), ScalarValue::Int64(Some(id))),
+        ("name".to_string(), ScalarValue::Utf8(Some(name.to_string()))),
+    ])))
+    .expect("serialize typed row");
+
+    InsertRpcRequest {
+        namespace: table_id.namespace_id().to_string(),
+        table_name: table_id.table_name().to_string(),
+        table_type: "shared".to_string(),
+        session_id: session_id.to_string(),
+        user_id: None,
+        rows_json: vec![row_json],
+    }
 }
 
 async fn open_session(service: &KalamPgService, session_id: &str) {
@@ -172,4 +208,326 @@ async fn system_transactions_shows_active_pg_and_sql_transactions_while_sessions
         .await,
     );
     assert!(cleared_rows.is_empty());
+}
+
+#[tokio::test]
+#[ntest::timeout(12000)]
+async fn pg_passive_timeout_hides_stale_transaction_fields_from_sessions_view() {
+    let mut config = ServerConfig::default();
+    config.transaction_timeout_secs = 1;
+
+    let (app_ctx, _test_db) = create_cluster_app_context_with_config(config).await;
+    let executor = create_executor(Arc::clone(&app_ctx));
+    let observer_ctx = observer_exec_ctx(&app_ctx);
+    let session_id = "pg-4300-feedcafe";
+
+    let executor_handle = app_ctx.executor();
+    let raft_executor = executor_handle
+        .as_any()
+        .downcast_ref::<RaftExecutor>()
+        .expect("raft executor available");
+    let pg_service = raft_executor.pg_service().expect("pg service is wired");
+
+    open_session(&pg_service, session_id).await;
+    let transaction_id = begin_transaction(&pg_service, session_id).await;
+
+    let active_session_rows = json_rows(
+        execute_ok(
+            &executor,
+            &observer_ctx,
+            &format!(
+                "SELECT session_id, state, transaction_id, transaction_state FROM system.sessions WHERE session_id = '{session_id}'"
+            ),
+        )
+        .await,
+    );
+    assert_eq!(active_session_rows.len(), 1);
+    assert_eq!(string_field(&active_session_rows[0], "state"), "idle in transaction");
+    assert_eq!(
+        optional_string_field(&active_session_rows[0], "transaction_id"),
+        Some(transaction_id.clone())
+    );
+    assert_eq!(
+        optional_string_field(&active_session_rows[0], "transaction_state"),
+        Some("active".to_string())
+    );
+
+    tokio::time::sleep(Duration::from_millis(2200)).await;
+
+    let timed_out_session_rows = json_rows(
+        execute_ok(
+            &executor,
+            &observer_ctx,
+            &format!(
+                "SELECT session_id, state, transaction_id, transaction_state FROM system.sessions WHERE session_id = '{session_id}'"
+            ),
+        )
+        .await,
+    );
+    assert_eq!(timed_out_session_rows.len(), 1);
+    assert_eq!(string_field(&timed_out_session_rows[0], "state"), "idle");
+    assert_eq!(optional_string_field(&timed_out_session_rows[0], "transaction_id"), None);
+    assert_eq!(
+        optional_string_field(&timed_out_session_rows[0], "transaction_state"),
+        None
+    );
+
+    let timed_out_transaction_rows = json_rows(
+        execute_ok(
+            &executor,
+            &observer_ctx,
+            &format!(
+                "SELECT transaction_id FROM system.transactions WHERE transaction_id = '{transaction_id}'"
+            ),
+        )
+        .await,
+    );
+    assert!(timed_out_transaction_rows.is_empty());
+
+    let replacement_transaction_id = begin_transaction(&pg_service, session_id).await;
+    assert_ne!(replacement_transaction_id, transaction_id);
+    rollback_transaction(&pg_service, session_id, &replacement_transaction_id).await;
+}
+
+#[tokio::test]
+#[ntest::timeout(12000)]
+async fn pg_timeout_after_write_clears_sessions_and_transactions_views() {
+    let mut config = ServerConfig::default();
+    config.transaction_timeout_secs = 1;
+
+    let (app_ctx, _test_db) = create_cluster_app_context_with_config(config).await;
+    let table_id = create_shared_table(&app_ctx, &unique_namespace("pg_timeout_write"), "items")
+        .await;
+    let executor = create_executor(Arc::clone(&app_ctx));
+    let observer_ctx = observer_exec_ctx(&app_ctx);
+    let session_id = "pg-4301-deadbeef";
+
+    let executor_handle = app_ctx.executor();
+    let raft_executor = executor_handle
+        .as_any()
+        .downcast_ref::<RaftExecutor>()
+        .expect("raft executor available");
+    let pg_service = raft_executor.pg_service().expect("pg service is wired");
+
+    open_session(&pg_service, session_id).await;
+    let transaction_id = begin_transaction(&pg_service, session_id).await;
+
+    pg_service
+        .insert(Request::new(shared_insert_request(
+            &table_id,
+            session_id,
+            1,
+            "pending",
+        )))
+        .await
+        .expect("initial staged write succeeds");
+
+    let active_session_rows = json_rows(
+        execute_ok(
+            &executor,
+            &observer_ctx,
+            &format!(
+                "SELECT session_id, state, transaction_id, transaction_state FROM system.sessions WHERE session_id = '{session_id}'"
+            ),
+        )
+        .await,
+    );
+    assert_eq!(active_session_rows.len(), 1);
+    assert_eq!(string_field(&active_session_rows[0], "state"), "idle in transaction");
+    assert_eq!(
+        optional_string_field(&active_session_rows[0], "transaction_id"),
+        Some(transaction_id.clone())
+    );
+    assert_eq!(
+        optional_string_field(&active_session_rows[0], "transaction_state"),
+        Some("active".to_string())
+    );
+
+    let active_transaction_rows = json_rows(
+        execute_ok(
+            &executor,
+            &observer_ctx,
+            &format!(
+                "SELECT transaction_id, state, write_count FROM system.transactions WHERE transaction_id = '{transaction_id}'"
+            ),
+        )
+        .await,
+    );
+    assert_eq!(active_transaction_rows.len(), 1);
+    assert_eq!(string_field(&active_transaction_rows[0], "state"), "open_write");
+    assert_eq!(i64_field(&active_transaction_rows[0], "write_count"), 1);
+
+    tokio::time::sleep(Duration::from_millis(2200)).await;
+
+    let timeout_error = pg_service
+        .insert(Request::new(shared_insert_request(
+            &table_id,
+            session_id,
+            2,
+            "late",
+        )))
+        .await
+        .expect_err("follow-up write should fail after timeout");
+    assert_eq!(timeout_error.code(), tonic::Code::FailedPrecondition);
+    assert!(timeout_error.message().contains("timed out"), "{timeout_error}");
+
+    let owner_key =
+        ExecutionOwnerKey::from_pg_session_id(session_id).expect("pg owner key should parse");
+    let parsed_transaction_id =
+        TransactionId::try_new(transaction_id.clone()).expect("transaction id should parse");
+    assert!(app_ctx.transaction_coordinator().active_for_owner(&owner_key).is_none());
+    assert!(
+        app_ctx
+            .transaction_coordinator()
+            .get_handle(&parsed_transaction_id)
+            .is_none(),
+        "timed out PG write should not leave a handle behind"
+    );
+    assert!(
+        app_ctx
+            .transaction_coordinator()
+            .get_overlay(&parsed_transaction_id)
+            .is_none(),
+        "timed out PG write should not leave staged rows behind"
+    );
+
+    let cleared_session_rows = json_rows(
+        execute_ok(
+            &executor,
+            &observer_ctx,
+            &format!(
+                "SELECT session_id, state, transaction_id, transaction_state FROM system.sessions WHERE session_id = '{session_id}'"
+            ),
+        )
+        .await,
+    );
+    assert_eq!(cleared_session_rows.len(), 1);
+    assert_eq!(string_field(&cleared_session_rows[0], "state"), "idle");
+    assert_eq!(optional_string_field(&cleared_session_rows[0], "transaction_id"), None);
+    assert_eq!(
+        optional_string_field(&cleared_session_rows[0], "transaction_state"),
+        None
+    );
+
+    let cleared_transaction_rows = json_rows(
+        execute_ok(
+            &executor,
+            &observer_ctx,
+            &format!(
+                "SELECT transaction_id FROM system.transactions WHERE transaction_id = '{transaction_id}'"
+            ),
+        )
+        .await,
+    );
+    assert!(cleared_transaction_rows.is_empty());
+
+    let replacement_transaction_id = begin_transaction(&pg_service, session_id).await;
+    assert_ne!(replacement_transaction_id, transaction_id);
+    rollback_transaction(&pg_service, session_id, &replacement_transaction_id).await;
+}
+
+#[tokio::test]
+#[ntest::timeout(12000)]
+async fn pg_timeout_after_read_clears_sessions_and_transactions_views() {
+    let mut config = ServerConfig::default();
+    config.transaction_timeout_secs = 1;
+
+    let (app_ctx, _test_db) = create_cluster_app_context_with_config(config).await;
+    let table_id = create_shared_table(&app_ctx, &unique_namespace("pg_timeout_read"), "items")
+        .await;
+    let executor = create_executor(Arc::clone(&app_ctx));
+    let observer_ctx = observer_exec_ctx(&app_ctx);
+    let session_id = "pg-4302-cafef00d";
+
+    let executor_handle = app_ctx.executor();
+    let raft_executor = executor_handle
+        .as_any()
+        .downcast_ref::<RaftExecutor>()
+        .expect("raft executor available");
+    let pg_service = raft_executor.pg_service().expect("pg service is wired");
+
+    open_session(&pg_service, session_id).await;
+    let transaction_id = begin_transaction(&pg_service, session_id).await;
+
+    let active_transaction_rows = json_rows(
+        execute_ok(
+            &executor,
+            &observer_ctx,
+            &format!(
+                "SELECT transaction_id, state, write_count FROM system.transactions WHERE transaction_id = '{transaction_id}'"
+            ),
+        )
+        .await,
+    );
+    assert_eq!(active_transaction_rows.len(), 1);
+    assert_eq!(string_field(&active_transaction_rows[0], "state"), "open_read");
+    assert_eq!(i64_field(&active_transaction_rows[0], "write_count"), 0);
+
+    tokio::time::sleep(Duration::from_millis(2200)).await;
+
+    let timeout_error = pg_service
+        .scan(Request::new(ScanRpcRequest {
+            namespace: table_id.namespace_id().to_string(),
+            table_name: table_id.table_name().to_string(),
+            table_type: "shared".to_string(),
+            session_id: session_id.to_string(),
+            user_id: None,
+            columns: vec![],
+            limit: None,
+        }))
+        .await
+        .expect_err("scan should fail after timeout");
+    assert_eq!(timeout_error.code(), tonic::Code::FailedPrecondition);
+    assert!(
+        timeout_error.message().contains("timed_out")
+            || timeout_error.message().contains("timed out"),
+        "{timeout_error}"
+    );
+
+    let owner_key =
+        ExecutionOwnerKey::from_pg_session_id(session_id).expect("pg owner key should parse");
+    let parsed_transaction_id =
+        TransactionId::try_new(transaction_id.clone()).expect("transaction id should parse");
+    assert!(app_ctx.transaction_coordinator().active_for_owner(&owner_key).is_none());
+    assert!(
+        app_ctx
+            .transaction_coordinator()
+            .get_handle(&parsed_transaction_id)
+            .is_none(),
+        "timed out PG read should not leave a handle behind"
+    );
+
+    let cleared_session_rows = json_rows(
+        execute_ok(
+            &executor,
+            &observer_ctx,
+            &format!(
+                "SELECT session_id, state, transaction_id, transaction_state FROM system.sessions WHERE session_id = '{session_id}'"
+            ),
+        )
+        .await,
+    );
+    assert_eq!(cleared_session_rows.len(), 1);
+    assert_eq!(string_field(&cleared_session_rows[0], "state"), "idle");
+    assert_eq!(optional_string_field(&cleared_session_rows[0], "transaction_id"), None);
+    assert_eq!(
+        optional_string_field(&cleared_session_rows[0], "transaction_state"),
+        None
+    );
+
+    let cleared_transaction_rows = json_rows(
+        execute_ok(
+            &executor,
+            &observer_ctx,
+            &format!(
+                "SELECT transaction_id FROM system.transactions WHERE transaction_id = '{transaction_id}'"
+            ),
+        )
+        .await,
+    );
+    assert!(cleared_transaction_rows.is_empty());
+
+    let replacement_transaction_id = begin_transaction(&pg_service, session_id).await;
+    assert_ne!(replacement_transaction_id, transaction_id);
+    rollback_transaction(&pg_service, session_id, &replacement_transaction_id).await;
 }

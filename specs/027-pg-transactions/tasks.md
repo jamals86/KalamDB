@@ -2,7 +2,7 @@
 
 **Input**: Design documents from `/specs/027-pg-transactions/`
 **Prerequisites**: plan.md, spec.md, research.md, data-model.md, contracts/pg-transaction-rpc.md, contracts/sql-transaction-batch.md, quickstart.md
-**Last Updated**: 2026-04-07 (Phase 0 completed, session foundation in place, hardening/fanout + Raft-alignment delta added)
+**Last Updated**: 2026-04-08 (All phases completed and validated; no remaining unchecked tasks)
 
 **Tests**: Included — the spec (FR-016) and contracts explicitly require automated test coverage.
 

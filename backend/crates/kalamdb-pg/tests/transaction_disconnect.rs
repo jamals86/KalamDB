@@ -27,9 +27,7 @@ async fn begin_transaction_reclaims_stale_session_transaction() {
     let replacement_tx = begin_transaction(&service, session_id).await;
 
     assert_ne!(stale_tx, replacement_tx);
-    assert!(scan_shared_rows(&service, &table_ids[0], observer_session)
-        .await
-        .is_empty());
+    assert!(scan_shared_rows(&service, &table_ids[0], observer_session).await.is_empty());
 
     let rolled_back = rollback_transaction(&service, session_id, &replacement_tx).await;
     assert_eq!(rolled_back, replacement_tx);

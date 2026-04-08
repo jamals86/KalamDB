@@ -197,6 +197,57 @@ fn smoke_test_soft_delete_user_table() {
         execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 }
 
+/// Test non-point UPDATE for USER tables after a batch insert.
+///
+/// Verifies:
+/// - multi-row INSERT commits user rows with visible versions
+/// - non-PK UPDATE writes a new committed version for the matched row
+/// - the updated value is visible on subsequent SELECTs
+#[ntest::timeout(180000)]
+#[test]
+fn smoke_test_non_point_update_user_table_after_batch_insert() {
+    if !is_server_running() {
+        eprintln!("⚠️  Server not running. Skipping test.");
+        return;
+    }
+
+    let namespace = generate_unique_namespace("dml_ns");
+    let table = generate_unique_table("non_point_update_test");
+    let full_table = format!("{}.{}", namespace, table);
+
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+
+    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
+        .expect("Failed to create namespace");
+
+    let create_sql = format!(
+        r#"CREATE TABLE {} (
+            id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
+            name TEXT NOT NULL
+        ) WITH (TYPE = 'USER', FLUSH_POLICY = 'rows:1000')"#,
+        full_table
+    );
+    execute_sql_as_root_via_client(&create_sql).expect("Failed to create table");
+
+    let insert_sql =
+        format!(r#"INSERT INTO {} (name) VALUES ('Alice'), ('Bob'), ('Charlie')"#, full_table);
+    execute_sql_as_root_via_client(&insert_sql).expect("Failed to insert data");
+
+    let update_sql = format!("UPDATE {} SET name = 'Bobby' WHERE name = 'Bob'", full_table);
+    execute_sql_as_root_via_client(&update_sql).expect("Failed to update matching row");
+
+    let select_sql = format!("SELECT name FROM {} ORDER BY name", full_table);
+    let output =
+        execute_sql_as_root_via_client_json(&select_sql).expect("Failed to query updated rows");
+
+    assert!(output.contains("Bobby"), "Expected updated row in output: {}", output);
+    assert!(!output.contains("\"Bob\""), "Expected old value to be gone: {}", output);
+
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+}
+
 /// Test soft DELETE for SHARED tables
 ///
 /// Verifies:

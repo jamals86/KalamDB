@@ -1702,9 +1702,10 @@ impl SharedTableProvider {
         Ok(count)
     }
 
-    pub async fn insert_deferred(
+    async fn insert_deferred_internal(
         &self,
         row_data: Row,
+        validate_unique_pk: bool,
     ) -> Result<(SharedTableRowId, Option<ChangeNotification>), KalamDbError> {
         let span = tracing::debug_span!(
             "table.insert",
@@ -1716,7 +1717,9 @@ impl SharedTableProvider {
         async move {
             ensure_manifest_ready(&self.core, self.core.table_type(), None, "SharedTableProvider")?;
 
-            base::ensure_unique_pk_value(self, None, &row_data).await?;
+            if validate_unique_pk {
+                base::ensure_unique_pk_value(self, None, &row_data).await?;
+            }
 
             let sys_cols = self.core.services.system_columns.clone();
             let seq_id = sys_cols.generate_seq_id().map_err(|e| {
@@ -1767,6 +1770,146 @@ impl SharedTableProvider {
             };
 
             Ok((row_key, notification))
+        }
+        .instrument(span)
+        .await
+    }
+
+    pub async fn insert_deferred(
+        &self,
+        row_data: Row,
+    ) -> Result<(SharedTableRowId, Option<ChangeNotification>), KalamDbError> {
+        self.insert_deferred_internal(row_data, true).await
+    }
+
+    pub async fn insert_deferred_prevalidated(
+        &self,
+        row_data: Row,
+    ) -> Result<(SharedTableRowId, Option<ChangeNotification>), KalamDbError> {
+        self.insert_deferred_internal(row_data, false).await
+    }
+
+    pub async fn insert_batch_deferred_prevalidated(
+        &self,
+        rows: Vec<Row>,
+    ) -> Result<Vec<(SharedTableRowId, Option<ChangeNotification>)>, KalamDbError> {
+        let row_count = rows.len();
+        let span = tracing::debug_span!(
+            "table.insert_batch",
+            table_id = %self.core.table_id(),
+            scope = "shared",
+            row_count,
+            deferred_side_effects = true
+        );
+        async move {
+            if rows.is_empty() {
+                return Ok(Vec::new());
+            }
+
+            ensure_manifest_ready(&self.core, self.core.table_type(), None, "SharedTableProvider")?;
+
+            let coerced_rows = coerce_rows(rows, &self.schema_ref()).map_err(|e| {
+                KalamDbError::InvalidOperation(format!("Schema coercion failed: {}", e))
+            })?;
+
+            crate::utils::datafusion_dml::validate_not_null_with_set(
+                self.core.non_null_columns(),
+                &coerced_rows,
+            )
+            .map_err(|e| KalamDbError::ConstraintViolation(e.to_string()))?;
+
+            let sys_cols = self.core.services.system_columns.clone();
+            let seq_ids = sys_cols.generate_seq_ids(coerced_rows.len()).map_err(|e| {
+                KalamDbError::InvalidOperation(format!("SeqId batch generation failed: {}", e))
+            })?;
+
+            let mut shared_rows: Vec<SharedTableRow> = Vec::with_capacity(coerced_rows.len());
+            let mut row_keys: Vec<SharedTableRowId> = Vec::with_capacity(coerced_rows.len());
+
+            for (row_data, seq_id) in coerced_rows.into_iter().zip(seq_ids.into_iter()) {
+                row_keys.push(seq_id);
+                shared_rows.push(SharedTableRow {
+                    _seq: seq_id,
+                    _commit_seq: 0,
+                    _deleted: false,
+                    fields: row_data,
+                });
+            }
+
+            let entries: Vec<(SharedTableRowId, SharedTableRow)> =
+                row_keys.iter().copied().zip(shared_rows.into_iter()).collect();
+
+            let store = self.store.clone();
+            let entries_for_write = entries.clone();
+
+            tokio::task::spawn_blocking(move || -> Result<(), KalamDbError> {
+                let encode_input: Vec<(
+                    kalamdb_commons::ids::SeqId,
+                    u64,
+                    bool,
+                    &kalamdb_commons::models::rows::Row,
+                )> = entries_for_write
+                    .iter()
+                    .map(|(_, row)| (row._seq, row._commit_seq, row._deleted, &row.fields))
+                    .collect();
+                let encoded_values =
+                    kalamdb_commons::serialization::row_codec::batch_encode_shared_table_rows(
+                        &encode_input,
+                    )
+                    .map_err(|e| {
+                        KalamDbError::InvalidOperation(format!(
+                            "Failed to batch encode shared table rows: {}",
+                            e
+                        ))
+                    })?;
+                store
+                    .insert_batch_preencoded(&entries_for_write, encoded_values)
+                    .map_err(|e| {
+                        KalamDbError::InvalidOperation(format!(
+                            "Failed to batch insert shared table rows: {}",
+                            e
+                        ))
+                    })
+            })
+            .await
+            .map_err(|e| KalamDbError::InvalidOperation(format!("spawn_blocking error: {}", e)))??;
+
+            if let Err(e) = self.stage_vector_upsert_batch(&entries).await {
+                log::warn!(
+                    "Failed to batch stage vector upserts for table={}: {}",
+                    self.core.table_id(),
+                    e
+                );
+            }
+
+            let manifest_service = self.core.services.manifest_service.clone();
+            if let Err(e) = manifest_service.mark_pending_write(self.core.table_id(), None) {
+                log::warn!(
+                    "Failed to mark manifest as pending_write for {}: {}",
+                    self.core.table_id(),
+                    e
+                );
+            }
+
+            let notification_service = self.core.services.notification_service.clone();
+            let table_id = self.core.table_id().clone();
+            let has_topics = self.core.has_topic_routes(&table_id);
+            let has_live_subs = notification_service.has_subscribers(None, &table_id);
+
+            Ok(entries
+                .into_iter()
+                .map(|(row_key, entity)| {
+                    let notification = if has_topics || has_live_subs {
+                        Some(ChangeNotification::insert(
+                            table_id.clone(),
+                            Self::build_notification_row(&entity),
+                        ))
+                    } else {
+                        None
+                    };
+                    (row_key, notification)
+                })
+                .collect())
         }
         .instrument(span)
         .await

@@ -83,24 +83,15 @@ async fn pg_commit_vs_rollback_repeats_without_leaking_state() {
         let parsed_transaction_id = parse_transaction_id(&transaction_id);
         assert!(app_ctx.transaction_coordinator().active_metrics().is_empty());
         assert!(
-            app_ctx
-                .transaction_coordinator()
-                .active_for_owner(&owner_key)
-                .is_none(),
+            app_ctx.transaction_coordinator().active_for_owner(&owner_key).is_none(),
             "PG session owner mapping should be cleared after commit/rollback race"
         );
         assert!(
-            app_ctx
-                .transaction_coordinator()
-                .get_handle(&parsed_transaction_id)
-                .is_none(),
+            app_ctx.transaction_coordinator().get_handle(&parsed_transaction_id).is_none(),
             "PG commit/rollback race should not leave an active handle behind"
         );
         assert!(
-            app_ctx
-                .transaction_coordinator()
-                .get_overlay(&parsed_transaction_id)
-                .is_none(),
+            app_ctx.transaction_coordinator().get_overlay(&parsed_transaction_id).is_none(),
             "PG commit/rollback race should not leave an orphaned staged overlay"
         );
     }
@@ -168,24 +159,15 @@ async fn pg_commit_vs_close_session_repeats_without_leaking_state() {
         let parsed_transaction_id = parse_transaction_id(&transaction_id);
         assert!(app_ctx.transaction_coordinator().active_metrics().is_empty());
         assert!(
-            app_ctx
-                .transaction_coordinator()
-                .active_for_owner(&owner_key)
-                .is_none(),
+            app_ctx.transaction_coordinator().active_for_owner(&owner_key).is_none(),
             "PG close_session race should clear owner mapping"
         );
         assert!(
-            app_ctx
-                .transaction_coordinator()
-                .get_handle(&parsed_transaction_id)
-                .is_none(),
+            app_ctx.transaction_coordinator().get_handle(&parsed_transaction_id).is_none(),
             "PG close_session race should not leave an active handle behind"
         );
         assert!(
-            app_ctx
-                .transaction_coordinator()
-                .get_overlay(&parsed_transaction_id)
-                .is_none(),
+            app_ctx.transaction_coordinator().get_overlay(&parsed_transaction_id).is_none(),
             "PG close_session race should not leave an orphaned staged overlay"
         );
     }

@@ -162,19 +162,19 @@ pub unsafe extern "C-unwind" fn exec_foreign_delete(
 }
 
 /// `EndForeignModify` callback: release modify resources.
-/// Buffered writes are NOT flushed here — they accumulate across statements
-/// within a transaction and are flushed at PRE_COMMIT or before scans.
+/// Buffered writes are flushed here at statement end for autocommit mode.
 #[pg_guard]
 pub unsafe extern "C-unwind" fn end_foreign_modify(
     _estate: *mut pg_sys::EState,
     rinfo: *mut pg_sys::ResultRelInfo,
 ) {
-    // Implicit autocommit statements need their buffered writes flushed here so
-    // statement errors surface to the client instead of being deferred to the
-    // transaction callback. Explicit BEGIN/COMMIT blocks keep batching until
-    // PRE_COMMIT for better throughput.
-    if let Some(table_id) = current_modify_table_id(rinfo) {
-        if !pg_sys::IsTransactionBlock() {
+    // Autocommit writes must flush at statement end so statement-level errors
+    // surface immediately. Explicit BEGIN/COMMIT blocks keep buffering across
+    // statements and flush in the terminal COMMIT hook to preserve batching.
+    if !crate::fdw_xact::is_explicit_transaction_block_active()
+        && !crate::fdw_xact::has_active_transaction()
+    {
+        if let Some(table_id) = current_modify_table_id(rinfo) {
             if let Err(e) = crate::write_buffer::flush_table(&table_id) {
                 pgrx::error!("pg_kalam modify flush: {}", e);
             }
@@ -239,8 +239,12 @@ unsafe fn begin_foreign_modify_impl(rinfo: *mut pg_sys::ResultRelInfo) -> Result
     let executor = remote_state.executor()?;
     let runtime = std::sync::Arc::clone(remote_state.runtime());
 
-    // Lazily begin a KalamDB transaction for this PostgreSQL transaction
-    let _ = crate::fdw_xact::ensure_transaction(remote_state.session_id())?;
+    // Only explicit BEGIN/COMMIT blocks need a remote transaction. Implicit
+    // autocommit statements should flush directly to the backend so errors
+    // surface at statement end and no stale remote transaction state lingers.
+    if crate::fdw_xact::is_explicit_transaction_block_active() {
+        let _ = crate::fdw_xact::ensure_transaction(remote_state.session_id())?;
+    }
 
     let modify_state = Box::new(KalamModifyState {
         table_options,

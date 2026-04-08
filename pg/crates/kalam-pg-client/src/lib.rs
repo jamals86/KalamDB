@@ -34,6 +34,7 @@ pub struct RemoteSessionHandle {
 #[derive(Debug, Clone)]
 pub struct RemoteKalamClient {
     channel: Channel,
+    config: RemoteServerConfig,
     /// "host:port" used in error messages.
     server_addr: String,
     /// Value to send as the gRPC `authorization` metadata header.
@@ -82,9 +83,23 @@ impl RemoteKalamClient {
 
         Ok(Self {
             channel,
+            config,
             server_addr,
             auth_header,
         })
+    }
+
+    fn should_retry_cleanup_status(status: &tonic::Status) -> bool {
+        use tonic::Code;
+
+        matches!(
+            status.code(),
+            Code::Unavailable | Code::DeadlineExceeded | Code::Cancelled | Code::Unknown
+        )
+    }
+
+    async fn reconnect(&self) -> Result<Self, KalamPgError> {
+        Self::connect(self.config.clone()).await
     }
 
     /// Convert a transport-level connection error into a user-readable message.
@@ -226,14 +241,25 @@ impl RemoteKalamClient {
 
     /// Close a session and free server-side resources.
     pub async fn close_session(&self, session_id: &str) -> Result<(), KalamPgError> {
+        match self.close_session_attempt(session_id).await {
+            Ok(()) => Ok(()),
+            Err(status) if Self::should_retry_cleanup_status(&status) => {
+                let fresh_client = self.reconnect().await?;
+                fresh_client
+                    .close_session_attempt(session_id)
+                    .await
+                    .map_err(|error| Self::grpc_err(error, &self.server_addr))
+            },
+            Err(status) => Err(Self::grpc_err(status, &self.server_addr)),
+        }
+    }
+
+    async fn close_session_attempt(&self, session_id: &str) -> Result<(), tonic::Status> {
         let mut client = PgServiceClient::new(self.channel.clone());
         let request = self.authorized_request(CloseSessionRequest {
             session_id: session_id.trim().to_string(),
         });
-        client
-            .close_session(request)
-            .await
-            .map_err(|e| Self::grpc_err(e, &self.server_addr))?;
+        client.close_session(request).await?;
         Ok(())
     }
 
@@ -395,6 +421,24 @@ impl RemoteKalamClient {
         session_id: &str,
         transaction_id: &str,
     ) -> Result<String, KalamPgError> {
+        match self.rollback_transaction_attempt(session_id, transaction_id).await {
+            Ok(response) => Ok(response),
+            Err(status) if Self::should_retry_cleanup_status(&status) => {
+                let fresh_client = self.reconnect().await?;
+                fresh_client
+                    .rollback_transaction_attempt(session_id, transaction_id)
+                    .await
+                    .map_err(|error| Self::grpc_err(error, &self.server_addr))
+            },
+            Err(status) => Err(Self::grpc_err(status, &self.server_addr)),
+        }
+    }
+
+    async fn rollback_transaction_attempt(
+        &self,
+        session_id: &str,
+        transaction_id: &str,
+    ) -> Result<String, tonic::Status> {
         let mut client = PgServiceClient::new(self.channel.clone());
         let request = self.authorized_request(RollbackTransactionRequest {
             session_id: session_id.to_string(),
@@ -402,8 +446,7 @@ impl RemoteKalamClient {
         });
         let response = client
             .rollback_transaction(request)
-            .await
-            .map_err(|e| Self::grpc_err(e, &self.server_addr))?
+            .await?
             .into_inner();
         Ok(response.transaction_id)
     }

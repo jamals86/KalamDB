@@ -5,14 +5,13 @@ use std::collections::BTreeMap;
 use datafusion_common::ScalarValue;
 use kalamdb_commons::models::rows::Row;
 use kalamdb_commons::models::NodeId;
-use kalamdb_commons::TransactionState;
 use kalamdb_core::transactions::TransactionRaftBinding;
-use kalamdb_pg::{InsertRpcRequest, PgService};
+use kalamdb_pg::{InsertRpcRequest, PgService, RollbackTransactionRequest};
 use ntest::timeout;
 
 use support::{
     await_shared_leader, begin_transaction, new_cluster_service_with_tables, open_session,
-    parse_transaction_id, request, rollback_transaction, scan_shared_rows,
+    parse_transaction_id, request, scan_shared_rows,
 };
 
 #[tokio::test]
@@ -76,20 +75,33 @@ async fn pg_transaction_aborts_when_bound_leader_changes_before_next_write() {
         message.contains("was aborted because leader for bound raft group"),
         "expected failover abort, got: {message}"
     );
-    assert!(message.contains(&group_id.to_string()), "expected bound group in error: {message}");
+    assert!(
+        message.contains(&group_id.to_string()),
+        "expected bound group in error: {message}"
+    );
 
-    let aborted_handle = app_ctx
-        .transaction_coordinator()
-        .get_handle(&parsed_transaction_id)
-        .expect("aborted transaction handle remains until cleanup");
-    assert_eq!(aborted_handle.state, TransactionState::Aborted);
+    assert!(
+        app_ctx.transaction_coordinator().get_handle(&parsed_transaction_id).is_none(),
+        "post-failover write should eagerly clean up the aborted transaction"
+    );
     assert!(scan_shared_rows(&service, &table_id, observer_session_id).await.is_empty());
 
-    let rolled_back_id = rollback_transaction(&service, session_id, &transaction_id).await;
-    assert_eq!(rolled_back_id, transaction_id);
-    assert!(app_ctx
-        .transaction_coordinator()
-        .get_handle(&parsed_transaction_id)
-        .is_none());
+    let rollback = service
+        .rollback_transaction(request(RollbackTransactionRequest {
+            session_id: session_id.to_string(),
+            transaction_id: transaction_id.clone(),
+        }))
+        .await;
+    match rollback {
+        Ok(response) => assert_eq!(response.into_inner().transaction_id, transaction_id),
+        Err(status) => {
+            assert_eq!(status.code(), tonic::Code::FailedPrecondition);
+            assert!(
+                status.message().contains("not found"),
+                "unexpected rollback status after eager cleanup: {status}"
+            );
+        },
+    }
+    assert!(app_ctx.transaction_coordinator().get_handle(&parsed_transaction_id).is_none());
     assert!(scan_shared_rows(&service, &table_id, observer_session_id).await.is_empty());
 }
