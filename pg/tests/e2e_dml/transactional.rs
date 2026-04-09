@@ -1,6 +1,6 @@
 use super::common::{
     await_user_shard_leader, count_rows, create_user_foreign_table, postgres_error_text,
-    set_user_id, unique_name, TestEnv,
+    retry_transient_user_leader_error, same_user_shard_pair, set_user_id, unique_name, TestEnv,
 };
 
 #[tokio::test]
@@ -119,4 +119,79 @@ async fn e2e_transaction_duplicate_primary_key_commit_fails() {
     await_user_shard_leader("txn-duplicate-user").await;
     let count = count_rows(&reader, &qualified_table, Some("id = 'dup-1'")) .await;
     assert_eq!(count, 0, "failed commit should leave no committed rows");
+}
+
+#[tokio::test]
+#[ntest::timeout(10000)]
+async fn e2e_transaction_switching_user_id_keeps_rows_in_separate_user_scopes() {
+    let env = TestEnv::global().await;
+    let pg = env.pg_connect().await;
+    let table = unique_name("profiles_tx_user_scope");
+    let qualified_table = format!("e2e.{table}");
+    let (first_user_id, second_user_id) =
+        same_user_shard_pair("txn-scope-user-a", "txn-scope-user-b").await;
+
+    create_user_foreign_table(
+        &pg,
+        &table,
+        "id TEXT, name TEXT, age INTEGER, _userid TEXT, _seq BIGINT, _deleted BOOLEAN",
+    )
+    .await;
+
+        await_user_shard_leader(&first_user_id).await;
+        await_user_shard_leader(&second_user_id).await;
+
+    let multi_user_tx = format!(
+        "BEGIN; \
+            SET LOCAL kalam.user_id = '{first_user_id}'; \
+         INSERT INTO {qualified_table} (id, name, age) VALUES ('profile-1', 'Alice', 30); \
+         INSERT INTO {qualified_table} (id, name, age) VALUES ('profile-2', 'Ava', 31); \
+            SET LOCAL kalam.user_id = '{second_user_id}'; \
+         INSERT INTO {qualified_table} (id, name, age) VALUES ('profile-1', 'Bob', 40); \
+         INSERT INTO {qualified_table} (id, name, age) VALUES ('profile-2', 'Bea', 41); \
+         COMMIT;"
+    );
+
+    retry_transient_user_leader_error("multi-user transaction insert", || {
+        pg.batch_execute(&multi_user_tx)
+    })
+    .await;
+
+    let reader_a = env.pg_connect().await;
+    set_user_id(&reader_a, &first_user_id).await;
+    await_user_shard_leader(&first_user_id).await;
+    let rows_a = reader_a
+        .query(
+            &format!("SELECT id, name FROM {qualified_table} ORDER BY id"),
+            &[],
+        )
+        .await
+        .expect("query user-a rows");
+    let visible_a = rows_a
+        .iter()
+        .map(|row| (row.get::<_, String>(0), row.get::<_, String>(1)))
+        .collect::<Vec<_>>();
+    assert_eq!(visible_a, vec![
+        ("profile-1".to_string(), "Alice".to_string()),
+        ("profile-2".to_string(), "Ava".to_string()),
+    ]);
+
+    let reader_b = env.pg_connect().await;
+    set_user_id(&reader_b, &second_user_id).await;
+    await_user_shard_leader(&second_user_id).await;
+    let rows_b = reader_b
+        .query(
+            &format!("SELECT id, name FROM {qualified_table} ORDER BY id"),
+            &[],
+        )
+        .await
+        .expect("query user-b rows");
+    let visible_b = rows_b
+        .iter()
+        .map(|row| (row.get::<_, String>(0), row.get::<_, String>(1)))
+        .collect::<Vec<_>>();
+    assert_eq!(visible_b, vec![
+        ("profile-1".to_string(), "Bob".to_string()),
+        ("profile-2".to_string(), "Bea".to_string()),
+    ]);
 }

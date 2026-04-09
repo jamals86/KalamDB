@@ -9,6 +9,7 @@ use arrow::array::RecordBatch;
 use datafusion::prelude::SessionContext;
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::conversions::arrow_json_conversion::arrow_value_to_scalar;
+use kalamdb_commons::models::datatypes::KalamDataType;
 use kalamdb_commons::models::{NamespaceId, TableId, TransactionId};
 use kalamdb_commons::Role;
 use kalamdb_sql::classifier::{SqlStatement, SqlStatementKind, StatementClassificationError};
@@ -25,6 +26,76 @@ enum DmlKind {
 }
 
 impl SqlExecutor {
+    async fn try_execute_embedding_literal_insert_via_applier(
+        &self,
+        sql: &str,
+        metadata: &PreparedExecutionStatement,
+        exec_ctx: &ExecutionContext,
+    ) -> Result<Option<ExecutionResult>, KalamDbError> {
+        let Some(table_id) = metadata.table_id.as_ref() else {
+            return Ok(None);
+        };
+
+        let mut request_transaction_state =
+            RequestTransactionState::from_execution_context(exec_ctx)?;
+        if let Some(state) = request_transaction_state.as_mut() {
+            state.sync_from_coordinator(self.app_context.as_ref());
+            if state.is_active() {
+                return Ok(None);
+            }
+        }
+
+        let Some(cached_table) = self.app_context.schema_registry().get(table_id) else {
+            return Ok(None);
+        };
+        let has_embedding_columns = cached_table
+            .table
+            .columns
+            .iter()
+            .any(|column| matches!(column.data_type, KalamDataType::Embedding(_)));
+        if !has_embedding_columns {
+            return Ok(None);
+        }
+
+        let dialect = sqlparser::dialect::GenericDialect {};
+        let parsed_statements = kalamdb_sql::parser::utils::parse_sql_statements(sql, &dialect)
+            .map_err(|error| KalamDbError::InvalidSql(error.to_string()))?;
+        if parsed_statements.len() != 1 {
+            return Ok(None);
+        }
+
+        let Some(insert_rows) = super::transaction_batch_insert::try_build_literal_insert_rows(
+            &parsed_statements[0],
+            self.app_context.as_ref(),
+            self.sql_cache_registry.as_ref(),
+            exec_ctx,
+            table_id,
+        )?
+        else {
+            return Ok(None);
+        };
+
+        let applier = self.app_context.applier();
+        let rows_affected = match insert_rows.table_type {
+            kalamdb_commons::schemas::TableType::Shared => applier
+                .insert_shared_data(table_id.clone(), insert_rows.rows)
+                .await
+                .map_err(KalamDbError::from)?
+                .rows_affected(),
+            kalamdb_commons::schemas::TableType::User
+            | kalamdb_commons::schemas::TableType::Stream => applier
+                .insert_user_data(table_id.clone(), exec_ctx.user_id().clone(), insert_rows.rows)
+                .await
+                .map_err(KalamDbError::from)?
+                .rows_affected(),
+            kalamdb_commons::schemas::TableType::System => return Ok(None),
+        };
+
+        Ok(Some(ExecutionResult::Inserted {
+            rows_affected: rows_affected as usize,
+        }))
+    }
+
     fn logical_plan_has_limit(plan: &datafusion::logical_expr::LogicalPlan) -> bool {
         matches!(plan, datafusion::logical_expr::LogicalPlan::Limit(_))
             || plan.inputs().iter().any(|input| Self::logical_plan_has_limit(input))
@@ -505,14 +576,36 @@ impl SqlExecutor {
 
                 // Native DataFusion DML path (provider insert/update/delete hooks)
                 SqlStatementKind::Insert(_) => {
-                    self.execute_dml_via_datafusion(
-                        classified.as_str(),
-                        metadata,
-                        params,
-                        exec_ctx,
-                        DmlKind::Insert,
-                    )
-                    .await
+                    if params.is_empty() {
+                        if let Some(result) = self
+                            .try_execute_embedding_literal_insert_via_applier(
+                                classified.as_str(),
+                                metadata,
+                                exec_ctx,
+                            )
+                            .await?
+                        {
+                            Ok(result)
+                        } else {
+                            self.execute_dml_via_datafusion(
+                                classified.as_str(),
+                                metadata,
+                                params,
+                                exec_ctx,
+                                DmlKind::Insert,
+                            )
+                            .await
+                        }
+                    } else {
+                        self.execute_dml_via_datafusion(
+                            classified.as_str(),
+                            metadata,
+                            params,
+                            exec_ctx,
+                            DmlKind::Insert,
+                        )
+                        .await
+                    }
                 },
                 SqlStatementKind::Update(_) => {
                     self.execute_dml_via_datafusion(

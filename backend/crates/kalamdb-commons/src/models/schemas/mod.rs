@@ -14,7 +14,7 @@
 //!       ↓
 //! Arrow Schema (Apache Arrow)
 //!       ↓
-//! DataFusion Execution (kalamdb-sql)
+//! DataFusion Execution (kalamdb-dialect + kalamdb-core)
 //!       ↓
 //! RocksDB Storage (kalamdb-store)
 //! ```
@@ -74,7 +74,7 @@
 //!
 //! - `kalamdb_commons::datatypes` - Unified type system (KalamDataType)
 //! - `kalamdb_core::schema_cache` - Lock-free caching layer
-//! - `kalamdb_sql::ddl` - SQL DDL statement handling
+//! - `kalamdb_dialect::ddl` - SQL DDL statement handling
 //! - `kalamdb_store::entities` - RocksDB storage implementation
 
 pub mod column_default;

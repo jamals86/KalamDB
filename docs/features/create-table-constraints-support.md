@@ -196,7 +196,7 @@ All features are thoroughly tested with 11+ unit tests:
 
 ```bash
 cd backend
-cargo nextest run --package kalamdb-sql --test test_create_table_constraints
+cargo nextest run --package kalamdb-dialect --test test_create_table_constraints
 # Result: 11 tests run: 11 passed ✅
 ```
 
@@ -283,7 +283,7 @@ CREATE TABLE IF NOT EXISTS users (
 
 ## Implementation Details
 
-**Parser:** `backend/crates/kalamdb-sql/src/ddl/create_table/parser.rs`
+**Parser:** `backend/crates/kalamdb-dialect/src/ddl/create_table/parser.rs`
 
 **Key Struct Fields:**
 ```rust

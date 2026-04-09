@@ -39,11 +39,14 @@ Layer 1: kalamdb-core (Business Logic)
 - DataFusion SQL execution
 - NO DIRECT ROCKSDB ACCESS
 
-Layer 2: kalamdb-sql + kalamdb-store (Data Access)
-- kalamdb-sql: System tables (namespaces, tables, schemas, storage_locations, jobs, users, live_queries)
+Layer 2: kalamdb-system + kalamdb-store (Metadata/Data Access)
+- kalamdb-system: System tables and metadata providers exposed through `SystemTablesRegistry`
 - kalamdb-store: User/shared/stream tables (UserTableStore, SharedTableStore, StreamTableStore)
 - Abstracts RocksDB column families, key encoding, error handling
 - Provides clean API for Layer 1
+
+SQL parsing/classification lives in `kalamdb-dialect`, which feeds typed
+statements into `kalamdb-core` but is not itself a metadata storage layer.
 
 Layer 3: RocksDB (Persistence)
 - Column families for all data
@@ -85,12 +88,11 @@ Layer 3: RocksDB (Persistence)
    - No need to spin up full RocksDB for logic tests
 
 3. **Consistent Metadata Access**:
-   ```rust
-   // All system table access via kalamdb-sql
-   let namespace = kalam_sql.get_namespace(namespace_id)?;
-   let table = kalam_sql.get_table(table_id)?;
-   let schemas = kalam_sql.get_table_schemas_for_table(table_id)?;
-   ```
+    ```rust
+    let system_tables = app_context.system_tables();
+    let namespace = system_tables.namespaces().get_namespace(namespace_id)?;
+    let storages = system_tables.storages().list_storages()?;
+    ```
 
 4. **Better Error Handling**:
    - Layer 2 wraps RocksDB errors with context
@@ -139,7 +141,7 @@ Layer 3: RocksDB (Persistence)
 - Run flush/backup jobs
 
 **Dependencies**:
-- `Arc<KalamSql>` for metadata
+- `Arc<AppContext>` for metadata providers and shared services
 - `Arc<UserTableStore>` for user data
 - `Arc<SharedTableStore>` for shared data
 - `Arc<StreamTableStore>` for stream data
@@ -147,8 +149,8 @@ Layer 3: RocksDB (Persistence)
 **Example**:
 ```rust
 pub struct UserTableService {
+    app_context: Arc<AppContext>,
     user_table_store: Arc<UserTableStore>,
-    kalam_sql: Arc<KalamSql>,
 }
 
 impl UserTableService {
@@ -156,8 +158,8 @@ impl UserTableService {
         // 1. Validate (business logic)
         self.validate_table_schema(&table.schema)?;
         
-        // 2. Create metadata (via kalamdb-sql)
-        self.kalam_sql.insert_table(table)?;
+        // 2. Create metadata (via kalamdb-system providers on AppContext)
+        let _system_tables = self.app_context.system_tables();
         
         // 3. Create storage (via kalamdb-store)
         self.user_table_store.create_column_family(namespace_id, &table.name)?;
@@ -167,7 +169,7 @@ impl UserTableService {
 }
 ```
 
-### Layer 2a: kalamdb-sql
+### Layer 2a: kalamdb-system
 
 **Responsibilities**:
 - System table CRUD (namespaces, tables, schemas, etc.)
@@ -176,26 +178,15 @@ impl UserTableService {
 
 **API**:
 ```rust
-pub struct KalamSql {
-    db: Arc<DB>, // RocksDB handle
+pub struct SystemTablesRegistry {
+    // provider registry omitted
 }
 
-impl KalamSql {
-    // Namespace operations
-    pub fn insert_namespace(&self, namespace: &Namespace) -> Result<()>;
-    pub fn get_namespace(&self, id: &NamespaceId) -> Result<Option<Namespace>>;
-    pub fn scan_all_namespaces(&self) -> Result<Vec<Namespace>>;
-    
-    // Table operations
-    pub fn insert_table(&self, table: &Table) -> Result<()>;
-    pub fn get_table(&self, id: &TableId) -> Result<Option<Table>>;
-    pub fn scan_all_tables(&self) -> Result<Vec<Table>>;
-    
-    // Schema operations
-    pub fn insert_table_schema(&self, schema: &TableSchema) -> Result<()>;
-    pub fn get_table_schemas_for_table(&self, table_id: &TableId) -> Result<Vec<TableSchema>>;
-    
-    // ... more system table methods
+impl SystemTablesRegistry {
+    pub fn namespaces(&self) -> Arc<NamespacesTableProvider>;
+    pub fn storages(&self) -> Arc<StoragesTableProvider>;
+    pub fn schemas(&self) -> Arc<SchemasTableProvider>;
+    pub fn users(&self) -> Arc<UsersTableProvider>;
 }
 ```
 
@@ -246,10 +237,11 @@ impl UserTableStore {
 
 The refactoring was completed in phases:
 
-1. **Phase 9.5**: Created `kalamdb-sql` crate for system tables
+1. **Phase 9.5**: Consolidated system table access into `kalamdb-system`
 2. **Phase 10**: Created `kalamdb-store` crate with store implementations
 3. **Phase 11-16**: Refactored all `kalamdb-core` services to use stores
-4. **Phase 17**: Documented architecture (this ADR)
+4. **Later refactor**: Moved SQL parsing/classification from `kalamdb-sql` into `kalamdb-dialect`
+5. **Phase 17**: Documented architecture (this ADR)
 
 All direct RocksDB access removed from `kalamdb-core` by Phase 16.
 
@@ -257,7 +249,7 @@ All direct RocksDB access removed from `kalamdb-core` by Phase 16.
 
 ### 1. Single Data Access Layer
 
-Combine `kalamdb-sql` and `kalamdb-store` into one crate.
+Combine `kalamdb-system` and `kalamdb-store` into one crate.
 
 **Pros**:
 - Fewer crates

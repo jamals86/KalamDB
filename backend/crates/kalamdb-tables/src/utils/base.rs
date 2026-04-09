@@ -413,6 +413,8 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
             .await
             .map_err(kalam_error_to_datafusion)?;
 
+        let _ = limit;
+
         // Combine filters (AND) for pruning and pass to scan_rows
         let combined_filter: Option<Expr> = if filters.is_empty() {
             None
@@ -429,7 +431,9 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
         let effective_projection = if filters.is_empty() { projection } else { None };
 
         let batch = self
-            .scan_rows(state, effective_projection, combined_filter.as_ref(), limit)
+            // Provider-level LIMIT pushdown is unsafe here because scan() does not know
+            // whether an ORDER BY will execute above this table scan.
+            .scan_rows(state, effective_projection, combined_filter.as_ref(), None)
             .await
             .map_err(|e| DataFusionError::Execution(format!("scan_rows failed: {}", e)))?;
 
@@ -439,7 +443,7 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
         // If filters are present, batch has all columns, so we apply projection in MemTable scan.
         let final_projection = if filters.is_empty() { None } else { projection };
 
-        mem.scan(state, final_projection, filters, limit).await
+        mem.scan(state, final_projection, filters, None).await
     }
 
     fn validate_transaction_table_access(&self, state: &dyn Session) -> DataFusionResult<()> {
@@ -1546,7 +1550,9 @@ pub fn calculate_scan_limit(limit: Option<usize>) -> usize {
 pub fn extract_embedding_vector(value: &ScalarValue, expected_dimensions: u32) -> Option<Vec<f32>> {
     let parse_inner = |array: &dyn Array| -> Option<Vec<f32>> {
         let float_array = array.as_any().downcast_ref::<Float32Array>()?;
-        if float_array.len() != expected_dimensions as usize {
+        if float_array.len() != expected_dimensions as usize
+            || float_array.null_count() == float_array.len()
+        {
             return None;
         }
         Some(

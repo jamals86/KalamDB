@@ -16,14 +16,14 @@ When adding a new SQL statement (e.g., `CREATE WIDGET <name>`), you need to:
 
 ## Step 1: Write the Statement Parser
 
-Location: `backend/crates/kalamdb-sql/src/ddl/`
+Location: `backend/crates/kalamdb-dialect/src/ddl/`
 
 ### 1.1 Create Parser File
 
 Create a new file for your statement parser (e.g., `create_widget.rs`):
 
 ```rust
-// backend/crates/kalamdb-sql/src/ddl/create_widget.rs
+// backend/crates/kalamdb-dialect/src/ddl/create_widget.rs
 
 use crate::ddl::DdlResult;
 use serde::{Deserialize, Serialize};
@@ -130,7 +130,7 @@ mod tests {
 
 ### 1.2 Export Parser from Module
 
-Edit `backend/crates/kalamdb-sql/src/ddl/mod.rs`:
+Edit `backend/crates/kalamdb-dialect/src/ddl.rs`:
 
 ```rust
 // Add your parser module
@@ -142,11 +142,11 @@ pub use create_widget::CreateWidgetStatement;
 
 ### 1.3 Add to SqlStatement Enum
 
-Edit `backend/crates/kalamdb-sql/src/statement_classifier.rs`:
+Edit `backend/crates/kalamdb-dialect/src/classifier/types.rs`:
 
 ```rust
 #[derive(Debug, Clone)]
-pub enum SqlStatement {
+pub enum SqlStatementKind {
     // ... existing variants ...
     
     /// CREATE WIDGET <name> TYPE <type>
@@ -158,7 +158,7 @@ pub enum SqlStatement {
 
 ### 1.4 Add Classification Logic
 
-In the same file, add classification and parsing:
+Then add classification and parsing in `backend/crates/kalamdb-dialect/src/classifier/engine/core.rs`:
 
 ```rust
 impl SqlStatement {
@@ -178,9 +178,9 @@ impl SqlStatement {
                 if !is_admin {
                     return Err("Admin privileges required for widget operations".to_string());
                 }
-                Ok(CreateWidgetStatement::parse(sql)
-                    .map(SqlStatement::CreateWidget)
-                    .unwrap_or(SqlStatement::Unknown))
+                let kind = CreateWidgetStatement::parse(sql)
+                    .map(SqlStatementKind::CreateWidget)?;
+                Ok(Self::new(sql.to_string(), kind))
             }
             
             // ... rest of patterns ...
@@ -190,7 +190,7 @@ impl SqlStatement {
     pub fn name(&self) -> &'static str {
         match self {
             // ... existing cases ...
-            SqlStatement::CreateWidget(_) => "CREATE WIDGET",
+            SqlStatementKind::CreateWidget(_) => "CREATE WIDGET",
             // ... rest of cases ...
         }
     }
@@ -199,12 +199,9 @@ impl SqlStatement {
 
 ### 1.5 Implement DdlAst Trait
 
-Edit `backend/crates/kalamdb-sql/src/lib.rs`:
+Edit `backend/crates/kalamdb-dialect/src/ddl_parent.rs`:
 
 ```rust
-/// Marker trait for all DDL AST types
-pub trait DdlAst: Send + Clone + std::fmt::Debug {}
-
 // Add implementation for your statement
 impl DdlAst for CreateWidgetStatement {}
 ```
@@ -229,7 +226,7 @@ use crate::error::KalamDbError;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
 use datafusion::execution::context::SessionContext;
-use kalamdb_sql::ddl::CreateWidgetStatement;
+use kalamdb_dialect::ddl::CreateWidgetStatement;
 use std::sync::Arc;
 
 /// Handler for CREATE WIDGET statements
@@ -479,7 +476,7 @@ async fn test_full_create_widget_flow() {
 
 ```bash
 # Test parser
-cd backend/crates/kalamdb-sql
+cd backend/crates/kalamdb-dialect
 cargo test create_widget
 
 # Test handler
@@ -497,7 +494,7 @@ cargo test --package kalamdb-core test_full_create_widget_flow
 Use this checklist to ensure you've completed all steps:
 
 ### Step 1: Parser ✅
-- [ ] Created parser file in `kalamdb-sql/src/ddl/`
+- [ ] Created parser file in `kalamdb-dialect/src/ddl/`
 - [ ] Implemented `parse()` method
 - [ ] Added unit tests for parser
 - [ ] Exported from `ddl/mod.rs`
@@ -650,7 +647,7 @@ Err(KalamDbError::StorageError(format!("Failed to save widget: {}", e)))
 
 See these files for a complete working example:
 
-- **Parser**: `backend/crates/kalamdb-sql/src/ddl/create_namespace.rs`
+- **Parser**: `backend/crates/kalamdb-dialect/src/ddl/create_namespace.rs`
 - **Handler**: `backend/crates/kalamdb-core/src/sql/executor/handlers/ddl_typed.rs`
 - **Registration**: `backend/crates/kalamdb-core/src/sql/executor/handler_registry.rs`
 

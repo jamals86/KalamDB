@@ -122,7 +122,7 @@ impl Dialect for KalamDbDialect {
 
 ### Data Type Mapping
 
-PostgreSQL and MySQL type aliases are mapped to Arrow types via `kalamdb-sql/src/compatibility.rs`:
+PostgreSQL and MySQL type aliases are mapped to Arrow types via `kalamdb-dialect/src/compatibility.rs`:
 
 ```rust
 pub fn map_sql_type_to_arrow(sql_type: &SQLDataType) -> Result<DataType> {
@@ -176,7 +176,7 @@ pub fn map_sql_type_to_arrow(sql_type: &SQLDataType) -> Result<DataType> {
 
 ### Completed (Phase 2a)
 
-- [X] Add sqlparser-rs 0.40+ dependency to kalamdb-sql
+- [X] Add sqlparser-rs dependency to kalamdb-dialect
 - [X] Create compatibility module for type mapping
 - [X] Migrate CREATE TABLE parsing to use sqlparser-rs for structure
 - [X] Keep custom parsers for KalamDB extensions (FLUSH POLICY, etc.)
@@ -185,28 +185,32 @@ pub fn map_sql_type_to_arrow(sql_type: &SQLDataType) -> Result<DataType> {
 - [X] Consolidate duplicate parsing code (280 lines eliminated)
 - [X] Create error formatting functions (PostgreSQL/MySQL styles)
 
-### Parsing Modules (kalamdb-sql Crate)
+### Parsing Modules (kalamdb-dialect Crate)
 
 ```
-kalamdb-sql/
+kalamdb-dialect/
 ├── src/
 │   ├── lib.rs                    # Public exports
 │   ├── compatibility.rs          # Type mapping + error formatting
-│   ├── keywords.rs               # Centralized keyword enums
+│   ├── classifier/
+│   │   ├── mod.rs                # Classifier exports
+│   │   ├── types.rs              # SqlStatement / SqlStatementKind
+│   │   └── engine/core.rs        # Statement classification logic
 │   ├── parser/
 │   │   ├── mod.rs                # Parser module
-│   │   ├── standard.rs           # sqlparser-rs wrappers
-│   │   └── extensions.rs         # KalamDB-specific parsers
+│   │   ├── extensions.rs         # KalamDB-specific parser hooks
+│   │   ├── query_parser.rs       # Query parser helpers
+│   │   └── utils.rs              # Shared parser utilities
+│   ├── ddl.rs                    # DDL exports
 │   ├── ddl/
-│   │   ├── mod.rs                # DDL exports
-│   │   ├── namespace.rs          # CREATE/DROP/ALTER NAMESPACE
-│   │   ├── user_table.rs         # CREATE USER TABLE
-│   │   ├── shared_table.rs       # CREATE SHARED TABLE
-│   │   ├── stream_table.rs       # CREATE STREAM TABLE
+│   │   ├── create_namespace.rs   # CREATE NAMESPACE
+│   │   ├── create_table/
+│   │   │   ├── parser.rs         # CREATE TABLE parser
+│   │   │   └── types.rs          # CREATE TABLE helpers
+│   │   ├── storage_commands.rs   # CREATE/ALTER/DROP/SHOW STORAGE
 │   │   └── ...
-│   ├── storage_commands.rs       # CREATE STORAGE, ALTER STORAGE, etc.
-│   ├── flush_commands.rs         # STORAGE FLUSH TABLE, STORAGE FLUSH ALL
-│   └── job_commands.rs           # KILL JOB, KILL LIVE QUERY
+│   ├── batch_execution.rs        # Multi-statement parsing helpers
+│   └── validation.rs             # Identifier validation helpers
 ```
 
 ### Custom vs Standard SQL Decision Tree
@@ -248,7 +252,7 @@ kalamdb-sql/
 Both PostgreSQL and MySQL error formats are available:
 
 ```rust
-use kalamdb_sql::compatibility::{
+use kalamdb_dialect::compatibility::{
     format_postgres_table_not_found,
     format_mysql_table_not_found,
     ErrorStyle,

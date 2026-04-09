@@ -2239,7 +2239,7 @@ impl TableProvider for SharedTableProvider {
             self.primary_key_field_name().to_string(),
             table_overlay,
             final_projection,
-            limit,
+            None,
         )?))
     }
 
@@ -2299,6 +2299,13 @@ impl TableProvider for SharedTableProvider {
             .await
             .map_err(|e| DataFusionError::Execution(e.to_string()))?;
 
+        let commit_seq = self.core.services.commit_sequence_source.allocate_next();
+        for row_key in &inserted {
+            self.patch_commit_seq_for_row_key(row_key, commit_seq)
+                .await
+                .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+        }
+
         crate::utils::datafusion_dml::rows_affected_plan(state, inserted.len() as u64).await
     }
 
@@ -2343,6 +2350,10 @@ impl TableProvider for SharedTableProvider {
 
         let mut seen = HashSet::new();
         let mut deleted: u64 = 0;
+        let transaction_query_context = extract_transaction_query_context(state);
+        let commit_seq = transaction_query_context
+            .is_none()
+            .then(|| self.core.services.commit_sequence_source.allocate_next());
 
         for row in rows {
             let pk_value = crate::utils::datafusion_dml::extract_pk_value(&row, &pk_column)?;
@@ -2350,7 +2361,7 @@ impl TableProvider for SharedTableProvider {
                 continue;
             }
 
-            if let Some(transaction_query_context) = extract_transaction_query_context(state) {
+            if let Some(transaction_query_context) = transaction_query_context {
                 transaction_query_context
                     .mutation_sink
                     .stage_mutation(
@@ -2373,6 +2384,17 @@ impl TableProvider for SharedTableProvider {
                 .await
                 .map_err(|e| DataFusionError::Execution(e.to_string()))?
             {
+                let commit_seq = commit_seq.expect("commit_seq must exist for direct DELETE");
+                let patched = self
+                    .patch_latest_commit_seq_by_pk(&pk_value, commit_seq)
+                    .await
+                    .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+                if !patched {
+                    return Err(DataFusionError::Execution(format!(
+                        "Deleted row '{}' but failed to stamp commit sequence",
+                        pk_value
+                    )));
+                }
                 deleted += 1;
             }
         }
@@ -2424,6 +2446,10 @@ impl TableProvider for SharedTableProvider {
 
         let mut seen = HashSet::new();
         let mut updated: u64 = 0;
+        let transaction_query_context = extract_transaction_query_context(state);
+        let commit_seq = transaction_query_context
+            .is_none()
+            .then(|| self.core.services.commit_sequence_source.allocate_next());
 
         for row in rows {
             let pk_value = crate::utils::datafusion_dml::extract_pk_value(&row, &pk_column)?;
@@ -2438,7 +2464,7 @@ impl TableProvider for SharedTableProvider {
                 &assignments,
             )?;
 
-            if let Some(transaction_query_context) = extract_transaction_query_context(state) {
+            if let Some(transaction_query_context) = transaction_query_context {
                 transaction_query_context
                     .mutation_sink
                     .stage_mutation(
@@ -2464,7 +2490,11 @@ impl TableProvider for SharedTableProvider {
                 )
                 .await
                 .map_err(|e| DataFusionError::Execution(e.to_string()))?;
-            if result.is_some() {
+            if let Some(row_key) = result {
+                let commit_seq = commit_seq.expect("commit_seq must exist for direct UPDATE");
+                self.patch_commit_seq_for_row_key(&row_key, commit_seq)
+                    .await
+                    .map_err(|e| DataFusionError::Execution(e.to_string()))?;
                 updated += 1;
             }
         }

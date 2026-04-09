@@ -138,7 +138,11 @@ mod tests {
         let overlay = write_set.merged_overlay();
         let entry = overlay.latest_visible_entry(&table_id, "1").unwrap();
         assert_eq!(entry.mutation_order, 1);
-        assert_eq!(entry.operation_kind, OperationKind::Update);
+        assert_eq!(entry.operation_kind, OperationKind::Insert);
+        assert_eq!(
+            entry.payload.values.get("name"),
+            Some(&ScalarValue::Utf8(Some("second".to_string())))
+        );
     }
 
     #[test]

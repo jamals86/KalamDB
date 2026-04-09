@@ -71,7 +71,7 @@ pub trait StatementHandler: Send + Sync {
     /// Execute a SQL statement with full context
     ///
     /// # Arguments
-    /// * `statement` - Parsed SQL statement (from kalamdb_sql)
+    /// * `statement` - Parsed SQL statement (from kalamdb_dialect)
     /// * `params` - Parameter values for prepared statements ($1, $2, ... placeholders)
     /// * `context` - Execution context (user, role, namespace, audit info, session)
     ///

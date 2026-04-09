@@ -168,7 +168,11 @@ fn parse_vector_at_index(array: &dyn Array, idx: usize) -> DataFusionResult<Opti
             if idx >= list.len() || list.is_null(idx) {
                 return Ok(None);
             }
-            parse_numeric_array(list.value(idx).as_ref()).map(Some)
+            let values = list.value(idx);
+            if values.null_count() == values.len() {
+                return Ok(None);
+            }
+            parse_numeric_array(values.as_ref()).map(Some)
         },
         DataType::List(_) => {
             let list = array.as_any().downcast_ref::<ListArray>().ok_or_else(|| {
@@ -179,7 +183,11 @@ fn parse_vector_at_index(array: &dyn Array, idx: usize) -> DataFusionResult<Opti
             if idx >= list.len() || list.is_null(idx) {
                 return Ok(None);
             }
-            parse_numeric_array(list.value(idx).as_ref()).map(Some)
+            let values = list.value(idx);
+            if values.null_count() == values.len() {
+                return Ok(None);
+            }
+            parse_numeric_array(values.as_ref()).map(Some)
         },
         DataType::LargeList(_) => {
             let list = array.as_any().downcast_ref::<LargeListArray>().ok_or_else(|| {
@@ -190,7 +198,11 @@ fn parse_vector_at_index(array: &dyn Array, idx: usize) -> DataFusionResult<Opti
             if idx >= list.len() || list.is_null(idx) {
                 return Ok(None);
             }
-            parse_numeric_array(list.value(idx).as_ref()).map(Some)
+            let values = list.value(idx);
+            if values.null_count() == values.len() {
+                return Ok(None);
+            }
+            parse_numeric_array(values.as_ref()).map(Some)
         },
         _ => Err(DataFusionError::Plan(format!(
             "COSINE_DISTANCE() vector argument must be a list, got {:?}",
@@ -295,6 +307,7 @@ fn parse_numeric_array(values: &dyn Array) -> DataFusionResult<Vec<f32>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use datafusion::arrow::datatypes::Field;
     use datafusion::logical_expr::ScalarUDF;
 
     #[test]
@@ -318,5 +331,19 @@ mod tests {
             .expect("json parse should succeed")
             .expect("vector should exist");
         assert_eq!(parsed, vec![0.1, 0.2]);
+    }
+
+    #[test]
+    fn test_parse_vector_at_index_treats_all_null_fixed_size_list_as_null() {
+        let values = Float32Array::from(vec![None, None, None]);
+        let list = FixedSizeListArray::new(
+            Arc::new(Field::new("item", DataType::Float32, true)),
+            3,
+            Arc::new(values),
+            None,
+        );
+
+        let parsed = parse_vector_at_index(&list, 0).expect("parse should succeed");
+        assert!(parsed.is_none());
     }
 }

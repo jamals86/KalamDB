@@ -329,11 +329,17 @@ unsafe fn handle_create_foreign_table(
 
     // Collect any extra KalamDB-specific options from the FDW table options
     // (e.g. storage_id, flush_policy, access_level, etc.)
-    let kalam_options: Vec<String> = ft_options
+    let kalam_options = match ft_options
         .iter()
         .filter(|(k, _)| *k != "table_type" && *k != "namespace" && *k != "table")
-        .map(|(k, v)| format!("{} = '{}'", k.to_uppercase(), v.replace('\'', "''")))
-        .collect();
+        .map(|(k, v)| format_kalam_option_assignment(k, v))
+        .collect::<Result<Vec<_>, _>>()
+    {
+        Ok(options) => options,
+        Err(error) => {
+            pgrx::error!("pg_kalam DDL: invalid KalamDB table option: {}", error);
+        },
+    };
 
     let with_clause = if kalam_options.is_empty() {
         String::new()
@@ -792,6 +798,32 @@ fn split_top_level_sql_list(input: &str) -> Vec<String> {
     entries
 }
 
+fn format_kalam_option_assignment(key: &str, value: &str) -> Result<String, KalamPgError> {
+    let key = key.trim();
+    let mut bytes = key.bytes();
+    let Some(first_byte) = bytes.next() else {
+        return Err(KalamPgError::Validation(format!(
+            "unsupported KalamDB option name '{}'",
+            key
+        )));
+    };
+
+    if !(first_byte.is_ascii_alphabetic() || first_byte == b'_')
+        || !bytes.all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    {
+        return Err(KalamPgError::Validation(format!(
+            "unsupported KalamDB option name '{}'",
+            key
+        )));
+    }
+
+    Ok(format!(
+        "{} = '{}'",
+        key.to_ascii_uppercase(),
+        value.replace('\'', "''")
+    ))
+}
+
 fn is_internal_column_entry(entry: &str) -> bool {
     first_sql_identifier(entry)
         .map(|identifier| matches!(identifier.as_str(), "_userid" | "_seq" | "_deleted"))
@@ -1111,6 +1143,13 @@ mod tests {
     }
 
     #[test]
+    fn format_kalam_option_assignment_rejects_numeric_prefix() {
+        let error = format_kalam_option_assignment("9evil", "value").expect_err("numeric prefix should be rejected");
+        assert!(matches!(error, KalamPgError::Validation(_)));
+        assert!(error.to_string().contains("unsupported KalamDB option name '9evil'"));
+    }
+
+    #[test]
     fn strip_for_foreign_table_removes_pk_keeps_defaults() {
         let defs = vec![
             "id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID()".to_string(),
@@ -1243,10 +1282,16 @@ unsafe fn handle_create_table_using_kalamdb(
     let kalam_with_clause = if with_options.is_empty() {
         String::new()
     } else {
-        let pairs: Vec<String> = with_options
+        let pairs = match with_options
             .iter()
-            .map(|(k, v)| format!("{} = '{}'", k.to_uppercase(), v.replace('\'', "''")))
-            .collect();
+            .map(|(k, v)| format_kalam_option_assignment(k, v))
+            .collect::<Result<Vec<_>, _>>()
+        {
+            Ok(pairs) => pairs,
+            Err(error) => {
+                pgrx::error!("pg_kalam: invalid KalamDB WITH option: {}", error);
+            },
+        };
         format!(" WITH ({})", pairs.join(", "))
     };
 

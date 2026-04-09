@@ -46,8 +46,16 @@ impl KalamBackendExecutor for RemoteBackendExecutor {
         let rows_json: Vec<String> = request
             .rows
             .iter()
-            .map(|row| serde_json::to_string(row).unwrap_or_default())
-            .collect();
+            .map(|row| {
+                serde_json::to_string(row).map_err(|error| {
+                    KalamPgError::Execution(format!(
+                        "failed to serialize insert row for {}: {}",
+                        request.table_id.full_name(),
+                        error
+                    ))
+                })
+            })
+            .collect::<Result<_, _>>()?;
 
         self.client
             .insert(
@@ -65,8 +73,14 @@ impl KalamBackendExecutor for RemoteBackendExecutor {
         request.validate()?;
         let user_id = request.tenant_context.effective_user_id().map(|u| u.as_str().to_string());
 
-        let updates_json =
-            serde_json::to_string(&request.updates).unwrap_or_else(|_| "{}".to_string());
+        let updates_json = serde_json::to_string(&request.updates).map_err(|error| {
+            KalamPgError::Execution(format!(
+                "failed to serialize update payload for {} pk {}: {}",
+                request.table_id.full_name(),
+                request.pk_value,
+                error
+            ))
+        })?;
 
         self.client
             .update(

@@ -13,7 +13,7 @@ This document is the architecture-level reference for data types in KalamDB:
 The canonical implementations are:
 - `backend/crates/kalamdb-commons/src/models/datatypes/kalam_data_type.rs`
 - `backend/crates/kalamdb-commons/src/conversions/arrow_conversion.rs`
-- `backend/crates/kalamdb-sql/src/compatibility.rs`
+- `backend/crates/kalamdb-dialect/src/compatibility.rs`
 - `backend/crates/kalamdb-commons/src/conversions/schema_metadata.rs`
 - `backend/crates/kalamdb-system/src/providers/manifest/models/file_ref.rs`
 

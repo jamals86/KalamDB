@@ -881,6 +881,16 @@ impl Default for KalamPgService {
 #[cfg(feature = "server")]
 impl KalamPgService {
     pub fn new(mtls_enabled: bool, expected_auth_header: Option<String>) -> Self {
+        let expected_auth_header = expected_auth_header
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+
+        if !mtls_enabled && expected_auth_header.is_none() {
+            log::warn!(
+                "PG RPC service is running without mTLS or pg_auth_token; requests are unauthenticated"
+            );
+        }
+
         Self {
             mtls_enabled,
             expected_auth_header,
@@ -1241,7 +1251,7 @@ impl PgService for KalamPgService {
         self.record_session_activity(session_id.as_str(), None, "Update", &request);
         self.session_registry.mark_transaction_writes(session_id.as_str());
         let inner = request.into_inner();
-        log::debug!("PG update: {}.{} pk={}", inner.namespace, inner.table_name, inner.pk_value);
+        log::debug!("PG update: {}.{}", inner.namespace, inner.table_name);
         let domain_req = operation_executor::update_request_from_rpc(&inner)?;
         let result = match self.operation_executor()?.execute_update(domain_req).await {
             Ok(result) => result,
@@ -1273,7 +1283,7 @@ impl PgService for KalamPgService {
         self.record_session_activity(session_id.as_str(), None, "Delete", &request);
         self.session_registry.mark_transaction_writes(session_id.as_str());
         let inner = request.into_inner();
-        log::debug!("PG delete: {}.{} pk={}", inner.namespace, inner.table_name, inner.pk_value);
+        log::debug!("PG delete: {}.{}", inner.namespace, inner.table_name);
         let domain_req = operation_executor::delete_request_from_rpc(&inner)?;
         let result = match self.operation_executor()?.execute_delete(domain_req).await {
             Ok(result) => result,
@@ -1495,7 +1505,8 @@ impl PgService for KalamPgService {
             Some("ExecuteSql"),
         );
 
-        log::debug!("PG execute_sql: {}", sql);
+        let statement_kind = sql.split_whitespace().next().unwrap_or("UNKNOWN");
+        log::debug!("PG execute_sql: kind={}", statement_kind);
         let result = self.operation_executor()?.execute_sql(sql).await;
         self.close_ephemeral_idle_session_if_created(session_id, had_session);
         let result = result?;
@@ -1529,7 +1540,8 @@ impl PgService for KalamPgService {
             Some("ExecuteQuery"),
         );
 
-        log::debug!("PG execute_query: {}", sql);
+        let statement_kind = sql.split_whitespace().next().unwrap_or("UNKNOWN");
+        log::debug!("PG execute_query: kind={}", statement_kind);
         let result = self.operation_executor()?.execute_query(sql).await;
         self.close_ephemeral_idle_session_if_created(session_id, had_session);
         let (message, ipc_batches) = result?;

@@ -138,6 +138,13 @@ impl TransactionCoordinator {
             return Err(Self::state_error(transaction_id, handle.state, "stage writes in"));
         }
 
+        if let Err(error) = self.ensure_bound_leadership_is_current(transaction_id, &mut handle) {
+            let owner_key = handle.owner_key;
+            drop(handle);
+            self.abort_transaction(transaction_id, owner_key);
+            return Err(error);
+        }
+
         let projected_buffer_bytes = handle.write_bytes.saturating_add(estimated_bytes);
         let max_transaction_buffer_bytes = self.app_context.config().max_transaction_buffer_bytes;
         if projected_buffer_bytes > max_transaction_buffer_bytes {
@@ -231,6 +238,13 @@ impl TransactionCoordinator {
             return Err(Self::state_error(transaction_id, handle.state, "stage writes in"));
         }
 
+        if let Err(error) = self.ensure_bound_leadership_is_current(transaction_id, &mut handle) {
+            let owner_key = handle.owner_key;
+            drop(handle);
+            self.abort_transaction(transaction_id, owner_key);
+            return Err(error);
+        }
+
         let projected_buffer_bytes = handle.write_bytes.saturating_add(total_estimated_bytes);
         let max_transaction_buffer_bytes = self.app_context.config().max_transaction_buffer_bytes;
         if projected_buffer_bytes > max_transaction_buffer_bytes {
@@ -285,8 +299,9 @@ impl TransactionCoordinator {
             }
 
             if let Err(error) = self.ensure_bound_leadership_is_current(transaction_id, &mut handle) {
+                let owner_key = handle.owner_key;
                 drop(handle);
-                self.write_sets.remove(transaction_id);
+                self.abort_transaction(transaction_id, owner_key);
                 return Err(error);
             }
 
@@ -560,6 +575,18 @@ impl TransactionCoordinator {
     fn timeout_sweep_interval(timeout: Duration) -> Duration {
         let timeout_secs = timeout.as_secs().max(1);
         Duration::from_secs((timeout_secs / 2).clamp(1, 5))
+    }
+
+    fn abort_transaction(
+        &self,
+        transaction_id: &TransactionId,
+        owner_key: ExecutionOwnerKey,
+    ) {
+        self.write_sets.remove(transaction_id);
+        self.active_by_owner.remove(&owner_key);
+        if let Some((_, mut sealed_handle)) = self.active_by_id.remove(transaction_id) {
+            sealed_handle.mark_state(TransactionState::Aborted);
+        }
     }
 
     async fn run_timeout_sweeper(

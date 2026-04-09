@@ -2166,7 +2166,7 @@ impl TableProvider for UserTableProvider {
             self.primary_key_field_name().to_string(),
             table_overlay,
             final_projection,
-            limit,
+            None,
         )?))
     }
 

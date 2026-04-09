@@ -555,6 +555,23 @@ pub async fn await_user_shard_leader(user_id: &str) {
     }
 }
 
+pub async fn same_user_shard_pair(first_user_id: &str, second_prefix: &str) -> (String, String) {
+    let env = TestEnv::global().await;
+    let num_user_shards = cluster_user_shard_count(env).await;
+    let target_group = user_shard_group_id(first_user_id, num_user_shards);
+
+    for index in 0..1024 {
+        let candidate = format!("{second_prefix}-{index}");
+        if candidate != first_user_id && user_shard_group_id(&candidate, num_user_shards) == target_group {
+            return (first_user_id.to_string(), candidate);
+        }
+    }
+
+    panic!(
+        "failed to find a user id with prefix '{second_prefix}' on the same shard as '{first_user_id}'"
+    );
+}
+
 pub fn is_transient_user_leader_error(error: &tokio_postgres::Error) -> bool {
     let mut message = if let Some(db_error) = error.as_db_error() {
         db_error.message().to_string()

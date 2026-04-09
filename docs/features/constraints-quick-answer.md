@@ -94,7 +94,7 @@ Run the test suite to verify:
 
 ```bash
 cd backend
-cargo nextest run --package kalamdb-sql --test test_create_table_constraints
+cargo nextest run --package kalamdb-dialect --test test_create_table_constraints
 
 # Result: 11 tests run: 11 passed ✅
 ```

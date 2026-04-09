@@ -20,7 +20,7 @@ kalamdb-raft = { path = "../kalamdb-raft" }
 kalamdb-session = { path = "../kalamdb-session" }
 kalamdb-session-datafusion = { path = "../kalamdb-session-datafusion" }
 kalamdb-sharding = { path = "../kalamdb-sharding" }
-kalamdb-sql = { path = "../kalamdb-sql" }
+kalamdb-sql = { package = "kalamdb-dialect", path = "../kalamdb-dialect" }
 kalamdb-store = { path = "../kalamdb-store" }
 kalamdb-auth = { path = "../kalamdb-auth", default-features = false, features = ["websocket"] }
 kalamdb-system = { path = "../kalamdb-system" }

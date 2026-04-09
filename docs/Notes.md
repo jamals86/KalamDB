@@ -1101,12 +1101,12 @@ err_msg.contains("NOT_LEADER")
                 Ok(QueryResult::subscription(sub_data))
 
 88) remove object_store from kalamdb-code it should onloy be included in kalamdb-filestore if it needs any function we will be adding it in kalamdb-filestore then
-also sqlparser should be inside kalamdb-sql only since there we parse sql's
+also sqlparser should be inside kalamdb-dialect only since there we parse sql's
 tonic should be only in kalamdb-raft since there only we use the networking
 num_cpus should be inside kalamdb-observability only
 also check why we need reqwest?
 
-89) in backend\crates\kalamdb-sql\src\classifier\engine\core.rs we have a switch case which we use strings why not using enum's from: backend\crates\kalamdb-sql\src\classifier\types.rs its type-safe more than using case, also check if its the best way to parse them, i think the parsing cna be done better and use the already sqlparser or datafusion things
+89) in backend\crates\kalamdb-dialect\src\classifier\engine\core.rs we have a switch case which we use strings why not using enum's from: backend\crates\kalamdb-dialect\src\classifier\types.rs its type-safe more than using case, also check if its the best way to parse them, i think the parsing cna be done better and use the already sqlparser or datafusion things
 
 90) move ShardingRegistry into kalamdb-sharding also split: backend\crates\kalamdb-sharding\src\lib.rs into multiple files for each struct, replace backend\crates\kalamdb-commons\src\models\ids\shard_id.rs with the Shard we already have and name it ShardId instead
 
@@ -1328,7 +1328,6 @@ Postgres Extension:
 - Remove the requirement the auth first we can rely on headers instead which will make the connection faster
 - \cluster list should also display status of each node, the memory and cpu usage of each one of the nodes as well, we need to fetch them from the node we alredy have a communication between the cluster nodes that we formed we can use it here to fetch the status and store them in memory so each one knows about the other followers/masters, it should also display uptime, this should be visible also in the dashboard admin ui and in the cluster page, we already have GetNodeInfoRequest and GetNodeInfoResponse in the raft proto we can use them to fetch.
 - New command \ps to view all running jobs in the system which in fact do select * from system.jobs but with a better formatting
-- We should be able to view all pg sessions opened, learn from how postgres displays the session and add them to the cli as: \sessions which will print all the active grpc sessions between the pg-extension and our server
 - cli: \help doesnt contain all commands there add them for example \cluster commands
 - Check if we still need json between raft commands why not json is only for endpoint and never use it internaly in the server-backend code internally
 - in kalam-link we need to add features, so when using with cli we add more features like ddls/healthcheck and cluster and for sdk's we dont need these included so we exclude them, i think there is more things we can exclude here
@@ -1336,6 +1335,5 @@ Postgres Extension:
 - Make an option for streams table to not-wait-for-ack, fire and forget
 - make the examples/ use the cli instead of api calls directly in this way we can make sure the cli covers everything we need
 - make sure we store _seq as UInt64 also on flatbuffers: seq: long; as ulong check everywhere seqid should always be unsigned
-- check that after we have added the transaction if we no longer need the batching code we added for inserting rows
 - Check if grpc streaming is better for the pg extension instead of the current long polling one we are using, this will make the connection more stable and faster for sure, and also add ping/pong and health check for that then the sessions will be the actual opened connections
 

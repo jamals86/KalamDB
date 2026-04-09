@@ -75,11 +75,17 @@ impl RemoteKalamClient {
             .await
             .map_err(|error| Self::connect_err(&error, &server_addr))?;
 
-        let auth_header = config
-            .auth_header
-            .as_deref()
-            .filter(|v| !v.is_empty())
-            .and_then(|v| v.parse::<tonic::metadata::MetadataValue<_>>().ok());
+        let auth_header = match config.auth_header.as_deref().filter(|v| !v.is_empty()) {
+            Some(value) => Some(value.parse::<tonic::metadata::MetadataValue<_>>().map_err(
+                |error| {
+                    KalamPgError::Validation(format!(
+                        "invalid auth_header metadata value: {}",
+                        error
+                    ))
+                },
+            )?),
+            None => None,
+        };
 
         Ok(Self {
             channel,

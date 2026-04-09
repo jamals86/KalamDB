@@ -129,7 +129,14 @@ async fn create_proxy_shared_foreign_table(
     table: &str,
     host: &str,
     port: u16,
+    extra_server_options: Option<&str>,
 ) {
+    let extra_server_options = extra_server_options
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| format!(", {value}"))
+        .unwrap_or_default();
+
     client
         .batch_execute("CREATE SCHEMA IF NOT EXISTS e2e;")
         .await
@@ -140,7 +147,7 @@ async fn create_proxy_shared_foreign_table(
              DROP SERVER IF EXISTS {server_name} CASCADE; \
              CREATE SERVER {server_name} \
                  FOREIGN DATA WRAPPER pg_kalam \
-                 OPTIONS (host '{host}', port '{port}'); \
+                 OPTIONS (host '{host}', port '{port}'{extra_server_options}); \
              CREATE FOREIGN TABLE e2e.{table} ( \
                  id TEXT, \
                  title TEXT, \
@@ -155,6 +162,68 @@ async fn create_proxy_shared_foreign_table(
         .await
         .wait_for_kalamdb_table_exists("e2e", table)
         .await;
+}
+
+async fn cleanup_proxy_table(env: &TestEnv, table: &str, server_name: &str) {
+    let cleanup = env.pg_connect().await;
+    cleanup
+        .batch_execute(&format!(
+            "DROP FOREIGN TABLE IF EXISTS e2e.{table}; DROP SERVER IF EXISTS {server_name} CASCADE;"
+        ))
+        .await
+        .ok();
+    cleanup.disconnect().await;
+    env.kalamdb_sql(&format!("DROP SHARED TABLE IF EXISTS e2e.{table}")).await;
+}
+
+fn assert_transport_or_timeout_error(message: &str, context: &str) {
+    assert!(
+        message.contains("db error")
+            || message.contains("Connection reset")
+            || message.contains("broken pipe")
+            || message.contains("transport")
+            || message.contains("connection closed")
+            || message.contains("timed out")
+            || message.contains("Timeout expired")
+            || message.contains("deadline")
+            || message.contains("unavailable")
+            || message.contains("operation was canceled")
+            || message.contains("operation was cancelled")
+            || message.contains("The operation was cancelled"),
+        "unexpected proxy failure error for {context}: {message}"
+    );
+}
+
+async fn wait_for_row_count(
+    client: &tokio_postgres::Client,
+    qualified_table: &str,
+    expected_count: i64,
+    timeout: Duration,
+) {
+    let deadline = Instant::now() + timeout;
+
+    loop {
+        match client
+            .query_one(&format!("SELECT COUNT(*) FROM {qualified_table}"), &[])
+            .await
+        {
+            Ok(row) => {
+                let count: i64 = row.get(0);
+                if count == expected_count {
+                    return;
+                }
+            }
+            Err(_) => {}
+        }
+
+        if Instant::now() >= deadline {
+            panic!(
+                "row count for {qualified_table} did not become {expected_count} within timeout"
+            );
+        }
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
 }
 
 async fn fetch_session_rows(env: &TestEnv, backend_pid: u32) -> Vec<Vec<Value>> {
@@ -265,7 +334,8 @@ async fn run_terminal_proxy_cleanup_scenario(action: TerminalAction) {
     let qualified_table = format!("e2e.{table}");
     let (proxy_host, proxy_port) = proxy_host_port(proxy.base_url());
 
-    create_proxy_shared_foreign_table(&pg, &server_name, &table, &proxy_host, proxy_port).await;
+    create_proxy_shared_foreign_table(&pg, &server_name, &table, &proxy_host, proxy_port, None)
+        .await;
 
     let backend_pid = pg_backend_pid(&pg).await;
     let tx = pg.transaction().await.expect("begin transaction through proxy");
@@ -306,15 +376,7 @@ async fn run_terminal_proxy_cleanup_scenario(action: TerminalAction) {
                 .await
                 .expect_err("commit should fail while proxy is down");
             let message = postgres_error_text(&terminal_error);
-            assert!(
-                message.contains("db error")
-                    || message.contains("Connection reset")
-                    || message.contains("broken pipe")
-                    || message.contains("transport")
-                    || message.contains("connection closed"),
-                "unexpected proxy failure error for {}: {message}",
-                action.label()
-            );
+            assert_transport_or_timeout_error(&message, action.label());
 
             let stuck_session_rows =
                 wait_for_session_rows(env, backend_pid, Duration::from_secs(2)).await;
@@ -326,17 +388,7 @@ async fn run_terminal_proxy_cleanup_scenario(action: TerminalAction) {
         TerminalAction::Rollback => {
             if let Err(terminal_error) = tx.rollback().await {
                 let message = postgres_error_text(&terminal_error);
-                assert!(
-                    message.contains("db error")
-                        || message.contains("Connection reset")
-                        || message.contains("broken pipe")
-                        || message.contains("transport")
-                        || message.contains("connection closed")
-                        || message.contains("operation was canceled")
-                        || message.contains("operation was cancelled"),
-                    "unexpected proxy failure error for {}: {message}",
-                    action.label()
-                );
+                assert_transport_or_timeout_error(&message, action.label());
             }
         },
     }
@@ -360,15 +412,7 @@ async fn run_terminal_proxy_cleanup_scenario(action: TerminalAction) {
         action.label()
     );
 
-    let cleanup = env.pg_connect().await;
-    cleanup
-        .batch_execute(&format!(
-            "DROP FOREIGN TABLE IF EXISTS e2e.{table}; DROP SERVER IF EXISTS {server_name} CASCADE;"
-        ))
-        .await
-        .ok();
-    cleanup.disconnect().await;
-    env.kalamdb_sql(&format!("DROP SHARED TABLE IF EXISTS e2e.{table}")).await;
+    cleanup_proxy_table(env, &table, &server_name).await;
 
     proxy.shutdown().await;
 }
@@ -394,4 +438,156 @@ async fn owned_pg_client_disconnect_terminates_backend() {
     pg.disconnect().await;
 
     wait_for_pg_backend_exit(backend_pid, Duration::from_secs(3)).await;
+}
+
+#[tokio::test]
+#[ntest::timeout(15000)]
+async fn e2e_proxy_autocommit_query_recovers_after_disconnect() {
+    let env = TestEnv::global().await;
+    let pg = OwnedPgClient::connect().await;
+    let (grpc_host, grpc_port) = kalamdb_grpc_target();
+    let proxy = TcpDisconnectProxy::start(&format!("http://{grpc_host}:{grpc_port}")).await;
+    let server_name = unique_name("proxy_recover_server");
+    let table = unique_name("proxy_recover_items");
+    let qualified_table = format!("e2e.{table}");
+    let (proxy_host, proxy_port) = proxy_host_port(proxy.base_url());
+
+    create_proxy_shared_foreign_table(&pg, &server_name, &table, &proxy_host, proxy_port, None)
+        .await;
+
+    pg.execute(
+        &format!("INSERT INTO {qualified_table} (id, title, value) VALUES ($1, $2, $3)"),
+        &[&"recover-1", &"before disconnect", &1_i32],
+    )
+    .await
+    .expect("seed row before proxy disconnect");
+    wait_for_row_count(&pg, &qualified_table, 1, Duration::from_secs(3)).await;
+
+    proxy.simulate_server_down().await;
+
+    let error = pg
+        .query_one(&format!("SELECT COUNT(*) FROM {qualified_table}"), &[])
+        .await
+        .expect_err("query should fail while the proxy is down");
+    let message = postgres_error_text(&error);
+    assert_transport_or_timeout_error(&message, "autocommit reconnect");
+
+    proxy.simulate_server_up();
+
+    wait_for_row_count(&pg, &qualified_table, 1, Duration::from_secs(5)).await;
+    pg.execute(
+        &format!("INSERT INTO {qualified_table} (id, title, value) VALUES ($1, $2, $3)"),
+        &[&"recover-2", &"after reconnect", &2_i32],
+    )
+    .await
+    .expect("insert should succeed after proxy recovery");
+    wait_for_row_count(&pg, &qualified_table, 2, Duration::from_secs(3)).await;
+
+    cleanup_proxy_table(env, &table, &server_name).await;
+    proxy.shutdown().await;
+}
+
+#[tokio::test]
+#[ntest::timeout(15000)]
+async fn e2e_proxy_slow_link_keeps_connection_usable() {
+    let env = TestEnv::global().await;
+    let pg = OwnedPgClient::connect().await;
+    let (grpc_host, grpc_port) = kalamdb_grpc_target();
+    let proxy = TcpDisconnectProxy::start(&format!("http://{grpc_host}:{grpc_port}")).await;
+    let server_name = unique_name("proxy_slow_server");
+    let table = unique_name("proxy_slow_items");
+    let qualified_table = format!("e2e.{table}");
+    let (proxy_host, proxy_port) = proxy_host_port(proxy.base_url());
+
+    proxy.set_chunk_delay(Duration::from_millis(200));
+    create_proxy_shared_foreign_table(&pg, &server_name, &table, &proxy_host, proxy_port, None)
+        .await;
+
+    pg.execute(
+        &format!("INSERT INTO {qualified_table} (id, title, value) VALUES ($1, $2, $3)"),
+        &[&"slow-1", &"slow insert", &10_i32],
+    )
+    .await
+    .expect("insert should succeed across a slow proxy");
+    wait_for_row_count(&pg, &qualified_table, 1, Duration::from_secs(5)).await;
+
+    pg.execute(
+        &format!("UPDATE {qualified_table} SET value = $1 WHERE id = $2"),
+        &[&11_i32, &"slow-1"],
+    )
+    .await
+    .expect("update should succeed across a slow proxy");
+
+    let row = pg
+        .query_one(
+            &format!("SELECT title, value FROM {qualified_table} WHERE id = $1"),
+            &[&"slow-1"],
+        )
+        .await
+        .expect("select should succeed across a slow proxy");
+    let title: String = row.get(0);
+    let value: i32 = row.get(1);
+    assert_eq!(title, "slow insert");
+    assert_eq!(value, 11);
+
+    cleanup_proxy_table(env, &table, &server_name).await;
+    proxy.shutdown().await;
+}
+
+#[tokio::test]
+#[ntest::timeout(15000)]
+async fn e2e_proxy_blackhole_timeout_recovers_after_traffic_is_restored() {
+    let env = TestEnv::global().await;
+    let pg = OwnedPgClient::connect().await;
+    let (grpc_host, grpc_port) = kalamdb_grpc_target();
+    let proxy = TcpDisconnectProxy::start(&format!("http://{grpc_host}:{grpc_port}")).await;
+    let server_name = unique_name("proxy_blackhole_server");
+    let table = unique_name("proxy_blackhole_items");
+    let qualified_table = format!("e2e.{table}");
+    let (proxy_host, proxy_port) = proxy_host_port(proxy.base_url());
+
+    create_proxy_shared_foreign_table(
+        &pg,
+        &server_name,
+        &table,
+        &proxy_host,
+        proxy_port,
+        Some("timeout '400'"),
+    )
+    .await;
+
+    pg.execute(
+        &format!("INSERT INTO {qualified_table} (id, title, value) VALUES ($1, $2, $3)"),
+        &[&"blackhole-1", &"seed row", &1_i32],
+    )
+    .await
+    .expect("seed row before blackhole");
+    wait_for_row_count(&pg, &qualified_table, 1, Duration::from_secs(3)).await;
+
+    proxy.blackhole();
+
+    let error = pg
+        .query_one(&format!("SELECT COUNT(*) FROM {qualified_table}"), &[])
+        .await
+        .expect_err("query should time out while the proxy blackholes traffic");
+    let message = postgres_error_text(&error);
+    assert_transport_or_timeout_error(&message, "blackhole timeout");
+
+    proxy.restore_traffic();
+    wait_for_row_count(&pg, &qualified_table, 1, Duration::from_secs(5)).await;
+
+    let row = pg
+        .query_one(
+            &format!("SELECT id, value FROM {qualified_table} WHERE id = $1"),
+            &[&"blackhole-1"],
+        )
+        .await
+        .expect("query should recover after blackhole is cleared");
+    let id: String = row.get(0);
+    let value: i32 = row.get(1);
+    assert_eq!(id, "blackhole-1");
+    assert_eq!(value, 1);
+
+    cleanup_proxy_table(env, &table, &server_name).await;
+    proxy.shutdown().await;
 }

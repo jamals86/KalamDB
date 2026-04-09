@@ -17,7 +17,7 @@ kalamdb-handlers-support = { path = "crates/support" }
 kalamdb-handlers-stream = { path = "crates/stream" }
 kalamdb-handlers-user = { path = "crates/user" }
 kalamdb-core = { path = "../kalamdb-core" }
-kalamdb-sql = { path = "../kalamdb-sql" }
+kalamdb-sql = { package = "kalamdb-dialect", path = "../kalamdb-dialect" }
 uuid = { workspace = true }
 
 [lib]

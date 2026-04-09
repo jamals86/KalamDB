@@ -41,6 +41,7 @@ arrow-ipc = { workspace = true }
 datafusion-common = { workspace = true }
 kalamdb-commons = { path = "../kalamdb-commons", features = ["full"] }
 kalamdb-core = { path = "../kalamdb-core", features = ["test-helpers"] }
+kalamdb-sharding = { path = "../kalamdb-sharding" }
 ntest = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt"] }
 tonic = { workspace = true }

@@ -12,8 +12,15 @@ use tokio::time::{sleep, Duration};
 pub struct TcpDisconnectProxy {
     base_url: String,
     paused: Arc<AtomicBool>,
+    impairments: Arc<ProxyImpairments>,
     active_connections: Arc<TokioMutex<HashMap<u64, JoinHandle<()>>>>,
     accept_task: JoinHandle<()>,
+}
+
+#[derive(Default)]
+struct ProxyImpairments {
+    blackhole_traffic: AtomicBool,
+    chunk_delay_ms: AtomicU64,
 }
 
 impl TcpDisconnectProxy {
@@ -24,10 +31,12 @@ impl TcpDisconnectProxy {
             .expect("proxy should bind to an ephemeral port");
         let bind_addr = listener.local_addr().expect("proxy should have a local addr");
         let paused = Arc::new(AtomicBool::new(false));
+        let impairments = Arc::new(ProxyImpairments::default());
         let active_connections = Arc::new(TokioMutex::new(HashMap::new()));
         let next_id = Arc::new(AtomicU64::new(1));
 
         let paused_clone = Arc::clone(&paused);
+        let impairments_clone = Arc::clone(&impairments);
         let active_clone = Arc::clone(&active_connections);
         let next_id_clone = Arc::clone(&next_id);
         let accept_task = tokio::spawn(async move {
@@ -39,14 +48,19 @@ impl TcpDisconnectProxy {
 
                 let id = next_id_clone.fetch_add(1, Ordering::SeqCst);
                 let target_addr = target_addr.clone();
+                let impairments_for_task = Arc::clone(&impairments_clone);
                 let active_for_task = Arc::clone(&active_clone);
                 let task = tokio::spawn(async move {
                     if let Ok(mut outbound) = TcpStream::connect(&target_addr).await {
                         let (inbound_reader, inbound_writer) = inbound.split();
                         let (outbound_reader, outbound_writer) = outbound.split();
                         let _ = tokio::try_join!(
-                            relay(inbound_reader, outbound_writer),
-                            relay(outbound_reader, inbound_writer),
+                            relay(
+                                inbound_reader,
+                                outbound_writer,
+                                Arc::clone(&impairments_for_task),
+                            ),
+                            relay(outbound_reader, inbound_writer, impairments_for_task),
                         );
                     }
                     active_for_task.lock().await.remove(&id);
@@ -59,6 +73,7 @@ impl TcpDisconnectProxy {
         Self {
             base_url: format!("http://{}", bind_addr),
             paused,
+            impairments,
             active_connections,
             accept_task,
         }
@@ -74,6 +89,29 @@ impl TcpDisconnectProxy {
 
     pub fn resume(&self) {
         self.paused.store(false, Ordering::SeqCst);
+    }
+
+    pub fn blackhole(&self) {
+        self.impairments
+            .blackhole_traffic
+            .store(true, Ordering::SeqCst);
+    }
+
+    pub fn restore_traffic(&self) {
+        self.impairments
+            .blackhole_traffic
+            .store(false, Ordering::SeqCst);
+    }
+
+    pub fn set_chunk_delay(&self, delay: Duration) {
+        let delay_ms = delay.as_millis().min(u64::MAX as u128) as u64;
+        self.impairments
+            .chunk_delay_ms
+            .store(delay_ms, Ordering::SeqCst);
+    }
+
+    pub fn clear_chunk_delay(&self) {
+        self.impairments.chunk_delay_ms.store(0, Ordering::SeqCst);
     }
 
     pub async fn drop_active_connections(&self) {
@@ -110,6 +148,7 @@ impl TcpDisconnectProxy {
     }
 
     pub fn simulate_server_up(&self) {
+        self.restore_traffic();
         self.resume();
     }
 
@@ -146,6 +185,7 @@ async fn bind_loopback_listener() -> std::io::Result<TcpListener> {
 async fn relay(
     mut reader: tokio::net::tcp::ReadHalf<'_>,
     mut writer: tokio::net::tcp::WriteHalf<'_>,
+    impairments: Arc<ProxyImpairments>,
 ) -> std::io::Result<()> {
     let mut buffer = [0_u8; 16 * 1024];
 
@@ -154,6 +194,15 @@ async fn relay(
         if read == 0 {
             writer.shutdown().await?;
             return Ok(());
+        }
+
+        while impairments.blackhole_traffic.load(Ordering::SeqCst) {
+            sleep(Duration::from_millis(25)).await;
+        }
+
+        let delay_ms = impairments.chunk_delay_ms.load(Ordering::SeqCst);
+        if delay_ms > 0 {
+            sleep(Duration::from_millis(delay_ms)).await;
         }
 
         writer.write_all(&buffer[..read]).await?;

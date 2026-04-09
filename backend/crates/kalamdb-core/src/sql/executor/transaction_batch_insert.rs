@@ -8,6 +8,7 @@ use crate::sql::plan_cache::{
 use crate::sql::ExecutionContext;
 use crate::transactions::StagedMutation;
 use chrono::Utc;
+use kalamdb_commons::conversions::arrow_json_conversion::coerce_rows;
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::conversions::json_value_to_scalar;
 use kalamdb_commons::ids::SnowflakeGenerator;
@@ -186,6 +187,97 @@ fn apply_missing_defaults(
     }
 
     Ok(())
+}
+
+pub(crate) struct LiteralInsertRows {
+    pub table_type: TableType,
+    pub rows: Vec<Row>,
+}
+
+pub(crate) fn try_build_literal_insert_rows(
+    statement: &Statement,
+    app_context: &AppContext,
+    sql_cache_registry: &SqlCacheRegistry,
+    exec_ctx: &ExecutionContext,
+    table_id: &TableId,
+) -> Result<Option<LiteralInsertRows>, KalamDbError> {
+    if table_id.namespace_id().is_system_namespace() {
+        return Ok(None);
+    }
+
+    let insert = match statement {
+        Statement::Insert(insert) => insert,
+        _ => return Ok(None),
+    };
+
+    if insert.on.is_some() || insert.overwrite || insert.returning.is_some() {
+        return Ok(None);
+    }
+
+    let source = match insert.source.as_ref() {
+        Some(source) => source,
+        None => return Ok(None),
+    };
+
+    if source.with.is_some() || source.order_by.is_some() || source.limit_clause.is_some() {
+        return Ok(None);
+    }
+
+    let value_rows = match &*source.body {
+        SetExpr::Values(values) => &values.rows,
+        _ => return Ok(None),
+    };
+
+    let cached_table = match app_context.schema_registry().get(table_id) {
+        Some(cached) => cached,
+        None => return Ok(None),
+    };
+
+    let cached_table_entry = cached_table.table_entry();
+    if cached_table_entry.table_type == kalamdb_commons::schemas::TableType::Shared {
+        let access_level =
+            cached_table_entry.access_level.unwrap_or(kalamdb_commons::TableAccess::Private);
+        kalamdb_session::permissions::check_shared_table_write_access_level(
+            exec_ctx.user_role(),
+            access_level,
+            table_id.namespace_id(),
+            table_id.table_name(),
+        )
+        .map_err(|e| KalamDbError::PermissionDenied(e.to_string()))?;
+    }
+
+    let requested_columns: Vec<String> =
+        insert.columns.iter().map(|ident| ident.value.clone()).collect();
+    let metadata_cache_key = InsertMetadataCacheKey::new(table_id.clone(), requested_columns.clone());
+    let insert_metadata = match sql_cache_registry.insert_metadata_cache().get(&metadata_cache_key)
+    {
+        Some(metadata) => metadata,
+        None => {
+            let metadata = Arc::new(build_insert_metadata(&requested_columns, cached_table.as_ref())?);
+            sql_cache_registry
+                .insert_metadata_cache()
+                .insert_arc(metadata_cache_key, Arc::clone(&metadata));
+            metadata
+        },
+    };
+
+    let mut rows = match values_to_rows(value_rows, &insert_metadata.column_names) {
+        Ok(rows) => rows,
+        Err(_) => return Ok(None),
+    };
+
+    if !insert_metadata.missing_defaults.is_empty() {
+        apply_missing_defaults(&mut rows, &insert_metadata.missing_defaults, exec_ctx)?;
+    }
+
+    let schema = cached_table.arrow_schema()?;
+    let rows = coerce_rows(rows, &schema)
+        .map_err(|e| KalamDbError::InvalidOperation(format!("Schema coercion failed: {}", e)))?;
+
+    Ok(Some(LiteralInsertRows {
+        table_type: insert_metadata.table_type,
+        rows,
+    }))
 }
 
 fn prepare_default_template(
@@ -378,6 +470,10 @@ pub(crate) fn try_batch_inserts_in_transaction(
         if !insert_metadata.missing_defaults.is_empty() {
             apply_missing_defaults(&mut rows, &insert_metadata.missing_defaults, exec_ctx)?;
         }
+
+        rows = coerce_rows(rows, &cached_table.arrow_schema()?).map_err(|e| {
+            KalamDbError::InvalidOperation(format!("Schema coercion failed: {}", e))
+        })?;
 
         per_statement_counts.push(rows.len());
         let mutations = build_insert_staged_mutations(

@@ -60,57 +60,25 @@ System Column Families:
 Active WebSocket subscriptions are now exposed through the in-memory
 `system.live` view rather than a dedicated RocksDB column family.
 
-### Unified kalamdb-sql API
+### Unified system table access
 
-All metadata access via single `KalamSql` interface:
+All metadata access now goes through `kalamdb-system` providers exposed from
+`AppContext` and `SystemTablesRegistry`. `kalamdb-dialect` owns SQL parsing and
+statement classification; it no longer owns metadata persistence.
 
 ```rust
-pub struct KalamSql {
-    db: Arc<DB>, // RocksDB handle
-}
-
-impl KalamSql {
-    // Namespaces
-    pub fn insert_namespace(&self, namespace: &Namespace) -> Result<()>;
-    pub fn get_namespace(&self, id: &NamespaceId) -> Result<Option<Namespace>>;
-    pub fn scan_all_namespaces(&self) -> Result<Vec<Namespace>>;
-    pub fn delete_namespace(&self, id: &NamespaceId) -> Result<()>;
-    
-    // Tables
-    pub fn insert_table(&self, table: &Table) -> Result<()>;
-    pub fn get_table(&self, id: &TableId) -> Result<Option<Table>>;
-    pub fn scan_all_tables(&self) -> Result<Vec<Table>>;
-    pub fn update_table(&self, table: &Table) -> Result<()>;
-    pub fn delete_table(&self, id: &TableId) -> Result<()>;
-    
-    // Schemas
-    pub fn insert_table_schema(&self, schema: &TableSchema) -> Result<()>;
-    pub fn get_table_schemas_for_table(&self, table_id: &TableId) -> Result<Vec<TableSchema>>;
-    
-    // Storage Locations
-    pub fn insert_storage_location(&self, location: &StorageLocation) -> Result<()>;
-    pub fn get_storage_location(&self, id: &StorageLocationId) -> Result<Option<StorageLocation>>;
-    pub fn scan_all_storage_locations(&self) -> Result<Vec<StorageLocation>>;
-    
-    // Jobs
-    pub fn insert_job(&self, job: &Job) -> Result<()>;
-    pub fn update_job(&self, job: &Job) -> Result<()>;
-    pub fn scan_all_jobs(&self) -> Result<Vec<Job>>;
-    
-    // ... more system table methods
-}
+let system_tables = app_context.system_tables();
+let namespace = system_tables.namespaces().get_namespace(&namespace_id)?;
+let storages = system_tables.storages().list_storages()?;
 ```
 
 ## Consequences
 
 ### Positive
 
-1. **Atomic Operations**: Metadata changes transactional with data changes
-   ```rust
-   // Both succeed or both fail (RocksDB transaction)
-   kalam_sql.insert_table(table)?;
-   user_table_store.create_column_family(namespace, table_name)?;
-   ```
+1. **Atomic Operations**: `kalamdb-core` coordinates metadata changes through
+    `app_context.system_tables()` and hot-path writes through `kalamdb-store`,
+    keeping metadata and data-path changes in the same orchestration layer.
 
 2. **No Synchronization Issues**: Single source of truth (RocksDB)
    - No file/DB sync problems
@@ -137,14 +105,8 @@ impl KalamSql {
 6. **Consistent Error Handling**: All storage errors from same source
    - No mix of file I/O errors and DB errors
 
-7. **Versioned Schemas**: Schema history stored in system_table_schemas
-   ```rust
-   // Get all schema versions for a table
-   let schemas = kalam_sql.get_table_schemas_for_table(table_id)?;
-   for schema in schemas {
-       println!("Version {}: {:?}", schema.version, schema.columns);
-   }
-   ```
+7. **Versioned Schemas**: Schema history remains stored in system tables and is
+    surfaced through `kalamdb-system` providers.
 
 8. **Job Tracking**: Background operations visible
    ```sql
@@ -265,52 +227,22 @@ pub struct Job {
 // RocksDB Value: JSON-serialized Job
 ```
 
-### kalamdb-sql Implementation
+### kalamdb-system Implementation
 
-```rust
-impl KalamSql {
-    pub fn insert_table(&self, table: &Table) -> Result<()> {
-        let cf = self.db.cf_handle("system_tables")
-            .ok_or(KalamDbError::ColumnFamily(
-                ColumnFamilyError::not_found("system_tables")
-            ))?;
-        
-        let key = table.table_id.to_string();
-        let value = serde_json::to_vec(table)
-            .map_err(|e| KalamDbError::SerializationError(e.to_string()))?;
-        
-        self.db.put_cf(cf, key.as_bytes(), &value)?;
-        Ok(())
-    }
-    
-    pub fn get_table(&self, id: &TableId) -> Result<Option<Table>> {
-        let cf = self.db.cf_handle("system_tables")
-            .ok_or(KalamDbError::ColumnFamily(
-                ColumnFamilyError::not_found("system_tables")
-            ))?;
-        
-        let key = id.to_string();
-        match self.db.get_cf(cf, key.as_bytes())? {
-            Some(value) => {
-                let table: Table = serde_json::from_slice(&value)
-                    .map_err(|e| KalamDbError::SerializationError(e.to_string()))?;
-                Ok(Some(table))
-            }
-            None => Ok(None),
-        }
-    }
-}
-```
+Metadata persistence now lives under `backend/crates/kalamdb-system/src/providers/**`
+and is exposed through `SystemTablesRegistry` on `AppContext`. The SQL surface
+for these commands lives in `kalamdb-dialect`, while `kalamdb-core` bridges the
+parsed statements to the provider calls.
 
 ## Migration Path
 
 Completed in Phase 9.5:
 
-1. Created `kalamdb-sql` crate with system table APIs
+1. Consolidated metadata persistence into `kalamdb-system` providers and registry APIs
 2. Migrated all metadata operations from JSON files to RocksDB
-3. Updated all `kalamdb-core` services to use `KalamSql`
+3. Updated `kalamdb-core` services to use `app_context.system_tables()`
 4. Removed all JSON config file parsing code
-5. Updated backup/restore to handle RocksDB system tables
+5. Removed `kalamdb-sql`; parsing and classification moved to `kalamdb-dialect`
 
 ## Alternatives Considered
 
@@ -362,14 +294,15 @@ Maintain JSON files as source of truth, mirror in RocksDB.
 
 ## Related ADRs
 
-- ADR-009: Three-Layer Architecture (kalamdb-sql is Layer 2)
+- ADR-009: Three-Layer Architecture (`kalamdb-system` and `kalamdb-store` are Layer 2)
 - ADR-004: RocksDB Column Families (system_* CFs implementation)
 
 ## References
 
 - [Tasks](../../../specs/002-simple-kalamdb/tasks.md) - Phase 9.5: System Tables Refactor
 - [Session Summary](../../../specs/002-simple-kalamdb/progress/SESSION_2025-10-17_SUMMARY.md) - Metadata migration discussion
-- [kalamdb-sql crate](../../../backend/crates/kalamdb-sql/) - Implementation details
+- [kalamdb-system crate](../../../backend/crates/kalamdb-system/) - System table providers
+- [kalamdb-dialect crate](../../../backend/crates/kalamdb-dialect/) - SQL dialect and parser surface
 
 ## Revision History
 

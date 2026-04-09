@@ -7,9 +7,9 @@
 
 ## Context
 
-KalamDB has multiple crates (kalamdb-core, kalamdb-sql, kalamdb-store, kalamdb-api, kalamdb-live) that need to share common types, constants, and configuration structures. Without a shared crate, we face several problems:
+KalamDB has multiple crates (kalamdb-core, kalamdb-dialect, kalamdb-system, kalamdb-store, kalamdb-api) that need to share common types, constants, and configuration structures. Without a shared crate, we face several problems:
 
-1. **Circular Dependencies**: kalamdb-core depends on kalamdb-sql for DDL types, but kalamdb-sql needs core types like UserId and TableName
+1. **Circular Dependencies**: kalamdb-core depends on shared identifiers used by both `kalamdb-dialect` and `kalamdb-system`, so those crates need a neutral place for `UserId`, `NamespaceId`, `TableName`, and related types
 2. **Code Duplication**: System table names, column family constants, and type definitions are duplicated across crates
 3. **Type Safety**: String-based identifiers (user IDs, namespace IDs, table names) can be accidentally mixed, causing runtime errors
 4. **Maintenance Burden**: Updating a constant or type requires changes in multiple crates
@@ -109,7 +109,8 @@ kalamdb-commons/
 ```
 kalamdb-commons (no dependencies)
     ↑
-    ├─ kalamdb-sql
+    ├─ kalamdb-dialect
+    ├─ kalamdb-system
     ├─ kalamdb-store
     ├─ kalamdb-core (also depends on sql, store)
     ├─ kalamdb-api (depends on core)

@@ -138,6 +138,7 @@ mod tests {
     use kalamdb_commons::schemas::TableType;
     use kalamdb_commons::Role;
     use kalamdb_core::test_helpers::{create_test_session_simple, test_app_context_simple};
+    use kalamdb_system::Storage;
 
     fn create_test_context(role: Role) -> ExecutionContext {
         ExecutionContext::new(UserId::new("test_user"), role, create_test_session_simple())
@@ -150,7 +151,6 @@ mod tests {
 
         // Check if "local" storage exists, create if not
         if storages_provider.get_storage_by_id(&storage_id).unwrap().is_none() {
-            use kalamdb_sql::Storage;
             let storage = Storage {
                 storage_id: storage_id.clone(),
                 storage_name: "Local Storage".to_string(),

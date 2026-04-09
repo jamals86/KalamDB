@@ -2,8 +2,8 @@
 //!
 //! Shared types, constants, and utilities for KalamDB.
 //!
-//! This crate provides foundational types and constants used across all KalamDB crates
-//! (kalamdb-core, kalamdb-sql, kalamdb-store, kalamdb-api, kalamdb-live). It has zero
+//! This crate provides foundational types and constants used across KalamDB crates
+//! (kalamdb-core, kalamdb-dialect, kalamdb-system, kalamdb-store, kalamdb-api). It has zero
 //! external dependencies to prevent circular dependency issues.
 //!
 //! ## Type-Safe Wrappers

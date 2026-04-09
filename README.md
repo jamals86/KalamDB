@@ -181,7 +181,7 @@ CREATE TABLE chat.messages (
 
 ## Architecture Snapshot
 
-- SQL and execution: `kalamdb-sql` + DataFusion/Arrow.
+- SQL parsing/classification: `kalamdb-dialect`; query execution: `kalamdb-core` + DataFusion/Arrow.
 - Hot path: `kalamdb-store` (RocksDB).
 - Cold path: `kalamdb-filestore` (Parquet/object storage).
 - Orchestration: `kalamdb-core` (DDL/DML, jobs, schema registry).

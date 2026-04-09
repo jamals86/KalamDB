@@ -1,6 +1,6 @@
 use super::common::{
-    await_user_shard_leader, count_rows, create_user_foreign_table, postgres_error_text,
-    retry_transient_user_leader_error, set_user_id, unique_name, TestEnv,
+    await_user_shard_leader, count_rows, create_user_foreign_table, kalamdb_grpc_target,
+    postgres_error_text, retry_transient_user_leader_error, set_user_id, unique_name, TestEnv,
 };
 
 #[tokio::test]
@@ -166,6 +166,56 @@ async fn e2e_offline_kalamdb_server_reports_connection_error() {
             || message.contains("could not connect")
             || message.contains("unreachable"),
         "offline server error should be user-facing: {message}"
+    );
+
+    pg.batch_execute(&format!("DROP FOREIGN TABLE IF EXISTS e2e.{table_name};"))
+        .await
+        .ok();
+    pg.batch_execute(&format!("DROP SERVER IF EXISTS {server_name} CASCADE;"))
+        .await
+        .ok();
+}
+
+#[tokio::test]
+#[ntest::timeout(7000)]
+async fn e2e_invalid_auth_header_metadata_fails_clearly() {
+    let env = TestEnv::global().await;
+    let pg = env.pg_connect().await;
+    let server_name = unique_name("invalid_auth_server");
+    let table_name = unique_name("invalid_auth_items");
+    let (grpc_host, grpc_port) = kalamdb_grpc_target();
+
+    pg.batch_execute("CREATE SCHEMA IF NOT EXISTS e2e;")
+        .await
+        .expect("create e2e schema");
+    pg.batch_execute(&format!(
+        "CREATE SERVER {server_name}
+            FOREIGN DATA WRAPPER pg_kalam
+            OPTIONS (
+                host '{grpc_host}',
+                port '{grpc_port}',
+                auth_header E'Bearer broken\\nvalue'
+            );"
+    ))
+    .await
+    .expect("create foreign server with invalid auth metadata");
+
+    let err = pg
+        .batch_execute(&format!(
+            "CREATE FOREIGN TABLE e2e.{table_name} (
+                id TEXT,
+                title TEXT,
+                value INTEGER
+             ) SERVER {server_name}
+             OPTIONS (namespace 'e2e', \"table\" '{table_name}', table_type 'shared');"
+        ))
+        .await
+        .expect_err("invalid auth_header metadata should fail before creating the foreign table");
+
+    let message = postgres_error_text(&err);
+    assert!(
+        message.contains("invalid auth_header") || message.contains("metadata value"),
+        "unexpected invalid auth_header error: {message}"
     );
 
     pg.batch_execute(&format!("DROP FOREIGN TABLE IF EXISTS e2e.{table_name};"))

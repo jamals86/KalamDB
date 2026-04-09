@@ -350,6 +350,51 @@ async fn e2e_ddl_create_foreign_table_disconnect_cleans_session_row() {
 }
 
 #[tokio::test]
+#[ntest::timeout(10000)]
+async fn e2e_ddl_rejects_unsafe_option_keys() {
+    let env = DdlTestEnv::global().await;
+    let pg = env.pg_connect().await;
+
+    let ns = unique_name("unsafe_opts_ns");
+    let table = unique_name("unsafe_opts_tbl");
+    ensure_schema_exists(&pg, &ns).await;
+
+    let error = pg
+        .batch_execute(&format!(
+            "CREATE FOREIGN TABLE {ns}.{table} (
+                id BIGINT,
+                title TEXT
+             ) SERVER kalam_server
+             OPTIONS (
+                namespace '{ns}',
+                \"table\" '{table}',
+                table_type 'shared',
+                \"9evil\" 'should-fail'
+             );"
+        ))
+        .await
+        .expect_err("unsafe option keys should be rejected");
+
+    let message = super::common::postgres_error_text(&error);
+    assert!(
+        message.contains("invalid KalamDB table option")
+            || message.contains("unsupported KalamDB option name"),
+        "unexpected unsafe option key error: {message}"
+    );
+    assert!(
+        !env.kalamdb_table_exists(&ns, &table).await,
+        "unsafe option keys must not create a backing KalamDB table"
+    );
+
+    pg.batch_execute(&format!("DROP FOREIGN TABLE IF EXISTS {ns}.{table};"))
+        .await
+        .ok();
+    pg.batch_execute(&format!("DROP SCHEMA IF EXISTS {ns} CASCADE;"))
+        .await
+        .ok();
+}
+
+#[tokio::test]
 #[ntest::timeout(15000)]
 async fn e2e_ddl_kalam_exec_disconnect_cleans_session_row() {
     let env = DdlTestEnv::global().await;

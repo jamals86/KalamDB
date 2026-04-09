@@ -104,7 +104,7 @@ backend/crates/
 - kalamdb-raft: Raft consensus, replication, and cluster coordination.
 - kalamdb-session: Session context + permission-aware table provider abstraction.
 - kalamdb-sharding: Shard models and routing logic.
-- kalamdb-sql: SQL parsing and query planning helpers.
+- kalamdb-dialect: SQL dialect, parsing, classification, compatibility helpers, and reusable DDL ASTs.
 - kalamdb-store: RocksDB backend and storage abstractions; provides `EntityStore` and `IndexedEntityStore` (indexed store) with automatic secondary indexes.
 - kalamdb-streams: Stream storage and commit log utilities.
 - kalamdb-system: System tables + metadata providers (EntityStore/IndexedEntityStore-based), `TopicPublisher` trait.

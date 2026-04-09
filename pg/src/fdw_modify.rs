@@ -174,8 +174,8 @@ pub unsafe extern "C-unwind" fn end_foreign_modify(
     if !crate::fdw_xact::is_explicit_transaction_block_active()
         && !crate::fdw_xact::has_active_transaction()
     {
-        if let Some(table_id) = current_modify_table_id(rinfo) {
-            if let Err(e) = crate::write_buffer::flush_table(&table_id) {
+        if let Some((session_id, table_id, table_type)) = current_modify_flush_context(rinfo) {
+            if let Err(e) = crate::write_buffer::flush_table(&session_id, &table_id, table_type) {
                 pgrx::error!("pg_kalam modify flush: {}", e);
             }
         }
@@ -247,6 +247,7 @@ unsafe fn begin_foreign_modify_impl(rinfo: *mut pg_sys::ResultRelInfo) -> Result
     }
 
     let modify_state = Box::new(KalamModifyState {
+        session_id: remote_state.session_id().to_string(),
         table_options,
         executor,
         runtime,
@@ -258,16 +259,20 @@ unsafe fn begin_foreign_modify_impl(rinfo: *mut pg_sys::ResultRelInfo) -> Result
     Ok(())
 }
 
-unsafe fn current_modify_table_id(
+unsafe fn current_modify_flush_context(
     rinfo: *mut pg_sys::ResultRelInfo,
-) -> Option<kalamdb_commons::TableId> {
+) -> Option<(String, kalamdb_commons::TableId, kalamdb_commons::TableType)> {
     let state_ptr = (*rinfo).ri_FdwState;
     if state_ptr.is_null() {
         return None;
     }
 
     let state = &*(state_ptr as *mut KalamModifyState);
-    Some(state.table_options.table_id.clone())
+    Some((
+        state.session_id.clone(),
+        state.table_options.table_id.clone(),
+        state.table_options.table_type,
+    ))
 }
 
 unsafe fn exec_foreign_insert_impl(
@@ -278,9 +283,10 @@ unsafe fn exec_foreign_insert_impl(
     let row = slot_to_row(slot, &state.column_names)?;
 
     let user_id_str = crate::current_kalam_user_id();
-    let user_id = user_id_str.map(UserId::new);
+    let user_id = user_id_str.clone().map(UserId::new);
 
     crate::write_buffer::buffer_insert(
+        &state.session_id,
         &state.table_options.table_id,
         state.table_options.table_type,
         user_id,
@@ -299,13 +305,14 @@ unsafe fn exec_foreign_batch_insert_impl(
     let state = &*((*rinfo).ri_FdwState as *mut KalamModifyState);
 
     let user_id_str = crate::current_kalam_user_id();
-    let user_id = user_id_str.map(UserId::new);
+    let user_id = user_id_str.clone().map(UserId::new);
 
     // Single-row case: buffer for cross-statement batching within transactions
     if num_slots == 1 {
         let slot = *slots.add(0);
         let row = slot_to_row(slot, &state.column_names)?;
         crate::write_buffer::buffer_insert(
+            &state.session_id,
             &state.table_options.table_id,
             state.table_options.table_type,
             user_id,
@@ -317,7 +324,11 @@ unsafe fn exec_foreign_batch_insert_impl(
     }
 
     // Multi-row case: flush any pending buffer first, then send this batch directly
-    crate::write_buffer::flush_table(&state.table_options.table_id)?;
+    crate::write_buffer::flush_table(
+        &state.session_id,
+        &state.table_options.table_id,
+        state.table_options.table_type,
+    )?;
 
     let mut rows = Vec::with_capacity(num_slots);
     for i in 0..num_slots {
@@ -343,7 +354,11 @@ unsafe fn exec_foreign_update_impl(
 ) -> Result<(), KalamPgError> {
     let state = &*((*rinfo).ri_FdwState as *mut KalamModifyState);
     // Flush pending inserts so the update sees all rows
-    crate::write_buffer::flush_table(&state.table_options.table_id)?;
+    crate::write_buffer::flush_table(
+        &state.session_id,
+        &state.table_options.table_id,
+        state.table_options.table_type,
+    )?;
     let pk_value = extract_pk_value(plan_slot, &state.pk_column, &state.column_names)?;
     let updates = slot_to_row(slot, &state.column_names)?;
 
@@ -368,7 +383,11 @@ unsafe fn exec_foreign_delete_impl(
 ) -> Result<(), KalamPgError> {
     let state = &*((*rinfo).ri_FdwState as *mut KalamModifyState);
     // Flush pending inserts so the delete sees all rows
-    crate::write_buffer::flush_table(&state.table_options.table_id)?;
+    crate::write_buffer::flush_table(
+        &state.session_id,
+        &state.table_options.table_id,
+        state.table_options.table_type,
+    )?;
     let pk_value = extract_pk_value(plan_slot, &state.pk_column, &state.column_names)?;
 
     let user_id_str = crate::current_kalam_user_id();

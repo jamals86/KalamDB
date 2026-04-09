@@ -213,9 +213,6 @@ unsafe fn begin_foreign_scan_impl(node: *mut pg_sys::ForeignScanState) -> Result
     let options = parse_options((*ft).options);
     let table_options = resolve_table_options_for_relation(relation, &options)?;
 
-    // Flush any pending writes for this table before scanning (read-your-writes)
-    crate::write_buffer::flush_table(&table_options.table_id)?;
-
     // Get server options (host/port) from the foreign server
     let server = pg_sys::GetForeignServer((*ft).serverid);
     let server_options = parse_options((*server).options);
@@ -233,6 +230,14 @@ unsafe fn begin_foreign_scan_impl(node: *mut pg_sys::ForeignScanState) -> Result
     // Ensure remote connection
     let remote_state = crate::remote_state::ensure_remote_extension_state(remote_config)
         .map_err(|e| KalamPgError::Execution(e.to_string()))?;
+
+    // Flush any pending writes for this table before scanning (read-your-writes)
+    crate::write_buffer::flush_table(
+        remote_state.session_id(),
+        &table_options.table_id,
+        table_options.table_type,
+    )?;
+
     let executor = remote_state.executor()?;
     let runtime = remote_state.runtime();
 

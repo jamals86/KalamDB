@@ -126,7 +126,7 @@ Query: WHERE owner_id = 'foo' OR owner_id = 'admin' -- attacker sees all data
 ---
 
 ### 5. ✅ Backup Path Not Sanitized (HIGH) - FIXED
-**Location:** `backend/crates/kalamdb-sql/src/ddl/backup_namespace.rs`
+**Location:** `backend/crates/kalamdb-dialect/src/ddl/backup_namespace.rs`
 
 **Issue:** `BACKUP DATABASE ... TO` path was not validated, allowing path traversal.
 
@@ -232,14 +232,13 @@ Query: WHERE owner_id = 'foo' OR owner_id = 'admin' -- attacker sees all data
 ---
 
 ### 14. ✅ Bincode With Size Limits (MEDIUM) - FIXED
-**Location:** `backend/crates/kalamdb-sql/src/query_cache.rs`
+**Location:** Historical `backend/crates/kalamdb-sql/src/query_cache.rs` (removed during the `kalamdb-dialect` extraction)
 
 **Issue:** Bincode deserialization did not set size limits, potentially allowing memory exhaustion.
 
 **Fix Applied:**
-- Added `MAX_BINCODE_DECODE_SIZE` constant (16MB)
-- Query cache `get()` uses `.with_limit::<MAX_BINCODE_DECODE_SIZE>()`
-- Corrupted/oversized entries are safely rejected
+- The legacy query cache was removed during the `kalamdb-dialect` extraction, eliminating this deserialization surface entirely
+- No live `kalamdb-dialect` query cache replacement exists today
 
 ---
 
@@ -374,7 +373,7 @@ Query: WHERE owner_id = 'foo' OR owner_id = 'admin' -- attacker sees all data
 | `backend/crates/kalamdb-commons/src/models/ids/user_id.rs` | Added path traversal validation |
 | `backend/crates/kalamdb-commons/src/security.rs` | New module for SQL redaction |
 | `backend/crates/kalamdb-commons/src/lib.rs` | Added security module export |
-| `backend/crates/kalamdb-sql/src/ddl/backup_namespace.rs` | Added backup path validation |
+| `backend/crates/kalamdb-dialect/src/ddl/backup_namespace.rs` | Added backup path validation |
 | `backend/crates/kalamdb-commons/src/config/defaults.rs` | JWT secret consolidation |
 | `backend/crates/kalamdb-auth/src/unified.rs` | Use centralized JWT default |
 | `backend/crates/kalamdb-system/src/definitions/storages.rs` | Updated credentials documentation |
@@ -398,7 +397,7 @@ Query: WHERE owner_id = 'foo' OR owner_id = 'admin' -- attacker sees all data
 | `backend/crates/kalamdb-auth/src/cookie.rs` | Cookie Secure=true by default |
 | `backend/crates/kalamdb-api/src/handlers/auth.rs` | AuthConfig cookie_secure=true, LoginRequest length validation |
 | `backend/crates/kalamdb-core/src/sql/executor/helpers/storage.rs` | CREATE STORAGE path traversal validation |
-| `backend/crates/kalamdb-sql/src/query_cache.rs` | Bincode size limits (16MB max) |
+| Historical `backend/crates/kalamdb-sql/src/query_cache.rs` | Removed during `kalamdb-dialect` extraction, eliminating unsafe bincode decode |
 
 ---
 
