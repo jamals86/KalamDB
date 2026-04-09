@@ -296,7 +296,7 @@ pub enum ErrorStyle {
 /// # Examples
 ///
 /// ```
-/// use kalamdb_sql::compatibility::format_postgres_error;
+/// use kalamdb_dialect::compatibility::format_postgres_error;
 ///
 /// let msg = format_postgres_error("relation \"users\" does not exist");
 /// assert_eq!(msg, "ERROR: relation \"users\" does not exist");
@@ -310,7 +310,7 @@ pub fn format_postgres_error(message: &str) -> String {
 /// # Examples
 ///
 /// ```
-/// use kalamdb_sql::compatibility::format_postgres_table_not_found;
+/// use kalamdb_dialect::compatibility::format_postgres_table_not_found;
 ///
 /// let msg = format_postgres_table_not_found("users");
 /// assert_eq!(msg, "ERROR: relation \"users\" does not exist");
@@ -324,7 +324,7 @@ pub fn format_postgres_table_not_found(table_name: &str) -> String {
 /// # Examples
 ///
 /// ```
-/// use kalamdb_sql::compatibility::format_postgres_column_not_found;
+/// use kalamdb_dialect::compatibility::format_postgres_column_not_found;
 ///
 /// let msg = format_postgres_column_not_found("age");
 /// assert_eq!(msg, "ERROR: column \"age\" does not exist");
@@ -338,7 +338,7 @@ pub fn format_postgres_column_not_found(column_name: &str) -> String {
 /// # Examples
 ///
 /// ```
-/// use kalamdb_sql::compatibility::format_postgres_syntax_error;
+/// use kalamdb_dialect::compatibility::format_postgres_syntax_error;
 ///
 /// let msg = format_postgres_syntax_error("FROM");
 /// assert_eq!(msg, "ERROR: syntax error at or near \"FROM\"");
@@ -352,7 +352,7 @@ pub fn format_postgres_syntax_error(token: &str) -> String {
 /// # Examples
 ///
 /// ```
-/// use kalamdb_sql::compatibility::format_mysql_error;
+/// use kalamdb_dialect::compatibility::format_mysql_error;
 ///
 /// let msg = format_mysql_error(1146, "42S02", "Table 'db.users' doesn't exist");
 /// assert_eq!(msg, "ERROR 1146 (42S02): Table 'db.users' doesn't exist");
@@ -366,7 +366,7 @@ pub fn format_mysql_error(error_code: u16, sqlstate: &str, message: &str) -> Str
 /// # Examples
 ///
 /// ```
-/// use kalamdb_sql::compatibility::format_mysql_table_not_found;
+/// use kalamdb_dialect::compatibility::format_mysql_table_not_found;
 ///
 /// let msg = format_mysql_table_not_found("db", "users");
 /// assert_eq!(msg, "ERROR 1146 (42S02): Table 'db.users' doesn't exist");
@@ -380,7 +380,7 @@ pub fn format_mysql_table_not_found(database: &str, table_name: &str) -> String 
 /// # Examples
 ///
 /// ```
-/// use kalamdb_sql::compatibility::format_mysql_column_not_found;
+/// use kalamdb_dialect::compatibility::format_mysql_column_not_found;
 ///
 /// let msg = format_mysql_column_not_found("age");
 /// assert_eq!(msg, "ERROR 1054 (42S22): Unknown column 'age' in 'field list'");
@@ -394,7 +394,7 @@ pub fn format_mysql_column_not_found(column_name: &str) -> String {
 /// # Examples
 ///
 /// ```
-/// use kalamdb_sql::compatibility::format_mysql_syntax_error;
+/// use kalamdb_dialect::compatibility::format_mysql_syntax_error;
 ///
 /// let msg = format_mysql_syntax_error("FROM", 1);
 /// assert_eq!(msg, "ERROR 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'FROM' at line 1");

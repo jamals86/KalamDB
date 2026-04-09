@@ -8,7 +8,8 @@ use kalamdb_commons::constants::SystemColumnNames;
 use sqlparser::ast::{
     Expr, GroupByExpr, Query, Select, SelectItem, SetExpr, Statement, TableFactor, TableWithJoins,
 };
-use sqlparser::dialect::GenericDialect;
+
+use crate::dialect::KalamDbDialect;
 
 /// Error type for query parsing
 #[derive(Debug, Clone)]
@@ -45,7 +46,7 @@ impl QueryParser {
     pub fn analyze_subscription_query(
         query: &str,
     ) -> Result<SubscriptionQueryAnalysis, QueryParseError> {
-        let dialect = GenericDialect {};
+        let dialect = KalamDbDialect::default();
         let statements = parse_sql_statements(query, &dialect)
             .map_err(|e| QueryParseError::ParseError(format!("Failed to parse SQL: {}", e)))?;
 
@@ -235,7 +236,7 @@ impl QueryParser {
     pub fn parse_parameterized_expr(
         expr_str: &str,
     ) -> Result<(String, Vec<String>), QueryParseError> {
-        let dialect = GenericDialect {};
+        let dialect = KalamDbDialect::default();
 
         // Wrap in a dummy SELECT to parse the expression
         let dummy_query = format!("SELECT * FROM dummy WHERE {}", expr_str);

@@ -1,13 +1,7 @@
-//! Unit tests for SQL statement classification
-//!
-//! Tests cover:
-//! - SELECT statement classification (including CTEs)
-//! - DML statement classification (INSERT, UPDATE, DELETE)
-//! - DDL statement classification
-//! - Authorization checks
+//! Unit tests for SQL statement classification.
 
 use kalamdb_commons::{NamespaceId, Role};
-use kalamdb_sql::classifier::{SqlStatement, SqlStatementKind};
+use kalamdb_dialect::{SqlStatement, SqlStatementKind};
 
 #[test]
 fn test_classify_simple_select() {
@@ -26,16 +20,13 @@ fn test_classify_simple_cte() {
 
     assert!(result.is_ok());
     let stmt = result.unwrap();
-    assert!(
-        matches!(stmt.kind(), SqlStatementKind::Select),
-        "CTEs starting with WITH should be classified as SELECT"
-    );
+    assert!(matches!(stmt.kind(), SqlStatementKind::Select));
 }
 
 #[test]
 fn test_classify_multiple_ctes() {
     let sql = r#"
-        WITH 
+        WITH
             sales AS (SELECT * FROM orders WHERE type = 'sale'),
             refunds AS (SELECT * FROM orders WHERE type = 'refund')
         SELECT * FROM sales
@@ -46,10 +37,7 @@ fn test_classify_multiple_ctes() {
 
     assert!(result.is_ok());
     let stmt = result.unwrap();
-    assert!(
-        matches!(stmt.kind(), SqlStatementKind::Select),
-        "CTEs with multiple WITH clauses should be classified as SELECT"
-    );
+    assert!(matches!(stmt.kind(), SqlStatementKind::Select));
 }
 
 #[test]
@@ -57,7 +45,7 @@ fn test_classify_cte_with_aggregation() {
     let sql = r#"
         WITH user_stats AS (
             SELECT user_id, COUNT(*) as count
-            FROM system.users 
+            FROM system.users
             GROUP BY user_id
         )
         SELECT * FROM user_stats WHERE count > 5
@@ -66,10 +54,7 @@ fn test_classify_cte_with_aggregation() {
 
     assert!(result.is_ok());
     let stmt = result.unwrap();
-    assert!(
-        matches!(stmt.kind(), SqlStatementKind::Select),
-        "CTEs with aggregations should be classified as SELECT"
-    );
+    assert!(matches!(stmt.kind(), SqlStatementKind::Select));
 }
 
 #[test]
@@ -109,10 +94,7 @@ fn test_classify_case_insensitive_with() {
 
     assert!(result.is_ok());
     let stmt = result.unwrap();
-    assert!(
-        matches!(stmt.kind(), SqlStatementKind::Select),
-        "Lowercase 'with' should be classified as SELECT"
-    );
+    assert!(matches!(stmt.kind(), SqlStatementKind::Select));
 }
 
 #[test]
@@ -122,8 +104,5 @@ fn test_classify_whitespace_before_with() {
 
     assert!(result.is_ok());
     let stmt = result.unwrap();
-    assert!(
-        matches!(stmt.kind(), SqlStatementKind::Select),
-        "WITH with leading whitespace should be classified as SELECT"
-    );
+    assert!(matches!(stmt.kind(), SqlStatementKind::Select));
 }

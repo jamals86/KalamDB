@@ -88,7 +88,7 @@ impl SubscribeStatement {
     /// # Examples
     ///
     /// ```
-    /// use kalamdb_sql::ddl::subscribe_commands::SubscribeStatement;
+    /// use kalamdb_dialect::ddl::subscribe_commands::SubscribeStatement;
     ///
     /// // Basic subscription (SELECT * FROM)
     /// let stmt = SubscribeStatement::parse("SUBSCRIBE TO app.messages").unwrap();
@@ -290,7 +290,7 @@ impl SubscribeStatement {
     /// # Examples
     ///
     /// ```
-    /// use kalamdb_sql::ddl::subscribe_commands::SubscribeStatement;
+    /// use kalamdb_dialect::ddl::subscribe_commands::SubscribeStatement;
     ///
     /// let stmt = SubscribeStatement::parse("SUBSCRIBE TO app.messages WHERE user_id = 'alice'").unwrap();
     /// assert_eq!(stmt.to_select_sql(), "SELECT * FROM app.messages WHERE user_id = 'alice'");

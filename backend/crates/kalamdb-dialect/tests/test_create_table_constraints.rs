@@ -1,19 +1,13 @@
-//! Tests for CREATE TABLE IF NOT EXISTS with constraints
-//!
-//! Verifies that KalamDB properly supports:
-//! - IF NOT EXISTS clause
-//! - PRIMARY KEY constraint
-//! - NOT NULL constraint
-//! - Validation of these constraints
+//! Tests for CREATE TABLE IF NOT EXISTS with constraints.
 
-use kalamdb_sql::ddl::create_table::CreateTableStatement;
+use kalamdb_dialect::ddl::create_table::CreateTableStatement;
 
 #[test]
 fn test_if_not_exists_basic() {
     let sql = "CREATE TABLE IF NOT EXISTS test.users (id BIGINT, name TEXT)";
     let stmt = CreateTableStatement::parse(sql, "default").unwrap();
 
-    assert!(stmt.if_not_exists, "IF NOT EXISTS should be true");
+    assert!(stmt.if_not_exists);
     assert_eq!(stmt.table_name.as_str(), "users");
     assert_eq!(stmt.namespace_id.as_str(), "test");
 }
@@ -30,19 +24,12 @@ fn test_if_not_exists_with_primary_key() {
 
     assert!(stmt.if_not_exists);
     assert_eq!(stmt.primary_key_column.as_deref(), Some("id"));
-
-    // Verify PK column is not nullable
-    let id_field = stmt.schema.field_with_name("id").unwrap();
-    assert!(!id_field.is_nullable(), "PRIMARY KEY column should not be nullable");
-
-    // Verify NOT NULL is respected
-    let name_field = stmt.schema.field_with_name("name").unwrap();
-    assert!(!name_field.is_nullable(), "NOT NULL column should not be nullable");
+    assert!(!stmt.schema.field_with_name("id").unwrap().is_nullable());
+    assert!(!stmt.schema.field_with_name("name").unwrap().is_nullable());
 }
 
 #[test]
 fn test_exact_user_query() {
-    // The exact query from the user's request
     let sql = r#"
         CREATE TABLE IF NOT EXISTS playing_with_neon(
             id BIGINT PRIMARY KEY,
@@ -52,24 +39,15 @@ fn test_exact_user_query() {
     "#;
     let stmt = CreateTableStatement::parse(sql, "default").unwrap();
 
-    assert!(stmt.if_not_exists, "IF NOT EXISTS should be parsed");
+    assert!(stmt.if_not_exists);
     assert_eq!(stmt.table_name.as_str(), "playing_with_neon");
     assert_eq!(stmt.primary_key_column.as_deref(), Some("id"));
-
-    // Verify all fields are present
     assert!(stmt.schema.field_with_name("id").is_ok());
     assert!(stmt.schema.field_with_name("name").is_ok());
     assert!(stmt.schema.field_with_name("value").is_ok());
-
-    // Verify constraints
-    let id_field = stmt.schema.field_with_name("id").unwrap();
-    assert!(!id_field.is_nullable(), "id (PRIMARY KEY) should not be nullable");
-
-    let name_field = stmt.schema.field_with_name("name").unwrap();
-    assert!(!name_field.is_nullable(), "name (NOT NULL) should not be nullable");
-
-    let value_field = stmt.schema.field_with_name("value").unwrap();
-    assert!(value_field.is_nullable(), "value (nullable) should be nullable");
+    assert!(!stmt.schema.field_with_name("id").unwrap().is_nullable());
+    assert!(!stmt.schema.field_with_name("name").unwrap().is_nullable());
+    assert!(stmt.schema.field_with_name("value").unwrap().is_nullable());
 }
 
 #[test]
@@ -77,7 +55,7 @@ fn test_without_if_not_exists() {
     let sql = "CREATE TABLE test.orders (id BIGINT PRIMARY KEY, total REAL)";
     let stmt = CreateTableStatement::parse(sql, "default").unwrap();
 
-    assert!(!stmt.if_not_exists, "IF NOT EXISTS should be false when not specified");
+    assert!(!stmt.if_not_exists);
 }
 
 #[test]
@@ -95,8 +73,6 @@ fn test_multiple_not_null_columns() {
 
     assert!(stmt.if_not_exists);
     assert_eq!(stmt.primary_key_column.as_deref(), Some("id"));
-
-    // Verify NOT NULL constraints
     assert!(!stmt.schema.field_with_name("id").unwrap().is_nullable());
     assert!(!stmt.schema.field_with_name("first_name").unwrap().is_nullable());
     assert!(!stmt.schema.field_with_name("last_name").unwrap().is_nullable());
@@ -117,27 +93,21 @@ fn test_primary_key_table_constraint() {
 
     assert!(stmt.if_not_exists);
     assert_eq!(stmt.primary_key_column.as_deref(), Some("id"));
-
-    // Verify PK is not nullable
-    let id_field = stmt.schema.field_with_name("id").unwrap();
-    assert!(!id_field.is_nullable());
+    assert!(!stmt.schema.field_with_name("id").unwrap().is_nullable());
 }
 
 #[test]
 fn test_table_types_with_if_not_exists() {
-    // USER TABLE
     let sql = "CREATE USER TABLE IF NOT EXISTS test.user_data (id BIGINT PRIMARY KEY)";
     let stmt = CreateTableStatement::parse(sql, "default").unwrap();
     assert!(stmt.if_not_exists);
     assert_eq!(stmt.table_type, kalamdb_commons::schemas::TableType::User);
 
-    // SHARED TABLE
     let sql = "CREATE SHARED TABLE IF NOT EXISTS test.shared_data (id BIGINT PRIMARY KEY)";
     let stmt = CreateTableStatement::parse(sql, "default").unwrap();
     assert!(stmt.if_not_exists);
     assert_eq!(stmt.table_type, kalamdb_commons::schemas::TableType::Shared);
 
-    // STREAM TABLE (requires TTL)
     let sql = r#"
         CREATE STREAM TABLE IF NOT EXISTS test.events (
             id BIGINT PRIMARY KEY
@@ -152,17 +122,14 @@ fn test_table_types_with_if_not_exists() {
 
 #[test]
 fn test_validation_primary_key_not_null() {
-    // PRIMARY KEY columns are automatically made NOT NULL
     let sql = "CREATE TABLE test.data (id BIGINT PRIMARY KEY)";
     let stmt = CreateTableStatement::parse(sql, "default").unwrap();
 
-    let id_field = stmt.schema.field_with_name("id").unwrap();
-    assert!(!id_field.is_nullable(), "PRIMARY KEY must be NOT NULL");
+    assert!(!stmt.schema.field_with_name("id").unwrap().is_nullable());
 }
 
 #[test]
 fn test_validation_multiple_primary_keys_rejected() {
-    // Multiple PRIMARY KEY definitions should fail
     let sql = r#"
         CREATE TABLE test.invalid (
             id1 BIGINT PRIMARY KEY,
@@ -177,7 +144,6 @@ fn test_validation_multiple_primary_keys_rejected() {
 
 #[test]
 fn test_validation_composite_primary_key_not_supported() {
-    // Composite PRIMARY KEYs are not yet supported
     let sql = r#"
         CREATE TABLE test.invalid (
             id1 BIGINT,
@@ -192,9 +158,8 @@ fn test_validation_composite_primary_key_not_supported() {
 }
 
 #[test]
-#[ignore] // sqlparser handles dashes in identifiers differently, skip for now
+#[ignore]
 fn test_validation_invalid_column_names() {
-    // Column names with invalid characters should fail
     let sql = "CREATE TABLE test.invalid (`id-with-dash` BIGINT)";
     let result = CreateTableStatement::parse(sql, "default");
 
@@ -205,7 +170,6 @@ fn test_validation_invalid_column_names() {
 
 #[test]
 fn test_validation_primary_key_must_exist() {
-    // PRIMARY KEY column must be in the column list
     let sql = r#"
         CREATE TABLE test.invalid (
             id BIGINT,

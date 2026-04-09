@@ -8,9 +8,10 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use sqlparser::ast::{ObjectNamePart, Statement, TableFactor, TableObject};
 use sqlparser::dialect::Dialect;
-use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::{Parser, ParserError, ParserOptions};
 use sqlparser::tokenizer::{Span, Token};
+
+use crate::dialect::KalamDbDialect;
 
 const DEFAULT_SQL_RECURSION_LIMIT: usize = 512;
 
@@ -85,9 +86,9 @@ pub fn parse_sql_statements(
     }
 }
 
-/// Parse a single SQL statement using KalamDB defaults and GenericDialect.
+/// Parse a single SQL statement using KalamDB defaults and KalamDbDialect.
 pub fn parse_single_statement(sql: &str) -> Result<Option<Statement>, ParserError> {
-    let dialect = GenericDialect {};
+    let dialect = KalamDbDialect::default();
     let mut statements = parse_sql_statements(sql, &dialect)?;
     if statements.len() != 1 {
         return Ok(None);
@@ -99,7 +100,7 @@ pub fn parse_single_statement(sql: &str) -> Result<Option<Statement>, ParserErro
 ///
 /// Returns None if parsing fails or the statement is not INSERT/UPDATE/DELETE.
 pub fn extract_dml_table_id(sql: &str, default_namespace: &str) -> Option<TableId> {
-    let dialect = GenericDialect {};
+    let dialect = KalamDbDialect::default();
     let statements = parse_sql_statements(sql, &dialect).ok()?;
     statements
         .first()
@@ -112,7 +113,7 @@ pub fn extract_dml_table_id(sql: &str, default_namespace: &str) -> Option<TableI
 /// Returns `None` for complex or unrecognized token layouts so callers can
 /// fall back to the full parser when exact syntax support is required.
 pub fn extract_dml_table_id_fast(sql: &str, default_namespace: &str) -> Option<TableId> {
-    let dialect = GenericDialect {};
+    let dialect = KalamDbDialect::default();
     let tokens = collect_non_whitespace_tokens(sql, &dialect).ok()?;
     extract_dml_table_id_from_tokens(&tokens, default_namespace)
 }
@@ -174,6 +175,29 @@ pub fn extract_dml_table_id_from_statement(
             table_id_from_parts(&parts, default_namespace)
         },
         _ => None,
+    }
+}
+
+pub fn insert_column_names_from_statement(statement: &Statement) -> Option<Vec<String>> {
+    match statement {
+        Statement::Insert(insert) => {
+            Some(insert.columns.iter().map(|ident| ident.value.clone()).collect())
+        },
+        _ => None,
+    }
+}
+
+pub fn insert_columns_match(statement: &Statement, expected_columns: &[String]) -> bool {
+    match statement {
+        Statement::Insert(insert) => {
+            insert.columns.len() == expected_columns.len()
+                && insert
+                    .columns
+                    .iter()
+                    .zip(expected_columns.iter())
+                    .all(|(column, expected)| column.value == *expected)
+        },
+        _ => false,
     }
 }
 
@@ -294,7 +318,7 @@ pub fn format_span(span: Span) -> String {
 /// # Examples
 ///
 /// ```
-/// use kalamdb_sql::parser::utils::normalize_sql;
+/// use kalamdb_dialect::parser::utils::normalize_sql;
 ///
 /// let sql = "CREATE   STORAGE\n  s3_prod  ;";
 /// assert_eq!(normalize_sql(sql), "CREATE STORAGE s3_prod");
@@ -317,7 +341,7 @@ pub fn normalize_sql(sql: &str) -> String {
 /// # Examples
 ///
 /// ```
-/// use kalamdb_sql::parser::utils::extract_quoted_keyword_value;
+/// use kalamdb_dialect::parser::utils::extract_quoted_keyword_value;
 ///
 /// let sql = "CREATE STORAGE s3 NAME 'Production Storage'";
 /// let name = extract_quoted_keyword_value(sql, "NAME").unwrap();
@@ -360,7 +384,7 @@ pub fn extract_quoted_keyword_value(sql: &str, keyword: &str) -> Result<String, 
 /// # Examples
 ///
 /// ```
-/// use kalamdb_sql::parser::utils::extract_keyword_value;
+/// use kalamdb_dialect::parser::utils::extract_keyword_value;
 ///
 /// // Quoted value
 /// let sql = "CREATE STORAGE s3 TYPE 's3' NAME 'Prod'";
@@ -403,7 +427,7 @@ pub fn extract_keyword_value(sql: &str, keyword: &str) -> Result<String, String>
 /// # Examples
 ///
 /// ```
-/// use kalamdb_sql::parser::utils::extract_identifier;
+/// use kalamdb_dialect::parser::utils::extract_identifier;
 ///
 /// let sql = "CREATE STORAGE s3_prod";
 /// let id = extract_identifier(sql, 2).unwrap(); // Skip "CREATE" and "STORAGE"
@@ -423,7 +447,7 @@ pub fn extract_identifier(sql: &str, skip_tokens: usize) -> Result<String, Strin
 /// # Examples
 ///
 /// ```
-/// use kalamdb_sql::parser::utils::extract_qualified_table;
+/// use kalamdb_dialect::parser::utils::extract_qualified_table;
 ///
 /// let (ns, table) = extract_qualified_table("prod.events").unwrap();
 /// assert_eq!(ns, "prod");

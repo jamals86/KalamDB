@@ -6,7 +6,8 @@ use crate::parser::utils::parse_sql_statements;
 use anyhow::{anyhow, Result};
 pub use kalamdb_system::SystemTable;
 use sqlparser::ast::Statement;
-use sqlparser::dialect::PostgreSqlDialect;
+
+use crate::dialect::KalamDbDialect;
 
 /// SQL statement types supported for system tables
 #[derive(Debug, Clone)]
@@ -34,13 +35,13 @@ pub enum SystemStatement {
 
 /// SQL parser for system tables
 pub struct SqlParser {
-    dialect: PostgreSqlDialect,
+    dialect: KalamDbDialect,
 }
 
 impl SqlParser {
     pub fn new() -> Self {
         Self {
-            dialect: PostgreSqlDialect {},
+            dialect: KalamDbDialect::default(),
         }
     }
 

@@ -57,7 +57,7 @@
 //! ## Examples
 //!
 //! ```rust
-//! use kalamdb_sql::ddl::flush_commands::{FlushTableStatement, FlushAllTablesStatement};
+//! use kalamdb_dialect::ddl::flush_commands::{FlushTableStatement, FlushAllTablesStatement};
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! // Parse STORAGE FLUSH TABLE
@@ -103,7 +103,7 @@ impl FlushTableStatement {
     /// # Examples
     ///
     /// ```
-    /// # use kalamdb_sql::ddl::flush_commands::FlushTableStatement;
+    /// # use kalamdb_dialect::ddl::flush_commands::FlushTableStatement;
     /// let stmt = FlushTableStatement::parse("STORAGE FLUSH TABLE prod.events").unwrap();
     /// assert_eq!(stmt.namespace, "prod".into());
     /// assert_eq!(stmt.table_name, "events".into());
@@ -159,7 +159,7 @@ impl FlushAllTablesStatement {
     /// # Examples
     ///
     /// ```
-    /// # use kalamdb_sql::ddl::flush_commands::FlushAllTablesStatement;
+    /// # use kalamdb_dialect::ddl::flush_commands::FlushAllTablesStatement;
     /// let stmt = FlushAllTablesStatement::parse("STORAGE FLUSH ALL IN prod").unwrap();
     /// assert_eq!(stmt.namespace, "prod".into());
     /// ```
