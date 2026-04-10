@@ -8,7 +8,7 @@ async fn e2e_perf_batch_insert_10k() {
     let table = unique_name("perf_batch");
     let qualified_table = format!("e2e.{table}");
 
-    create_shared_foreign_table(&pg, &table, "id TEXT, payload TEXT, seq_num INTEGER").await;
+    create_shared_kalam_table(&pg, &table, "id TEXT, payload TEXT, seq_num INTEGER").await;
 
     const TOTAL: usize = 10_000;
     const BATCH: usize = 1_000;
@@ -52,7 +52,7 @@ async fn e2e_perf_sequential_insert_100() {
     let table = unique_name("perf_seq100");
     let qualified_table = format!("e2e.{table}");
 
-    create_shared_foreign_table(&pg, &table, "id TEXT, value INTEGER").await;
+    create_shared_kalam_table(&pg, &table, "id TEXT, value INTEGER").await;
 
     const TOTAL: usize = 100;
 
@@ -89,7 +89,7 @@ async fn e2e_perf_sequential_insert_1k() {
     let table = unique_name("perf_seq");
     let qualified_table = format!("e2e.{table}");
 
-    create_shared_foreign_table(&pg, &table, "id TEXT, value INTEGER").await;
+    create_shared_kalam_table(&pg, &table, "id TEXT, value INTEGER").await;
 
     const TOTAL: usize = 1_000;
 
@@ -169,7 +169,7 @@ async fn e2e_perf_scan_5k() {
     let table = unique_name("perf_scan");
     let qualified_table = format!("e2e.{table}");
 
-    create_shared_foreign_table(&pg, &table, "id TEXT, title TEXT, value INTEGER").await;
+    create_shared_kalam_table(&pg, &table, "id TEXT, title TEXT, value INTEGER").await;
 
     const TOTAL: usize = 5_000;
     const BATCH: usize = 1_000;
@@ -212,7 +212,7 @@ async fn e2e_perf_point_select() {
     let table = unique_name("perf_point");
     let qualified_table = format!("e2e.{table}");
 
-    create_shared_foreign_table(&pg, &table, "id TEXT, payload TEXT, value INTEGER").await;
+    create_shared_kalam_table(&pg, &table, "id TEXT, payload TEXT, value INTEGER").await;
 
     const TOTAL: usize = 1_000;
     let mut values = Vec::with_capacity(TOTAL);
@@ -258,7 +258,7 @@ async fn e2e_perf_update_500() {
     let table = unique_name("perf_update");
     let qualified_table = format!("e2e.{table}");
 
-    create_shared_foreign_table(&pg, &table, "id TEXT, value INTEGER").await;
+    create_shared_kalam_table(&pg, &table, "id TEXT, value INTEGER").await;
 
     const TOTAL: usize = 500;
     let mut values = Vec::with_capacity(TOTAL);
@@ -296,7 +296,7 @@ async fn e2e_perf_delete_500() {
     let table = unique_name("perf_delete");
     let qualified_table = format!("e2e.{table}");
 
-    create_shared_foreign_table(&pg, &table, "id TEXT, value INTEGER").await;
+    create_shared_kalam_table(&pg, &table, "id TEXT, value INTEGER").await;
 
     const TOTAL: usize = 500;
     let mut values = Vec::with_capacity(TOTAL);
@@ -334,7 +334,7 @@ async fn e2e_perf_user_table_insert_scan() {
     let table = unique_name("perf_user");
     let qualified_table = format!("e2e.{table}");
 
-    create_user_foreign_table(
+    create_user_kalam_table(
         &pg,
         &table,
         "id TEXT, data TEXT",
@@ -385,7 +385,7 @@ async fn e2e_perf_cross_verify_latency() {
     let table = unique_name("perf_xv");
     let qualified_table = format!("e2e.{table}");
 
-    create_shared_foreign_table(&pg, &table, "id TEXT, value INTEGER").await;
+    create_shared_kalam_table(&pg, &table, "id TEXT, value INTEGER").await;
 
     const ITERATIONS: usize = 10;
     let mut latencies = Vec::with_capacity(ITERATIONS);

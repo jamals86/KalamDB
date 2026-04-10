@@ -1,19 +1,23 @@
-//! ProcessUtility hook that propagates DDL on foreign tables to KalamDB.
+//! ProcessUtility hook that propagates DDL on KalamDB-backed PostgreSQL tables.
 //!
 //! Intercepts:
-//! - `CREATE FOREIGN TABLE`  → `CREATE NAMESPACE IF NOT EXISTS` + `CREATE <type> TABLE`
+//! - `CREATE TABLE ... USING kalamdb` → remote `CREATE <type> TABLE` + internal `CREATE FOREIGN TABLE`
+//! - `CREATE FOREIGN TABLE`           → `CREATE NAMESPACE IF NOT EXISTS` + `CREATE <type> TABLE`
 //!   (auto-injects `_seq BIGINT` and `_userid TEXT` system columns into
 //!   the local PG schema; rejects explicit declarations of these columns)
-//! - `ALTER FOREIGN TABLE`   → `ALTER TABLE ADD/DROP COLUMN`
-//! - `DROP FOREIGN TABLE`    → `DROP <type> TABLE IF EXISTS`
+//! - `ALTER FOREIGN TABLE`            → `ALTER TABLE ADD/DROP COLUMN`
+//! - `DROP FOREIGN TABLE`             → `DROP <type> TABLE IF EXISTS`
 
 use crate::fdw_options::parse_options;
 use kalam_pg_common::{KalamPgError, SEQ_COLUMN, USER_ID_COLUMN};
 use kalam_pg_fdw::ServerOptions;
 use kalamdb_commons::TableType;
 use pgrx::pg_sys;
+use std::collections::BTreeMap;
 use std::ffi::{CStr, CString};
 use std::str::FromStr;
+
+const DEFAULT_KALAM_SERVER: &str = "kalam_server";
 
 // Thread-local flag: when true, suppress KalamDB propagation in DDL hooks
 // because the extension itself is issuing SPI statements (e.g. injecting
@@ -57,6 +61,25 @@ unsafe extern "C-unwind" fn kalam_process_utility(
     let tag = (*utility_stmt).type_;
 
     match tag {
+        pg_sys::NodeTag::T_CreateStmt => {
+            let create_stmt = utility_stmt as *mut pg_sys::CreateStmt;
+            let access_method = read_cstr((*create_stmt).accessMethod);
+            if access_method.eq_ignore_ascii_case("kalamdb") {
+                let statement_sql = extract_statement_sql(pstmt, query_string);
+                handle_create_table_using_kalamdb(create_stmt, &statement_sql);
+            } else {
+                call_prev(
+                    pstmt,
+                    query_string,
+                    read_only_tree,
+                    context,
+                    params,
+                    query_env,
+                    dest,
+                    qc,
+                );
+            }
+        },
         pg_sys::NodeTag::T_CreateForeignTableStmt => {
             let ft_stmt = utility_stmt as *mut pg_sys::CreateForeignTableStmt;
             let statement_sql = extract_statement_sql(pstmt, query_string);
@@ -263,6 +286,170 @@ unsafe fn report_sql_error(message: &str) -> ! {
     }
 
     std::hint::unreachable_unchecked()
+}
+
+// ---------------------------------------------------------------------------
+// CREATE TABLE ... USING kalamdb → CREATE FOREIGN TABLE + propagate
+// ---------------------------------------------------------------------------
+
+unsafe fn handle_create_table_using_kalamdb(
+    stmt: *mut pg_sys::CreateStmt,
+    statement_sql: &str,
+) {
+    let rv = (*stmt).relation;
+    if rv.is_null() {
+        pgrx::error!("pg_kalam DDL: CREATE TABLE USING kalamdb requires a table name");
+    }
+
+    let table_name = read_cstr((*rv).relname);
+    if table_name.is_empty() {
+        pgrx::error!("pg_kalam DDL: could not determine table name");
+    }
+
+    let namespace = resolve_create_namespace(rv).unwrap_or_else(|| {
+        pgrx::error!("pg_kalam DDL: could not determine target schema for CREATE TABLE USING kalamdb")
+    });
+
+    let if_not_exists = create_statement_has_if_not_exists(statement_sql).unwrap_or(false);
+    let relid = pg_sys::RangeVarGetRelidExtended(
+        rv,
+        pg_sys::AccessShareLock as i32,
+        pg_sys::RVROption::RVR_MISSING_OK as u32,
+        None,
+        std::ptr::null_mut(),
+    );
+    if relid != pg_sys::InvalidOid {
+        if if_not_exists {
+            return;
+        }
+        pgrx::error!("pg_kalam DDL: relation '{}.{}' already exists", namespace, table_name);
+    }
+
+    if let Err(error) = validate_no_system_columns(statement_sql) {
+        pgrx::error!("pg_kalam DDL: {}", error);
+    }
+
+    let column_defs = match extract_remote_column_definitions(statement_sql) {
+        Ok(definitions) if !definitions.is_empty() => definitions,
+        Ok(_) => {
+            pgrx::error!("pg_kalam DDL: no user columns found in CREATE TABLE USING kalamdb");
+        },
+        Err(error) => {
+            pgrx::error!(
+                "pg_kalam DDL: failed to parse CREATE TABLE USING kalamdb: {}",
+                error
+            );
+        },
+    };
+
+    let with_options = extract_with_options_from_sql(statement_sql);
+    let table_type = with_options
+        .get("type")
+        .and_then(|value| TableType::from_str(value).ok())
+        .unwrap_or(TableType::Shared);
+    let table_type_keyword = table_type_to_keyword(table_type);
+
+    let column_defs = transform_serial_types(column_defs);
+    let column_defs = infer_primary_key_column(column_defs, table_type);
+    if column_defs.is_empty() {
+        pgrx::error!("pg_kalam DDL: no columns found in CREATE TABLE USING kalamdb");
+    }
+
+    let pg_column_defs = strip_for_foreign_table(&column_defs);
+
+    let kalam_options = match with_options
+        .iter()
+        .map(|(key, value)| format_kalam_option_assignment(key, value))
+        .collect::<Result<Vec<_>, _>>()
+    {
+        Ok(options) => options,
+        Err(error) => {
+            pgrx::error!("pg_kalam DDL: invalid KalamDB table option: {}", error);
+        },
+    };
+    let kalam_with_clause = if kalam_options.is_empty() {
+        String::new()
+    } else {
+        format!(" WITH ({})", kalam_options.join(", "))
+    };
+    let remote_if_not_exists = if if_not_exists { "IF NOT EXISTS " } else { "" };
+    let create_ns_sql = format!("CREATE NAMESPACE IF NOT EXISTS {}", quote_ident(&namespace));
+    let create_table_sql = format!(
+        "CREATE {} TABLE {}{}.{} ({}){}",
+        table_type_keyword,
+        remote_if_not_exists,
+        quote_ident(&namespace),
+        quote_ident(&table_name),
+        column_defs.join(", "),
+        kalam_with_clause
+    );
+
+    if let Err(error) = execute_remote_sql(&create_ns_sql, DEFAULT_KALAM_SERVER) {
+        pgrx::warning!(
+            "pg_kalam DDL: failed to create namespace '{}': {}",
+            namespace,
+            error
+        );
+    }
+    if let Err(error) = execute_remote_sql(&create_table_sql, DEFAULT_KALAM_SERVER) {
+        pgrx::error!(
+            "pg_kalam DDL: failed to create KalamDB table {}.{}: {}",
+            namespace,
+            table_name,
+            error
+        );
+    }
+
+    if !namespace_exists(&namespace) {
+        let create_schema_sql = format!("CREATE SCHEMA IF NOT EXISTS {}", quote_ident_pg(&namespace));
+        if let Err(error) = pgrx::Spi::run(&create_schema_sql) {
+            pgrx::error!(
+                "pg_kalam DDL: failed to ensure local schema '{}': {}",
+                namespace,
+                error
+            );
+        }
+    }
+
+    let mut ft_options = vec![format!(
+        "table_type '{}'",
+        table_type_keyword.to_ascii_lowercase()
+    )];
+    for (key, value) in &with_options {
+        if key == "type" {
+            continue;
+        }
+        let assignment = format_foreign_table_option_assignment(key, value).unwrap_or_else(|error| {
+            pgrx::error!("pg_kalam DDL: invalid local foreign table option: {}", error)
+        });
+        ft_options.push(assignment);
+    }
+
+    let local_if_not_exists = if if_not_exists { "IF NOT EXISTS " } else { "" };
+    let create_ft_sql = format!(
+        "CREATE FOREIGN TABLE {}{}.{} ({}) SERVER {} OPTIONS ({})",
+        local_if_not_exists,
+        quote_ident_pg(&namespace),
+        quote_ident_pg(&table_name),
+        pg_column_defs.join(", "),
+        quote_ident_pg(DEFAULT_KALAM_SERVER),
+        ft_options.join(", ")
+    );
+
+    SKIP_DDL_PROPAGATION.with(|flag| flag.set(true));
+    let spi_result = pgrx::Spi::run(&create_ft_sql);
+    SKIP_DDL_PROPAGATION.with(|flag| flag.set(false));
+
+    if let Err(error) = spi_result {
+        pgrx::error!(
+            "pg_kalam DDL: failed to create foreign table {}.{}: {}",
+            namespace,
+            table_name,
+            error
+        );
+    }
+
+    inject_system_columns_spi(&namespace, &table_name, table_type);
 }
 
 // ---------------------------------------------------------------------------
@@ -668,11 +855,14 @@ fn infer_primary_key_column(mut column_defs: Vec<String>, table_type: TableType)
         return column_defs;
     }
 
-    if let Some(index) = column_defs
-        .iter()
-        .position(|entry| first_sql_identifier(entry).as_deref() == Some("id"))
-    {
-        column_defs[index].push_str(" PRIMARY KEY");
+    if let Some(id_identifier) = column_defs.iter().find_map(|entry| {
+        if first_sql_identifier(entry).as_deref() == Some("id") {
+            raw_first_sql_identifier(entry)
+        } else {
+            None
+        }
+    }) {
+        column_defs.push(format!("PRIMARY KEY ({})", id_identifier));
     }
 
     column_defs
@@ -792,6 +982,66 @@ fn split_top_level_sql_list(input: &str) -> Vec<String> {
     entries
 }
 
+fn extract_with_options_from_sql(sql: &str) -> BTreeMap<String, String> {
+    let mut options = BTreeMap::new();
+
+    let Some((_open_idx, close_idx)) = find_column_list_bounds(sql) else {
+        return options;
+    };
+
+    let after_columns = &sql[close_idx + 1..];
+    let after_columns_upper = after_columns.to_ascii_uppercase();
+    let Some(with_pos) = after_columns_upper.find("WITH") else {
+        return options;
+    };
+
+    let after_with = after_columns[with_pos + 4..].trim_start();
+    if !after_with.starts_with('(') {
+        return options;
+    }
+
+    let mut depth = 0usize;
+    let mut end_idx = None;
+    let mut in_single_quote = false;
+    let mut in_double_quote = false;
+    for (idx, ch) in after_with.char_indices() {
+        match ch {
+            '\'' if !in_double_quote => in_single_quote = !in_single_quote,
+            '"' if !in_single_quote => in_double_quote = !in_double_quote,
+            '(' if !in_single_quote && !in_double_quote => depth += 1,
+            ')' if !in_single_quote && !in_double_quote => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    end_idx = Some(idx);
+                    break;
+                }
+            },
+            _ => {},
+        }
+    }
+
+    let Some(end_idx) = end_idx else {
+        return options;
+    };
+
+    let block = &after_with[1..end_idx];
+    for entry in split_top_level_sql_list(block) {
+        let Some((raw_key, raw_value)) = entry.split_once('=') else {
+            continue;
+        };
+        let key = raw_key.trim().trim_matches('"').to_ascii_lowercase();
+        let value = raw_value.trim().trim_matches('"');
+        let value = if value.starts_with('\'') && value.ends_with('\'') && value.len() >= 2 {
+            &value[1..value.len() - 1]
+        } else {
+            value
+        };
+        options.insert(key, value.to_string());
+    }
+
+    options
+}
+
 fn format_kalam_option_assignment(key: &str, value: &str) -> Result<String, KalamPgError> {
     let key = key.trim();
     let mut bytes = key.bytes();
@@ -814,6 +1064,32 @@ fn format_kalam_option_assignment(key: &str, value: &str) -> Result<String, Kala
     Ok(format!(
         "{} = '{}'",
         key.to_ascii_uppercase(),
+        value.replace('\'', "''")
+    ))
+}
+
+fn format_foreign_table_option_assignment(key: &str, value: &str) -> Result<String, KalamPgError> {
+    let key = key.trim();
+    let mut bytes = key.bytes();
+    let Some(first_byte) = bytes.next() else {
+        return Err(KalamPgError::Validation(format!(
+            "unsupported foreign table option name '{}'",
+            key
+        )));
+    };
+
+    if !(first_byte.is_ascii_alphabetic() || first_byte == b'_')
+        || !bytes.all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    {
+        return Err(KalamPgError::Validation(format!(
+            "unsupported foreign table option name '{}'",
+            key
+        )));
+    }
+
+    Ok(format!(
+        "{} '{}'",
+        key.to_ascii_lowercase(),
         value.replace('\'', "''")
     ))
 }
@@ -916,6 +1192,35 @@ fn first_sql_identifier(entry: &str) -> Option<String> {
     }
 }
 
+fn raw_first_sql_identifier(entry: &str) -> Option<String> {
+    let trimmed = entry.trim_start();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if let Some(rest) = trimmed.strip_prefix('"') {
+        let end = rest.find('"')?;
+        return Some(format!("\"{}\"", &rest[..end]));
+    }
+
+    let end = trimmed
+        .char_indices()
+        .find_map(|(idx, ch)| {
+            if ch.is_ascii_alphanumeric() || ch == '_' {
+                None
+            } else {
+                Some(idx)
+            }
+        })
+        .unwrap_or(trimmed.len());
+    let identifier = trimmed[..end].trim();
+    if identifier.is_empty() {
+        None
+    } else {
+        Some(identifier.to_string())
+    }
+}
+
 fn consume_sql_keyword(sql: &str, index: &mut usize, keyword: &str) -> Result<(), KalamPgError> {
     skip_sql_whitespace(sql, index);
     let remaining = &sql[*index..];
@@ -986,6 +1291,47 @@ fn skip_sql_whitespace(sql: &str, index: &mut usize) {
         .take_while(|ch| ch.is_whitespace())
         .map(char::len_utf8)
         .sum::<usize>();
+}
+
+fn create_statement_has_if_not_exists(statement_sql: &str) -> Result<bool, KalamPgError> {
+    let sql = statement_sql.trim().trim_end_matches(';').trim();
+    let mut index = 0usize;
+    consume_sql_keyword(sql, &mut index, "CREATE")?;
+    consume_sql_keyword(sql, &mut index, "TABLE")?;
+    if !consume_sql_keyword_optional(sql, &mut index, "IF") {
+        return Ok(false);
+    }
+    consume_sql_keyword(sql, &mut index, "NOT")?;
+    consume_sql_keyword(sql, &mut index, "EXISTS")?;
+    Ok(true)
+}
+
+unsafe fn resolve_create_namespace(rv: *mut pg_sys::RangeVar) -> Option<String> {
+    if rv.is_null() {
+        return None;
+    }
+
+    let explicit_namespace = read_cstr((*rv).schemaname);
+    if !explicit_namespace.is_empty() {
+        return Some(explicit_namespace);
+    }
+
+    let namespace_oid = pg_sys::RangeVarGetCreationNamespace(rv);
+    if namespace_oid == pg_sys::InvalidOid {
+        return None;
+    }
+
+    let namespace = read_cstr(pg_sys::get_namespace_name(namespace_oid));
+    if namespace.is_empty() {
+        None
+    } else {
+        Some(namespace)
+    }
+}
+
+fn namespace_exists(namespace: &str) -> bool {
+    let namespace_name = CString::new(namespace).unwrap_or_default();
+    unsafe { pg_sys::get_namespace_oid(namespace_name.as_ptr(), true) != pg_sys::InvalidOid }
 }
 
 unsafe fn resolve_relation_identity_from_range_var(
@@ -1126,6 +1472,26 @@ fn find_keyword_position(sql: &str, keyword: &str) -> Option<usize> {
     upper.find(keyword)
 }
 
+fn strip_for_foreign_table(column_defs: &[String]) -> Vec<String> {
+    let pk_re = regex::Regex::new(r"(?i)\bPRIMARY\s+KEY\b").unwrap();
+    let table_pk_re = regex::Regex::new(r"(?i)^\s*PRIMARY\s+KEY\s*\(").unwrap();
+
+    column_defs
+        .iter()
+        .filter(|def| !table_pk_re.is_match(def))
+        .map(|def| {
+            let result = pk_re.replace_all(def, "").into_owned();
+            result
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .trim_end_matches(',')
+                .trim()
+                .to_string()
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1177,6 +1543,22 @@ mod tests {
         );
         assert_eq!(entries.len(), 3);
         assert_eq!(entries[1], "amount NUMERIC(10, 2)");
+    }
+
+    #[test]
+    fn infer_primary_key_column_adds_table_constraint_for_shared_tables() {
+        let defs = vec!["id BIGINT".to_string(), "title TEXT".to_string()];
+        let result = super::infer_primary_key_column(defs, TableType::Shared);
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[2], "PRIMARY KEY (id)");
+    }
+
+    #[test]
+    fn infer_primary_key_column_preserves_quoted_id_identifier() {
+        let defs = vec!["\"Id\" BIGINT".to_string(), "title TEXT".to_string()];
+        let result = super::infer_primary_key_column(defs, TableType::Shared);
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[2], "PRIMARY KEY (\"Id\")");
     }
 
     #[test]
@@ -1234,6 +1616,39 @@ mod tests {
         let defs = vec!["id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY".to_string()];
         let result = super::transform_serial_types(defs);
         assert_eq!(result[0], "id INTEGER DEFAULT SNOWFLAKE_ID() PRIMARY KEY");
+    }
+
+    #[test]
+    fn extract_with_options_from_sql_works_for_using_kalamdb() {
+        let sql = "CREATE TABLE t (id INT) USING kalamdb WITH (type = 'user', storage_id = 'local', flush_policy = 'rows:100,interval:60');";
+        let opts = super::extract_with_options_from_sql(sql);
+        assert_eq!(opts.get("type").unwrap(), "user");
+        assert_eq!(opts.get("storage_id").unwrap(), "local");
+        assert_eq!(opts.get("flush_policy").unwrap(), "rows:100,interval:60");
+    }
+
+    #[test]
+    fn strip_for_foreign_table_removes_pk_keeps_defaults() {
+        let defs = vec![
+            "id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID()".to_string(),
+            "name TEXT NOT NULL".to_string(),
+            "created_at TIMESTAMP DEFAULT NOW()".to_string(),
+            "PRIMARY KEY (id)".to_string(),
+        ];
+        let stripped = super::strip_for_foreign_table(&defs);
+        assert_eq!(stripped.len(), 3);
+        assert_eq!(stripped[0], "id BIGINT DEFAULT SNOWFLAKE_ID()");
+        assert_eq!(stripped[1], "name TEXT NOT NULL");
+        assert_eq!(stripped[2], "created_at TIMESTAMP DEFAULT NOW()");
+    }
+
+    #[test]
+    fn create_statement_has_if_not_exists_detects_clause() {
+        let sql = "CREATE TABLE IF NOT EXISTS app.items (id BIGINT) USING kalamdb WITH (type = 'shared');";
+        assert!(super::create_statement_has_if_not_exists(sql).expect("parse IF NOT EXISTS"));
+
+        let sql = "CREATE TABLE app.items (id BIGINT) USING kalamdb WITH (type = 'shared');";
+        assert!(!super::create_statement_has_if_not_exists(sql).expect("parse CREATE TABLE"));
     }
 
     #[test]

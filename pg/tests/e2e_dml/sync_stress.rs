@@ -1,4 +1,4 @@
-use super::common::{count_rows, create_shared_foreign_table, unique_name, TestEnv};
+use super::common::{count_rows, create_shared_kalam_table, unique_name, TestEnv};
 use futures_util::future::join_all;
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -146,7 +146,7 @@ async fn e2e_bidirectional_typed_roundtrip_between_pg_and_api() {
     let table = unique_name("typed_sync");
     let qualified_table = format!("e2e.{table}");
 
-    create_shared_foreign_table(
+    create_shared_kalam_table(
         &pg,
         &table,
         "id TEXT, label VARCHAR, attempts SMALLINT, qty INTEGER, total BIGINT, ratio REAL, score DOUBLE PRECISION, active BOOLEAN, notes TEXT",
@@ -290,7 +290,7 @@ async fn e2e_parallel_transactional_inserts_and_updates_stay_consistent() {
     let table = unique_name("parallel_tx");
     let qualified_table = format!("e2e.{table}");
 
-    create_shared_foreign_table(
+    create_shared_kalam_table(
         &coordinator,
         &table,
         "id TEXT, worker INTEGER, ordinal INTEGER, status TEXT, amount BIGINT",
@@ -446,7 +446,7 @@ async fn e2e_transaction_rollback_discards_insert_update_delete_in_pg_and_api() 
     let table = unique_name("rollback_guard");
     let qualified_table = format!("e2e.{table}");
 
-    create_shared_foreign_table(&pg, &table, "id TEXT, title TEXT, value INTEGER, active BOOLEAN")
+    create_shared_kalam_table(&pg, &table, "id TEXT, title TEXT, value INTEGER, active BOOLEAN")
         .await;
 
     pg.batch_execute(&format!(
@@ -518,7 +518,7 @@ async fn e2e_disconnect_abort_discards_uncommitted_changes_in_pg_and_api() {
     let table = unique_name("disconnect_abort");
     let qualified_table = format!("e2e.{table}");
 
-    create_shared_foreign_table(&coordinator, &table, "id TEXT, title TEXT, value INTEGER")
+    create_shared_kalam_table(&coordinator, &table, "id TEXT, title TEXT, value INTEGER")
         .await;
 
     coordinator

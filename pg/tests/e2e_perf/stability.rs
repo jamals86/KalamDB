@@ -1,5 +1,5 @@
 use super::common::{
-    bulk_delete_all, count_rows, create_shared_foreign_table, kalamdb_pid, pg_backend_pid,
+    bulk_delete_all, count_rows, create_shared_kalam_table, kalamdb_pid, pg_backend_pid,
     process_group_rss_kb, process_rss_kb, sample_process_group_peak_rss_kb,
     sample_process_peak_rss_kb, timed_query, unique_name, TestEnv,
 };
@@ -16,7 +16,7 @@ async fn e2e_perf_local_memory_stays_bounded_under_batch_insert_and_scan() {
     let pid = kalamdb_pid();
     let baseline_rss_kb = process_rss_kb(pid);
 
-    create_shared_foreign_table(&pg, &table, "id TEXT, payload TEXT, value INTEGER").await;
+    create_shared_kalam_table(&pg, &table, "id TEXT, payload TEXT, value INTEGER").await;
     bulk_delete_all(&pg, &qualified_table, "id").await;
 
     const TOTAL: usize = 8_000;
@@ -90,7 +90,7 @@ async fn e2e_perf_multi_session_pg_extension_memory_stays_bounded() {
     let table = unique_name("perf_multi_session");
     let qualified_table = format!("e2e.{table}");
 
-    create_shared_foreign_table(&coordinator, &table, "id TEXT, payload TEXT, worker_id INTEGER")
+    create_shared_kalam_table(&coordinator, &table, "id TEXT, payload TEXT, worker_id INTEGER")
         .await;
     bulk_delete_all(&coordinator, &qualified_table, "id").await;
 

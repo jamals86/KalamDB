@@ -1,5 +1,5 @@
 use super::common::{
-    await_user_shard_leader, count_rows, create_user_foreign_table, kalamdb_grpc_target,
+    await_user_shard_leader, count_rows, create_user_kalam_table, kalamdb_grpc_target,
     postgres_error_text, retry_transient_user_leader_error, set_user_id, unique_name, TestEnv,
 };
 
@@ -11,7 +11,7 @@ async fn e2e_duplicate_primary_key_insert_fails() {
     let table = unique_name("profiles");
     let qualified_table = format!("e2e.{table}");
 
-    create_user_foreign_table(
+    create_user_kalam_table(
         &pg,
         &table,
         "id TEXT, name TEXT, age INTEGER",
@@ -55,18 +55,19 @@ async fn e2e_insert_without_backing_kalamdb_table_fails() {
     let pg = env.pg_connect().await;
     let table = unique_name("missing_profiles");
 
-    pg.batch_execute(&format!(
-        "CREATE SCHEMA IF NOT EXISTS app; \
-             DROP FOREIGN TABLE IF EXISTS app.{table}; \
-             CREATE FOREIGN TABLE app.{table} ( \
-                 id TEXT, \
-                 name TEXT, \
-                 age INTEGER \
-             ) SERVER kalam_server \
-             OPTIONS (namespace 'app', \"table\" '{table}', table_type 'user');"
-    ))
+    let create_sql = format!(
+        "CREATE SCHEMA IF NOT EXISTS app;
+         DROP FOREIGN TABLE IF EXISTS app.{table};
+         CREATE TABLE app.{table} (
+             id TEXT,
+             name TEXT,
+             age INTEGER
+         ) USING kalamdb WITH (type = 'user');"
+    );
+
+    pg.batch_execute(&create_sql)
     .await
-    .expect("create local-only foreign table");
+    .expect("create local-only Kalam table");
     env.kalamdb_sql(&format!("DROP USER TABLE IF EXISTS app.{table}")).await;
 
     set_user_id(&pg, "user-1").await;
@@ -96,7 +97,7 @@ async fn e2e_user_table_scan_without_user_id_fails_clearly() {
     let table = unique_name("profiles_missing_uid");
     let writer = env.pg_connect().await;
 
-    create_user_foreign_table(
+    create_user_kalam_table(
         &writer,
         &table,
         "id TEXT, name TEXT, age INTEGER",

@@ -101,8 +101,8 @@ const StudioExplorerPanelComponent = ({
   onTableContextMenu,
 }: StudioExplorerPanelProps) => {
   const normalizedFilter = filter.trim().toLowerCase();
-  const sectionButtonClassName = "mb-2 flex w-full items-center gap-2 rounded-xl border border-border/70 bg-background/80 px-2.5 py-2 text-left text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground shadow-sm transition-colors hover:border-border hover:bg-background";
-  const sectionBadgeClassName = "ml-auto inline-flex min-w-5 items-center justify-center rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold tracking-normal text-foreground";
+  const sectionButtonClassName = "flex w-full items-center gap-1.5 px-1 py-1.5 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground transition-colors hover:text-foreground hover:bg-accent rounded-sm";
+  const sectionBadgeClassName = "ml-auto inline-flex items-center justify-center rounded bg-muted px-1.5 py-0.5 text-[9px] font-medium tracking-normal text-foreground";
 
   const filteredSchema = useMemo(() => {
     return schema
@@ -134,15 +134,15 @@ const StudioExplorerPanelComponent = ({
 
   return (
     <TooltipProvider delayDuration={250}>
-      <div className="flex h-full min-h-0 flex-col overflow-hidden border-r border-border bg-muted/30 text-muted-foreground">
-        <div className="shrink-0 border-b border-border px-3 py-3">
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Explorer</p>
+      <div className="flex h-full min-h-0 flex-col overflow-hidden border-r border-border bg-background text-foreground">
+        <div className="shrink-0 border-b border-border pl-3 pr-2 py-2">
+          <div className="flex items-center justify-between gap-1 mb-2">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Explorer</p>
             <Button
               type="button"
-              variant="outline"
+              variant="ghost"
               size="icon"
-              className="h-7 w-7 shrink-0"
+              className="h-6 w-6 shrink-0 text-muted-foreground hover:text-foreground"
               onClick={onRefresh}
               disabled={isRefreshing}
               aria-label="Refresh explorer"
@@ -154,11 +154,11 @@ const StudioExplorerPanelComponent = ({
           <Tooltip>
             <TooltipTrigger asChild>
               <div className="relative">
-                <Search className="pointer-events-none absolute left-2 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
+                <Search className="pointer-events-none absolute left-2 top-1.5 h-3.5 w-3.5 text-muted-foreground" />
                 <Input
                   value={filter}
                   onChange={(event) => onFilterChange(event.target.value)}
-                  className="h-8 border-border bg-background pl-7 text-xs text-foreground placeholder:text-muted-foreground"
+                  className="h-7 border-border bg-muted/40 pl-7 text-xs text-foreground placeholder:text-muted-foreground focus-visible:bg-background rounded-sm"
                   placeholder="Search tables..."
                 />
               </div>
@@ -168,50 +168,47 @@ const StudioExplorerPanelComponent = ({
         </div>
 
         <ScrollArea className="h-full min-h-0 flex-1 overflow-hidden">
-          <div className="space-y-3 p-2">
+          <div className="space-y-1 p-2">
             <div>
               <button
                 type="button"
                 onClick={onToggleFavorites}
                 className={sectionButtonClassName}
               >
-                {favoritesExpanded ? (
-                  <ChevronDown className="h-3 w-3" />
-                ) : (
-                  <ChevronRight className="h-3 w-3" />
-                )}
-                <span className="inline-flex h-6 w-6 items-center justify-center rounded-lg bg-primary/10 text-primary ring-1 ring-primary/20">
-                  <Star className="h-3.5 w-3.5" />
-                </span>
-                Favorites
+                <div className="flex w-5 items-center justify-center shrink-0">
+                  {favoritesExpanded ? (
+                    <ChevronDown className="h-4 w-4" />
+                  ) : (
+                    <ChevronRight className="h-4 w-4" />
+                  )}
+                </div>
+                <Star className="h-3.5 w-3.5 text-primary" />
+                <span className="font-semibold ml-1">Favorites</span>
                 <span className={sectionBadgeClassName}>{savedQueries.length}</span>
               </button>
               {favoritesExpanded && (
-                <div className="space-y-2">
-                  <div className="ml-1 border-l border-border pl-3">
-                    <div className="space-y-0.5">
-                      {savedQueries.length === 0 && (
-                        <p className="px-2 py-1 text-xs text-muted-foreground">No saved queries yet.</p>
-                      )}
-                      {savedQueries.map((savedQuery) => (
-                        <Tooltip key={savedQuery.id}>
-                          <TooltipTrigger asChild>
-                            <button
-                              type="button"
-                              onClick={() => onOpenSavedQuery(savedQuery.id)}
-                              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-sky-300"
-                            >
-                              <Star className="h-3.5 w-3.5 text-primary" />
-                              <span className="truncate">{savedQuery.title}</span>
-                            </button>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            {savedQuery.title}
-                          </TooltipContent>
-                        </Tooltip>
-                      ))}
-                    </div>
-                  </div>
+                <div className="space-y-0.5 mt-0.5 border-l border-border/40 ml-2.5 pl-2 mb-2">
+                  {savedQueries.length === 0 && (
+                    <p className="px-5 py-1.5 text-xs text-muted-foreground">No saved queries yet.</p>
+                  )}
+                  {savedQueries.map((savedQuery) => (
+                    <Tooltip key={savedQuery.id}>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          onClick={() => onOpenSavedQuery(savedQuery.id)}
+                          className="flex w-full items-center gap-2 rounded-sm px-2 py-1 text-left text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                        >
+                          <div className="w-5 shrink-0" />
+                          <Star className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                          <span className="truncate">{savedQuery.title}</span>
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        {savedQuery.title}
+                      </TooltipContent>
+                    </Tooltip>
+                  ))}
                 </div>
               )}
             </div>
@@ -222,67 +219,47 @@ const StudioExplorerPanelComponent = ({
                 onClick={onToggleNamespaceSection}
                 className={sectionButtonClassName}
               >
-                {namespaceSectionExpanded ? (
-                  <ChevronDown className="h-3 w-3" />
-                ) : (
-                  <ChevronRight className="h-3 w-3" />
-                )}
-                <span className="inline-flex h-6 w-6 items-center justify-center rounded-lg bg-sky-500/10 text-sky-400 ring-1 ring-sky-500/20">
-                  <FolderTree className="h-3.5 w-3.5" />
-                </span>
-                Namespaces
+                <div className="flex w-5 items-center justify-center shrink-0">
+                  {namespaceSectionExpanded ? (
+                    <ChevronDown className="h-4 w-4" />
+                  ) : (
+                    <ChevronRight className="h-4 w-4" />
+                  )}
+                </div>
+                <FolderTree className="h-3.5 w-3.5" />
+                <span className="font-semibold ml-1">Namespaces</span>
                 <span className={sectionBadgeClassName}>{filteredSchema.length}</span>
               </button>
               {namespaceSectionExpanded && (
-                <div className="ml-2 space-y-3 border-l-2 border-border/60 pl-3">
+                <div className="space-y-0.5 mt-0.5 pb-2">
                   {filteredSchema.length === 0 && (
-                    <div className="rounded-xl border border-dashed border-border/70 bg-background/70 px-3 py-4 text-xs text-muted-foreground shadow-sm">
+                    <div className="px-8 py-1.5 text-xs text-muted-foreground">
                       No matching namespaces or tables.
                     </div>
                   )}
                   {filteredSchema.map((namespace) => {
                     const namespaceOpen = expandedNamespaces[namespace.name] ?? false;
                     return (
-                      <div key={namespace.name} className="relative">
-                        <div className="absolute -left-[17px] top-5 h-px w-3 bg-border/80" />
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <button
-                              type="button"
-                              onClick={() => onToggleNamespace(namespace.name)}
-                              className={cn(
-                                "flex w-full items-center gap-2 rounded-xl border px-3 py-2 text-left text-[11px] shadow-sm transition-colors",
-                                namespaceOpen
-                                  ? "border-sky-500/25 bg-background text-foreground"
-                                  : "border-border/70 bg-background/80 text-muted-foreground hover:border-border hover:bg-background",
-                              )}
-                            >
-                              <span className="inline-flex h-5 w-5 items-center justify-center rounded-md bg-muted text-muted-foreground">
-                                {namespaceOpen ? (
-                                  <ChevronDown className="h-3 w-3" />
-                                ) : (
-                                  <ChevronRight className="h-3 w-3" />
-                                )}
-                              </span>
-                              <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-sky-500/10 text-sky-400 ring-1 ring-sky-500/15">
-                                <Database className="h-3.5 w-3.5" />
-                              </span>
-                              <span className="min-w-0 flex-1">
-                                <span className="block truncate text-sm font-semibold text-foreground">{namespace.name}</span>
-                                <span className="block truncate text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
-                                  {namespace.tables.length} {namespace.tables.length === 1 ? "table" : "tables"}
-                                </span>
-                              </span>
-                              <span className="inline-flex min-w-6 items-center justify-center rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-foreground">
-                                {namespace.tables.length}
-                              </span>
-                            </button>
-                          </TooltipTrigger>
-                          <TooltipContent>Namespace: {namespace.name}</TooltipContent>
-                        </Tooltip>
+                      <div key={namespace.name}>
+                        <button
+                          type="button"
+                          onClick={() => onToggleNamespace(namespace.name)}
+                          className="flex w-full items-center gap-2 rounded-sm px-2 py-1 text-left text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                        >
+                          <div className="flex w-5 items-center justify-center shrink-0">
+                            {namespaceOpen ? (
+                              <ChevronDown className="h-4 w-4" />
+                            ) : (
+                              <ChevronRight className="h-4 w-4" />
+                            )}
+                          </div>
+                          <Database className="h-3.5 w-3.5 shrink-0" />
+                          <span className="truncate font-medium flex-1">{namespace.name}</span>
+                          <span className="text-[10px] tabular-nums text-muted-foreground/60">{namespace.tables.length}</span>
+                        </button>
 
                         {namespaceOpen && (
-                          <div className="ml-3 mt-2 space-y-2 border-l border-dashed border-border/80 pl-4">
+                          <div className="space-y-0.5">
                             {namespace.tables.map((table) => {
                               const tableKey = `${table.namespace}.${table.name}`;
                               const tableOpen = expandedTables[tableKey] ?? tableKey === selectedTableKey;
@@ -290,15 +267,15 @@ const StudioExplorerPanelComponent = ({
                               const tableMeta = tableTypeMeta(table.tableType);
 
                               return (
-                                <div key={tableKey} className="relative">
-                                  <div className="absolute -left-4 top-4 h-px w-4 bg-border/70" />
+                                <div key={tableKey}>
                                   <div
                                     className={cn(
-                                      "group rounded-xl border px-1.5 py-1.5 shadow-sm transition-colors",
+                                      "flex w-full items-center gap-2 rounded-sm pr-2 py-1 text-left text-xs transition-colors cursor-pointer",
                                       isSelected
-                                        ? "border-sky-500/30 bg-accent/80 text-sky-300"
-                                        : "border-border/70 bg-background/70 text-muted-foreground hover:border-border hover:bg-background hover:text-foreground",
+                                        ? "bg-sky-500/15 text-sky-400 font-medium"
+                                        : "text-muted-foreground hover:bg-accent hover:text-foreground",
                                     )}
+                                    onClick={() => onSelectTable(table)}
                                     onContextMenu={(event) => {
                                       event.preventDefault();
                                       event.stopPropagation();
@@ -306,71 +283,54 @@ const StudioExplorerPanelComponent = ({
                                       onTableContextMenu(table, { x: event.clientX, y: event.clientY });
                                     }}
                                   >
-                                    <div className="flex items-center gap-1">
-                                      <button
-                                        type="button"
-                                        onClick={() => onToggleTable(tableKey)}
-                                        aria-label={tableOpen ? `Collapse ${table.name}` : `Expand ${table.name}`}
-                                        className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                                      >
-                                        {tableOpen ? (
-                                          <ChevronDown className="h-3 w-3" />
-                                        ) : (
-                                          <ChevronRight className="h-3 w-3" />
-                                        )}
-                                      </button>
-
-                                      <button
-                                        type="button"
-                                        onClick={() => onSelectTable(table)}
-                                        className="flex min-w-0 flex-1 items-center gap-2 text-left"
-                                      >
-                                        <Tooltip>
-                                          <TooltipTrigger asChild>
-                                            <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-muted/80 ring-1 ring-border/60">
-                                              {tableMeta.icon}
-                                            </span>
-                                          </TooltipTrigger>
-                                          <TooltipContent>{tableMeta.tooltip}</TooltipContent>
-                                        </Tooltip>
-                                        <span className="min-w-0 flex-1">
-                                          <span className="block truncate text-sm font-medium text-foreground">{table.name}</span>
-                                          <span className="block truncate text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
-                                            {table.columns.length} {table.columns.length === 1 ? "column" : "columns"}
-                                          </span>
-                                        </span>
-                                      </button>
-                                      <span className="inline-flex min-w-6 items-center justify-center rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-foreground">
-                                        {table.columns.length}
-                                      </span>
+                                    <div className="w-5 shrink-0" />
+                                    <div 
+                                      className="flex w-5 items-center justify-center shrink-0 hover:bg-muted rounded"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        onToggleTable(tableKey);
+                                      }}
+                                    >
+                                      {tableOpen ? (
+                                        <ChevronDown className="h-4 w-4" />
+                                      ) : (
+                                        <ChevronRight className="h-4 w-4" />
+                                      )}
                                     </div>
-
-                                    {tableOpen && (
-                                      <div className="ml-6 mt-2 space-y-1.5 rounded-lg border border-border/70 bg-background/85 px-2.5 py-2 shadow-sm">
-                                        <div className="flex items-center gap-2 px-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                                          <span className="h-1.5 w-1.5 rounded-full bg-sky-400/70" />
-                                          Columns
-                                          <span className="ml-auto inline-flex min-w-5 items-center justify-center rounded-full bg-muted px-1.5 py-0.5 text-[9px] font-semibold tracking-normal text-foreground">
-                                            {table.columns.length}
-                                          </span>
-                                        </div>
-                                        {table.columns.map((column) => (
-                                          <Tooltip key={`${tableKey}.${column.name}`}>
-                                            <TooltipTrigger asChild>
-                                              <div className="flex items-center gap-2 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/80 hover:text-foreground">
-                                                {columnIcon(column.isPrimaryKey)}
-                                                <span className="truncate">{column.name}</span>
-                                                <span className="ml-auto truncate font-mono text-[10px] lowercase">{column.dataType}</span>
-                                              </div>
-                                            </TooltipTrigger>
-                                            <TooltipContent>
-                                              {column.name} ({column.dataType})
-                                            </TooltipContent>
-                                          </Tooltip>
-                                        ))}
-                                      </div>
-                                    )}
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <div className="shrink-0">{tableMeta.icon}</div>
+                                      </TooltipTrigger>
+                                      <TooltipContent>{tableMeta.tooltip}</TooltipContent>
+                                    </Tooltip>
+                                    <span className="truncate flex-1">{table.name}</span>
+                                    <span className="text-[10px] tabular-nums text-muted-foreground/60 opacity-0 group-hover:opacity-100 transition-opacity">{table.columns.length}</span>
                                   </div>
+
+                                  {tableOpen && (
+                                    <div className="space-y-0.5">
+                                      {table.columns.map((column) => (
+                                        <Tooltip key={`${tableKey}.${column.name}`}>
+                                          <TooltipTrigger asChild>
+                                            <div className="flex items-center gap-2 rounded-sm pr-2 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground cursor-default">
+                                              <div className="w-5 shrink-0" />
+                                              <div className="w-5 shrink-0" />
+                                              <div className="flex w-5 shrink-0 items-center justify-center">
+                                                {columnIcon(column.isPrimaryKey)}
+                                              </div>
+                                              <span className="truncate">{column.name}</span>
+                                              <span className="ml-auto truncate font-mono text-[9px] lowercase opacity-70">
+                                                {column.dataType}
+                                              </span>
+                                            </div>
+                                          </TooltipTrigger>
+                                          <TooltipContent>
+                                            {column.name} ({column.dataType})
+                                          </TooltipContent>
+                                        </Tooltip>
+                                      ))}
+                                    </div>
+                                  )}
                                 </div>
                               );
                             })}
@@ -379,11 +339,6 @@ const StudioExplorerPanelComponent = ({
                       </div>
                     );
                   })}
-                  {filteredSchema.length > 0 && filteredTableCount > 0 && (
-                    <div className="pl-1 text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
-                      {filteredTableCount} visible {filteredTableCount === 1 ? "table" : "tables"}
-                    </div>
-                  )}
                 </div>
               )}
             </div>

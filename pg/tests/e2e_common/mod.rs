@@ -459,10 +459,10 @@ async fn try_login(
 }
 
 // ---------------------------------------------------------------------------
-// Foreign Table helpers
+// Kalam table helpers
 // ---------------------------------------------------------------------------
 
-pub async fn create_shared_foreign_table(
+pub async fn create_shared_kalam_table(
     client: &tokio_postgres::Client,
     table: &str,
     columns: &str,
@@ -471,16 +471,14 @@ pub async fn create_shared_foreign_table(
     let drop = format!("DROP FOREIGN TABLE IF EXISTS e2e.{table};");
     client.batch_execute(&drop).await.expect("drop old table");
     let sql = format!(
-        "CREATE FOREIGN TABLE e2e.{table} ({columns}) \
-         SERVER kalam_server \
-         OPTIONS (namespace 'e2e', \"table\" '{table}', table_type 'shared');"
+        "CREATE TABLE e2e.{table} ({columns}) USING kalamdb WITH (type = 'shared');"
     );
-    client.batch_execute(&sql).await.expect("create foreign table");
+    client.batch_execute(&sql).await.expect("create Kalam table");
     TestEnv::global().await.wait_for_kalamdb_table_exists("e2e", table).await;
     wait_for_table_queryable(client, &format!("e2e.{table}")).await;
 }
 
-pub async fn create_user_foreign_table(
+pub async fn create_user_kalam_table(
     client: &tokio_postgres::Client,
     table: &str,
     columns: &str,
@@ -489,11 +487,9 @@ pub async fn create_user_foreign_table(
     let drop = format!("DROP FOREIGN TABLE IF EXISTS e2e.{table};");
     client.batch_execute(&drop).await.expect("drop old table");
     let sql = format!(
-        "CREATE FOREIGN TABLE e2e.{table} ({columns}) \
-         SERVER kalam_server \
-         OPTIONS (namespace 'e2e', \"table\" '{table}', table_type 'user');"
+        "CREATE TABLE e2e.{table} ({columns}) USING kalamdb WITH (type = 'user');"
     );
-    client.batch_execute(&sql).await.expect("create foreign table");
+    client.batch_execute(&sql).await.expect("create Kalam table");
     TestEnv::global().await.wait_for_kalamdb_table_exists("e2e", table).await;
 }
 

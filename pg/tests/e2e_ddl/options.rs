@@ -81,7 +81,7 @@ impl OwnedPgClient {
 
 #[tokio::test]
 #[ntest::timeout(15000)]
-async fn e2e_ddl_create_foreign_table_forwards_shared_options() {
+async fn e2e_ddl_create_table_using_kalamdb_forwards_shared_options() {
     let env = DdlTestEnv::global().await;
     let pg = env.pg_connect().await;
 
@@ -90,20 +90,17 @@ async fn e2e_ddl_create_foreign_table_forwards_shared_options() {
     ensure_schema_exists(&pg, &ns).await;
 
     pg.batch_execute(&format!(
-        "CREATE FOREIGN TABLE {ns}.{table} (
+          "CREATE TABLE {ns}.{table} (
             id BIGINT,
             title TEXT
-         ) SERVER kalam_server
-         OPTIONS (
-            namespace '{ns}',
-            \"table\" '{table}',
-            table_type 'shared',
-            storage_id 'local',
-            access_level 'public'
-         );"
+            ) USING kalamdb WITH (
+                type = 'shared',
+                storage_id = 'local',
+                access_level = 'public'
+            );"
     ))
     .await
-    .expect("create shared foreign table with forwarded options");
+     .expect("create shared Kalam table with forwarded options");
     env.wait_for_kalamdb_table_exists(&ns, &table).await;
 
     let metadata = env
@@ -145,7 +142,7 @@ async fn e2e_ddl_create_foreign_table_forwards_shared_options() {
 
 #[tokio::test]
 #[ntest::timeout(15000)]
-async fn e2e_ddl_create_foreign_table_forwards_stream_ttl() {
+async fn e2e_ddl_create_table_using_kalamdb_forwards_stream_ttl() {
     let env = DdlTestEnv::global().await;
     let pg = env.pg_connect().await;
 
@@ -154,19 +151,16 @@ async fn e2e_ddl_create_foreign_table_forwards_stream_ttl() {
     ensure_schema_exists(&pg, &ns).await;
 
     pg.batch_execute(&format!(
-        "CREATE FOREIGN TABLE {ns}.{table} (
+          "CREATE TABLE {ns}.{table} (
             event_type TEXT,
             payload TEXT
-         ) SERVER kalam_server
-         OPTIONS (
-            namespace '{ns}',
-            \"table\" '{table}',
-            table_type 'stream',
-            ttl_seconds '45'
-         );"
+            ) USING kalamdb WITH (
+                type = 'stream',
+                ttl_seconds = '45'
+            );"
     ))
     .await
-    .expect("create stream foreign table with ttl");
+     .expect("create stream Kalam table with ttl");
     env.wait_for_kalamdb_table_exists(&ns, &table).await;
 
     let metadata = env
@@ -203,7 +197,7 @@ async fn e2e_ddl_create_foreign_table_forwards_stream_ttl() {
 
 #[tokio::test]
 #[ntest::timeout(15000)]
-async fn e2e_ddl_drop_multiple_foreign_tables() {
+async fn e2e_ddl_drop_multiple_kalam_tables() {
     let env = DdlTestEnv::global().await;
     let pg = env.pg_connect().await;
 
@@ -214,11 +208,10 @@ async fn e2e_ddl_drop_multiple_foreign_tables() {
 
     for table in [&table_a, &table_b] {
         pg.batch_execute(&format!(
-            "CREATE FOREIGN TABLE {ns}.{table} (
+            "CREATE TABLE {ns}.{table} (
                 id TEXT,
                 payload TEXT
-             ) SERVER kalam_server
-             OPTIONS (namespace '{ns}', \"table\" '{table}', table_type 'shared');"
+             ) USING kalamdb WITH (type = 'shared');"
         ))
         .await
         .expect("create table for multi-drop test");
@@ -231,7 +224,7 @@ async fn e2e_ddl_drop_multiple_foreign_tables() {
 
     pg.batch_execute(&format!("DROP FOREIGN TABLE {ns}.{table_a}, {ns}.{table_b};"))
         .await
-        .expect("drop multiple foreign tables");
+        .expect("drop multiple Kalam tables");
     env.wait_for_kalamdb_table_absent(&ns, &table_a).await;
     env.wait_for_kalamdb_table_absent(&ns, &table_b).await;
 
@@ -309,7 +302,7 @@ async fn e2e_ddl_kalam_exec_passthrough_statements() {
 
 #[tokio::test]
 #[ntest::timeout(15000)]
-async fn e2e_ddl_create_foreign_table_disconnect_cleans_session_row() {
+async fn e2e_ddl_create_table_using_kalamdb_disconnect_cleans_session_row() {
     let env = DdlTestEnv::global().await;
     let pg = OwnedPgClient::connect().await;
     let backend_pid: i32 = pg
@@ -324,17 +317,16 @@ async fn e2e_ddl_create_foreign_table_disconnect_cleans_session_row() {
     ensure_schema_exists(&pg.client, &ns).await;
     pg.client
         .batch_execute(&format!(
-            "CREATE FOREIGN TABLE {ns}.{table} (
+            "CREATE TABLE {ns}.{table} (
                 id BIGINT,
                 title TEXT
-             ) SERVER kalam_server
-             OPTIONS (namespace '{ns}', \"table\" '{table}', table_type 'shared');"
+             ) USING kalamdb WITH (type = 'shared');"
         ))
         .await
-        .expect("create shared foreign table");
+        .expect("create shared Kalam table");
 
     pg.disconnect().await;
-    wait_for_backend_session_cleanup(env, backend_pid, "disconnect after CREATE FOREIGN TABLE")
+    wait_for_backend_session_cleanup(env, backend_pid, "disconnect after CREATE TABLE USING kalamdb")
         .await;
 
     let cleanup = env.pg_connect().await;
@@ -360,16 +352,13 @@ async fn e2e_ddl_rejects_unsafe_option_keys() {
 
     let error = pg
         .batch_execute(&format!(
-            "CREATE FOREIGN TABLE {ns}.{table} (
+                "CREATE TABLE {ns}.{table} (
                 id BIGINT,
                 title TEXT
-             ) SERVER kalam_server
-             OPTIONS (
-                namespace '{ns}',
-                \"table\" '{table}',
-                table_type 'shared',
-                \"9evil\" 'should-fail'
-             );"
+                 ) USING kalamdb WITH (
+                     type = 'shared',
+                     \"9evil\" = 'should-fail'
+                 );"
         ))
         .await
         .expect_err("unsafe option keys should be rejected");

@@ -21,6 +21,21 @@ filter = 'test(autocommit_read_write_latency_regression_stays_within_five_percen
 # This perf regression compares two nearly identical code paths and should run in isolation.
 threads-required = 15
 
+[[profile.default.overrides]]
+filter = 'test(e2e_perf_sequential_insert_100)'
+# This PG perf check is stable in isolation but noisy under full-suite contention.
+threads-required = 15
+
+[[profile.default.overrides]]
+filter = 'test(e2e_perf_cross_verify_latency)'
+# This latency check is sensitive to concurrent heavy tests and should run in isolation.
+threads-required = 15
+
+[[profile.default.overrides]]
+filter = 'test(e2e_perf_local_memory_stays_bounded_under_batch_insert_and_scan)'
+# This memory-bound perf check is meaningful only without competing suite load.
+threads-required = 15
+
 # [[profile.default.overrides]]
 # filter = 'package(kalamdb-server)'
 # threads-required = 15

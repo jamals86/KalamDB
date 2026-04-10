@@ -1,5 +1,5 @@
 use super::common::{
-    await_user_shard_leader, count_rows, create_user_foreign_table, postgres_error_text,
+    await_user_shard_leader, count_rows, create_user_kalam_table, postgres_error_text,
     retry_transient_user_leader_error, same_user_shard_pair, set_user_id, unique_name, TestEnv,
 };
 
@@ -11,7 +11,7 @@ async fn e2e_transaction_begin_commit_persists_rows() {
     let table = unique_name("profiles_tx_commit");
     let qualified_table = format!("e2e.{table}");
 
-    create_user_foreign_table(
+    create_user_kalam_table(
         &pg,
         &table,
         "id TEXT, name TEXT, age INTEGER",
@@ -47,7 +47,7 @@ async fn e2e_transaction_begin_rollback_discards_rows() {
     let table = unique_name("profiles_tx_rollback");
     let qualified_table = format!("e2e.{table}");
 
-    create_user_foreign_table(
+    create_user_kalam_table(
         &pg,
         &table,
         "id TEXT, name TEXT, age INTEGER",
@@ -77,7 +77,7 @@ async fn e2e_transaction_duplicate_primary_key_commit_fails() {
     let table = unique_name("profiles_tx_duplicate");
     let qualified_table = format!("e2e.{table}");
 
-    create_user_foreign_table(
+    create_user_kalam_table(
         &pg,
         &table,
         "id TEXT, name TEXT, age INTEGER",
@@ -131,7 +131,7 @@ async fn e2e_transaction_switching_user_id_keeps_rows_in_separate_user_scopes() 
         same_user_shard_pair("txn-scope-user-a", "txn-scope-user-b").await;
     let pg = env.pg_connect().await;
 
-    create_user_foreign_table(
+    create_user_kalam_table(
         &pg,
         &table,
         "id TEXT, name TEXT, age INTEGER",

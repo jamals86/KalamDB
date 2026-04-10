@@ -1,5 +1,5 @@
 use super::common::{
-    await_user_shard_leader, count_rows, create_shared_foreign_table, create_user_foreign_table,
+    await_user_shard_leader, count_rows, create_shared_kalam_table, create_user_kalam_table,
     delete_all, retry_transient_user_leader_error, set_user_id, unique_name, TestEnv,
 };
 
@@ -10,7 +10,7 @@ async fn e2e_bulk_insert_delete_shared_table() {
     let table = unique_name("items");
     let qualified_table = format!("e2e.{table}");
 
-    create_shared_foreign_table(&pg, &table, "id TEXT, title TEXT, value INTEGER").await;
+    create_shared_kalam_table(&pg, &table, "id TEXT, title TEXT, value INTEGER").await;
 
     const TOTAL: i64 = 5_000;
     const BATCH: i64 = 500;
@@ -43,7 +43,7 @@ async fn e2e_insert_update_shared_table() {
     let table = unique_name("items");
     let qualified_table = format!("e2e.{table}");
 
-    create_shared_foreign_table(&pg, &table, "id TEXT, title TEXT, value INTEGER").await;
+    create_shared_kalam_table(&pg, &table, "id TEXT, title TEXT, value INTEGER").await;
     delete_all(&pg, &qualified_table, "id").await;
 
     pg.batch_execute(&format!(
@@ -108,7 +108,7 @@ async fn e2e_user_table_isolation() {
     let qualified_table = format!("e2e.{table}");
 
     let pg_a = env.pg_connect().await;
-    create_user_foreign_table(
+    create_user_kalam_table(
         &pg_a,
         &table,
         "id TEXT, name TEXT, age INTEGER",

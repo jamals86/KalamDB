@@ -50,10 +50,10 @@ Commit after the local helper is stable.
 **Step 1: Write the failing tests**
 
 Add tests for:
-- `CREATE FOREIGN TABLE` mirrored schema parity between PostgreSQL and KalamDB
+- `CREATE TABLE ... USING kalamdb` mirrored schema parity between PostgreSQL and KalamDB
 - INSERT/UPDATE/DELETE visibility in KalamDB after FDW writes
 - SELECT with filters on KalamDB data
-- JOIN between PostgreSQL-local data and KalamDB foreign tables
+- JOIN between PostgreSQL-local data and KalamDB-backed PostgreSQL tables
 - user-table scans without `kalam.user_id`
 - offline KalamDB server / bad server endpoint reporting
 

@@ -168,7 +168,7 @@ Practical choices:
 
 - call `Ping`
 - run `SELECT kalam_exec('SELECT 1')`
-- run a normal FDW `SELECT 1`-style query against a foreign table
+- run a normal FDW `SELECT 1`-style query against a Kalam-backed table
 
 If the channel is broken, the next RPC is what will usually detect it.
 

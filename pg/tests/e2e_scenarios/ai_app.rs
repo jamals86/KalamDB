@@ -1,5 +1,5 @@
 use super::common::{
-    create_shared_foreign_table_in_schema, drop_foreign_tables, unique_name, TestEnv,
+    create_shared_kalam_table_in_schema, drop_kalam_tables, unique_name, TestEnv,
 };
 
 #[tokio::test]
@@ -14,28 +14,28 @@ async fn e2e_scenario_ai_app_rag_and_agent_run_flow() {
 
     let pg = env.pg_connect().await;
 
-    create_shared_foreign_table_in_schema(
+    create_shared_kalam_table_in_schema(
         &pg,
         &schema,
         &documents,
         "id TEXT, title TEXT, source_uri TEXT, owner_team TEXT",
     )
     .await;
-    create_shared_foreign_table_in_schema(
+    create_shared_kalam_table_in_schema(
         &pg,
         &schema,
         &chunks,
         "id TEXT, document_id TEXT, chunk_no INTEGER, token_count INTEGER, chunk_text TEXT, embedding_model TEXT",
     )
     .await;
-    create_shared_foreign_table_in_schema(
+    create_shared_kalam_table_in_schema(
         &pg,
         &schema,
         &runs,
         "id TEXT, user_id TEXT, prompt TEXT, status TEXT, retrieved_chunks INTEGER, answer_tokens INTEGER",
     )
     .await;
-    create_shared_foreign_table_in_schema(
+    create_shared_kalam_table_in_schema(
         &pg,
         &schema,
         &steps,
@@ -144,5 +144,5 @@ async fn e2e_scenario_ai_app_rag_and_agent_run_flow() {
         "ai run completion should be visible in KalamDB: {remote_run_text}"
     );
 
-    drop_foreign_tables(&pg, &schema, &[documents, chunks, runs, steps]).await;
+    drop_kalam_tables(&pg, &schema, &[documents, chunks, runs, steps]).await;
 }

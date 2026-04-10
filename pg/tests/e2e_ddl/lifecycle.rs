@@ -10,17 +10,16 @@ async fn e2e_ddl_create_shared_table() {
     ensure_schema_exists(&pg, ns).await;
 
     let sql = format!(
-        "CREATE FOREIGN TABLE {ns}.{table} (
+        "CREATE TABLE {ns}.{table} (
             id TEXT,
             title TEXT,
             value INTEGER
-        ) SERVER kalam_server
-        OPTIONS (namespace '{ns}', \"table\" '{table}', table_type 'shared');"
+        ) USING kalamdb WITH (type = 'shared');"
     );
-    pg.batch_execute(&sql).await.expect("CREATE FOREIGN TABLE");
+    pg.batch_execute(&sql).await.expect("CREATE TABLE USING kalamdb");
     env.wait_for_kalamdb_table_exists(ns, &table).await;
 
-    assert!(env.kalamdb_table_exists(ns, &table).await, "KalamDB table {ns}.{table} should exist after CREATE FOREIGN TABLE");
+    assert!(env.kalamdb_table_exists(ns, &table).await, "KalamDB table {ns}.{table} should exist after CREATE TABLE USING kalamdb");
 
     let cols = env.kalamdb_columns(ns, &table).await;
     eprintln!("[DDL] Created {ns}.{table}, columns: {cols:?}");
@@ -43,14 +42,13 @@ async fn e2e_ddl_create_user_table() {
     ensure_schema_exists(&pg, ns).await;
 
     let sql = format!(
-        "CREATE FOREIGN TABLE {ns}.{table} (
+        "CREATE TABLE {ns}.{table} (
             id TEXT,
             name TEXT,
             age INTEGER
-        ) SERVER kalam_server
-        OPTIONS (namespace '{ns}', \"table\" '{table}', table_type 'user');"
+        ) USING kalamdb WITH (type = 'user');"
     );
-    pg.batch_execute(&sql).await.expect("CREATE FOREIGN TABLE (user)");
+    pg.batch_execute(&sql).await.expect("CREATE TABLE USING kalamdb (user)");
     env.wait_for_kalamdb_table_exists(ns, &table).await;
 
     assert!(env.kalamdb_table_exists(ns, &table).await, "KalamDB user table {ns}.{table} should exist");
@@ -76,13 +74,12 @@ async fn e2e_ddl_alter_add_column() {
     ensure_schema_exists(&pg, ns).await;
 
     let sql = format!(
-        "CREATE FOREIGN TABLE {ns}.{table} (
+        "CREATE TABLE {ns}.{table} (
             id TEXT,
             name TEXT
-        ) SERVER kalam_server
-        OPTIONS (namespace '{ns}', \"table\" '{table}', table_type 'shared');"
+        ) USING kalamdb WITH (type = 'shared');"
     );
-    pg.batch_execute(&sql).await.expect("CREATE FOREIGN TABLE");
+    pg.batch_execute(&sql).await.expect("CREATE TABLE USING kalamdb");
     let cols_before = env
         .wait_for_kalamdb_columns(ns, &table, "base columns to include name", |columns| {
             columns.iter().any(|column| column == "name")
@@ -119,14 +116,13 @@ async fn e2e_ddl_alter_drop_column() {
     ensure_schema_exists(&pg, ns).await;
 
     let sql = format!(
-        "CREATE FOREIGN TABLE {ns}.{table} (
+        "CREATE TABLE {ns}.{table} (
             id TEXT,
             name TEXT,
             description TEXT
-        ) SERVER kalam_server
-        OPTIONS (namespace '{ns}', \"table\" '{table}', table_type 'shared');"
+        ) USING kalamdb WITH (type = 'shared');"
     );
-    pg.batch_execute(&sql).await.expect("CREATE FOREIGN TABLE");
+    pg.batch_execute(&sql).await.expect("CREATE TABLE USING kalamdb");
     let cols_before = env
         .wait_for_kalamdb_columns(ns, &table, "base columns to include description", |columns| {
             columns.iter().any(|column| column == "description")
@@ -166,13 +162,12 @@ async fn e2e_ddl_drop_table() {
     ensure_schema_exists(&pg, ns).await;
 
     let sql = format!(
-        "CREATE FOREIGN TABLE {ns}.{table} (
+        "CREATE TABLE {ns}.{table} (
             id TEXT,
             data TEXT
-        ) SERVER kalam_server
-        OPTIONS (namespace '{ns}', \"table\" '{table}', table_type 'shared');"
+        ) USING kalamdb WITH (type = 'shared');"
     );
-    pg.batch_execute(&sql).await.expect("CREATE FOREIGN TABLE");
+    pg.batch_execute(&sql).await.expect("CREATE TABLE USING kalamdb");
     env.wait_for_kalamdb_table_exists(ns, &table).await;
     assert!(env.kalamdb_table_exists(ns, &table).await, "table should exist before DROP");
 
@@ -208,11 +203,10 @@ async fn e2e_ddl_full_lifecycle() {
     ensure_schema_exists(&pg, ns).await;
 
     let create_sql = format!(
-        "CREATE FOREIGN TABLE {ns}.{table} (
+        "CREATE TABLE {ns}.{table} (
             id TEXT,
             name TEXT
-        ) SERVER kalam_server
-        OPTIONS (namespace '{ns}', \"table\" '{table}', table_type 'shared');"
+        ) USING kalamdb WITH (type = 'shared');"
     );
     pg.batch_execute(&create_sql).await.expect("CREATE");
     env.wait_for_kalamdb_table_exists(ns, &table).await;
@@ -262,13 +256,13 @@ async fn e2e_ddl_schema_qualified_create() {
         .expect("CREATE SCHEMA");
 
     let sql = format!(
-        "CREATE FOREIGN TABLE {ns}.{table} (
+        "CREATE TABLE {ns}.{table} (
             id TEXT,
             name TEXT,
             age INTEGER
-        ) SERVER kalam_server;"
+        ) USING kalamdb WITH (type = 'shared');"
     );
-    pg.batch_execute(&sql).await.expect("CREATE FOREIGN TABLE (schema-qualified)");
+    pg.batch_execute(&sql).await.expect("CREATE TABLE USING kalamdb (schema-qualified)");
     env.wait_for_kalamdb_table_exists(&ns, &table).await;
 
     assert!(env.kalamdb_table_exists(&ns, &table).await, "KalamDB table {ns}.{table} should exist after schema-qualified CREATE");

@@ -26,23 +26,22 @@ END;
 $$;
 
 -- ==========================================================================
--- 1. CREATE SCHEMA + FOREIGN TABLE
+-- 1. CREATE SCHEMA + KALAM TABLE
 -- ==========================================================================
 \echo ''
-\echo '=== 1. Create schema + foreign table for remote KalamDB table ==='
+\echo '=== 1. Create schema + Kalam table for remote KalamDB table ==='
 
 CREATE SCHEMA IF NOT EXISTS rmtest;
 DROP FOREIGN TABLE IF EXISTS rmtest.profiles;
 
-CREATE FOREIGN TABLE rmtest.profiles (
+CREATE TABLE rmtest.profiles (
   id TEXT,
   name TEXT,
   age INTEGER
-) SERVER kalam_server
-  OPTIONS (namespace 'rmtest', "table" 'profiles', table_type 'user');
+) USING kalamdb WITH (type = 'user');
 
--- Verify the foreign table columns
-\echo '--- Foreign table columns ---'
+-- Verify the PostgreSQL table columns
+\echo '--- PostgreSQL table columns ---'
 SELECT column_name, data_type
   FROM information_schema.columns
  WHERE table_schema = 'rmtest' AND table_name = 'profiles'
@@ -298,12 +297,11 @@ SELECT COUNT(*) AS post_rollback_count FROM rmtest.profiles;
 
 DROP FOREIGN TABLE IF EXISTS rmtest.shared_items;
 
-CREATE FOREIGN TABLE rmtest.shared_items (
+CREATE TABLE rmtest.shared_items (
   id TEXT,
   title TEXT,
   value INTEGER
-) SERVER kalam_server
-  OPTIONS (namespace 'rmtest', "table" 'shared_items', table_type 'shared');
+) USING kalamdb WITH (type = 'shared');
 
 -- Clean up leftover shared rows from previous runs
 DELETE FROM rmtest.shared_items WHERE id IN ('s1', 's2');
@@ -466,11 +464,42 @@ END;
 $$;
 
 -- ==========================================================================
--- 17. (Removed: CREATE TABLE ... USING kalamdb — single DDL path is now
---     CREATE FOREIGN TABLE with auto-injected system columns)
+-- 17. CREATE TABLE ... USING kalamdb
 -- ==========================================================================
 \echo ''
-\echo '=== 17. Skipped (USING kalamdb path removed) ==='
+\echo '=== 17. CREATE TABLE ... USING kalamdb ==='
+
+DROP FOREIGN TABLE IF EXISTS rmtest.using_items;
+
+CREATE TABLE rmtest.using_items (
+  id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
+  label TEXT DEFAULT 'untitled'
+) USING kalamdb WITH (
+  type = 'shared',
+  storage_id = 'local'
+);
+
+INSERT INTO rmtest.using_items (label) VALUES ('explicit');
+INSERT INTO rmtest.using_items DEFAULT VALUES;
+
+SELECT id, label FROM rmtest.using_items ORDER BY label;
+
+DO $$
+DECLARE
+  cnt INTEGER;
+  default_cnt INTEGER;
+BEGIN
+  SELECT COUNT(*) INTO cnt FROM rmtest.using_items;
+  IF cnt < 2 THEN
+    RAISE EXCEPTION 'USING kalamdb test: expected at least 2 rows, got %', cnt;
+  END IF;
+
+  SELECT COUNT(*) INTO default_cnt FROM rmtest.using_items WHERE label = 'untitled';
+  IF default_cnt <> 1 THEN
+    RAISE EXCEPTION 'USING kalamdb test: expected one default label row, got %', default_cnt;
+  END IF;
+END;
+$$;
 
 -- ==========================================================================
 -- 18. CLEANUP
@@ -487,6 +516,8 @@ SET kalam.user_id = 'user-B';
 DELETE FROM rmtest.profiles WHERE id IN ('ub1');
 
 DELETE FROM rmtest.shared_items WHERE id = 's1';
+DELETE FROM rmtest.using_items WHERE label IN ('explicit', 'untitled');
+DROP FOREIGN TABLE IF EXISTS rmtest.using_items;
 
 \echo ''
 \echo '========================================'
