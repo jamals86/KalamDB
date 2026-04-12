@@ -145,23 +145,41 @@ impl KalamLinkClient {
             }
         }
 
-        {
+        // Phase 1: Send the subscribe command while holding the lock (fast —
+        // only enqueues a channel message).  Grab the unsub/progress senders
+        // and the oneshot for the Ready ack, then release the lock so other
+        // callers can pipeline their own subscribes concurrently.
+        let pending = {
             let conn_guard = self.connection.lock().await;
             if let Some(ref conn) = *conn_guard {
-                let (event_rx, generation, resume_from) =
-                    conn.subscribe(config.id.clone(), config.sql, config.options).await?;
+                let (event_rx, result_rx) =
+                    conn.subscribe_send(config.id.clone(), config.sql, config.options).await?;
                 let unsub_tx = conn.unsubscribe_tx();
                 let progress_tx = conn.progress_tx();
-                return Ok(SubscriptionManager::from_shared(
-                    config.id,
-                    event_rx,
-                    unsub_tx,
-                    progress_tx,
-                    generation,
-                    resume_from,
-                    &self.timeouts,
-                ));
+                Some((event_rx, result_rx, unsub_tx, progress_tx))
+            } else {
+                None
             }
+        };
+        // Lock released here ↑
+
+        // Phase 2: Wait for the server Ready ack without the lock held.
+        if let Some((event_rx, result_rx, unsub_tx, progress_tx)) = pending {
+            let (generation, resume_from) = result_rx.await.map_err(|_| {
+                KalamLinkError::WebSocketError(
+                    "Connection task died before confirming subscribe".to_string(),
+                )
+            })??;
+
+            return Ok(SubscriptionManager::from_shared(
+                config.id,
+                event_rx,
+                unsub_tx,
+                progress_tx,
+                generation,
+                resume_from,
+                &self.timeouts,
+            ));
         }
 
         Err(KalamLinkError::WebSocketError(

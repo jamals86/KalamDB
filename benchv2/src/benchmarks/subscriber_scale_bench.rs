@@ -19,7 +19,86 @@ use crate::config::Config;
 /// number of concurrent subscribers the server can sustain.
 ///
 /// Run with: `--iterations 1 --warmup 0 --filter subscriber_scale`
-pub struct SubscriberScaleBench;
+pub struct SubscriberScaleBench {
+    cleanup_state: Mutex<Option<SubscriberScaleCleanup>>,
+}
+
+struct SubscriberScaleCleanup {
+    stop_tx: watch::Sender<bool>,
+    handles: Vec<tokio::task::JoinHandle<()>>,
+    pooled_links: Arc<Vec<Vec<KalamLinkClient>>>,
+}
+
+impl Default for SubscriberScaleBench {
+    fn default() -> Self {
+        Self {
+            cleanup_state: Mutex::new(None),
+        }
+    }
+}
+
+impl SubscriberScaleBench {
+    async fn record_cleanup_state(
+        &self,
+        stop_tx: watch::Sender<bool>,
+        handles: Vec<tokio::task::JoinHandle<()>>,
+        pooled_links: Arc<Vec<Vec<KalamLinkClient>>>,
+    ) -> Result<(), String> {
+        let mut cleanup_state = self.cleanup_state.lock().await;
+        if cleanup_state.is_some() {
+            return Err("subscriber_scale cleanup state already exists".to_string());
+        }
+
+        *cleanup_state = Some(SubscriberScaleCleanup {
+            stop_tx,
+            handles,
+            pooled_links,
+        });
+        Ok(())
+    }
+
+    async fn finish_pending_cleanup(&self) {
+        let cleanup = { self.cleanup_state.lock().await.take() };
+        let Some(SubscriberScaleCleanup {
+            stop_tx,
+            handles,
+            pooled_links,
+        }) = cleanup
+        else {
+            return;
+        };
+
+        let _ = stop_tx.send(true);
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        let shutdown_deadline = tokio::time::Instant::now() + SHUTDOWN_GRACE;
+        loop {
+            if handles.iter().all(tokio::task::JoinHandle::is_finished) {
+                break;
+            }
+            if tokio::time::Instant::now() >= shutdown_deadline {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        for handle in &handles {
+            if !handle.is_finished() {
+                handle.abort();
+            }
+        }
+
+        for handle in handles {
+            let _ = handle.await;
+        }
+
+        for links in pooled_links.iter() {
+            for link in links {
+                link.disconnect().await;
+            }
+        }
+    }
+}
 
 /// Tiers to test (cumulative subscriber counts).
 const TIERS: &[u32] = &[
@@ -79,6 +158,8 @@ impl Benchmark for SubscriberScaleBench {
         config: &'a Config,
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
+            self.finish_pending_cleanup().await;
+
             client
                 .sql_ok(&format!("CREATE NAMESPACE IF NOT EXISTS {}", config.namespace))
                 .await?;
@@ -272,7 +353,7 @@ impl Benchmark for SubscriberScaleBench {
                             result = tokio::time::timeout(connect_timeout, async {
                                 let sub_name = format!("scale_{}_{}", iteration, sub_id);
                                 let sql = format!("SELECT * FROM {}.scale_sub", ns);
-                                let mut sub_config = SubscriptionConfig::new(sub_name, sql);
+                                let mut sub_config = SubscriptionConfig::without_initial_data(sub_name, sql);
                                 sub_config.ws_url = Some(target_ws_url.clone());
                                 link.subscribe_with_config(sub_config).await
                             }) => {
@@ -395,9 +476,6 @@ impl Benchmark for SubscriberScaleBench {
                 current_connected += connected;
                 all_handles.extend(tier_handles);
 
-                // Short settle time before optional delivery probe.
-                tokio::time::sleep(Duration::from_millis(200)).await;
-
                 // --- Fire a write and measure delivery (sampling at large tiers) ---
                 let (tier_changes_display, delivery_time_display) = if verify_delivery {
                     let write_id = 1_000_000 + tier_target;
@@ -504,38 +582,8 @@ impl Benchmark for SubscriberScaleBench {
             println!("  Max sustained subscribers: {}", format_num(max_achieved));
             println!();
 
-            // Signal all subscriber tasks to stop gracefully
-            let _ = stop_tx.send(true);
-            tokio::time::sleep(Duration::from_millis(200)).await;
-
-            // Wait up to SHUTDOWN_GRACE for tasks to finish, then abort any stragglers.
-            // This avoids O(N) sequential timeout behavior at high subscriber counts.
-            let shutdown_deadline = tokio::time::Instant::now() + SHUTDOWN_GRACE;
-            loop {
-                if all_handles.iter().all(tokio::task::JoinHandle::is_finished) {
-                    break;
-                }
-                if tokio::time::Instant::now() >= shutdown_deadline {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            }
-
-            for handle in &all_handles {
-                if !handle.is_finished() {
-                    handle.abort();
-                }
-            }
-
-            for handle in all_handles {
-                let _ = handle.await;
-            }
-
-            for links in pooled_links.iter() {
-                for link in links {
-                    link.disconnect().await;
-                }
-            }
+            self.record_cleanup_state(stop_tx, all_handles, pooled_links)
+                .await?;
 
             Ok(())
         })
@@ -547,6 +595,8 @@ impl Benchmark for SubscriberScaleBench {
         config: &'a Config,
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
+            self.finish_pending_cleanup().await;
+
             // Wait for live queries on this benchmark table to drain before dropping it.
             // This avoids noisy "Table not found" races from late in-flight subscribe requests.
             let drain_deadline = tokio::time::Instant::now() + Duration::from_secs(45);

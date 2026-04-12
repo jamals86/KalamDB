@@ -6,7 +6,7 @@ use actix_web::{web, HttpRequest, HttpResponse};
 use kalamdb_auth::{authenticate, extract_client_ip_secure, AuthRequest, UserRepository};
 use std::sync::Arc;
 
-use super::models::{AuthErrorResponse, UserInfo};
+use super::models::UserInfo;
 use super::{extract_bearer_or_cookie_token, map_auth_error_to_response};
 
 /// GET /v1/api/auth/me
@@ -30,15 +30,7 @@ pub async fn me_handler(
         Err(err) => return map_auth_error_to_response(err),
     };
 
-    // Get current user info
-    let username_typed = auth_result.user.username.clone();
-    let user = match user_repo.get_user_by_username(&username_typed).await {
-        Ok(user) if user.deleted_at.is_none() => user,
-        _ => {
-            return HttpResponse::Unauthorized()
-                .json(AuthErrorResponse::new("unauthorized", "User not found"));
-        },
-    };
+    let user = auth_result.user;
 
     // Convert timestamps properly
     let created_at = chrono::DateTime::from_timestamp_millis(user.created_at)
@@ -49,8 +41,8 @@ pub async fn me_handler(
         .to_rfc3339();
 
     HttpResponse::Ok().json(UserInfo {
-        id: user.user_id.clone(),
-        username: user.username.clone(),
+        id: user.user_id,
+        username: user.username,
         role: user.role,
         email: user.email,
         created_at,

@@ -72,7 +72,7 @@ impl Benchmark for ConnectionStormBench {
                     let mut delay = std::time::Duration::from_millis(200);
                     let mut attempts = 0u32;
                     let fresh = loop {
-                        match KalamClient::login_single(&url, &user, &pass).await {
+                        match KalamClient::login_single_steady_state(&url, &user, &pass).await {
                             Ok(c) => break c,
                             Err(e)
                                 if attempts < 5

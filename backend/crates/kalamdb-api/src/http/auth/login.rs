@@ -55,17 +55,7 @@ pub async fn login_handler(
         Err(err) => return map_auth_error_to_response(err),
     };
 
-    // Load full user record for response fields
-    let username_typed = auth_result.user.username.clone();
-    let user = match user_repo.get_user_by_username(&username_typed).await {
-        Ok(user) => user,
-        Err(e) => {
-            log::error!("Failed to load user after authentication: {}", e);
-            return HttpResponse::InternalServerError()
-                .json(AuthErrorResponse::new("internal_error", "Authentication failed"));
-        },
-    };
-
+    let user = auth_result.user;
     let admin_ui_access = matches!(user.role, Role::Dba | Role::System);
 
     // Generate JWT access token
@@ -134,8 +124,8 @@ pub async fn login_handler(
         .cookie(refresh_cookie)
         .json(LoginResponse {
             user: UserInfo {
-                id: user.user_id.clone(),
-                username: user.username.clone(),
+                id: user.user_id,
+                username: user.username,
                 role: user.role,
                 email: user.email,
                 created_at,

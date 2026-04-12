@@ -1,6 +1,7 @@
 mod support;
 
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::future::Future;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
@@ -28,6 +29,7 @@ const READ_ROUNDS: usize = 9;
 const READ_OPS_PER_ROUND: usize = 12;
 const READ_SEED_ROWS: usize = 192;
 const ALLOCATION_ITERS: usize = 32;
+const ALLOCATION_SAMPLE_ROUNDS: usize = 5;
 
 struct CountingAllocator;
 
@@ -66,6 +68,18 @@ unsafe impl GlobalAlloc for CountingAllocator {
 struct AllocationSample {
     allocations: u64,
     bytes: u64,
+}
+
+impl AllocationSample {
+    fn min_noise_floor(self, other: Self) -> Self {
+        if other.allocations < self.allocations
+            || (other.allocations == self.allocations && other.bytes < self.bytes)
+        {
+            other
+        } else {
+            self
+        }
+    }
 }
 
 struct AllocationGuard;
@@ -268,6 +282,21 @@ fn assert_regression(label: &str, baseline_ns: u128, candidate_ns: u128) {
     );
 }
 
+async fn measure_allocation_floor<F, Fut>(mut measure: F) -> AllocationSample
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = AllocationSample>,
+{
+    // The counting allocator is process-global, so unrelated background work can
+    // only add noise to a sample. Take the minimum across several identical
+    // steady-state rounds to recover the intrinsic allocation floor of the path.
+    let mut best = measure().await;
+    for _ in 1..ALLOCATION_SAMPLE_ROUNDS {
+        best = best.min_noise_floor(measure().await);
+    }
+    best
+}
+
 async fn measure_allocations_for_scan(
     service: &OperationService,
     table_id: &TableId,
@@ -335,17 +364,24 @@ async fn idle_autocommit_transaction_checks_add_no_extra_allocations() {
         .expect_err("warmup rejected write with session stays rejected");
     assert_eq!(warmup_error.code(), tonic::Code::PermissionDenied);
 
-    let scan_without_session = measure_allocations_for_scan(&service, &scan_table, None).await;
-    let scan_with_idle_session =
-        measure_allocations_for_scan(&service, &scan_table, Some(VALID_IDLE_SESSION_ID)).await;
+    let scan_without_session =
+        measure_allocation_floor(|| measure_allocations_for_scan(&service, &scan_table, None))
+            .await;
+    let scan_with_idle_session = measure_allocation_floor(|| {
+        measure_allocations_for_scan(&service, &scan_table, Some(VALID_IDLE_SESSION_ID))
+    })
+    .await;
     assert_eq!(
         scan_with_idle_session, scan_without_session,
         "idle transaction lookup changed scan allocations: without_session={scan_without_session:?} with_session={scan_with_idle_session:?}"
     );
 
-    let write_without_session = measure_allocations_for_rejected_write(&service, None).await;
-    let write_with_idle_session =
-        measure_allocations_for_rejected_write(&service, Some(VALID_IDLE_SESSION_ID)).await;
+    let write_without_session =
+        measure_allocation_floor(|| measure_allocations_for_rejected_write(&service, None)).await;
+    let write_with_idle_session = measure_allocation_floor(|| {
+        measure_allocations_for_rejected_write(&service, Some(VALID_IDLE_SESSION_ID))
+    })
+    .await;
     assert_eq!(
         write_with_idle_session, write_without_session,
         "idle transaction lookup changed write allocations: without_session={write_without_session:?} with_session={write_with_idle_session:?}"

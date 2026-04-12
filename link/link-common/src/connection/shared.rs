@@ -127,6 +127,32 @@ impl SharedConnection {
         sql: String,
         options: Option<SubscriptionOptions>,
     ) -> Result<(mpsc::Receiver<Result<ChangeEvent>>, u64, Option<SeqId>)> {
+        let (event_rx, result_rx) = self.subscribe_send(id, sql, options).await?;
+
+        let (generation, resume_from) = result_rx.await.map_err(|_| {
+            KalamLinkError::WebSocketError(
+                "Connection task died before confirming subscribe".to_string(),
+            )
+        })??;
+
+        Ok((event_rx, generation, resume_from))
+    }
+
+    /// Send a subscribe command without waiting for the server Ready ack.
+    ///
+    /// Returns the event receiver and a oneshot that resolves when the server
+    /// confirms the subscription is ready. Callers can drop their lock on the
+    /// connection before awaiting the oneshot, allowing other subscribes to
+    /// pipeline through the same shared connection concurrently.
+    pub async fn subscribe_send(
+        &self,
+        id: String,
+        sql: String,
+        options: Option<SubscriptionOptions>,
+    ) -> Result<(
+        mpsc::Receiver<Result<ChangeEvent>>,
+        oneshot::Receiver<Result<(u64, Option<SeqId>)>>,
+    )> {
         let (event_tx, event_rx) = mpsc::channel(crate::connection::DEFAULT_EVENT_CHANNEL_CAPACITY);
         let (result_tx, result_rx) = oneshot::channel();
         let request_initial_data = options.is_some();
@@ -146,13 +172,7 @@ impl SharedConnection {
                 KalamLinkError::WebSocketError("Connection task is not running".to_string())
             })?;
 
-        let (generation, resume_from) = result_rx.await.map_err(|_| {
-            KalamLinkError::WebSocketError(
-                "Connection task died before confirming subscribe".to_string(),
-            )
-        })??;
-
-        Ok((event_rx, generation, resume_from))
+        Ok((event_rx, result_rx))
     }
 
     pub async fn unsubscribe(&self, id: &str) -> Result<()> {
