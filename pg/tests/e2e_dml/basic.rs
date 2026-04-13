@@ -1,6 +1,6 @@
 use super::common::{
-    count_rows, create_shared_foreign_table, create_user_foreign_table, delete_all, set_user_id,
-    unique_name, TestEnv,
+    await_user_shard_leader, count_rows, create_shared_kalam_table, create_user_kalam_table,
+    delete_all, retry_transient_user_leader_error, set_user_id, unique_name, TestEnv,
 };
 
 #[tokio::test]
@@ -10,7 +10,7 @@ async fn e2e_bulk_insert_delete_shared_table() {
     let table = unique_name("items");
     let qualified_table = format!("e2e.{table}");
 
-    create_shared_foreign_table(&pg, &table, "id TEXT, title TEXT, value INTEGER").await;
+    create_shared_kalam_table(&pg, &table, "id TEXT, title TEXT, value INTEGER").await;
 
     const TOTAL: i64 = 5_000;
     const BATCH: i64 = 500;
@@ -43,7 +43,7 @@ async fn e2e_insert_update_shared_table() {
     let table = unique_name("items");
     let qualified_table = format!("e2e.{table}");
 
-    create_shared_foreign_table(&pg, &table, "id TEXT, title TEXT, value INTEGER").await;
+    create_shared_kalam_table(&pg, &table, "id TEXT, title TEXT, value INTEGER").await;
     delete_all(&pg, &qualified_table, "id").await;
 
     pg.batch_execute(&format!(
@@ -108,33 +108,30 @@ async fn e2e_user_table_isolation() {
     let qualified_table = format!("e2e.{table}");
 
     let pg_a = env.pg_connect().await;
-    create_user_foreign_table(
+    create_user_kalam_table(
         &pg_a,
         &table,
-        "id TEXT, name TEXT, age INTEGER, _userid TEXT, _seq BIGINT, _deleted BOOLEAN",
+        "id TEXT, name TEXT, age INTEGER",
     )
     .await;
     set_user_id(&pg_a, "user-a").await;
+    await_user_shard_leader("user-a").await;
 
     let pg_b = env.pg_connect().await;
     set_user_id(&pg_b, "user-b").await;
+    await_user_shard_leader("user-b").await;
 
-    delete_all(&pg_a, &qualified_table, "id").await;
-    delete_all(&pg_b, &qualified_table, "id").await;
-
-    pg_a.batch_execute(&format!(
+        let user_a_insert = format!(
         "INSERT INTO {qualified_table} (id, name, age) VALUES \
-         ('a1', 'Alice', 30), ('a2', 'Ada', 25);"
-    ))
-    .await
-    .expect("user-a insert");
+            ('a1', 'Alice', 30), ('a2', 'Ada', 25);"
+        );
+        retry_transient_user_leader_error("user-a insert", || pg_a.batch_execute(&user_a_insert)).await;
 
-    pg_b.batch_execute(&format!(
+        let user_b_insert = format!(
         "INSERT INTO {qualified_table} (id, name, age) VALUES \
-         ('b1', 'Bob', 40), ('b2', 'Blake', 35), ('b3', 'Bea', 28);"
-    ))
-    .await
-    .expect("user-b insert");
+            ('b1', 'Bob', 40), ('b2', 'Blake', 35), ('b3', 'Bea', 28);"
+        );
+        retry_transient_user_leader_error("user-b insert", || pg_b.batch_execute(&user_b_insert)).await;
 
     let count_a = count_rows(&pg_a, &qualified_table, None).await;
     assert_eq!(count_a, 2, "user-a should see 2 rows");

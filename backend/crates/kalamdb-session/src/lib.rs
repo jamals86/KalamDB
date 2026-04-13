@@ -18,7 +18,7 @@
 //! | Category | Location | Description |
 //! |----------|----------|-------------|
 //! | Table Type Access | `permissions` | System/User/Shared table access |
-//! | Statement Auth | `kalamdb_sql::classifier` | DDL/DML statement-level auth |
+//! | Statement Auth | `kalamdb_dialect::classifier` | DDL/DML statement-level auth |
 //! | User Management | `handlers::user` | Role changes, password updates |
 //! | RBAC Functions | `kalamdb_session::permissions` | Role-based access helpers |
 

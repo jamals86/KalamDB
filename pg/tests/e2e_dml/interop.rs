@@ -1,4 +1,4 @@
-use super::common::{create_shared_foreign_table, delete_all, unique_name, TestEnv};
+use super::common::{create_shared_kalam_table, delete_all, unique_name, TestEnv};
 
 #[tokio::test]
 async fn e2e_cross_verify_fdw_to_rest() {
@@ -7,7 +7,7 @@ async fn e2e_cross_verify_fdw_to_rest() {
     let table = unique_name("items");
     let qualified_table = format!("e2e.{table}");
 
-    create_shared_foreign_table(&pg, &table, "id TEXT, title TEXT, value INTEGER").await;
+    create_shared_kalam_table(&pg, &table, "id TEXT, title TEXT, value INTEGER").await;
 
     pg.batch_execute(&format!(
         "INSERT INTO {qualified_table} (id, title, value) VALUES ('xv-rest', 'CrossVerify', 999);"
@@ -38,7 +38,7 @@ async fn e2e_dml_changes_are_visible_in_kalamdb() {
     let pg = env.pg_connect().await;
     let table = unique_name("direct_sync");
 
-    create_shared_foreign_table(&pg, &table, "id TEXT, title TEXT, value INTEGER").await;
+    create_shared_kalam_table(&pg, &table, "id TEXT, title TEXT, value INTEGER").await;
 
     pg.execute(
         &format!("INSERT INTO e2e.{table} (id, title, value) VALUES ($1, $2, $3)"),
@@ -93,7 +93,7 @@ async fn e2e_select_filters_and_postgres_join_work() {
     let pg = env.pg_connect().await;
     let table = unique_name("join_items");
 
-    create_shared_foreign_table(&pg, &table, "id TEXT, title TEXT, value INTEGER").await;
+    create_shared_kalam_table(&pg, &table, "id TEXT, title TEXT, value INTEGER").await;
     delete_all(&pg, &format!("e2e.{table}"), "id").await;
 
     pg.batch_execute(&format!(
@@ -118,7 +118,7 @@ async fn e2e_select_filters_and_postgres_join_work() {
         "INSERT INTO local_meta (id, segment) VALUES
          ('j1', 'bronze'),
          ('j2', 'silver'),
-         ('j3', 'gold');",
+         ('j3', 'gold');"
     )
     .await
     .expect("insert local metadata");
@@ -155,22 +155,21 @@ async fn e2e_search_path_schema_mirror_works_without_namespace_option() {
     pg.batch_execute(&format!(
         "CREATE SCHEMA IF NOT EXISTS {schema};
          SET search_path TO {schema};
-         CREATE FOREIGN TABLE {table} (
+         CREATE TABLE {table} (
              id TEXT,
              title TEXT,
              value INTEGER
-         ) SERVER kalam_server
-         OPTIONS (table_type 'shared');"
+         ) USING kalamdb WITH (type = 'shared');"
     ))
     .await
-    .expect("create mirrored foreign table via search_path");
+    .expect("create mirrored Kalam table via search_path");
 
     pg.execute(
         &format!("INSERT INTO {schema}.{table} (id, title, value) VALUES ($1, $2, $3)"),
         &[&"spath-1", &"From search_path", &7_i32],
     )
     .await
-    .expect("insert through schema-mirrored foreign table");
+    .expect("insert through schema-mirrored Kalam table");
 
     let rows = pg
         .query(
@@ -178,7 +177,7 @@ async fn e2e_search_path_schema_mirror_works_without_namespace_option() {
             &[&"spath-1"],
         )
         .await
-        .expect("select through schema-mirrored foreign table");
+        .expect("select through schema-mirrored Kalam table");
     assert_eq!(rows.len(), 1, "expected one mirrored row through PostgreSQL");
 
     let result = env
@@ -187,7 +186,7 @@ async fn e2e_search_path_schema_mirror_works_without_namespace_option() {
     let result_text = serde_json::to_string(&result).unwrap_or_default();
     assert!(
         result_text.contains("spath-1") && result_text.contains("From search_path"),
-        "search_path-mirrored foreign table should write into KalamDB namespace {schema}: {result_text}"
+        "search_path-mirrored Kalam table should write into KalamDB namespace {schema}: {result_text}"
     );
 
     pg.batch_execute(&format!(

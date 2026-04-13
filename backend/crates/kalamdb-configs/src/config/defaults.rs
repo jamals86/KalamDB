@@ -115,6 +115,14 @@ pub fn default_max_header_size() -> usize {
     16384 // 16KB - increased from default 8KB to support large JWT tokens
 }
 
+pub fn default_transaction_timeout_secs() -> u64 {
+    300 // 5 minutes
+}
+
+pub fn default_max_transaction_buffer_bytes() -> usize {
+    100 * 1024 * 1024 // 100MB
+}
+
 // DataFusion defaults
 pub fn default_datafusion_memory_limit() -> usize {
     32 * 1024 * 1024 // 32MB — sufficient for mobile/OLTP queries; keeps peak RSS low
@@ -191,6 +199,10 @@ pub fn default_stream_max_buffer() -> usize {
 
 pub fn default_stream_eviction_interval() -> u64 {
     60 // 60 seconds = 1 minute
+}
+
+pub fn default_topic_visibility_timeout_secs() -> u64 {
+    60 // 60 seconds
 }
 
 pub fn default_user_deletion_grace_period() -> i64 {

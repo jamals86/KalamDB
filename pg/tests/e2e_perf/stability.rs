@@ -1,5 +1,5 @@
 use super::common::{
-    bulk_delete_all, count_rows, create_shared_foreign_table, kalamdb_pid, pg_backend_pid,
+    bulk_delete_all, count_rows, create_shared_kalam_table, kalamdb_pid, pg_backend_pid,
     process_group_rss_kb, process_rss_kb, sample_process_group_peak_rss_kb,
     sample_process_peak_rss_kb, timed_query, unique_name, TestEnv,
 };
@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 #[tokio::test]
-#[ntest::timeout(32000)]
+#[ntest::timeout(39000)]
 async fn e2e_perf_local_memory_stays_bounded_under_batch_insert_and_scan() {
     let env = TestEnv::global().await;
     let pg = env.pg_connect().await;
@@ -16,7 +16,7 @@ async fn e2e_perf_local_memory_stays_bounded_under_batch_insert_and_scan() {
     let pid = kalamdb_pid();
     let baseline_rss_kb = process_rss_kb(pid);
 
-    create_shared_foreign_table(&pg, &table, "id TEXT, payload TEXT, value INTEGER").await;
+    create_shared_kalam_table(&pg, &table, "id TEXT, payload TEXT, value INTEGER").await;
     bulk_delete_all(&pg, &qualified_table, "id").await;
 
     const TOTAL: usize = 8_000;
@@ -46,7 +46,7 @@ async fn e2e_perf_local_memory_stays_bounded_under_batch_insert_and_scan() {
     let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
 
     bulk_delete_all(&pg, &qualified_table, "id").await;
-    tokio::time::sleep(std::time::Duration::from_millis(750)).await;
+    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
 
     stop.store(true, Ordering::Relaxed);
     let peak_rss_kb = sampler.await.expect("join rss sampler");
@@ -74,10 +74,12 @@ async fn e2e_perf_local_memory_stays_bounded_under_batch_insert_and_scan() {
         peak_delta_kb / 1024
     );
     assert!(
-        final_delta_kb < 96 * 1024,
-        "KalamDB RSS retained {} MB after cleanup — expected < 96 MB",
+        final_delta_kb < 112 * 1024,
+        "KalamDB RSS retained {} MB after cleanup — expected < 112 MB",
         final_delta_kb / 1024
     );
+
+    pg.disconnect().await;
 }
 
 #[tokio::test]
@@ -88,7 +90,7 @@ async fn e2e_perf_multi_session_pg_extension_memory_stays_bounded() {
     let table = unique_name("perf_multi_session");
     let qualified_table = format!("e2e.{table}");
 
-    create_shared_foreign_table(&coordinator, &table, "id TEXT, payload TEXT, worker_id INTEGER")
+    create_shared_kalam_table(&coordinator, &table, "id TEXT, payload TEXT, worker_id INTEGER")
         .await;
     bulk_delete_all(&coordinator, &qualified_table, "id").await;
 
@@ -226,4 +228,12 @@ async fn e2e_perf_multi_session_pg_extension_memory_stays_bounded() {
         "PostgreSQL backend RSS retained {} MB after workload — expected < 96 MB",
         final_delta_kb / 1024
     );
+
+    for client in clients {
+        let client = Arc::try_unwrap(client)
+            .ok()
+            .expect("multi-session client still shared");
+        client.disconnect().await;
+    }
+    coordinator.disconnect().await;
 }

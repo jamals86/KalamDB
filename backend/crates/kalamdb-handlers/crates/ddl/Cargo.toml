@@ -16,7 +16,7 @@ kalamdb-handlers-support = { path = "../support" }
 kalamdb-jobs = { path = "../../../kalamdb-jobs" }
 kalamdb-raft = { path = "../../../kalamdb-raft" }
 kalamdb-session = { path = "../../../kalamdb-session" }
-kalamdb-sql = { path = "../../../kalamdb-sql" }
+kalamdb-sql = { package = "kalamdb-dialect", path = "../../../kalamdb-dialect" }
 kalamdb-store = { path = "../../../kalamdb-store" }
 kalamdb-system = { path = "../../../kalamdb-system" }
 kalamdb-tables = { path = "../../../kalamdb-tables" }

@@ -13,7 +13,7 @@ kalamdb-commons = { path = "../../../kalamdb-commons", default-features = false 
 kalamdb-core = { path = "../../../kalamdb-core" }
 kalamdb-handlers-support = { path = "../support" }
 kalamdb-jobs = { path = "../../../kalamdb-jobs" }
-kalamdb-sql = { path = "../../../kalamdb-sql" }
+kalamdb-sql = { package = "kalamdb-dialect", path = "../../../kalamdb-dialect" }
 kalamdb-system = { path = "../../../kalamdb-system" }
 kalamdb-tables = { path = "../../../kalamdb-tables" }
 

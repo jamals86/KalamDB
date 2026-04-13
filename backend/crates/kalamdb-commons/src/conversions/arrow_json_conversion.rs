@@ -135,9 +135,9 @@ pub fn json_rows_to_arrow_batch(schema: &SchemaRef, rows: Vec<Row>) -> Result<Re
     // Build arrays from columns
     let mut arrays: Vec<ArrayRef> = Vec::with_capacity(schema.fields().len());
     for (i, col_values) in columns.into_iter().enumerate() {
-        let field_name = schema.field(i).name();
-        let array = ScalarValue::iter_to_array(col_values.into_iter())
-            .map_err(|e| format!("Failed to build column '{}': {}", field_name, e))?;
+        let field = schema.field(i);
+        let array = build_array_from_scalars(field.as_ref(), col_values)
+            .map_err(|e| format!("Failed to build column '{}': {}", field.name(), e))?;
         arrays.push(array);
     }
 
@@ -181,11 +181,20 @@ fn get_column_defaults(schema: &SchemaRef) -> Vec<Option<ScalarValue>> {
         .collect()
 }
 
+fn typed_null_for_field(field: &Field) -> ScalarValue {
+    match field.data_type() {
+        DataType::FixedSizeList(child, _) if matches!(child.data_type(), DataType::Float32) => {
+            ScalarValue::Null
+        },
+        _ => ScalarValue::try_from(field.data_type()).unwrap_or(ScalarValue::Null),
+    }
+}
+
 fn get_typed_nulls(schema: &SchemaRef) -> Vec<ScalarValue> {
     schema
         .fields()
         .iter()
-        .map(|field| ScalarValue::try_from(field.data_type()).unwrap_or(ScalarValue::Null))
+        .map(|field| typed_null_for_field(field.as_ref()))
         .collect()
 }
 
@@ -193,10 +202,98 @@ fn create_empty_array(data_type: &DataType) -> ArrayRef {
     new_empty_array(data_type)
 }
 
+fn build_array_from_scalars(field: &Field, values: Vec<ScalarValue>) -> Result<ArrayRef, String> {
+    match field.data_type() {
+        DataType::FixedSizeList(child, len) if matches!(child.data_type(), DataType::Float32) => {
+            build_embedding_array(child.clone(), *len, values)
+        },
+        _ => ScalarValue::iter_to_array(values.into_iter())
+            .map_err(|e| format!("{}", e)),
+    }
+}
+
+fn build_embedding_array(
+    child: Arc<Field>,
+    len: i32,
+    values: Vec<ScalarValue>,
+) -> Result<ArrayRef, String> {
+    let dimensions = len as usize;
+    let mut flat_values = Vec::with_capacity(values.len() * dimensions);
+    let mut validity = Vec::with_capacity(values.len());
+
+    for value in values {
+        let maybe_vector = match value {
+            ScalarValue::FixedSizeList(list) => fixed_size_list_scalar_to_vec(&list, dimensions),
+            ScalarValue::List(list) => list_scalar_to_vec(&list, dimensions),
+            ScalarValue::LargeList(list) => large_list_scalar_to_vec(&list, dimensions),
+            other if other.is_null() => None,
+            other => {
+                return Err(format!(
+                    "unsupported EMBEDDING scalar while building Arrow array: {:?}",
+                    other.data_type()
+                ));
+            },
+        };
+
+        if let Some(vector) = maybe_vector {
+            flat_values.extend(vector);
+            validity.push(true);
+        } else {
+            flat_values.extend(std::iter::repeat_n(0.0_f32, dimensions));
+            validity.push(false);
+        }
+    }
+
+    let values_array: ArrayRef = Arc::new(Float32Array::from(flat_values));
+    let nulls = if validity.iter().all(|is_valid| *is_valid) {
+        None
+    } else {
+        Some(validity.into())
+    };
+
+    Ok(Arc::new(FixedSizeListArray::new(child, len, values_array, nulls)) as ArrayRef)
+}
+
+fn fixed_size_list_scalar_to_vec(list: &FixedSizeListArray, dimensions: usize) -> Option<Vec<f32>> {
+    if list.is_empty() || list.is_null(0) {
+        return None;
+    }
+
+    numeric_array_to_vec(list.value(0).as_ref(), dimensions)
+}
+
+fn list_scalar_to_vec(list: &ListArray, dimensions: usize) -> Option<Vec<f32>> {
+    if list.is_empty() || list.is_null(0) {
+        return None;
+    }
+
+    numeric_array_to_vec(list.value(0).as_ref(), dimensions)
+}
+
+fn large_list_scalar_to_vec(list: &LargeListArray, dimensions: usize) -> Option<Vec<f32>> {
+    if list.is_empty() || list.is_null(0) {
+        return None;
+    }
+
+    numeric_array_to_vec(list.value(0).as_ref(), dimensions)
+}
+
+fn numeric_array_to_vec(array: &dyn Array, dimensions: usize) -> Option<Vec<f32>> {
+    let float_array = array.as_any().downcast_ref::<Float32Array>()?;
+    if float_array.len() != dimensions || float_array.null_count() == float_array.len() {
+        return None;
+    }
+
+    Some(
+        (0..float_array.len())
+            .map(|idx| if float_array.is_null(idx) { 0.0 } else { float_array.value(idx) })
+            .collect(),
+    )
+}
+
 pub fn coerce_scalar_to_field(value: ScalarValue, field: &Field) -> Result<ScalarValue, String> {
     if matches!(value, ScalarValue::Null) {
-        return ScalarValue::try_from(field.data_type())
-            .map_err(|e| format!("Failed to build typed NULL for '{}': {}", field.name(), e));
+        return Ok(typed_null_for_field(field));
     }
 
     if &value.data_type() == field.data_type() {
@@ -421,13 +518,66 @@ mod tests {
         assert_eq!(ts_col.value(0), 1609459200000i64);
     }
 
+    #[test]
+    fn embedding_typed_null_uses_plain_null_scalar() {
+        let field = Field::new(
+            "embedding",
+            DataType::FixedSizeList(Arc::new(Field::new("item", DataType::Float32, true)), 3),
+            true,
+        );
+
+        let typed_null = coerce_scalar_to_field(ScalarValue::Null, &field).unwrap();
+        assert!(matches!(typed_null, ScalarValue::Null));
+    }
+
+    #[test]
+    fn json_rows_to_arrow_batch_preserves_null_embedding_rows() {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int64, false),
+            Field::new(
+                "embedding",
+                DataType::FixedSizeList(Arc::new(Field::new("item", DataType::Float32, true)), 3),
+                true,
+            ),
+        ]));
+
+        let rows = vec![
+            make_row(vec![
+                ("id", ScalarValue::Int64(Some(1))),
+                ("embedding", coerce_scalar_to_field(ScalarValue::Null, schema.field(1)).unwrap()),
+            ]),
+            make_row(vec![
+                ("id", ScalarValue::Int64(Some(2))),
+                (
+                    "embedding",
+                    ScalarValue::FixedSizeList(Arc::new(FixedSizeListArray::new(
+                        Arc::new(Field::new("item", DataType::Float32, true)),
+                        3,
+                        Arc::new(Float32Array::from(vec![1.0_f32, 0.0, 0.0])),
+                        None,
+                    ))),
+                ),
+            ]),
+        ];
+
+        let batch = json_rows_to_arrow_batch(&schema, rows).unwrap();
+        let embedding = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<FixedSizeListArray>()
+            .expect("embedding array");
+
+        assert!(embedding.is_null(0));
+        assert!(!embedding.is_null(1));
+    }
+
     // ─── No-op UPDATE detection tests ────────────────────────────────────────
     // These tests verify that `coerce_updates` produces values with proper types,
     // ensuring that the Row equality check in `update_by_pk_value` correctly
     // detects no-op UPDATEs (same logical value, potentially different ScalarValue type).
 
     /// Build a schema matching the user's chat.messages table:
-    /// id TEXT PK, thread_id TEXT, role TEXT, content TEXT, created_at TIMESTAMP, _seq INT64, _deleted BOOLEAN
+    /// id TEXT PK, thread_id TEXT, role TEXT, content TEXT, created_at TIMESTAMP, _seq INT64, _commit_seq UINT64, _deleted BOOLEAN
     fn chat_messages_schema() -> Arc<Schema> {
         Arc::new(Schema::new(vec![
             Field::new("id", DataType::Utf8, false),
@@ -440,6 +590,7 @@ mod tests {
                 true,
             ),
             Field::new("_seq", DataType::Int64, false),
+            Field::new("_commit_seq", DataType::UInt64, false),
             Field::new("_deleted", DataType::Boolean, false),
         ]))
     }
@@ -453,6 +604,7 @@ mod tests {
             ("content", ScalarValue::Utf8(Some("hello world".into()))),
             ("created_at", ScalarValue::TimestampMicrosecond(Some(1704067200000000), None)),
             ("_seq", ScalarValue::Int64(Some(0))),
+            ("_commit_seq", ScalarValue::UInt64(Some(0))),
             ("_deleted", ScalarValue::Boolean(Some(false))),
         ])
     }

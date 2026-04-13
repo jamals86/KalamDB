@@ -3,7 +3,7 @@ use kalam_client::models::ResponseStatus;
 use serial_test::serial;
 
 #[tokio::test]
-#[ntest::timeout(3000)] // 3 seconds - observed ~1.6 seconds
+#[ntest::timeout(5000)] // healthy shared-server startup + query now lands around 3.1s
 #[serial(memory_metrics)]
 async fn test_system_stats_expose_memory_breakdown_and_allocator_metrics() {
     let server = TestServer::new_shared().await;

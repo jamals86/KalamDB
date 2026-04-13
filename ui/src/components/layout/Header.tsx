@@ -1,6 +1,7 @@
 import { Search } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { Input } from "@/components/ui/input";
+import BackendStatusIndicator from "./BackendStatusIndicator";
 import { NotificationsDropdown } from "./NotificationsDropdown";
 import { UserMenu } from "./UserMenu";
 
@@ -34,6 +35,7 @@ export default function Header() {
       </div>
 
       <div className="ml-auto flex shrink-0 items-center gap-2">
+        <BackendStatusIndicator />
         <NotificationsDropdown />
         <UserMenu
           username={user?.username ?? "User"}

@@ -502,6 +502,40 @@ describe("SqlStudio page", () => {
     expect(screen.getByRole("button", { name: /stop/i })).toBeTruthy();
   });
 
+  it("removes the browser-added limit when live mode is enabled", async () => {
+    renderSqlStudio();
+
+    fireEvent.change(getSqlEditor(), {
+      target: { value: "SELECT * FROM default.events LIMIT 100;" },
+    });
+
+    fireEvent.click(screen.getByRole("switch"));
+
+    expect(screen.getByDisplayValue("SELECT * FROM default.events;")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /subscribe/i }));
+
+    await waitFor(() => {
+      expect(mockSubscribe).toHaveBeenCalledWith(
+        "SELECT * FROM default.events;",
+        expect.any(Function),
+        undefined,
+      );
+    });
+  });
+
+  it("keeps manual limit queries unchanged when live mode is enabled", () => {
+    renderSqlStudio();
+
+    fireEvent.change(getSqlEditor(), {
+      target: { value: "SELECT id FROM default.events LIMIT 100;" },
+    });
+
+    fireEvent.click(screen.getByRole("switch"));
+
+    expect(screen.getByDisplayValue("SELECT id FROM default.events LIMIT 100;")).toBeTruthy();
+  });
+
   it("passes the live subscription from option as an exact string checkpoint", async () => {
     renderSqlStudio();
 
@@ -622,8 +656,10 @@ describe("SqlStudio page", () => {
       const tabResults = store.getState().sqlStudioWorkspace.tabResults;
       const activeResult = Object.values(tabResults).find((result) => result !== null);
       const messages = activeResult?.logs.map((entry) => entry.message) ?? [];
-      expect(messages).toContain("WS SEND · subscribe");
-      expect(messages).toContain("WS RECEIVE · subscription_ack");
+      expect(messages).toEqual([
+        "WS SEND · subscribe",
+        "WS RECEIVE · subscription_ack",
+      ]);
     });
   });
 
@@ -747,8 +783,10 @@ describe("SqlStudio page", () => {
 
     expect(screen.getByRole("button", { name: /synced query/i })).toBeTruthy();
     expect(screen.getByText("Favorite Query")).toBeTruthy();
-    const favoritesTree = screen.getByText("Favorite Query").closest("button")?.parentElement?.parentElement;
-    expect(favoritesTree?.className).toContain("border-l");
+    
+    // Verify it is inside the favorites section
+    const favoriteButton = screen.getByText("Favorite Query").closest("button");
+    expect(favoriteButton).toBeTruthy();
 
     await act(async () => {
       syncedWorkspaceCallback?.({

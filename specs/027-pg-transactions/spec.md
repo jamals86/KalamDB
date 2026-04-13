@@ -2,7 +2,8 @@
 
 **Feature Branch**: `027-pg-transactions`  
 **Created**: 2026-03-23  
-**Status**: Draft  
+**Last Updated**: 2026-04-08  
+**Status**: Completed (Implemented and validated)
 **Input**: User description: "I want to add transactions to kalamdb it should be similar to postgres transaction, the main cause is to be able to run transactions from pg_kalam to the kalamdb-server"
 
 ## User Scenarios & Testing *(mandatory)*
@@ -120,6 +121,15 @@ Long-running transactions that exceed a configurable time limit are automaticall
 - What happens when the server restarts while transactions are in progress?
 - How does the system behave when a transaction contains only read operations (no writes)?
 - What happens when a transaction buffer grows very large (e.g., millions of rows before COMMIT)?
+- What happens when `COMMIT`, `ROLLBACK`, timeout cleanup, and session/request close race against each other for the same transaction?
+- What happens when a large committed transaction fans out change notifications to thousands of subscribers on one hot table?
+- What happens when a subscriber is still loading its initial snapshot while a committed transaction produces a burst of live changes?
+- What happens when a slow subscriber cannot drain post-commit notifications as fast as the commit path produces them?
+- What happens in cluster mode when the first table touched by a transaction maps to one Raft data group but a later statement targets another?
+- What happens when the leader for a transaction's bound Raft group changes while the transaction is still open?
+- What happens when a client reads from a follower immediately after a successful transaction commit but before that follower has locally applied the committed Raft entry?
+- What happens when the newest committed version of a logical row is newer than the transaction snapshot but an older committed version of that same row is still visible?
+- What happens when simple SQL fast-path DML (`INSERT ... VALUES`, point `UPDATE`, point `DELETE`) is executed inside an explicit transaction and would otherwise bypass staging?
 
 ## Requirements *(mandatory)*
 
@@ -129,7 +139,7 @@ Long-running transactions that exceed a configurable time limit are automaticall
 - **FR-001A**: The KalamDB server's own SQL execution path MUST recognize and execute BEGIN (or START TRANSACTION), COMMIT, and ROLLBACK statements, not only the pg RPC transaction calls.
 - **FR-001B**: A single `/v1/api/sql` request MUST be allowed to contain zero, one, or more sequential explicit transaction blocks.
 - **FR-002**: All DML operations (INSERT, UPDATE, DELETE) executed within an active transaction MUST be buffered and only made durable and visible to other sessions upon COMMIT.
-- **FR-002A**: For this phase, explicit transaction support MUST apply to user tables and shared tables only. Stream tables are out of scope and MUST be rejected with a clear error if used inside an explicit transaction.
+- **FR-002A**: For this phase, explicit transaction support MUST apply to user tables and shared tables only. Stream tables are out of scope and MUST be rejected with a clear error before staging; they MUST NOT appear in the transaction write set, `TransactionCommit` batch, or post-commit fanout/publisher plan.
 - **FR-003**: On ROLLBACK (explicit or implicit via disconnect/timeout), the server MUST discard all buffered writes for that transaction with no side effects.
 - **FR-004**: Within an active transaction, the originating session MUST see its own uncommitted writes when querying (read-your-writes consistency).
 - **FR-005**: Uncommitted writes from one session's transaction MUST NOT be visible to other sessions (session-level isolation).
@@ -139,35 +149,77 @@ Long-running transactions that exceed a configurable time limit are automaticall
 - **FR-009**: The server MUST reject nested BEGIN commands within an active transaction with a clear error message (savepoints are out of scope for this feature).
 - **FR-010**: A COMMIT on an empty transaction (no DML was executed) MUST succeed as a no-op.
 - **FR-011**: A ROLLBACK on an empty or non-existent transaction MUST succeed as a no-op.
-- **FR-012**: The server MUST track active transactions and expose their count and age via system observability (e.g., system table or metrics endpoint).
+- **FR-012**: The server MUST track active transactions and expose them through a `system.transactions` virtual view backed by the current in-memory transaction state, including at least count, age, origin, and owner identifier.
 - **FR-013**: Writes within a transaction MUST apply atomically on COMMIT — either all writes across all affected tables succeed, or none do.
 - **FR-014**: The pg_kalam extension's existing BEGIN/COMMIT/ROLLBACK RPC calls MUST work with the new server-side transaction implementation without changes to the pg_kalam wire protocol.
 - **FR-015**: The server MUST handle concurrent transactions from multiple sessions without data corruption or lost writes.
-- **FR-016**: The implementation MUST include automated tests covering pg RPC transaction lifecycle, KalamDB SQL BEGIN/COMMIT/ROLLBACK execution, rollback-on-error, disconnect/timeout cleanup, isolation, and autocommit regression behavior.
+- **FR-016**: The implementation MUST include automated tests covering pg RPC transaction lifecycle, KalamDB SQL BEGIN/COMMIT/ROLLBACK execution, rollback-on-error, disconnect/timeout cleanup, isolation, autocommit regression behavior, repeated lifecycle race/fault-injection coverage, and live-fanout stress behavior with slow/high-cardinality subscriber sets.
 - **FR-017**: The implementation MUST preserve the current non-transaction execution path so requests that do not use explicit transactions do not pay more than minimal overhead.
 - **FR-018**: The transaction ID returned by `BeginTransaction` MUST remain the canonical identifier for that transaction across pg_kalam, server-side staged mutations, observability, cleanup, and the final durable commit path.
 - **FR-019**: When a pg_kalam session closes with an active transaction, the server MUST automatically abort that same canonical transaction ID and discard all uncommitted staged writes for it.
 - **FR-020**: When a `/v1/api/sql` request ends, the server MUST automatically shut down and roll back every still-open request-scoped transaction created by that request, because request-scoped SQL transactions are not allowed to survive across API calls.
 - **FR-021**: The transaction orchestration layer MUST depend on the server's storage abstraction rather than on RocksDB-specific types, so the implementation can migrate to a different storage engine in the future without changing transaction semantics.
 
+### Transaction Owner Binding Requirements (updated 2026-04-07)
+
+- **FR-022**: Every transaction MUST be owned by exactly one execution owner identifier. For `PgRpc`, this owner is the session_id. For `SqlBatch`, it is a lightweight request-scoped owner identifier. That owner identifier is the correlation key carried through the transaction lifecycle.
+- **FR-023**: Each PostgreSQL backend process × foreign server config pair MUST map to a unique session (format: `pg-<pid>-<config_hash>`). Transactions from different foreign server configs in the same PG backend MUST be independent.
+- **FR-024**: The pg_kalam extension's `fdw_xact` module MUST track active transactions per session_id (not as a single global), enabling multiple concurrent sessions per PG backend when different foreign server configs are used.
+- **FR-025**: When a PostgreSQL backend process exits, the extension MUST close ALL sessions registered for that backend (iterating the RemoteStateRegistry), which triggers server-side transaction rollback for each.
+- **FR-026**: The `system.sessions` virtual view MUST expose transaction state (transaction_id, transaction_state, transaction_has_writes) for active pg sessions only.
+- **FR-027**: The server MUST expose a `system.transactions` virtual view listing all active in-memory transactions across `PgRpc`, `SqlBatch`, and `Internal` origins.
+- **FR-028**: Transactions opened through `/v1/api/sql` MUST appear in `system.transactions` while active, but MUST NOT create rows in `system.sessions`.
+- **FR-029**: `system.transactions` MUST be computed on demand from the in-memory transaction coordinator state only; it MUST NOT persist transaction history, start background polling, or materialize extra storage solely for observability.
+
+### Production Hardening Requirements (added 2026-04-07)
+
+- **FR-030**: The transaction coordinator MUST use typed execution-owner keys internally rather than raw string owner identifiers on the hot path, while still exposing human-readable owner identifiers in APIs and virtual views.
+- **FR-031**: The transaction coordinator MUST maintain explicit lifecycle states that distinguish at least read-only active, write-active, committing, rolling back, timed out, and terminal phases.
+- **FR-032**: `BEGIN` / `START TRANSACTION` MUST remain cheap for read-only and empty transactions; write buffers, overlays, and other heavy staged-write structures MUST be allocated lazily on first write.
+- **FR-033**: Commit, rollback, timeout cleanup, and owner-loss cleanup MUST follow idempotent ordered phases so races between `COMMIT`, `ROLLBACK`, session close, and request-end cleanup cannot leak staged writes or double-release side effects.
+- **FR-034**: Live query notifications, publisher events, and other external side effects produced by committed user/shared-table mutations from an explicit transaction MUST be released only after durable commit succeeds, and MUST NOT hold the transaction coordinator's active-state lock while fanout executes.
+- **FR-035**: Live query fanout for committed transaction changes MUST start from pre-indexed candidate subscription sets keyed at least by table and ownership scope; it MUST NOT scan every active connection for each committed row.
+- **FR-036**: Live query fanout MUST enforce bounded per-connection and per-subscription buffering for slow consumers, with deterministic drop or disconnect behavior rather than unbounded backlog growth.
+- **FR-037**: During fanout, payload materialization and serialization work MUST be shared across subscribers with identical projection and wire-format requirements whenever possible.
+
+### Raft / Cluster Alignment Requirements (added 2026-04-07)
+
+- **FR-038**: When explicit transactions are enabled in cluster mode, a transaction MUST bind to exactly one data Raft group for its lifetime. The first transactional table access may establish that binding, but once established it MUST NOT move to another group.
+- **FR-039**: In cluster mode, any explicit transaction that attempts to read or write a table mapped to a different data Raft group than the bound group MUST be rejected with a clear error in this phase.
+- **FR-040**: In cluster mode, open transaction state and staged writes MUST remain leader-local until `COMMIT`; they MUST NOT be treated as durable or failover-safe before the final `TransactionCommit` Raft proposal succeeds.
+- **FR-041**: If the leader for the bound Raft group changes while an explicit transaction is still open, the transaction MUST be aborted and all uncommitted staged writes discarded. The client MUST retry from a new transaction.
+- **FR-042**: Successful transaction commit in cluster mode MUST continue to follow normal Raft semantics: success is returned after quorum replication and leader apply of the final commit entry, not after every follower has applied it locally.
+
+### Visibility and Concurrency Requirements (added 2026-04-07)
+
+- **FR-043**: Every committed user-table and shared-table row version MUST carry a persisted hidden commit-order marker (for example `_commit_seq`) in both hot and cold storage representations so snapshot visibility can be evaluated without consulting a separate per-row side table.
+- **FR-044**: Snapshot visibility MUST resolve the latest visible committed version for each logical row using `commit_seq <= snapshot_commit_seq`, with `_seq` used only as a deterministic tie-break within the same commit boundary. The system MUST NOT resolve `MAX(_seq)` first and then post-filter by snapshot.
+- **FR-045**: Autocommit writes and explicit-transaction commits MUST obtain their commit-order values from the same durable apply-path source so `snapshot_commit_seq` is globally ordered across both execution modes and remains monotonic after restart.
+- **FR-046**: The transaction implementation MUST avoid holding coordinator-wide locks, map guards, or equivalent shared state across awaited Raft writes, storage I/O, file cleanup, or live fanout. Timeout enforcement MUST use bounded shared background work rather than one timer task per active transaction.
+
 ### Key Entities
 
-- **Transaction**: Represents an active unit of work within a session. Has a lifecycle (active → committed or aborted), a unique identifier, a start timestamp, and an association with a session. Contains a buffer of uncommitted write operations.
-- **Canonical Transaction ID**: The stable transaction identifier created at BEGIN and preserved across pg_kalam, server session state, staged mutations, observability, and the final durable commit batch.
-- **Session**: An authenticated client connection (HTTP session, WebSocket, or pg_kalam backend). Holds at most one active transaction at a time. Responsible for transaction lifecycle management.
+- **Session**: A long-lived transport connection tracked by the server, currently the pg_kalam gRPC session model. Each pg session is uniquely identified by a config-scoped session_id (format `pg-<pid>-<config_hash>`). `system.sessions` remains focused on these live pg sessions and their current transaction metadata.
+- **Execution Owner ID**: The owner identifier for a transaction. For `PgRpc`, this is the pg session_id. For `SqlBatch`, this is a lightweight request-scoped identifier such as `sql-req-<request_id>`. The owner ID is carried through the transaction lifecycle without requiring every origin to create a `system.sessions` row.
+- **Transaction**: Represents an active unit of work within one execution owner context. Has a lifecycle (active → committed or aborted), a unique identifier, a start timestamp, and an association with its owner ID. Contains a buffer of uncommitted write operations.
+- **Canonical Transaction ID**: The stable transaction identifier created at BEGIN and preserved across pg_kalam, SQL batch execution, staged mutations, observability, and the final durable commit batch. Format: `tx-{owner_id}-{counter}`.
 - **Write Operation**: An individual DML operation (insert, update, or delete) captured within a transaction's buffer. Includes the target table, operation type, and row data.
-- **Transaction Snapshot**: A point-in-time view of committed data established when a transaction begins. Used to determine which committed rows are visible to the transaction.
+- **Transaction Snapshot**: A point-in-time view of committed data established when a transaction begins. Uses a global `commit_seq` counter (not per-row `_seq`). Used to determine which committed rows are visible to the transaction.
+- **Committed Version Visibility Marker**: Hidden system metadata stored with each committed user/shared row version (for example `_commit_seq`). Used to choose the newest committed version visible to a given snapshot before applying tombstone rules.
+- **Transaction Raft Binding**: In cluster mode, the leader/group affinity for an explicit transaction. A transaction may begin unbound, but the first table access pins it to one data Raft group leader until commit, rollback, or abort.
 
 ## Assumptions
 
 - **Isolation Level**: The initial implementation will target Read Committed or Snapshot Isolation semantics (each query within a transaction sees the latest committed data plus its own writes). Serializable isolation is out of scope.
 - **Atomic Commit Primitive**: Transaction commits will rely on the storage layer's atomic commit primitive for the final durable apply step. Rollback before commit is achieved by discarding the staged write set rather than undoing partially applied writes.
-- **Single-Node Focus**: This feature targets single-node KalamDB deployments. Distributed transactions across Raft groups are a separate future feature.
+- **Single-Node Focus**: This feature targets single-node KalamDB deployments for GA. Any later cluster-mode enablement before a dedicated distributed transaction design exists is limited to one data Raft group with leader-local open state and abort-on-failover behavior.
 - **Table Scope**: Transactional support in this phase is limited to user and shared tables. Stream tables remain non-transactional until a future design defines their transactional model.
 - **No Savepoints**: Nested transactions and savepoints (SAVEPOINT / RELEASE / ROLLBACK TO) are explicitly out of scope for this feature.
 - **No DDL in Transactions**: DDL statements (CREATE TABLE, ALTER TABLE, DROP TABLE) within a transaction are out of scope. DDL continues to execute with autocommit semantics.
 - **Transaction Timeout Default**: The default transaction timeout will be 5 minutes, configurable via server settings. This is a reasonable default for interactive workloads while preventing resource leaks.
 - **Write Buffer Size Limit**: The server will enforce a maximum write buffer size per transaction to prevent memory exhaustion. A reasonable default is 100MB. Transactions exceeding this limit are aborted with an error.
+- **SQL Request Ownership**: `/v1/api/sql` explicit transactions use a lightweight request-scoped owner identifier only when `BEGIN` is encountered. They do not populate the pg `SessionRegistry` or `system.sessions`.
+- **Active-Only Transaction View**: `system.transactions` is an active-only virtual view computed from in-memory handles. It is not a persisted audit trail and does not retain committed or rolled-back rows after cleanup.
 
 ## Success Criteria *(mandatory)*
 
@@ -186,3 +238,13 @@ Long-running transactions that exceed a configurable time limit are automaticall
 - **SC-011**: In pg_kalam transaction tests, the same transaction ID is observable from `BeginTransaction` through commit or rollback handling with 100% consistency.
 - **SC-012**: Automated tests validate that a single `/v1/api/sql` request can contain multiple sequential transaction blocks and that any still-open blocks are rolled back automatically when the request terminates.
 - **SC-013**: Automated tests verify that explicit transactions succeed for user/shared tables and are rejected cleanly for stream tables.
+- **SC-014**: Each PG backend using multiple foreign server configs maintains independent sessions and transactions — verified by integration test showing config A's transaction does not interfere with config B's.
+- **SC-015**: The `system.sessions` view correctly shows transaction_id, transaction_state, and transaction_has_writes for active pg sessions only.
+- **SC-016**: Automated tests validate that active transactions from both pg_kalam and `/v1/api/sql` appear in `system.transactions` while active and disappear immediately after commit, rollback, timeout, or request-end cleanup.
+- **SC-017**: Querying `system.transactions` with 100 active in-memory transactions completes from a single on-demand memory snapshot without requiring persistent storage writes or background sampling.
+- **SC-018**: Repeating an empty `BEGIN; ROLLBACK;` cycle 10,000 times does not produce unbounded memory growth and keeps localhost roundtrip latency within the existing transaction budget.
+- **SC-019**: A hot-table fanout stress test with 10,000 active subscriptions preserves per-table notification order for delivered events and keeps memory bounded by the configured notification and buffering caps.
+- **SC-020**: Repeated race/fault-injection tests covering `COMMIT` vs `ROLLBACK`, timeout, session close, and request-end cleanup finish with zero leaked active transactions and zero orphaned staged write sets after each run.
+- **SC-021**: In cluster mode, a single-group explicit transaction remains leader-affine from first table access through commit, and operations reaching a follower/frontdoor are forwarded or rejected without duplicate staging or partial durable writes.
+- **SC-022**: A leader change during an open explicit transaction results in an aborted transaction with zero leaked active coordinator state and zero partial committed rows.
+- **SC-023**: Snapshot-isolation tests where one logical row has multiple committed versions across the snapshot boundary always return the newest version with `commit_seq <= snapshot_commit_seq`; they never return a newer post-snapshot version and never report a false "row missing" result caused by resolving only on `_seq`.

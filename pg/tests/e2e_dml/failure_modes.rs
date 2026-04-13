@@ -1,6 +1,6 @@
 use super::common::{
-    count_rows, create_user_foreign_table, postgres_error_text, set_user_id, unique_name,
-    wait_for_table_queryable, TestEnv,
+    await_user_shard_leader, count_rows, create_user_kalam_table, kalamdb_grpc_target,
+    postgres_error_text, retry_transient_user_leader_error, set_user_id, unique_name, TestEnv,
 };
 
 #[tokio::test]
@@ -11,22 +11,21 @@ async fn e2e_duplicate_primary_key_insert_fails() {
     let table = unique_name("profiles");
     let qualified_table = format!("e2e.{table}");
 
-    create_user_foreign_table(
+    create_user_kalam_table(
         &pg,
         &table,
-        "id TEXT, name TEXT, age INTEGER, _userid TEXT, _seq BIGINT, _deleted BOOLEAN",
+        "id TEXT, name TEXT, age INTEGER",
     )
     .await;
     set_user_id(&pg, "dup-user").await;
+    await_user_shard_leader("dup-user").await;
 
-    super::common::delete_all(&pg, &qualified_table, "id").await;
-
-    pg.execute(
-        &format!("INSERT INTO {qualified_table} (id, name, age) VALUES ($1, $2, $3)"),
-        &[&"dup-1", &"Alice", &30_i32],
-    )
-    .await
-    .expect("first insert should succeed");
+    let first_insert_sql =
+        format!("INSERT INTO {qualified_table} (id, name, age) VALUES ('dup-1', 'Alice', 30)");
+    retry_transient_user_leader_error("first duplicate test insert", || {
+        pg.batch_execute(&first_insert_sql)
+    })
+    .await;
 
     let err = pg
         .execute(
@@ -56,24 +55,23 @@ async fn e2e_insert_without_backing_kalamdb_table_fails() {
     let pg = env.pg_connect().await;
     let table = unique_name("missing_profiles");
 
-    pg.batch_execute(&format!(
-        "CREATE SCHEMA IF NOT EXISTS app; \
-             DROP FOREIGN TABLE IF EXISTS app.{table}; \
-             CREATE FOREIGN TABLE app.{table} ( \
-                 id TEXT, \
-                 name TEXT, \
-                 age INTEGER, \
-                 _userid TEXT, \
-                 _seq BIGINT, \
-                 _deleted BOOLEAN \
-             ) SERVER kalam_server \
-             OPTIONS (namespace 'app', \"table\" '{table}', table_type 'user');"
-    ))
+    let create_sql = format!(
+        "CREATE SCHEMA IF NOT EXISTS app;
+         DROP FOREIGN TABLE IF EXISTS app.{table};
+         CREATE TABLE app.{table} (
+             id TEXT,
+             name TEXT,
+             age INTEGER
+         ) USING kalamdb WITH (type = 'user');"
+    );
+
+    pg.batch_execute(&create_sql)
     .await
-    .expect("create local-only foreign table");
+    .expect("create local-only Kalam table");
     env.kalamdb_sql(&format!("DROP USER TABLE IF EXISTS app.{table}")).await;
 
     set_user_id(&pg, "user-1").await;
+    await_user_shard_leader("user-1").await;
 
     let err = pg
         .execute(
@@ -99,21 +97,20 @@ async fn e2e_user_table_scan_without_user_id_fails_clearly() {
     let table = unique_name("profiles_missing_uid");
     let writer = env.pg_connect().await;
 
-    create_user_foreign_table(
+    create_user_kalam_table(
         &writer,
         &table,
-        "id TEXT, name TEXT, age INTEGER, _userid TEXT, _seq BIGINT, _deleted BOOLEAN",
+        "id TEXT, name TEXT, age INTEGER",
     )
     .await;
     set_user_id(&writer, "scan-user").await;
-    wait_for_table_queryable(&writer, &format!("e2e.{table}")).await;
-    writer
-        .execute(
-            &format!("INSERT INTO e2e.{table} (id, name, age) VALUES ($1, $2, $3)"),
-            &[&"scan-1", &"Alice", &30_i32],
-        )
-        .await
-        .expect("seed user table row");
+    await_user_shard_leader("scan-user").await;
+    let seed_insert_sql =
+        format!("INSERT INTO e2e.{table} (id, name, age) VALUES ('scan-1', 'Alice', 30)");
+    retry_transient_user_leader_error("seed user table row", || {
+        writer.batch_execute(&seed_insert_sql)
+    })
+    .await;
 
     let reader = env.pg_connect().await;
 
@@ -167,6 +164,56 @@ async fn e2e_offline_kalamdb_server_reports_connection_error() {
             || message.contains("could not connect")
             || message.contains("unreachable"),
         "offline server error should be user-facing: {message}"
+    );
+
+    pg.batch_execute(&format!("DROP FOREIGN TABLE IF EXISTS e2e.{table_name};"))
+        .await
+        .ok();
+    pg.batch_execute(&format!("DROP SERVER IF EXISTS {server_name} CASCADE;"))
+        .await
+        .ok();
+}
+
+#[tokio::test]
+#[ntest::timeout(7000)]
+async fn e2e_invalid_auth_header_metadata_fails_clearly() {
+    let env = TestEnv::global().await;
+    let pg = env.pg_connect().await;
+    let server_name = unique_name("invalid_auth_server");
+    let table_name = unique_name("invalid_auth_items");
+    let (grpc_host, grpc_port) = kalamdb_grpc_target();
+
+    pg.batch_execute("CREATE SCHEMA IF NOT EXISTS e2e;")
+        .await
+        .expect("create e2e schema");
+    pg.batch_execute(&format!(
+        "CREATE SERVER {server_name}
+            FOREIGN DATA WRAPPER pg_kalam
+            OPTIONS (
+                host '{grpc_host}',
+                port '{grpc_port}',
+                auth_header E'Bearer broken\\nvalue'
+            );"
+    ))
+    .await
+    .expect("create foreign server with invalid auth metadata");
+
+    let err = pg
+        .batch_execute(&format!(
+            "CREATE FOREIGN TABLE e2e.{table_name} (
+                id TEXT,
+                title TEXT,
+                value INTEGER
+             ) SERVER {server_name}
+             OPTIONS (namespace 'e2e', \"table\" '{table_name}', table_type 'shared');"
+        ))
+        .await
+        .expect_err("invalid auth_header metadata should fail before creating the foreign table");
+
+    let message = postgres_error_text(&err);
+    assert!(
+        message.contains("invalid auth_header") || message.contains("metadata value"),
+        "unexpected invalid auth_header error: {message}"
     );
 
     pg.batch_execute(&format!("DROP FOREIGN TABLE IF EXISTS e2e.{table_name};"))

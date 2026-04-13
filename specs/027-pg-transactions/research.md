@@ -1,9 +1,11 @@
 # Research: PostgreSQL-Style Transactions for KalamDB
 
+**Last Updated**: 2026-04-07 (Decisions 18–41 added after session foundation, production-hardening, live fanout review, Raft alignment pass, and implementation-surface review)
+
 ## Decision 1: Use snapshot isolation for explicit transactions with a global commit sequence counter
 
 - Decision: Explicit `BEGIN` transactions capture a snapshot boundary at transaction start using a global monotonic `commit_seq` counter (not the per-row `_seq` Snowflake ID). The transaction reads from committed data with `commit_seq <= snapshot_commit_seq` plus the transaction's own staged writes.
-- Rationale: The feature spec requires read-your-writes and requires that a transaction not observe rows committed by another session after the first transaction has already started. Snapshot isolation satisfies both. However, the per-row `_seq` column (Snowflake ID from `SystemColumnsService`) is assigned at write time, not commit time — a concurrent transaction may receive a higher `_seq` but commit earlier. Using `_seq` as the snapshot boundary would produce incorrect visibility. A dedicated `commit_seq` counter, incremented by `TransactionCoordinator` on each successful commit, is the correct MVCC boundary. Each committed write set is tagged with its `commit_seq`, and snapshots read "all data with `commit_seq <= my_snapshot`".
+- Rationale: The feature spec requires read-your-writes and requires that a transaction not observe rows committed by another session after the first transaction has already started. Snapshot isolation satisfies both. However, the per-row `_seq` column (Snowflake ID from `SystemColumnsService`) is assigned at write time, not commit time — a concurrent transaction may receive a higher `_seq` but commit earlier. Using `_seq` as the snapshot boundary would produce incorrect visibility. A dedicated `commit_seq` source in the durable apply path is the correct MVCC boundary. Each committed write set is tagged with its `commit_seq`, and snapshots read "all data with `commit_seq <= my_snapshot`".
 - Alternatives considered:
   - Read committed: simpler, but it fails the spec's concurrent-session acceptance scenario where a started transaction must not see later commits from another session.
   - Serializable: stronger, but materially more complex and out of scope for the first single-node implementation.
@@ -172,3 +174,262 @@
 - Alternatives considered:
   - Use `caller_kind` everywhere: rejected because `origin` is more semantic and self-describing.
   - Use raw strings: rejected because type-safe enums are a core coding principle.
+
+## Decision 18: Config-scoped sessions as the transaction anchor (IMPLEMENTED ✅)
+
+- Decision: Each PostgreSQL backend process × foreign server config pair gets a unique session, identified by `pg-<pid>-<config_hash_hex>`. For pg-origin transactions, the session_id is the correlation key that links the pg extension state, the gRPC transport, and the server-side SessionRegistry + TransactionCoordinator.
+- Rationale: Before this change, the pg extension used a single `OnceLock<RemoteExtensionState>` per backend process, meaning only one foreign server config could be used per PG backend, and a single global session covered all FDW operations. If a PG backend accessed two different KalamDB servers (or different namespaces via different foreign server configs), only the first config's connection would be used. By refactoring to a `RemoteStateRegistry` keyed by `RemoteServerConfig` (with `Hash` derived), each config gets its own `RemoteExtensionState` with a unique session_id, gRPC channel, and transaction tracking. This ensures that transactions from different configs are fully independent and observable as separate sessions in `system.sessions`.
+- Implementation details:
+  - `RemoteStateRegistry<T>` with dual indexing: `by_config` (HashMap<RemoteServerConfig, Arc<T>>) and `by_session_id` (HashMap<String, Arc<T>>).
+  - Session ID generation: `format!("pg-{}-{:016x}", std::process::id(), session_suffix(config))` where `session_suffix` uses `DefaultHasher` on the config.
+  - `RemoteServerConfig` derives `Hash` (via `config.rs` change).
+  - Process exit handler iterates all registered states, closing each session.
+- Alternatives considered:
+  - Single global session per process (status quo): rejected because it broke multi-config scenarios and made session observability misleading.
+  - Session per table: rejected because overly granular; one session per config is the right granularity matching the gRPC channel reuse model.
+  - Random session IDs: rejected because the `pid-hash` format provides deterministic, debuggable session identifiers.
+
+## Decision 19: Per-session transaction tracking in fdw_xact (IMPLEMENTED ✅)
+
+- Decision: The `fdw_xact::CURRENT_TX` static is a `LazyLock<Mutex<HashMap<String, ActiveTransaction>>>` keyed by session_id, not a single `Option<ActiveTransaction>`. The PostgreSQL xact callback iterates all active transactions at commit/abort time, resolving the remote state per-session via `get_remote_extension_state_for_session()`.
+- Rationale: With config-scoped sessions (Decision 18), a single PG backend may have multiple active sessions with independent transactions. If `CURRENT_TX` were a single `Option`, committing/rolling back would only handle one session's transaction, leaving others orphaned. The HashMap ensures that each session's transaction is independently tracked and finalized when PostgreSQL commits or aborts.
+- Implementation details:
+  - `ensure_transaction(session_id)` checks `CURRENT_TX[session_id]` first; if absent, begins a new transaction via `get_remote_extension_state_for_session(session_id)`.
+  - `xact_callback()` at COMMIT/ABORT uses `std::mem::take()` to drain all active transactions, then iterates each, resolving state per session_id.
+  - Write buffer flush at PRE_COMMIT and discard at ABORT happen before transaction iteration.
+- Alternatives considered:
+  - Keep single `Option<ActiveTransaction>`: rejected because it breaks multi-config scenarios.
+  - One xact callback per session: rejected because PostgreSQL's `RegisterXactCallback` doesn't support per-foreign-server callbacks — the callback is process-global.
+
+## Decision 20: Session close MUST rollback active transactions before removing session state
+
+- Decision: The `close_session` RPC handler and any session cleanup path MUST call `TransactionCoordinator::rollback(session_id)` before removing the session from `SessionRegistry`. This prevents orphaned staged writes.
+- Rationale: The current `close_session` implementation simply calls `self.session_registry.remove(session_id)` without checking for an active transaction. Once the TransactionCoordinator is implemented (Phase 2+), this gap would cause staged mutations to be leaked in memory with no cleanup path. The fix is straightforward: before removing the session, check if `session.transaction_id` is present and active, and if so, call the coordinator's rollback method.
+- Implementation: Tracked as T046/T047 in Phase 6 (US5). Must be implemented when TransactionCoordinator is available.
+- Alternatives considered:
+  - Rely on timeout cleanup only: rejected because timeouts can be long (default 5 minutes) and the session is already gone — there's no reason to keep the staged writes around.
+  - Auto-commit on close: rejected because it violates PostgreSQL semantics (PG aborts, never auto-commits, on disconnect).
+
+## Decision 21: Expose active transactions through a dedicated lightweight `system.transactions` virtual view
+
+- Decision: Add a new `system.transactions` virtual view that snapshots the `TransactionCoordinator`'s in-memory active transaction handles on demand. Do not route active transaction observability through `system.stats`, persisted system tables, or a background collector.
+- Rationale: The existing codebase already uses lightweight virtual views such as `system.sessions`, `system.live`, and `system.stats`, all computed at query time from in-memory state with memoized Arrow schemas. Active transactions are already held in memory by the future `TransactionCoordinator`, so the cheapest correct observability path is to expose exactly that in-memory state as a dedicated view. This satisfies the need to inspect both pg and `/v1/api/sql` transactions without adding write amplification, periodic sampling, or storage pressure.
+- Implementation details:
+  - Add `SystemTable::Transactions` in `kalamdb-commons/src/system_tables.rs`.
+  - Add `TransactionsView` in `backend/crates/kalamdb-views/src/transactions.rs` following the same pattern as `SessionsView`.
+  - Wire a callback from `TransactionCoordinator::active_metrics()` through `system_schema_provider.rs`.
+  - Memoize the Arrow schema with `OnceLock` and compute rows only when queried.
+- Alternatives considered:
+  - Extend `system.sessions` to include SQL batch rows: rejected because `system.sessions` is transport-session oriented and SQL batch requests are not long-lived pg sessions.
+  - Expose only metrics counters: rejected because operators need per-transaction visibility, not just aggregates.
+  - Persist active transactions in a system table: rejected because it adds extra writes and cleanup work for purely in-memory state.
+
+## Decision 22: `/v1/api/sql` explicit transactions use lightweight request owner IDs and appear only in `system.transactions`
+
+- Decision: When `/v1/api/sql` executes an explicit `BEGIN`, the server creates a lightweight request owner identifier, for example `sql-req-<request_id>`, and uses it as the `TransactionHandle.session_id` value for `SqlBatch` origin. These transactions appear in `system.transactions` while active but do not create entries in `SessionRegistry` or `system.sessions`.
+- Rationale: SQL batch transactions need the same coordinator and observability path as pg transactions, but they do not correspond to long-lived transport sessions. Reusing the same `session_id` field in `TransactionHandle` as a generic owner ID keeps the coordinator path simple while avoiding the overhead and semantic confusion of populating pg session state for every HTTP request.
+- Alternatives considered:
+  - Create full `SessionRegistry` rows for every SQL request: rejected because it adds churn and makes `system.sessions` misleading.
+  - Add a separate owner abstraction throughout the entire stack: rejected for now because a lightweight request owner ID achieves the same goal with less code and less hot-path complexity.
+
+## Decision 23: Use typed compact execution-owner keys internally and derive human-readable owner labels only at boundaries
+
+- Decision: Inside `TransactionCoordinator`, do not use raw `String` owner identifiers on the hot path. Instead, represent ownership with a typed compact `ExecutionOwnerKey` and derive a human-readable owner label only for RPC responses, logs, and virtual views.
+- Rationale: PostgreSQL keeps hot transaction state keyed by compact process/XID structures, and SQLite keeps pager/connection ownership inside typed handles rather than string IDs. KalamDB already needs owner identifiers in multiple paths (`PgRpc`, `SqlBatch`, future `Internal` work). Keeping those keys as raw strings in `DashMap` lookups, transaction state, and timeout sweeps adds hashing and allocation pressure to a path that should stay cheap. The external string form still matters for compatibility and observability, but it should be a boundary concern, not the coordinator's internal identity.
+- Alternatives considered:
+  - Keep string owner IDs everywhere: rejected because it pushes formatting and string hashing into the hot path and couples internal data structures to transport-specific labels.
+  - Create separate coordinators for pg and SQL batch: rejected because it duplicates lifecycle logic and makes cross-origin observability harder.
+
+## Decision 24: Split hot transaction metadata from cold staged-write state and allocate the write set lazily
+
+- Decision: Store transaction hot metadata (`transaction_id`, owner key, state, snapshot, timestamps, counters) separately from the cold staged payload (`Vec<StagedMutation>`, overlay indexes, deferred side effects). `BEGIN` allocates only the hot metadata entry. The write set is allocated on the first staged write.
+- Rationale: PostgreSQL separates transaction metadata from `MemoryContext`-owned bulk allocations, and SQLite keeps autocommit/read-only paths cheap until a writer lock is needed. KalamDB needs the same property. Read-only transactions, empty transactions, and transactions that time out before their first write should not pay for an overlay map or staged mutation buffer they never use. This also makes `system.transactions` snapshots cheaper because the view reads only hot metadata.
+- Alternatives considered:
+  - Keep all staged mutations inline in `TransactionHandle`: rejected because every active transaction would carry cold payload fields even when no write occurs.
+  - Pre-build overlay structures at `BEGIN`: rejected because it makes the empty/read-only path too expensive.
+
+## Decision 25: Use an explicit lifecycle state machine that distinguishes read-only, write-active, commit, rollback, timeout, and abort paths
+
+- Decision: Expand the internal transaction lifecycle beyond `Active`/`Committed`/`RolledBack`. The coordinator should distinguish at least `OpenRead`, `OpenWrite`, `Committing`, `RollingBack`, `Committed`, `RolledBack`, `TimedOut`, and `Aborted`.
+- Rationale: PostgreSQL's `TransState`/`TBlockState` separation and SQLite's pager/VDBE states both exist for one reason: cleanup and failure handling become unsafe when all in-flight work is compressed into a single "active" bucket. KalamDB needs to reason about races such as `CommitTransaction` vs `CloseSession`, timeout vs explicit rollback, and request-end cleanup vs SQL `COMMIT`. These paths are only deterministic if the coordinator can see which phase the transaction is already in.
+- Alternatives considered:
+  - Reuse the current 3-state pg enum: rejected because it cannot distinguish in-flight commit/rollback from ordinary active state.
+  - Track booleans (`has_writes`, `is_committing`, `timed_out`) instead of a state machine: rejected because combinations become harder to validate and test.
+
+## Decision 26: Commit and rollback must run through ordered cleanup phases
+
+- Decision: Model transaction shutdown as ordered phases instead of one monolithic "remove from map" operation.
+- Commit phases:
+  1. Validate ownership and move the transaction to `Committing` so no new writes enter.
+  2. Perform the durable apply step and collect deferred side effects.
+  3. Advance `commit_seq`, detach the owner from the active-owner index, and mark the transaction committed.
+  4. Release post-commit side effects (notifications, publisher events, manifest/file updates) outside the coordinator lock.
+  5. Drop the cold write set and final metadata.
+- Rollback phases:
+  1. Move the transaction to `RollingBack` / `TimedOut` / `Aborted` depending on cause.
+  2. Detach the owner from the active-owner index so no new operations resolve to it.
+  3. Drop the cold write set and overlay state.
+  4. Clear transport/request bookkeeping and remove the hot metadata entry.
+- Rationale: PostgreSQL separates commit durability, proc-array visibility removal, and resource-owner release; SQLite separates commit phase one/two and statement-vs-transaction rollback. KalamDB needs the same discipline so that retries, disconnect cleanup, and timeout sweeps cannot double-release work or leak staged buffers.
+- Alternatives considered:
+  - Single-step `DashMap::remove()` cleanup: rejected because it cannot safely order visibility removal against durable apply and side-effect release.
+  - Auto-commit on close to simplify cleanup: rejected because it violates PostgreSQL-compatible semantics.
+
+## Decision 27: Release transaction side effects through a post-commit dispatch plan
+
+- Decision: Transaction commit produces a `CommitSideEffectPlan` (notifications, publisher events, manifest/file updates, other deferred outputs) during durable apply, but the plan is executed only after commit durability succeeds and after the coordinator has sealed the transaction. The open transaction keeps one source of truth for changes in `TransactionWriteSet`; the side-effect plan is derived once from that write set instead of maintaining separate per-feature queues while the transaction is open.
+- Rationale: PostgreSQL keeps side-effect release ordered after commit visibility transitions, and SQLite avoids exposing committed state before commit phases complete. KalamDB's explicit transaction design must do the same: live query notifications, topic publishing, and file/manifest cleanup cannot fire while the transaction is still logically tentative. Deriving one compact commit-local plan from the staged write set is easier to debug and cheaper than duplicating notification/publisher state for every mutation during the full transaction lifetime. Stream tables remain excluded entirely because they are not part of the persisted explicit-transaction model.
+- Alternatives considered:
+  - Emit notifications while replaying staged mutations inside the commit loop: rejected because a later commit failure would have leaked externally visible effects.
+  - Re-run the full DML side-effect path after commit by scanning storage: rejected because it duplicates work and delays notifications unnecessarily.
+
+## Decision 28: Keep live query fanout node-local and candidate-scoped; do not persist a subscription catalog like Supabase Realtime
+
+- Decision: Keep KalamDB live query subscription routing in memory, keyed by table and ownership scope (`user_id` + `table_id` for user tables, `table_id` for shared tables). Do not add a persistent subscription table or cross-node fanout layer solely to support transaction commit notifications.
+- Rationale: Supabase Realtime persists subscriptions in `realtime.subscription` because it polls PostgreSQL WAL centrally, applies RLS there, and then fans out to Phoenix channels across nodes. KalamDB is different: the write path already applies locally on each node through the provider stack and already has an in-memory `ConnectionsManager` index. Persisting ephemeral live subscriptions would add write amplification and cleanup complexity without giving KalamDB the same benefit Supabase gets. The useful lesson is not the persistent table; it is the narrower candidate set before transport fanout.
+- Alternatives considered:
+  - Add a persistent subscription system table: rejected because active live subscriptions are already intentionally in-memory (`system.live`) and query-time.
+  - Broadcast change notifications across nodes just to locate subscribers: rejected because Raft apply already happens locally and each node can notify its own subscribers after apply.
+
+## Decision 29: Reuse payload work by projection and serialization group, and keep slow-subscriber buffers bounded
+
+- Decision: Continue grouping candidate subscribers by shared projection requirements, and extend the design to treat wire-format/serialization requirements as part of the same cache key where needed. Keep bounded per-worker queues, per-connection channels, and per-subscription initial-load buffers; do not allow unbounded lagging-client growth.
+- Rationale: Supabase Realtime's `MessageDispatcher` uses Phoenix fastlane metadata so one encoded payload can be reused across many recipients. KalamDB already applies a similar idea one level earlier by caching `SharedChangePayload` per projection group inside `notification.rs`, and it already bounds notification channels and initial-load buffers. The production-ready design should preserve those bounds and make projection/serialization reuse explicit in the transaction commit path so high-fanout commits do not serialize the same row N times.
+- Alternatives considered:
+  - Build and serialize one payload per subscriber: rejected because it scales linearly with fanout even when every subscriber requested the same shape.
+  - Use unbounded channels to avoid drops: rejected because it converts slow subscribers into a memory leak.
+
+## Decision 30: Require race, fault-injection, and hot-table fanout coverage before calling the design production-ready
+
+- Decision: The implementation plan must include repeated race tests for `COMMIT` vs `ROLLBACK`, session close, timeout, and request-end cleanup, plus live fanout stress cases with hot tables, slow subscribers, and large subscriber counts.
+- Rationale: PostgreSQL and SQLite earned their stability through aggressive lifecycle hardening, not just API surface design. Supabase Realtime's production code also carries explicit rate limits, heap caps, subscription cleanup, and throughput tests. KalamDB is not production-ready until it proves that the coordinator never leaks active state and the live fanout path stays bounded under skewed workloads.
+- Alternatives considered:
+  - Rely on happy-path integration tests only: rejected because the risky behavior lives in races and overload, not in single-transaction correctness.
+
+## Decision 31: In Raft cluster mode, keep open explicit transactions leader-local until commit
+
+- Decision: If explicit transactions are enabled in Raft cluster mode before a distributed transaction protocol exists, the open transaction handle, overlay, and staged write set remain leader-local in memory until `COMMIT`. They are not replicated to followers before commit. In cluster mode, a transaction may begin unbound, but its first table access must bind it to one data-group leader for the remainder of its lifetime.
+- Rationale: KalamDB already routes writes to Raft leaders and returns success after quorum replication plus leader apply; followers apply later. The transaction overlay also exists only in coordinator memory. Replicating every staged mutation before commit would effectively introduce replicated intents, recovery cleanup, and transaction-record semantics similar to CockroachDB or YugabyteDB distributed transactions, which is out of scope here. PostgreSQL primary/standby behaves similarly at a higher level: the primary owns the open transaction, standbys replay WAL, and uncommitted transactions do not survive failover.
+- Alternatives considered:
+  - Allow any follower to host the open transaction state and only forward `COMMIT`: rejected because it splits strong-read ownership from the node that can actually commit and makes failover semantics even harder to reason about.
+  - Replicate staged writes incrementally before `COMMIT`: rejected because it introduces distributed-intent cleanup and recovery complexity far beyond the current design.
+  - Collapse to etcd-style single-request transactions only: rejected because pg_kalam requires session-spanning `BEGIN`/`COMMIT` semantics.
+
+## Decision 32: Reject cross-Raft-group explicit transactions in cluster mode for this phase
+
+- Decision: In cluster mode, explicit transactions may touch only one data Raft group for their full lifetime. If a later read or write resolves to a different `GroupId`, the transaction is rejected with a clear error instead of attempting a partial or best-effort commit.
+- Rationale: KalamDB routes user and shared data deterministically to different Raft groups. Atomic commit across groups would require a real distributed transaction protocol such as two-phase commit with a replicated transaction record, prepared intents, and crash recovery. PostgreSQL physical replication is not an example of this problem because it has one writable primary, not multiple independently led shards. CockroachDB and YugabyteDB solve the cross-range case with additional replicated transaction metadata beyond a plain Raft proposal. KalamDB should reject the unsupported case rather than fake atomicity.
+- Alternatives considered:
+  - Replay one transaction as multiple per-group commits: rejected because a crash or leader change between groups would violate atomicity.
+  - Silently auto-commit per group: rejected because it breaks the user's PostgreSQL-compatible expectations.
+
+## Decision 33: Leader change aborts any still-open explicit transaction
+
+- Decision: If the leader for the transaction's bound data group changes before `COMMIT` or `ROLLBACK` finishes, the transaction is aborted and the client must retry from a new transaction.
+- Rationale: Open transaction state is leader-local and not replicated before commit. KalamDB's current leader-forwarding logic can retry proposals against a new leader, but that only helps for requests that have not accumulated private in-memory transaction state. Once a transaction has an overlay and staged writes, there is nothing durable to migrate. PostgreSQL failover also discards uncommitted transactions; only committed WAL survives promotion.
+- Alternatives considered:
+  - Migrate the in-memory transaction to the new leader: rejected because there is no replicated transaction record, overlay snapshot, or lock/intent state to transfer safely.
+  - Keep the old leader serving the transaction after step-down: rejected because followers must not keep accepting writes once leadership is lost.
+
+## Decision 34: Active explicit transactions require leader-affine reads and writes
+
+- Decision: While an explicit transaction is active in cluster mode, all transactional reads, writes, and `COMMIT`/`ROLLBACK` operations must execute on, or be forwarded to, the transaction's bound leader. Follower-local reads are out of scope for active transactions.
+- Rationale: Read-your-writes depends on the leader-local overlay. Followers may lag behind leader apply, and they never own the uncommitted overlay state. CockroachDB and YugabyteDB both colocate strong reads with the leaseholder/leader by default and treat follower reads as a separate stale/safe-timestamp feature. KalamDB should follow the same rule.
+- Alternatives considered:
+  - Serve active-transaction reads from followers after a local apply wait: rejected because followers still lack the uncommitted overlay and may not even know the transaction exists.
+  - Broadcast the overlay to followers for each read: rejected because it is effectively a distributed transaction cache.
+
+## Decision 35: Keep commit acknowledgment at quorum replication plus leader apply, not "all followers applied"
+
+- Decision: Successful explicit-transaction `COMMIT` in Raft mode continues to mean normal Raft success: the `TransactionCommit` entry is replicated to a quorum and applied on the leader. It does not wait for every follower to apply before replying.
+- Rationale: That is the existing OpenRaft `client_write()` contract in KalamDB today. Waiting for all followers to apply would turn normal Raft writes into a much slower and less available protocol. PostgreSQL exposes this distinction explicitly with `synchronous_commit` levels such as `on`, `remote_write`, and `remote_apply`; CockroachDB uses leader/leaseholder reads for strong consistency and safe-time follower reads separately; etcd also treats the committed revision as the durable boundary while watch visibility can lag. KalamDB should preserve quorum semantics and treat stronger follower-visible guarantees as a separate feature.
+- Alternatives considered:
+  - Wait for all followers to apply on every transaction commit: rejected because one slow follower would stall every write transaction.
+  - Claim follower-visible read-after-write from any node immediately after commit: rejected because it is false under current Raft apply semantics.
+
+## Decision 36: Put the transaction query seam in a shared crate, not only in `kalamdb-core`
+
+- Decision: The query-facing transaction surface (`TransactionOverlay`, `TransactionOverlayExec`, and the transaction-specific DataFusion session extension/traits used by table providers) must live in a crate consumable by both `kalamdb-core` and `kalamdb-tables`, rather than only inside `kalamdb-core`.
+- Rationale: The current crate graph already has `kalamdb-core -> kalamdb-tables`, while `kalamdb-tables` extracts only session extensions (`SessionUserContext`) and scan helpers from shared crates. Putting `TransactionOverlayExec` only in `kalamdb-core` but asking `kalamdb-tables` providers to wrap scans with it creates the wrong dependency direction. Copying the full overlay into `SessionUserContext` would also bloat every query context. A shared crate/seam keeps the layering clean and the per-query context lightweight.
+- Alternatives considered:
+  - Let `kalamdb-tables` depend on `kalamdb-core`: rejected because it creates a cycle and breaks crate ownership boundaries.
+  - Clone the full overlay into `SessionUserContext`: rejected because it increases memory cost per query and mixes transaction state into a general identity context.
+
+## Decision 37: Persist `commit_seq` as hidden row visibility metadata
+
+- Decision: Every committed user/shared row version carries a hidden commit-order marker (for example `_commit_seq`) in hot storage, Parquet output, and row serialization.
+- Rationale: The current row shape and system-column list carry `_seq` and `_deleted`, but no persisted commit-order marker. Snapshot isolation cannot be enforced cheaply unless visibility metadata travels with each row version. A hidden per-row marker is the lightest correct option because it avoids a second lookup table or storage join on every snapshot read.
+- Alternatives considered:
+  - Keep `commit_seq` only in memory: rejected because snapshot reads on persisted rows and restart recovery would have no durable visibility metadata.
+  - Store `commit_seq` in a separate side table keyed by row version: rejected because it adds extra lookups and breaks the current hot/cold row-resolution pipeline.
+
+## Decision 38: Resolve the latest visible version by `commit_seq` first, then `_seq`
+
+- Decision: Snapshot reads must choose the latest committed version where `commit_seq <= snapshot_commit_seq`, then use `_seq` only as an intra-commit tie-break. They must not resolve `MAX(_seq)` first and then discard rows newer than the snapshot boundary.
+- Rationale: The current `kalamdb-tables` version-resolution helper keeps the row with the highest `_seq` per logical row. If snapshot filtering is bolted on afterward, a row whose newest committed version is post-snapshot would disappear entirely even when an older committed version is still visible. Visibility must therefore be applied before, or as part of, version resolution.
+- Alternatives considered:
+  - Post-filter rows after `MAX(_seq)` resolution: rejected because it can produce false "row missing" results for snapshot reads.
+  - Ignore older visible versions and require read committed only: rejected because the spec requires snapshot-style isolation.
+
+## Decision 39: Allocate `commit_seq` in the durable apply path used by both autocommit and explicit commits
+
+- Decision: The same durable apply-path source allocates/stamps `commit_seq` for autocommit writes and explicit-transaction commits. The coordinator reads the latest committed value at `BEGIN`, but it does not own a private authoritative counter for all writes.
+- Rationale: The current plan said the coordinator could increment `commit_seq`, but autocommit writes already bypass the coordinator and the row writer needs the committed value while writing the row version. The correct place for the authoritative sequence is the write/apply path that already owns durable ordering for both autocommit and `TransactionCommit` replay.
+- Alternatives considered:
+  - Keep a coordinator-local `AtomicU64` as the only source: rejected because autocommit writes would diverge and row stamping would happen too late.
+  - Derive snapshot order only from `_seq`: rejected for the reasons in Decision 1 and Decision 38.
+
+## Decision 40: Never hold shared coordinator guards across awaits, and avoid one timer task per transaction
+
+- Decision: The coordinator may use `DashMap`/per-transaction state transitions, but it must drop shared guards before awaiting Raft apply, file cleanup, storage I/O, or fanout work. Timeout enforcement should use a bounded periodic sweep (or similar shared mechanism), not one spawned timer per active transaction.
+- Rationale: The current codebase relies on bounded worker loops, sharded queues, and `spawn_blocking`/shared background tasks to stay scalable. Holding guards across awaits would serialize unrelated transactions, and per-transaction timers would create avoidable scheduling/memory overhead at scale. The design must preserve non-blocking behavior except at the explicit durability boundary.
+- Alternatives considered:
+  - Hold the active transaction entry locked through commit: rejected because one slow commit would stall unrelated lifecycle operations.
+  - Spawn a timeout task per transaction: rejected because thousands of mostly-idle read transactions would pay unnecessary scheduler and memory overhead.
+
+## Decision 41: All DML entry points must honor staging when a transaction is active
+
+- Decision: Every DML entry point that can write rows — typed pg operations, DataFusion DML, and SQL fast paths such as `fast_insert` / `fast_point_dml` — must route through transaction staging when an explicit transaction is active.
+- Rationale: The current codebase has more than one DML entry path. In particular, SQL fast-path helpers call the applier directly today. If those paths are not transaction-aware, explicit SQL transactions will silently bypass staging and break rollback/read-your-writes semantics.
+- Alternatives considered:
+  - Disable fast paths whenever a transaction is active: acceptable as an emergency fallback, but rejected as the target design because it adds avoidable performance cliffs and duplicated branching.
+  - Leave the fast paths untouched: rejected because it would create correctness holes.
+
+## Cluster and Replication Comparison
+
+- PostgreSQL HA: one primary accepts writes, standbys replay WAL, and commit visibility on standbys depends on replication and `synchronous_commit` settings (`remote_write`, `on`, `remote_apply`). Uncommitted transactions do not survive failover.
+- CockroachDB and YugabyteDB: strong reads and writes are leader/leaseholder-affine by default. Cross-range distributed transactions require extra replicated transaction state, not just a final Raft batch.
+- etcd: transactions are single consensus-backed API requests that commit at one revision. etcd is a good model for atomic one-shot transactions, but not for multi-request PostgreSQL-style `BEGIN` / `COMMIT` sessions.
+
+## Live Query Fanout Review: Supabase Realtime
+
+### Relevant Supabase patterns observed
+
+- `Extensions.PostgresCdcRls.ReplicationPoller` narrows recipients before websocket fanout by carrying a `subscription_ids` set with each change, then routing that set to the correct node before dispatch.
+- `Extensions.PostgresCdcRls.MessageDispatcher` caches encoded messages by payload/message shape so the same broadcast is serialized once and reused across many subscribers.
+- `RealtimeWeb.RealtimeChannel.MessageDispatcher` uses Phoenix fastlane metadata to send directly to transport processes while skipping already-replayed messages and incrementing rate counters.
+- `SubscriptionManager` aggressively cleans up dead subscribers, batches deletion of orphaned subscriptions, and stops idle tenant workers after inactivity.
+- The system relies on hard rate limits (`max_channels_per_client`, `max_events_per_second`, `max_joins_per_second`) and bounded runtime settings (`websocket_max_heap_size`, pool sizes) as part of normal production posture.
+
+### What KalamDB should adopt
+
+- Keep the candidate subscriber set narrow before fanout. KalamDB already has the first-stage routing indices in `ConnectionsManager`; commit fanout should continue to use those table-scoped indices and never fall back to scanning all connections.
+- Keep payload reuse explicit. KalamDB already caches shared payloads by projection group in `notification.rs`; the transaction design should preserve that and extend it to serialization group boundaries where necessary.
+- Keep cleanup first-class. Disconnect cleanup, idle cleanup, and slow-subscriber behavior must remain bounded and tested, not best-effort.
+
+### What KalamDB should not copy directly
+
+- Do not persist ephemeral live subscriptions in a database table just to emulate Supabase's `realtime.subscription`; KalamDB's live subscriptions are intentionally in-memory and node-local.
+- Do not add cluster broadcast for live fanout unless the apply path itself stops being node-local. Supabase needs cluster routing because CDC enters through a separate replication/poller path; KalamDB already notifies on local apply.
+- Do not move filter/projection evaluation into SQL rewrite or storage persistence purely for targeting. KalamDB's current compiled in-memory filter path is consistent with the rest of the architecture and cheaper to evolve incrementally.
+
+### Current KalamDB strengths confirmed by code review
+
+- `ConnectionsManager` already maintains table-scoped secondary indices for user and shared table subscriptions.
+- `NotificationService` already shards work by deterministic table hash, preserving per-table ordering while allowing cross-table parallelism.
+- `notification.rs` already reuses projected payloads across subscribers with identical projections.
+- Connection and subscription flow control is already bounded through notification channel limits and initial-load buffers.
+
+### Remaining hardening gap
+
+- The commit path still needs to make the post-commit fanout contract explicit: build a dispatch plan after durable commit, release it outside coordinator locks, and add stress coverage for a hot table with many subscribers and slow consumers.

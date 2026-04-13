@@ -19,6 +19,10 @@ pub struct AuthenticatedUser {
     pub role: Role,
     /// Email address (if available)
     pub email: Option<String>,
+    /// Account creation timestamp in milliseconds since epoch
+    pub created_at: i64,
+    /// Last update timestamp in milliseconds since epoch
+    pub updated_at: i64,
     /// Connection information (IP address, localhost check)
     pub connection_info: ConnectionInfo,
 }
@@ -40,6 +44,8 @@ impl AuthenticatedUser {
         username: UserName,
         role: Role,
         email: Option<String>,
+        created_at: i64,
+        updated_at: i64,
         connection_info: ConnectionInfo,
     ) -> Self {
         Self {
@@ -47,6 +53,8 @@ impl AuthenticatedUser {
             username,
             role,
             email,
+            created_at,
+            updated_at,
             connection_info,
         }
     }
@@ -112,6 +120,8 @@ mod tests {
             UserName::new("testuser"),
             role,
             Some("test@example.com".to_string()),
+            0,
+            0,
             ConnectionInfo::new(addr),
         )
     }

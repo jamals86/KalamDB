@@ -151,17 +151,6 @@ pub unsafe extern "C-unwind" fn iterate_foreign_scan(
                 }
                 continue;
             },
-            SEQ_COLUMN => {
-                // _seq not yet available from scan response, return null
-                *(*slot).tts_isnull.add(att_idx) = true;
-                continue;
-            },
-            DELETED_COLUMN => {
-                // Live rows are not deleted
-                *(*slot).tts_values.add(att_idx) = pg_sys::Datum::from(false as usize);
-                *(*slot).tts_isnull.add(att_idx) = false;
-                continue;
-            },
             _ => {},
         }
 
@@ -213,9 +202,6 @@ unsafe fn begin_foreign_scan_impl(node: *mut pg_sys::ForeignScanState) -> Result
     let options = parse_options((*ft).options);
     let table_options = resolve_table_options_for_relation(relation, &options)?;
 
-    // Flush any pending writes for this table before scanning (read-your-writes)
-    crate::write_buffer::flush_table(&table_options.table_id)?;
-
     // Get server options (host/port) from the foreign server
     let server = pg_sys::GetForeignServer((*ft).serverid);
     let server_options = parse_options((*server).options);
@@ -233,17 +219,30 @@ unsafe fn begin_foreign_scan_impl(node: *mut pg_sys::ForeignScanState) -> Result
     // Ensure remote connection
     let remote_state = crate::remote_state::ensure_remote_extension_state(remote_config)
         .map_err(|e| KalamPgError::Execution(e.to_string()))?;
+
+    // Flush any pending writes for this table before scanning (read-your-writes)
+    crate::write_buffer::flush_table(
+        remote_state.session_id(),
+        &table_options.table_id,
+        table_options.table_type,
+    )?;
+
     let executor = remote_state.executor()?;
     let runtime = remote_state.runtime();
 
-    // Lazily begin a KalamDB transaction for this PostgreSQL transaction
-    let _ = crate::fdw_xact::ensure_transaction(remote_state.session_id())?;
+    // Autocommit SELECTs do not need a remote transaction. Keep remote
+    // transactions only for explicit BEGIN/COMMIT blocks so transaction
+    // bookkeeping stays aligned with PostgreSQL statement boundaries.
+    if crate::fdw_xact::is_explicit_transaction_block_active() {
+        let _ = crate::fdw_xact::ensure_transaction(remote_state.session_id())?;
+    }
 
     // Build column mapping from PG TupleDesc to Arrow schema
     let tupdesc = (*(*node).ss.ss_ScanTupleSlot).tts_tupleDescriptor;
     let natts = (*tupdesc).natts as usize;
 
-    // Collect physical column names for projection
+    // Collect physical column names for projection (sent to KalamDB backend).
+    // _userid is synthesized locally; _seq is injected by the backend automatically.
     let mut physical_columns: Vec<String> = Vec::new();
     for i in 0..natts {
         let att = (*tupdesc).attrs.as_ptr().add(i);
@@ -285,11 +284,13 @@ unsafe fn begin_foreign_scan_impl(node: *mut pg_sys::ForeignScanState) -> Result
         let att = (*tupdesc).attrs.as_ptr().add(i);
         let col_name = CStr::from_ptr((*att).attname.data.as_ptr()).to_string_lossy();
 
-        if col_name == USER_ID_COLUMN || col_name == SEQ_COLUMN || col_name == DELETED_COLUMN {
+        // _userid is synthesized from the session; skip Arrow mapping.
+        if col_name == USER_ID_COLUMN {
             column_mapping.push(None);
             continue;
         }
 
+        // _seq and user columns are mapped from Arrow.
         let arrow_idx = arrow_schema
             .as_ref()
             .and_then(|schema| schema.column_with_name(col_name.as_ref()))

@@ -73,7 +73,6 @@ impl SystemTablesRegistry {
     ///
     /// # Arguments
     /// * `storage_backend` - Storage backend for EntityStore-based providers
-    /// * `kalam_sql` - KalamSQL adapter for information_schema providers
     ///
     /// # Example
     /// ```no_run
@@ -82,8 +81,7 @@ impl SystemTablesRegistry {
     /// # use kalamdb_store::StorageBackend;
     ///
     /// # let backend: Arc<dyn StorageBackend> = unimplemented!();
-    /// # let kalam_sql: Arc<KalamSql> = unimplemented!();
-    /// let registry = SystemTablesRegistry::new(backend, kalam_sql);
+    /// let registry = SystemTablesRegistry::new(backend);
     /// ```
     pub fn new(storage_backend: Arc<dyn StorageBackend>) -> Self {
         Self {

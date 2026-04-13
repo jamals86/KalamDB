@@ -1,13 +1,19 @@
 use super::{PreparedExecutionStatement, SqlExecutor};
 use crate::error::KalamDbError;
 use crate::sql::executor::handler_registry::HandlerRegistry;
-use crate::sql::plan_cache::PlanCacheKey;
+use crate::sql::executor::request_transaction_state::RequestTransactionState;
+use crate::sql::plan_cache::{PlanCacheKey, SqlCacheRegistry, SqlCacheRegistryConfig};
 use crate::sql::{ExecutionContext, ExecutionResult};
+use crate::transactions::CoordinatorAccessValidator;
 use arrow::array::RecordBatch;
+use datafusion::prelude::SessionContext;
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::conversions::arrow_json_conversion::arrow_value_to_scalar;
-use kalamdb_commons::models::TableId;
-use kalamdb_sql::classifier::{SqlStatement, SqlStatementKind};
+use kalamdb_commons::models::datatypes::KalamDataType;
+use kalamdb_commons::models::{NamespaceId, TableId, TransactionId};
+use kalamdb_commons::Role;
+use kalamdb_sql::classifier::{SqlStatement, SqlStatementKind, StatementClassificationError};
+use kalamdb_transactions::{TransactionQueryContext, TransactionQueryExtension};
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::Instrument;
@@ -20,6 +26,76 @@ enum DmlKind {
 }
 
 impl SqlExecutor {
+    async fn try_execute_embedding_literal_insert_via_applier(
+        &self,
+        sql: &str,
+        metadata: &PreparedExecutionStatement,
+        exec_ctx: &ExecutionContext,
+    ) -> Result<Option<ExecutionResult>, KalamDbError> {
+        let Some(table_id) = metadata.table_id.as_ref() else {
+            return Ok(None);
+        };
+
+        let mut request_transaction_state =
+            RequestTransactionState::from_execution_context(exec_ctx)?;
+        if let Some(state) = request_transaction_state.as_mut() {
+            state.sync_from_coordinator(self.app_context.as_ref());
+            if state.is_active() {
+                return Ok(None);
+            }
+        }
+
+        let Some(cached_table) = self.app_context.schema_registry().get(table_id) else {
+            return Ok(None);
+        };
+        let has_embedding_columns = cached_table
+            .table
+            .columns
+            .iter()
+            .any(|column| matches!(column.data_type, KalamDataType::Embedding(_)));
+        if !has_embedding_columns {
+            return Ok(None);
+        }
+
+        let dialect = sqlparser::dialect::GenericDialect {};
+        let parsed_statements = kalamdb_sql::parser::utils::parse_sql_statements(sql, &dialect)
+            .map_err(|error| KalamDbError::InvalidSql(error.to_string()))?;
+        if parsed_statements.len() != 1 {
+            return Ok(None);
+        }
+
+        let Some(insert_rows) = super::transaction_batch_insert::try_build_literal_insert_rows(
+            &parsed_statements[0],
+            self.app_context.as_ref(),
+            self.sql_cache_registry.as_ref(),
+            exec_ctx,
+            table_id,
+        )?
+        else {
+            return Ok(None);
+        };
+
+        let applier = self.app_context.applier();
+        let rows_affected = match insert_rows.table_type {
+            kalamdb_commons::schemas::TableType::Shared => applier
+                .insert_shared_data(table_id.clone(), insert_rows.rows)
+                .await
+                .map_err(KalamDbError::from)?
+                .rows_affected(),
+            kalamdb_commons::schemas::TableType::User
+            | kalamdb_commons::schemas::TableType::Stream => applier
+                .insert_user_data(table_id.clone(), exec_ctx.user_id().clone(), insert_rows.rows)
+                .await
+                .map_err(KalamDbError::from)?
+                .rows_affected(),
+            kalamdb_commons::schemas::TableType::System => return Ok(None),
+        };
+
+        Ok(Some(ExecutionResult::Inserted {
+            rows_affected: rows_affected as usize,
+        }))
+    }
+
     fn logical_plan_has_limit(plan: &datafusion::logical_expr::LogicalPlan) -> bool {
         matches!(plan, datafusion::logical_expr::LogicalPlan::Limit(_))
             || plan.inputs().iter().any(|input| Self::logical_plan_has_limit(input))
@@ -133,30 +209,289 @@ impl SqlExecutor {
         }
     }
 
+    fn is_ddl_statement(kind: &SqlStatementKind) -> bool {
+        matches!(
+            kind,
+            SqlStatementKind::CreateNamespace(_)
+                | SqlStatementKind::AlterNamespace(_)
+                | SqlStatementKind::DropNamespace(_)
+                | SqlStatementKind::CreateStorage(_)
+                | SqlStatementKind::AlterStorage(_)
+                | SqlStatementKind::DropStorage(_)
+                | SqlStatementKind::CreateTable(_)
+                | SqlStatementKind::CreateView(_)
+                | SqlStatementKind::AlterTable(_)
+                | SqlStatementKind::DropTable(_)
+        )
+    }
+
+    fn request_transaction_state(
+        &self,
+        exec_ctx: &ExecutionContext,
+    ) -> Result<Option<RequestTransactionState>, KalamDbError> {
+        let mut request_state = RequestTransactionState::from_execution_context(exec_ctx)?;
+        if let Some(state) = request_state.as_mut() {
+            state.sync_from_coordinator(&self.app_context);
+        }
+        Ok(request_state)
+    }
+
+    fn active_request_transaction_id(
+        &self,
+        exec_ctx: &ExecutionContext,
+    ) -> Result<Option<TransactionId>, KalamDbError> {
+        Ok(self
+            .request_transaction_state(exec_ctx)?
+            .and_then(|state| state.active_transaction_id().cloned()))
+    }
+
+    fn transaction_query_context_for_request(
+        &self,
+        exec_ctx: &ExecutionContext,
+    ) -> Result<Option<TransactionQueryContext>, KalamDbError> {
+        let Some(transaction_id) = self.active_request_transaction_id(exec_ctx)? else {
+            return Ok(None);
+        };
+
+        let coordinator = self.app_context.transaction_coordinator();
+        let handle = coordinator.get_handle(&transaction_id).ok_or_else(|| {
+            KalamDbError::InvalidOperation(format!(
+                "active SQL transaction '{}' has no handle",
+                transaction_id
+            ))
+        })?;
+
+        if !handle.state.is_open() {
+            return Err(KalamDbError::InvalidOperation(format!(
+                "transaction '{}' is {}",
+                transaction_id, handle.state
+            )));
+        }
+
+        Ok(Some(TransactionQueryContext::new(
+            transaction_id.clone(),
+            handle.snapshot_commit_seq,
+            Arc::new(crate::transactions::CoordinatorOverlayView::new(
+                Arc::clone(&coordinator),
+                transaction_id.clone(),
+            )),
+            Arc::new(crate::transactions::CoordinatorMutationSink::new(coordinator)),
+            Arc::new(CoordinatorAccessValidator::new(
+                self.app_context.transaction_coordinator(),
+            )),
+        )))
+    }
+
+    fn create_session_with_transaction_context(
+        &self,
+        exec_ctx: &ExecutionContext,
+    ) -> Result<SessionContext, KalamDbError> {
+        let session = exec_ctx.create_session_with_user();
+        let Some(transaction_query_context) = self.transaction_query_context_for_request(exec_ctx)?
+        else {
+            return Ok(session);
+        };
+
+        let mut state = session.state().clone();
+        state
+            .config_mut()
+            .options_mut()
+            .extensions
+            .insert(TransactionQueryExtension::new(transaction_query_context));
+        Ok(SessionContext::new_with_state(state))
+    }
+
+    async fn execute_begin_transaction(
+        &self,
+        exec_ctx: &ExecutionContext,
+    ) -> Result<ExecutionResult, KalamDbError> {
+        let mut request_state = RequestTransactionState::from_execution_context(exec_ctx)?.ok_or_else(
+            || {
+                KalamDbError::InvalidOperation(
+                    "BEGIN requires a request-scoped execution context".to_string(),
+                )
+            },
+        )?;
+        request_state.sync_from_coordinator(&self.app_context);
+        let transaction_id = request_state.begin(&self.app_context)?;
+        Ok(ExecutionResult::Success {
+            message: format!("Transaction started ({})", transaction_id),
+        })
+    }
+
+    async fn execute_commit_transaction(
+        &self,
+        exec_ctx: &ExecutionContext,
+    ) -> Result<ExecutionResult, KalamDbError> {
+        let mut request_state = RequestTransactionState::from_execution_context(exec_ctx)?.ok_or_else(
+            || {
+                KalamDbError::InvalidOperation(
+                    "COMMIT requires a request-scoped execution context".to_string(),
+                )
+            },
+        )?;
+        request_state.sync_from_coordinator(&self.app_context);
+        let transaction_id = request_state.commit(&self.app_context).await?;
+        Ok(ExecutionResult::Success {
+            message: format!("Transaction committed ({})", transaction_id),
+        })
+    }
+
+    fn execute_rollback_transaction(
+        &self,
+        exec_ctx: &ExecutionContext,
+    ) -> Result<ExecutionResult, KalamDbError> {
+        let mut request_state = RequestTransactionState::from_execution_context(exec_ctx)?.ok_or_else(
+            || {
+                KalamDbError::InvalidOperation(
+                    "ROLLBACK requires a request-scoped execution context".to_string(),
+                )
+            },
+        )?;
+        request_state.sync_from_coordinator(&self.app_context);
+        let transaction_id = request_state.rollback(&self.app_context)?;
+        Ok(ExecutionResult::Success {
+            message: format!("Transaction rolled back ({})", transaction_id),
+        })
+    }
+
+    fn reject_ddl_in_active_request_transaction(
+        &self,
+        classified: &SqlStatement,
+        exec_ctx: &ExecutionContext,
+    ) -> Result<(), KalamDbError> {
+        if !Self::is_ddl_statement(classified.kind()) {
+            return Ok(());
+        }
+
+        if let Some(transaction_id) = self.active_request_transaction_id(exec_ctx)? {
+            self.app_context
+                .transaction_coordinator()
+                .reject_ddl_in_transaction(&transaction_id)?;
+        }
+
+        Ok(())
+    }
+
     /// Construct a new executor with a pre-built handler registry.
     pub fn new(
         app_context: std::sync::Arc<crate::app_context::AppContext>,
         handler_registry: Arc<HandlerRegistry>,
     ) -> Self {
-        let plan_cache = std::sync::Arc::new(crate::sql::plan_cache::PlanCache::with_config(
+        let sql_cache_registry = Arc::new(SqlCacheRegistry::new(SqlCacheRegistryConfig::new(
             app_context.config().execution.sql_plan_cache_max_entries,
             Duration::from_secs(app_context.config().execution.sql_plan_cache_ttl_seconds),
-        ));
+        )));
         Self {
             app_context,
             handler_registry,
-            plan_cache,
+            sql_cache_registry,
         }
     }
 
-    /// Clear the plan cache (e.g., after DDL operations)
+    /// Clear SQL caches that may become stale after DDL operations.
     pub fn clear_plan_cache(&self) {
-        self.plan_cache.clear();
+        self.sql_cache_registry.clear();
     }
 
     /// Get current plan cache size (diagnostics/testing)
     pub fn plan_cache_len(&self) -> usize {
-        self.plan_cache.len()
+        self.sql_cache_registry.plan_cache().len()
+    }
+
+    /// Batch-execute multiple INSERT statements targeting the same table in an
+    /// active explicit transaction via the transaction batch insert path.
+    ///
+    /// Returns `Ok(Some(results))` with per-statement `ExecutionResult::Inserted`,
+    /// `Ok(None)` if the batch path is not applicable (caller should fall back to
+    /// per-statement execution), or `Err(e)` on execution failure.
+    pub fn try_batch_insert_in_transaction(
+        &self,
+        statements: &[&PreparedExecutionStatement],
+        exec_ctx: &ExecutionContext,
+        transaction_id: &TransactionId,
+    ) -> Result<Option<Vec<crate::sql::ExecutionResult>>, KalamDbError> {
+        let batch_sql = statements
+            .iter()
+            .map(|statement| statement.sql.as_str())
+            .collect::<Vec<_>>()
+            .join("; ");
+        let dialect = sqlparser::dialect::GenericDialect {};
+        let parsed_stmts_storage =
+            kalamdb_sql::parser::utils::parse_sql_statements(&batch_sql, &dialect)
+                .map_err(|error| KalamDbError::InvalidSql(error.to_string()))?;
+
+        if parsed_stmts_storage.len() != statements.len() {
+            return Ok(None);
+        }
+
+        let parsed_stmts: Vec<&sqlparser::ast::Statement> = parsed_stmts_storage.iter().collect();
+
+        let table_id = match statements[0].table_id.as_ref() {
+            Some(id) => id,
+            None => return Ok(None),
+        };
+
+        match super::transaction_batch_insert::try_batch_inserts_in_transaction(
+            &parsed_stmts,
+            self.app_context.as_ref(),
+            self.sql_cache_registry.as_ref(),
+            exec_ctx,
+            table_id,
+            transaction_id,
+        )?
+        {
+            Some(counts) => Ok(Some(
+                counts
+                    .into_iter()
+                    .map(|rows_affected| crate::sql::ExecutionResult::Inserted { rows_affected })
+                    .collect(),
+            )),
+            None => Ok(None),
+        }
+    }
+
+    pub fn prepare_statement_metadata(
+        &self,
+        sql: &str,
+        exec_ctx: &ExecutionContext,
+    ) -> Result<PreparedExecutionStatement, StatementClassificationError> {
+        self.prepare_statement_metadata_for_role(
+            sql,
+            &exec_ctx.default_namespace(),
+            exec_ctx.user_role(),
+        )
+    }
+
+    pub fn prepare_statement_metadata_for_role(
+        &self,
+        sql: &str,
+        default_namespace: &NamespaceId,
+        role: Role,
+    ) -> Result<PreparedExecutionStatement, StatementClassificationError> {
+        let classified = SqlStatement::classify_and_parse(sql, default_namespace, role)?;
+        let table_id = match classified.kind() {
+            SqlStatementKind::Insert(_)
+            | SqlStatementKind::Update(_)
+            | SqlStatementKind::Delete(_) => {
+                kalamdb_sql::extract_dml_table_id_fast(sql, default_namespace.as_str())
+                    .or_else(|| kalamdb_sql::extract_dml_table_id(sql, default_namespace.as_str()))
+            },
+            _ => None,
+        };
+        let table_type = table_id.as_ref().and_then(|table_id| {
+            self.app_context
+                .schema_registry()
+                .get(table_id)
+                .map(|cached| cached.table_entry().table_type)
+        });
+
+        Ok(PreparedExecutionStatement::new(
+            sql.to_string(),
+            table_id,
+            table_type,
+            Some(classified),
+        ))
     }
 
     /// Execute a statement without request metadata.
@@ -180,30 +515,9 @@ impl SqlExecutor {
             )));
         }
 
-        // parse_single_statement uses sqlparser which doesn't understand
-        // custom DDL (CREATE NAMESPACE, CREATE USER, SHOW TABLES, etc.).
-        // When it fails we fall through with None — the classifier and
-        // executor handle these statements via their own tokeniser.
-        let parsed_statement = kalamdb_sql::parse_single_statement(sql).ok().flatten();
-        let table_id = parsed_statement.as_ref().and_then(|stmt| {
-            kalamdb_sql::extract_dml_table_id_from_statement(
-                stmt,
-                exec_ctx.default_namespace().as_str(),
-            )
-        });
-        let classified = SqlStatement::classify_and_parse(
-            sql,
-            &exec_ctx.default_namespace(),
-            exec_ctx.user_role(),
-        )
-        .map_err(Self::map_classification_error)?;
-        let metadata = PreparedExecutionStatement::new(
-            sql.to_string(),
-            table_id,
-            None,
-            parsed_statement,
-            Some(classified),
-        );
+        let metadata = self
+            .prepare_statement_metadata(sql, exec_ctx)
+            .map_err(Self::map_classification_error)?;
 
         self.execute_with_metadata(&metadata, exec_ctx, params).await
     }
@@ -235,8 +549,18 @@ impl SqlExecutor {
             let command_label = format!("{:?}", classified.kind());
             tracing::Span::current().record("command", &command_label.as_str());
 
+            self.reject_ddl_in_active_request_transaction(&classified, exec_ctx)?;
+
             // Step 2: Route based on statement type
             let result = match classified.kind() {
+                SqlStatementKind::BeginTransaction => self.execute_begin_transaction(exec_ctx).await,
+                SqlStatementKind::CommitTransaction => {
+                    self.execute_commit_transaction(exec_ctx).await
+                },
+                SqlStatementKind::RollbackTransaction => {
+                    self.execute_rollback_transaction(exec_ctx)
+                },
+
                 // Hot path: SELECT queries use DataFusion
                 // Tables are already registered in base session, we just inject user_id
                 SqlStatementKind::Select => {
@@ -252,14 +576,36 @@ impl SqlExecutor {
 
                 // Native DataFusion DML path (provider insert/update/delete hooks)
                 SqlStatementKind::Insert(_) => {
-                    self.execute_dml_via_datafusion(
-                        classified.as_str(),
-                        metadata,
-                        params,
-                        exec_ctx,
-                        DmlKind::Insert,
-                    )
-                    .await
+                    if params.is_empty() {
+                        if let Some(result) = self
+                            .try_execute_embedding_literal_insert_via_applier(
+                                classified.as_str(),
+                                metadata,
+                                exec_ctx,
+                            )
+                            .await?
+                        {
+                            Ok(result)
+                        } else {
+                            self.execute_dml_via_datafusion(
+                                classified.as_str(),
+                                metadata,
+                                params,
+                                exec_ctx,
+                                DmlKind::Insert,
+                            )
+                            .await
+                        }
+                    } else {
+                        self.execute_dml_via_datafusion(
+                            classified.as_str(),
+                            metadata,
+                            params,
+                            exec_ctx,
+                            DmlKind::Insert,
+                        )
+                        .await
+                    }
                 },
                 SqlStatementKind::Update(_) => {
                     self.execute_dml_via_datafusion(
@@ -294,8 +640,8 @@ impl SqlExecutor {
                     // Clear plan cache after DDL to invalidate any cached plans
                     // that may reference the modified schema
                     if result.is_ok() {
-                        self.plan_cache.clear();
-                        log::debug!("Plan cache cleared after DDL operation");
+                        self.sql_cache_registry.clear();
+                        log::debug!("SQL caches cleared after DDL operation");
                     }
                     result
                 },
@@ -338,61 +684,10 @@ impl SqlExecutor {
         exec_ctx: &ExecutionContext,
         dml_kind: DmlKind,
     ) -> Result<ExecutionResult, KalamDbError> {
-        let execution_sql = kalamdb_sql::rewrite_context_functions_for_datafusion(sql);
-        let execution_sql = execution_sql.as_str();
-        let parsed_statement = metadata.parsed_statement.as_ref();
         self.block_system_namespace_dml(metadata.table_id.as_ref(), dml_kind)?;
 
-        // Fast-path: bypass DataFusion for simple point DML that can route directly
-        // to the Kalam provider without planning a DataFusion query.
-        if params.is_empty() {
-            let schema_registry = self.app_context.schema_registry();
-            let fast_insert_result = if let Some(statement) = parsed_statement {
-                match dml_kind {
-                    DmlKind::Insert => {
-                        super::fast_insert::try_fast_insert(
-                            statement,
-                            self.app_context.as_ref(),
-                            exec_ctx,
-                            &schema_registry,
-                            metadata.table_id.as_ref(),
-                            metadata.table_type,
-                        )
-                        .await
-                    },
-                    DmlKind::Update => {
-                        super::fast_point_dml::try_fast_update(
-                            statement,
-                            self.app_context.as_ref(),
-                            exec_ctx,
-                            &schema_registry,
-                            metadata.table_id.as_ref(),
-                            metadata.table_type,
-                        )
-                        .await
-                    },
-                    DmlKind::Delete => {
-                        super::fast_point_dml::try_fast_delete(
-                            statement,
-                            self.app_context.as_ref(),
-                            exec_ctx,
-                            &schema_registry,
-                            metadata.table_id.as_ref(),
-                            metadata.table_type,
-                        )
-                        .await
-                    },
-                }
-            } else {
-                Ok(None)
-            };
-
-            match fast_insert_result {
-                Ok(Some(result)) => return Ok(result),
-                Ok(None) => { /* fall through to DataFusion */ },
-                Err(e) => return Err(e),
-            }
-        }
+        let execution_sql = kalamdb_sql::rewrite_context_functions_for_datafusion(sql);
+        let execution_sql = execution_sql.as_str();
 
         use crate::sql::executor::parameter_binding::{
             replace_placeholders_in_plan, validate_params,
@@ -405,7 +700,7 @@ impl SqlExecutor {
         // Parameterized DML: reuse cached template plans and only bind placeholders per request.
         // This avoids reparsing/replanning the same INSERT/UPDATE/DELETE shape repeatedly.
         let df = if params.is_empty() {
-            let session = exec_ctx.create_session_with_user();
+            let session = self.create_session_with_transaction_context(exec_ctx)?;
             let plan_start = std::time::Instant::now();
             match session.sql(execution_sql).await {
                 Ok(df) => {
@@ -422,7 +717,7 @@ impl SqlExecutor {
                                 load_err
                             );
                         }
-                        let retry_session = exec_ctx.create_session_with_user();
+                        let retry_session = self.create_session_with_transaction_context(exec_ctx)?;
                         retry_session
                             .sql(execution_sql)
                             .await
@@ -438,9 +733,9 @@ impl SqlExecutor {
                 exec_ctx.user_role(),
                 execution_sql,
             );
-            let session = exec_ctx.create_session_with_user();
+            let session = self.create_session_with_transaction_context(exec_ctx)?;
 
-            if let Some(template_plan) = self.plan_cache.get(&cache_key) {
+            if let Some(template_plan) = self.sql_cache_registry.plan_cache().get(&cache_key) {
                 let bound_plan = replace_placeholders_in_plan((*template_plan).clone(), &params)?;
                 match session.execute_logical_plan(bound_plan).await {
                     Ok(df) => df,
@@ -454,7 +749,9 @@ impl SqlExecutor {
                         match session.sql(execution_sql).await {
                             Ok(planned_df) => {
                                 let template_plan = planned_df.logical_plan().clone();
-                                self.plan_cache.insert(cache_key.clone(), template_plan.clone());
+                                self.sql_cache_registry
+                                    .plan_cache()
+                                    .insert(cache_key.clone(), template_plan.clone());
                                 let rebound_plan =
                                     replace_placeholders_in_plan(template_plan, &params)?;
                                 session
@@ -472,13 +769,15 @@ impl SqlExecutor {
                                             load_err
                                         );
                                     }
-                                    let retry_session = exec_ctx.create_session_with_user();
+                                    let retry_session =
+                                        self.create_session_with_transaction_context(exec_ctx)?;
                                     let retry_df = retry_session
                                         .sql(execution_sql)
                                         .await
                                         .map_err(|e2| self.log_sql_error(sql, exec_ctx, e2))?;
                                     let template_plan = retry_df.logical_plan().clone();
-                                    self.plan_cache
+                                    self.sql_cache_registry
+                                        .plan_cache()
                                         .insert(cache_key.clone(), template_plan.clone());
                                     let rebound_plan =
                                         replace_placeholders_in_plan(template_plan, &params)?;
@@ -497,7 +796,9 @@ impl SqlExecutor {
                 match session.sql(execution_sql).await {
                     Ok(planned_df) => {
                         let template_plan = planned_df.logical_plan().clone();
-                        self.plan_cache.insert(cache_key.clone(), template_plan.clone());
+                        self.sql_cache_registry
+                            .plan_cache()
+                            .insert(cache_key.clone(), template_plan.clone());
                         let bound_plan = replace_placeholders_in_plan(template_plan, &params)?;
                         session
                             .execute_logical_plan(bound_plan)
@@ -514,14 +815,17 @@ impl SqlExecutor {
                                     load_err
                                 );
                             }
-                            let retry_session = exec_ctx.create_session_with_user();
+                            let retry_session =
+                                self.create_session_with_transaction_context(exec_ctx)?;
                             let retry_df = retry_session
                                 .sql(execution_sql)
                                 .await
                                 .map_err(|e2| self.log_sql_error(sql, exec_ctx, e2))?;
 
                             let template_plan = retry_df.logical_plan().clone();
-                            self.plan_cache.insert(cache_key.clone(), template_plan.clone());
+                            self.sql_cache_registry
+                                .plan_cache()
+                                .insert(cache_key.clone(), template_plan.clone());
                             let bound_plan = replace_placeholders_in_plan(template_plan, &params)?;
                             retry_session
                                 .execute_logical_plan(bound_plan)
@@ -579,7 +883,7 @@ impl SqlExecutor {
             validate_params(&params)?;
         }
 
-        let session = exec_ctx.create_session_with_user();
+        let session = self.create_session_with_transaction_context(exec_ctx)?;
 
         // Try cached template plan first (works for both plain and parameterized SQL).
         // Key excludes user_id because LogicalPlan is user-agnostic - filtering happens at scan time.
@@ -589,7 +893,7 @@ impl SqlExecutor {
             execution_sql,
         );
 
-        let df = if let Some(template_plan) = self.plan_cache.get(&cache_key) {
+        let df = if let Some(template_plan) = self.sql_cache_registry.plan_cache().get(&cache_key) {
             let executable_plan = if params.is_empty() {
                 (*template_plan).clone()
             } else {
@@ -617,7 +921,8 @@ impl SqlExecutor {
                                         e
                                     );
                                 }
-                                let retry_session = exec_ctx.create_session_with_user();
+                                let retry_session =
+                                    self.create_session_with_transaction_context(exec_ctx)?;
                                 match retry_session.sql(execution_sql).await {
                                     Ok(df) => df,
                                     Err(e2) => {
@@ -635,7 +940,9 @@ impl SqlExecutor {
                         &self.app_context,
                     )
                     .await?;
-                    self.plan_cache.insert(cache_key.clone(), ordered_template.clone());
+                    self.sql_cache_registry
+                        .plan_cache()
+                        .insert(cache_key.clone(), ordered_template.clone());
 
                     let executable_plan = if params.is_empty() {
                         ordered_template
@@ -679,7 +986,8 @@ impl SqlExecutor {
                                 e
                             );
                         }
-                        let retry_session = exec_ctx.create_session_with_user();
+                        let retry_session =
+                            self.create_session_with_transaction_context(exec_ctx)?;
                         match retry_session.sql(execution_sql).await {
                             Ok(df) => df,
                             Err(e2) => {
@@ -697,7 +1005,9 @@ impl SqlExecutor {
             let ordered_template =
                 apply_default_order_by(planned_df.logical_plan().clone(), &self.app_context)
                     .await?;
-            self.plan_cache.insert(cache_key, ordered_template.clone());
+            self.sql_cache_registry
+                .plan_cache()
+                .insert(cache_key, ordered_template.clone());
 
             let executable_plan = if params.is_empty() {
                 ordered_template
@@ -776,7 +1086,7 @@ impl SqlExecutor {
         let execution_sql = kalamdb_sql::rewrite_context_functions_for_datafusion(sql);
         let execution_sql = execution_sql.as_str();
         // Create per-request SessionContext with user_id injected
-        let session = exec_ctx.create_session_with_user();
+        let session = self.create_session_with_transaction_context(exec_ctx)?;
 
         // Execute the command directly via DataFusion
         let df = match session.sql(execution_sql).await {

@@ -372,11 +372,19 @@ async fn test_user_table_pk_index_select() {
         create_response.error
     );
 
-    // Insert 500 rows
-    for i in 1..=500 {
+    // Insert 500 rows in batches for speed
+    for batch_start in (1..=500).step_by(100) {
+        let batch_end = (batch_start + 99).min(500);
+        let values: Vec<String> = (batch_start..=batch_end)
+            .map(|i| format!("({}, 'data_for_{}')", i, i))
+            .collect();
         server
             .execute_sql_as_user(
-                &format!("INSERT INTO {}.records (id, data) VALUES ({}, 'data_for_{}')", ns, i, i),
+                &format!(
+                    "INSERT INTO {}.records (id, data) VALUES {}",
+                    ns,
+                    values.join(", ")
+                ),
                 "select_user",
             )
             .await;
@@ -403,11 +411,19 @@ async fn test_user_table_pk_index_select() {
     }
     let latency_500_rows = median_duration(&mut samples_500);
 
-    // Insert 2000 more rows (total 2500)
-    for i in 501..=2500 {
+    // Insert 2000 more rows (total 2500) in batches for speed
+    for batch_start in (501..=2500).step_by(100) {
+        let batch_end = (batch_start + 99).min(2500);
+        let values: Vec<String> = (batch_start..=batch_end)
+            .map(|i| format!("({}, 'data_for_{}')", i, i))
+            .collect();
         server
             .execute_sql_as_user(
-                &format!("INSERT INTO {}.records (id, data) VALUES ({}, 'data_for_{}')", ns, i, i),
+                &format!(
+                    "INSERT INTO {}.records (id, data) VALUES {}",
+                    ns,
+                    values.join(", ")
+                ),
                 "select_user",
             )
             .await;

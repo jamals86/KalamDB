@@ -1,7 +1,8 @@
 // pg/tests/e2e_ddl.rs
 //
-// End-to-end tests for DDL propagation: CREATE / ALTER / DROP FOREIGN TABLE
-// should automatically propagate to KalamDB via the ProcessUtility hook.
+// End-to-end tests for DDL propagation: CREATE TABLE ... USING kalamdb,
+// ALTER FOREIGN TABLE, and DROP FOREIGN TABLE should automatically propagate
+// to KalamDB via the ProcessUtility hook.
 //
 // Prerequisites:
 //   1. KalamDB server running:          cd backend && cargo run

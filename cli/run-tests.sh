@@ -203,6 +203,141 @@ autodetect_cluster_mode() {
 
 autodetect_cluster_mode
 
+parse_host_port_from_url() {
+    local url="$1"
+
+    if ! command -v python3 >/dev/null 2>&1; then
+        return 1
+    fi
+
+    python3 - "$url" <<'PY'
+from urllib.parse import urlparse
+import sys
+
+url = sys.argv[1].strip()
+if not url:
+    raise SystemExit(1)
+
+parsed = urlparse(url)
+host = parsed.hostname
+port = parsed.port
+if not host:
+    raise SystemExit(1)
+if port is None:
+    port = 443 if parsed.scheme == "https" else 80
+
+print(f"{host}\n{port}")
+PY
+}
+
+is_local_host() {
+    case "$1" in
+        127.0.0.1|localhost|::1|0.0.0.0)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+validate_single_local_listener() {
+    local host_port
+    local host
+    local port
+    local pids
+    local count
+
+    if ! command -v lsof >/dev/null 2>&1; then
+        return 0
+    fi
+
+    host_port="$(parse_host_port_from_url "$SERVER_URL")" || return 0
+    host="$(printf '%s\n' "$host_port" | sed -n '1p')"
+    port="$(printf '%s\n' "$host_port" | sed -n '2p')"
+
+    if ! is_local_host "$host"; then
+        return 0
+    fi
+
+    pids="$(lsof -n -P -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null | sort -u)"
+    count="$(printf '%s\n' "$pids" | sed '/^$/d' | wc -l | tr -d ' ')"
+
+    if [ "$count" -le 1 ]; then
+        return 0
+    fi
+
+    echo "Error: multiple processes are listening on ${host}:${port}."
+    echo "Running-server mode requires a single deterministic target."
+    echo ""
+    lsof -n -P -iTCP:"$port" -sTCP:LISTEN | head -n 20
+    echo ""
+    echo "Stop the extra server(s) and rerun ./run-tests.sh."
+    exit 1
+}
+
+validate_cluster_health() {
+    local health_url="$1"
+    local summary
+
+    if ! command -v curl >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1; then
+        return 0
+    fi
+
+    summary="$(curl -fsS --max-time 3 "${health_url%/}/v1/api/cluster/health" 2>/dev/null | python3 -c '
+import json
+import sys
+
+try:
+    payload = json.load(sys.stdin)
+except Exception:
+    raise SystemExit(1)
+
+is_cluster = bool(payload.get("is_cluster_mode"))
+groups_leading = payload.get("groups_leading")
+total_groups = payload.get("total_groups")
+
+if groups_leading is None or total_groups is None:
+    nodes = payload.get("nodes") or []
+    if nodes:
+        groups_leading = max((node.get("groups_leading") or 0) for node in nodes)
+        total_groups = max((node.get("total_groups") or 0) for node in nodes)
+
+if not is_cluster or groups_leading is None or total_groups is None:
+    print("ok")
+    raise SystemExit(0)
+
+if int(groups_leading) < int(total_groups):
+    print(f"degraded {groups_leading} {total_groups}")
+else:
+    print("ok")
+')" || true
+
+    case "$summary" in
+        ok|"")
+            return 0
+            ;;
+        degraded\ *)
+            set -- $summary
+            echo "Error: target server reports incomplete cluster leadership (${2}/${3} groups leading)."
+            echo "This usually means stale or mismatched local Raft state, and CLI e2e tests will fail nondeterministically."
+            echo ""
+            echo "Check: ${health_url%/}/v1/api/cluster/health"
+            echo "Fix the running server state, then rerun ./run-tests.sh."
+            exit 1
+            ;;
+    esac
+}
+
+preflight_running_server() {
+    if [ "$SERVER_TYPE" = "fresh" ]; then
+        return 0
+    fi
+
+    validate_single_local_listener
+    validate_cluster_health "$SERVER_URL"
+}
+
 if [ ${#PACKAGE_FILTERS[@]} -gt 1 ]; then
     for package in "${PACKAGE_FILTERS[@]}"; do
         if [ "$package" = "kalam-cli" ]; then
@@ -260,6 +395,8 @@ echo "Mode:            $FEATURE_MODE"
 echo "================================================"
 echo ""
 
+preflight_running_server
+
 # Clear shared JWT caches so a restarted running server/cluster does not reuse
 # stale admin/root tokens from a previous test session.
 rm -f "${TMPDIR:-/tmp}/kalamdb_test_tokens.json" "${TMPDIR:-/tmp}/kalamdb_test_tokens.lock"
@@ -309,6 +446,9 @@ build_test_cmd() {
         fi
     else
         TEST_CMD+=(--workspace)
+        # The PostgreSQL extension crate is tested via the dedicated pgrx workflow,
+        # not through generic cargo test/nextest targets.
+        TEST_CMD+=(--exclude "kalam-pg-extension")
         TEST_CMD+=(--features "kalam-cli/e2e-tests")
     fi
 

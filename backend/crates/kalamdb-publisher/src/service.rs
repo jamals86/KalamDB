@@ -32,7 +32,7 @@ use crate::routing::RouteCache;
 ///
 /// If a consumer fetches messages but does not ack within this window, the
 /// claimed range is released so another consumer can re-deliver it.
-const VISIBILITY_TIMEOUT: Duration = Duration::from_secs(60);
+const DEFAULT_VISIBILITY_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Tracks per-(topic, group, partition) claim state for consumer groups.
 ///
@@ -154,11 +154,21 @@ pub struct TopicPublisherService {
     /// Per-(topic, partition) write locks that serialize offset allocation +
     /// RocksDB write to guarantee messages are stored in offset order.
     partition_write_locks: DashMap<TopicPartitionKey, Arc<Mutex<()>>>,
+    /// How long a consumer claim stays valid before re-delivery.
+    visibility_timeout: Duration,
 }
 
 impl TopicPublisherService {
     /// Create a new TopicPublisherService with stores backed by the given storage.
     pub fn new(storage_backend: Arc<dyn StorageBackend>) -> Self {
+        Self::with_visibility_timeout(storage_backend, DEFAULT_VISIBILITY_TIMEOUT)
+    }
+
+    /// Create a new TopicPublisherService with a custom visibility timeout.
+    pub fn with_visibility_timeout(
+        storage_backend: Arc<dyn StorageBackend>,
+        visibility_timeout: Duration,
+    ) -> Self {
         // Ensure the topic message partition exists.
         // Consumer offsets live in system.topic_offsets (system_topic_offsets CF),
         // so creating a separate topic_offsets CF here only adds permanent idle overhead.
@@ -176,6 +186,7 @@ impl TopicPublisherService {
             offset_allocator: OffsetAllocator::new(),
             group_claim_state: DashMap::new(),
             partition_write_locks: DashMap::new(),
+            visibility_timeout,
         }
     }
 
@@ -535,7 +546,7 @@ impl TopicPublisherService {
             .or_insert_with(|| ClaimState::new(start_offset));
 
         // Expire stale claims so crashed consumers don't block delivery.
-        state.expire_stale_claims(Instant::now(), VISIBILITY_TIMEOUT);
+        state.expire_stale_claims(Instant::now(), self.visibility_timeout);
 
         let effective_start = state.cursor.max(start_offset);
 
@@ -615,6 +626,11 @@ impl TopicPublisherService {
     /// Get the underlying offset store.
     pub fn offset_store(&self) -> Arc<TopicOffsetsTableProvider> {
         self.offset_store.clone()
+    }
+
+    /// Get the configured visibility timeout for consumer claims.
+    pub fn visibility_timeout(&self) -> Duration {
+        self.visibility_timeout
     }
 
     /// Get statistics about the topic cache.

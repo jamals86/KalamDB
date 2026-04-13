@@ -714,12 +714,6 @@ fn create_partition(&self, partition: &Partition) -> Result<()> {
 - `models/ids/user_row_id.rs:94-95`
 - `models/ids/live_query_id.rs:139-140`
 
-**Vulnerable Code:**
-```rust
-unsafe impl Send for UserName {}
-unsafe impl Sync for UserName {}
-```
-
 **Impact:**
 - Types contain only `String` which is already `Send + Sync`
 - Manual `unsafe impl` is unnecessary and introduces potential for future bugs if the types are modified

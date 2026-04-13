@@ -6,7 +6,7 @@ import type {
   QueryRunSummary,
   QueryTab,
   SavedQuery,
-} from "@/components/sql-studio-v2/types";
+} from "@/components/sql-studio-v2/shared/types";
 
 interface SqlStudioWorkspaceState {
   tabs: QueryTab[];

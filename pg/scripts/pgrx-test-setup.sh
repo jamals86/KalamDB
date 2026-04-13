@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 #
-# pgrx-test-setup.sh — Set up a pgrx-managed PostgreSQL instance for DDL e2e testing.
+# pgrx-test-setup.sh — Set up a pgrx-managed PostgreSQL instance for pg e2e testing.
 #
 # Prerequisites:
 #   1. pgrx PG installed: cargo pgrx init --pg<major> download
 #   2. KalamDB server running locally with cluster mode (gRPC on :9188, HTTP on :8080)
 #
 # Usage:
-#   ./pg/scripts/pgrx-test-setup.sh          # Full setup (install extension + create DB + server)
+#   ./pg/scripts/pgrx-test-setup.sh          # Full setup (start PG + install extension + create DB + server)
 #   ./pg/scripts/pgrx-test-setup.sh --start  # Just start PG if stopped
 #   ./pg/scripts/pgrx-test-setup.sh --stop   # Stop pgrx PG
 #   ./pg/scripts/pgrx-test-setup.sh --psql   # Open psql against the test DB
@@ -50,6 +50,7 @@ PGRX_INSTALL_BIN_DIR="$PGRX_VERSION_DIR/pgrx-install/bin"
 PG_CONFIG="$PGRX_INSTALL_BIN_DIR/pg_config"
 PSQL="$PGRX_INSTALL_BIN_DIR/psql"
 PG_CTL="$PGRX_INSTALL_BIN_DIR/pg_ctl"
+INITDB="$PGRX_INSTALL_BIN_DIR/initdb"
 DATA_DIR="$PGRX_HOME/data-${PG_MAJOR}"
 
 # Connection settings (pgrx defaults)
@@ -82,14 +83,29 @@ check_pg_config() {
     fi
 }
 
+ensure_data_dir() {
+    if [[ -f "$DATA_DIR/PG_VERSION" && -f "$DATA_DIR/postgresql.conf" ]]; then
+        return 0
+    fi
+
+    info "Initializing pgrx PostgreSQL $PG_MAJOR data directory..."
+    rm -rf "$DATA_DIR"
+    "$INITDB" -D "$DATA_DIR" >/dev/null
+}
+
 start_pg() {
+    ensure_data_dir
+
     if pg_isready -h "$PG_HOST" -p "$PG_PORT" -q 2>/dev/null; then
         info "PostgreSQL already running on port $PG_PORT"
         return 0
     fi
     info "Starting pgrx PostgreSQL $PG_MAJOR..."
     "$PG_CTL" -D "$DATA_DIR" -l "$DATA_DIR/pgrx.log" -o "-p $PG_PORT" start
-    # Wait for ready
+    wait_for_pg_ready
+}
+
+wait_for_pg_ready() {
     for i in $(seq 1 15); do
         if pg_isready -h "$PG_HOST" -p "$PG_PORT" -q 2>/dev/null; then
             info "PostgreSQL ready on port $PG_PORT"
@@ -99,6 +115,12 @@ start_pg() {
     done
     error "PostgreSQL did not start within 15s"
     exit 1
+}
+
+restart_pg() {
+    info "Restarting pgrx PostgreSQL $PG_MAJOR..."
+    "$PG_CTL" -D "$DATA_DIR" -l "$DATA_DIR/pgrx.log" -o "-p $PG_PORT" restart
+    wait_for_pg_ready
 }
 
 stop_pg() {
@@ -115,6 +137,23 @@ install_extension() {
         -F "$PG_EXTENSION_FLAVOR" \
         2>&1 | tail -3
     info "Extension installed"
+}
+
+ensure_shared_preload_libraries() {
+    local conf="$DATA_DIR/postgresql.conf"
+
+    if grep -Eq "^[[:space:]]*shared_preload_libraries[[:space:]]*=.*pg_kalam" "$conf" 2>/dev/null; then
+        info "shared_preload_libraries already includes pg_kalam"
+        return 0
+    fi
+
+    if grep -Eq "^[[:space:]]*shared_preload_libraries[[:space:]]*=" "$conf" 2>/dev/null; then
+        info "Updating shared_preload_libraries to include pg_kalam..."
+        perl -0pi -e "s/^[[:space:]]*shared_preload_libraries[[:space:]]*=.*$/shared_preload_libraries = 'pg_kalam'/m" "$conf"
+    else
+        info "Adding pg_kalam to shared_preload_libraries..."
+        echo "shared_preload_libraries = 'pg_kalam'" >> "$conf"
+    fi
 }
 
 setup_database() {
@@ -140,18 +179,6 @@ setup_database() {
             FOREIGN DATA WRAPPER pg_kalam
             OPTIONS (host '$KALAMDB_GRPC_HOST', port '$KALAMDB_GRPC_PORT');
     "
-
-    # Ensure pg_kalam is in shared_preload_libraries so the DDL hook loads at startup
-    local conf="$DATA_DIR/postgresql.conf"
-    if grep -q "shared_preload_libraries.*pg_kalam" "$conf" 2>/dev/null; then
-        info "shared_preload_libraries already includes pg_kalam"
-    else
-        info "Adding pg_kalam to shared_preload_libraries..."
-        echo "shared_preload_libraries = 'pg_kalam'" >> "$conf"
-        info "Restarting PostgreSQL to pick up shared_preload_libraries..."
-        "$PG_CTL" -D "$DATA_DIR" restart -l "$DATA_DIR/pgrx.log"
-        sleep 2
-    fi
 
     info "Setup complete!"
     info ""
@@ -186,6 +213,8 @@ case "${1:-}" in
     *)
         start_pg
         install_extension
+        ensure_shared_preload_libraries
+        restart_pg
         setup_database
         ;;
 esac

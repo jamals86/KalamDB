@@ -151,6 +151,8 @@ pub(super) async fn authenticate_bearer(
             user.username.clone(),
             role,
             user.email.clone(),
+            user.created_at,
+            user.updated_at,
             connection_info.clone(),
         ))
     }

@@ -6,7 +6,7 @@ import type {
   QueryResultSchemaField,
   StudioNamespace,
   StudioTable,
-} from "@/components/sql-studio-v2/types";
+} from "@/components/sql-studio-v2/shared/types";
 
 const MAX_SQL_STUDIO_RENDER_ROWS = 1000;
 

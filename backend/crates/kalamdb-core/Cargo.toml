@@ -13,18 +13,21 @@ repository.workspace = true
 kalamdb-commons = { path = "../kalamdb-commons", features = ["full"] }
 kalamdb-configs = { path = "../kalamdb-configs" }
 kalamdb-filestore = { path = "../kalamdb-filestore" }
+kalamdb-live = { path = "../kalamdb-live" }
 kalamdb-observability = { path = "../kalamdb-observability" }
+kalamdb-plan-cache = { workspace = true }
 kalamdb-pg = { path = "../kalamdb-pg" }
 kalamdb-raft = { path = "../kalamdb-raft" }
 kalamdb-session = { path = "../kalamdb-session" }
 kalamdb-session-datafusion = { path = "../kalamdb-session-datafusion" }
 kalamdb-sharding = { path = "../kalamdb-sharding" }
-kalamdb-sql = { path = "../kalamdb-sql" }
+kalamdb-sql = { package = "kalamdb-dialect", path = "../kalamdb-dialect" }
 kalamdb-store = { path = "../kalamdb-store" }
 kalamdb-auth = { path = "../kalamdb-auth", default-features = false, features = ["websocket"] }
 kalamdb-system = { path = "../kalamdb-system" }
 kalamdb-tables = { path = "../kalamdb-tables" }
 kalamdb-publisher = { path = "../kalamdb-publisher" }
+kalamdb-transactions = { path = "../kalamdb-transactions" }
 kalamdb-views = { path = "../kalamdb-views" }
 kalamdb-vector = { path = "../kalamdb-vector" }
 
@@ -40,7 +43,6 @@ sqlparser = { workspace = true }
 # Concurrent data structures
 dashmap = { workspace = true }
 parking_lot = { workspace = true }
-moka = { workspace = true }
 
 # Async
 async-trait = { workspace = true }
@@ -98,7 +100,7 @@ kalamdb-jobs = { path = "../kalamdb-jobs" }
 # Feature to run expensive/slow tests (disabled by default)
 expensive_tests = []
 # Expose test helpers to other crates' test code (dev-dependencies)
-test-helpers = []
+test-helpers = ["kalamdb-live/test-helpers"]
 mimalloc = ["kalamdb-observability/mimalloc", "kalamdb-raft/mimalloc"]
 
 [lib]

@@ -26,10 +26,12 @@ use kalamdb_views::columns_view::create_columns_view_provider;
 use kalamdb_views::datatypes::{DatatypesTableProvider, DatatypesView};
 use kalamdb_views::describe::DescribeView;
 use kalamdb_views::live::{LiveTableProvider, LiveView};
+use kalamdb_views::sessions::{SessionsTableProvider, SessionsView};
 use kalamdb_views::server_logs::create_server_logs_provider;
 use kalamdb_views::settings::{SettingsTableProvider, SettingsView};
 use kalamdb_views::stats::{StatsTableProvider, StatsView};
 use kalamdb_views::tables_view::create_tables_view_provider;
+use kalamdb_views::transactions::{TransactionsTableProvider, TransactionsView};
 use kalamdb_views::view_base::ViewTableProvider;
 
 /// Configuration for view initialization
@@ -44,6 +46,10 @@ pub struct ViewConfig {
     pub stats_view: Arc<StatsView>,
     /// Pre-created system.live view for callback wiring.
     pub live_view: Arc<LiveView>,
+    /// Pre-created system.sessions view for callback wiring.
+    pub sessions_view: Arc<SessionsView>,
+    /// Pre-created system.transactions view for callback wiring.
+    pub transactions_view: Arc<TransactionsView>,
 }
 
 impl std::fmt::Debug for ViewConfig {
@@ -88,6 +94,8 @@ impl SystemSchemaProvider {
                 executor: RwLock::new(None),
                 stats_view: Arc::new(StatsView::new()),
                 live_view: Arc::new(LiveView::new(SystemTable::Live)),
+                sessions_view: Arc::new(SessionsView::new()),
+                transactions_view: Arc::new(TransactionsView::new()),
             }),
         }
     }
@@ -109,6 +117,16 @@ impl SystemSchemaProvider {
     /// Get the pre-created system.live view for callback wiring.
     pub fn live_view(&self) -> Arc<LiveView> {
         Arc::clone(&self.view_config.live_view)
+    }
+
+    /// Get the pre-created system.sessions view for callback wiring.
+    pub fn sessions_view(&self) -> Arc<SessionsView> {
+        Arc::clone(&self.view_config.sessions_view)
+    }
+
+    /// Get the pre-created system.transactions view for callback wiring.
+    pub fn transactions_view(&self) -> Arc<TransactionsView> {
+        Arc::clone(&self.view_config.transactions_view)
     }
 
     /// Get or create a view provider, storing it in SchemaRegistry's CachedTableData
@@ -135,6 +153,18 @@ impl SystemSchemaProvider {
             SystemTable::Live => {
                 let provider =
                     Arc::new(LiveTableProvider::new(Arc::clone(&self.view_config.live_view)));
+                provider as Arc<dyn TableProvider>
+            },
+            SystemTable::Sessions => {
+                let provider = Arc::new(SessionsTableProvider::new(Arc::clone(
+                    &self.view_config.sessions_view,
+                )));
+                provider as Arc<dyn TableProvider>
+            },
+            SystemTable::Transactions => {
+                let provider = Arc::new(TransactionsTableProvider::new(Arc::clone(
+                    &self.view_config.transactions_view,
+                )));
                 provider as Arc<dyn TableProvider>
             },
             SystemTable::Settings => {
@@ -186,7 +216,7 @@ impl SystemSchemaProvider {
         let secured: Arc<dyn TableProvider + Send + Sync> =
             secure_provider(provider, system_table.table_id());
         if let Some(cached) = self.schema_registry.get(&table_id) {
-            cached.set_system_provider(Arc::clone(&secured));
+            cached.set_provider(Arc::clone(&secured));
         }
 
         Some(secured)

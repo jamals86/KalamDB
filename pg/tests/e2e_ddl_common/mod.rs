@@ -13,11 +13,18 @@
 //   cargo nextest run --features e2e -p kalam-pg-extension -E 'test(e2e_ddl)'
 #![allow(dead_code)]
 
+#[path = "../support/http_client.rs"]
+mod http_client;
+
+use std::ops::{Deref, DerefMut};
 use std::sync::OnceLock;
 use std::time::Duration;
 use std::{env, fmt};
 
-use reqwest::Client;
+/// Reason DDL tests are being skipped (set once during init).
+static SKIP_REASON: OnceLock<Option<String>> = OnceLock::new();
+
+use http_client::TestHttpClient;
 use serde_json::Value;
 use tokio_postgres::{Config, NoTls};
 
@@ -113,39 +120,85 @@ fn kalamdb_grpc_target() -> (String, u16) {
 
 pub struct DdlTestEnv {
     pub bearer_token: String,
-    http_client: Client,
+    http_client: TestHttpClient,
     pg_user: String,
+}
+
+pub struct OwnedPgClient {
+    client: Option<tokio_postgres::Client>,
+    connection_task: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl OwnedPgClient {
+    fn new(client: tokio_postgres::Client, connection_task: tokio::task::JoinHandle<()>) -> Self {
+        Self {
+            client: Some(client),
+            connection_task: Some(connection_task),
+        }
+    }
+
+    pub async fn disconnect(mut self) {
+        self.client.take();
+        if let Some(connection_task) = self.connection_task.take() {
+            let _ = connection_task.await;
+        }
+    }
+}
+
+impl Deref for OwnedPgClient {
+    type Target = tokio_postgres::Client;
+
+    fn deref(&self) -> &Self::Target {
+        self.client.as_ref().expect("pg client already disconnected")
+    }
+}
+
+impl DerefMut for OwnedPgClient {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.client.as_mut().expect("pg client already disconnected")
+    }
+}
+
+impl Drop for OwnedPgClient {
+    fn drop(&mut self) {
+        self.client.take();
+        let _ = self.connection_task.take();
+    }
 }
 
 static ENV: OnceLock<DdlTestEnv> = OnceLock::new();
 
 impl DdlTestEnv {
     /// Return a reference to the global test environment.
-    /// Panics if the pgrx PG or KalamDB server is not reachable.
-    pub async fn global() -> &'static DdlTestEnv {
+    /// Returns `None` (and prints a skip message) if pgrx PostgreSQL is not
+    /// reachable or `shared_preload_libraries` does not include `pg_kalam`.
+    pub async fn global() -> Option<&'static DdlTestEnv> {
         if let Some(env) = ENV.get() {
-            return env;
+            // Already initialised — check whether we decided to skip.
+            if SKIP_REASON.get().and_then(|r| r.as_ref()).is_some() {
+                return None;
+            }
+            return Some(env);
         }
-        let env = Self::start().await;
-        ENV.get_or_init(|| env)
+        match Self::try_start().await {
+            Ok(env) => {
+                SKIP_REASON.get_or_init(|| None);
+                Some(ENV.get_or_init(|| env))
+            }
+            Err(reason) => {
+                eprintln!("  [SKIP] DDL tests skipped: {reason}");
+                SKIP_REASON.get_or_init(|| Some(reason));
+                // Store a dummy env so subsequent calls don't re-init.
+                None
+            }
+        }
     }
 
     /// Open a new `tokio_postgres::Client` connected to the pgrx test PG.
-    pub async fn pg_connect(&self) -> tokio_postgres::Client {
-        let (client, conn) = Config::new()
-            .host(PG_HOST)
-            .port(PG_PORT)
-            .user(&self.pg_user)
-            .dbname(TEST_DB)
-            .connect(NoTls)
+    pub async fn pg_connect(&self) -> OwnedPgClient {
+        self.pg_connect_to(TEST_DB)
             .await
-            .expect("connect to pgrx PostgreSQL (is it running on port 28816?)");
-        tokio::spawn(async move {
-            if let Err(e) = conn.await {
-                eprintln!("pg connection error: {e}");
-            }
-        });
-        client
+            .expect("connect to pgrx PostgreSQL (is it running on port 28816?)")
     }
 
     /// Execute a SQL statement on KalamDB via its HTTP API.
@@ -161,14 +214,11 @@ impl DdlTestEnv {
         let body = serde_json::json!({ "sql": sql });
         let resp = self
             .http_client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.bearer_token))
-            .json(&body)
-            .send()
+            .post_json(&url, &body, Some(&self.bearer_token))
             .await
             .expect("KalamDB SQL request");
-        let status = resp.status();
-        let text = resp.text().await.unwrap_or_default();
+        let status = resp.status;
+        let text = resp.body;
         if !status.is_success() {
             return Err(format!("({status}): {text}"));
         }
@@ -184,13 +234,10 @@ impl DdlTestEnv {
         let body = serde_json::json!({ "sql": sql });
         let resp = self
             .http_client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.bearer_token))
-            .json(&body)
-            .send()
+            .post_json(&url, &body, Some(&self.bearer_token))
             .await
             .expect("KalamDB table exists check");
-        resp.status().is_success()
+        resp.status.is_success()
     }
 
     /// Get column names for a KalamDB table (returns empty vec on error).
@@ -201,16 +248,13 @@ impl DdlTestEnv {
         let body = serde_json::json!({ "sql": sql });
         let resp = self
             .http_client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.bearer_token))
-            .json(&body)
-            .send()
+            .post_json(&url, &body, Some(&self.bearer_token))
             .await
             .expect("KalamDB columns check");
-        if !resp.status().is_success() {
+        if !resp.status.is_success() {
             return Vec::new();
         }
-        let text = resp.text().await.unwrap_or_default();
+        let text = resp.body;
         let val: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
         // Response format: { "results": [{ "schema": [{"name": "col1", ...}, ...], "rows": [...] }] }
         val["results"][0]["schema"]
@@ -277,14 +321,14 @@ impl DdlTestEnv {
 
     // -- lifecycle ----------------------------------------------------------
 
-    async fn start() -> Self {
-        let http_client = Client::builder().timeout(Duration::from_secs(15)).build().unwrap();
+    async fn try_start() -> Result<Self, String> {
+        let http_client = TestHttpClient::new(Duration::from_secs(15));
 
         // 1. Verify KalamDB is reachable
-        Self::wait_for_kalamdb(&http_client).await;
+        Self::wait_for_kalamdb(&http_client).await?;
 
         // 2. Authenticate
-        let bearer_token = Self::authenticate(&http_client).await;
+        let bearer_token = Self::authenticate(&http_client).await?;
 
         // 3. Detect current OS user (pgrx uses trust auth with $USER)
         let pg_user = std::env::var("USER").unwrap_or_else(|_| "postgres".to_string());
@@ -296,76 +340,80 @@ impl DdlTestEnv {
         };
 
         // 4. Verify PG is reachable and bootstrap the FDW test server.
-        env.ensure_test_db().await;
-        env.wait_for_pg().await;
-        env.ensure_extension_bootstrap().await;
+        env.ensure_test_db().await?;
+        env.wait_for_pg().await?;
+        env.ensure_extension_bootstrap().await?;
 
-        env
+        Ok(env)
     }
 
-    async fn wait_for_kalamdb(client: &Client) {
+    async fn wait_for_kalamdb(client: &TestHttpClient) -> Result<(), String> {
         let config = kalamdb_auth_config();
         let url = format!("{}/health", config.base_url);
         for i in 0..10 {
             if client
                 .get(&url)
-                .send()
                 .await
-                .map(|response| response.status().is_success())
+                .map(|response| response.status.is_success())
                 .unwrap_or(false)
             {
-                return;
+                return Ok(());
             }
             if i == 0 {
                 eprintln!("  waiting for KalamDB at {}...", config.base_url);
             }
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
-        panic!(
-            "KalamDB not reachable at {}\n\
-             Start with: cd backend && cargo run",
+        Err(format!(
+            "KalamDB not reachable at {}. Start with: cd backend && cargo run",
             config.base_url
-        );
+        ))
     }
 
-    async fn ensure_test_db(&self) {
-        let postgres = self.pg_connect_to("postgres").await.expect("connect to postgres database");
+    async fn ensure_test_db(&self) -> Result<(), String> {
+        let postgres = self.pg_connect_to("postgres").await.map_err(|e| format!("connect to postgres database: {e}"))?;
 
         let exists = postgres
             .query_opt("SELECT 1 FROM pg_database WHERE datname = $1", &[&TEST_DB])
             .await
-            .expect("query test database")
+            .map_err(|e| format!("query test database: {e}"))?
             .is_some();
         if !exists {
             postgres
                 .batch_execute(&format!("CREATE DATABASE {TEST_DB};"))
                 .await
-                .expect("create test database");
+                .map_err(|e| format!("create test database: {e}"))?;
         }
+
+        postgres.disconnect().await;
+        Ok(())
     }
 
-    async fn ensure_extension_bootstrap(&self) {
+    async fn ensure_extension_bootstrap(&self) -> Result<(), String> {
         let pg = self.pg_connect().await;
         let (grpc_host, grpc_port) = kalamdb_grpc_target();
         const BOOTSTRAP_LOCK_ID: i64 = 8_271_604_221;
 
         pg.batch_execute("CREATE EXTENSION IF NOT EXISTS pg_kalam;")
             .await
-            .expect("create extension pg_kalam");
+            .map_err(|e| format!("create extension pg_kalam: {e}"))?;
 
         let shared_preload = pg
             .query_one("SHOW shared_preload_libraries", &[])
             .await
-            .expect("show shared_preload_libraries");
+            .map_err(|e| format!("show shared_preload_libraries: {e}"))?;
         let shared_preload: String = shared_preload.get(0);
-        assert!(
-            shared_preload.split(',').any(|entry| entry.trim() == "pg_kalam"),
-            "shared_preload_libraries must include pg_kalam for DDL propagation tests, got: {shared_preload}"
-        );
+        if !shared_preload.split(',').any(|entry| entry.trim() == "pg_kalam") {
+            pg.disconnect().await;
+            return Err(format!(
+                "shared_preload_libraries does not include pg_kalam (got: '{shared_preload}'). \
+                 Run: pg/scripts/pgrx-test-setup.sh"
+            ));
+        }
 
         pg.execute("SELECT pg_advisory_lock($1)", &[&BOOTSTRAP_LOCK_ID])
             .await
-            .expect("acquire pg_kalam bootstrap advisory lock");
+            .map_err(|e| format!("acquire pg_kalam bootstrap advisory lock: {e}"))?;
 
         let bootstrap_result = async {
             pg.batch_execute(&format!(
@@ -374,27 +422,33 @@ impl DdlTestEnv {
                      OPTIONS (host '{grpc_host}', port '{grpc_port}');"
             ))
             .await
-            .expect("create kalam_server foreign server");
+            .map_err(|e| format!("create kalam_server foreign server: {e}"))?;
 
             pg.batch_execute(&format!(
                 "ALTER SERVER kalam_server OPTIONS (SET host '{grpc_host}', SET port '{grpc_port}');"
             ))
             .await
-            .expect("repoint kalam_server foreign server");
+            .map_err(|e| format!("repoint kalam_server foreign server: {e}"))?;
+
+            Ok::<(), String>(())
         }
         .await;
 
-        pg.execute("SELECT pg_advisory_unlock($1)", &[&BOOTSTRAP_LOCK_ID])
-            .await
-            .expect("release pg_kalam bootstrap advisory lock");
+        let _ = pg.execute("SELECT pg_advisory_unlock($1)", &[&BOOTSTRAP_LOCK_ID])
+            .await;
+
+        pg.disconnect().await;
 
         bootstrap_result
     }
 
-    async fn wait_for_pg(&self) {
+    async fn wait_for_pg(&self) -> Result<(), String> {
         for i in 0..10 {
             match self.pg_connect_to("postgres").await {
-                Ok(_client) => return,
+                Ok(client) => {
+                    client.disconnect().await;
+                    return Ok(());
+                }
                 Err(_) => {
                     if i == 0 {
                         eprintln!("  waiting for PostgreSQL on port {PG_PORT}...");
@@ -403,16 +457,16 @@ impl DdlTestEnv {
                 },
             }
         }
-        panic!(
-            "PostgreSQL not reachable at {PG_HOST}:{PG_PORT}\n\
+        Err(format!(
+            "PostgreSQL not reachable at {PG_HOST}:{PG_PORT}. \
              Start with: ./pg/scripts/pgrx-test-setup.sh --start"
-        );
+        ))
     }
 
     async fn pg_connect_to(
         &self,
         dbname: &str,
-    ) -> Result<tokio_postgres::Client, tokio_postgres::Error> {
+    ) -> Result<OwnedPgClient, tokio_postgres::Error> {
         let (client, conn) = Config::new()
             .host(PG_HOST)
             .port(PG_PORT)
@@ -420,39 +474,37 @@ impl DdlTestEnv {
             .dbname(dbname)
             .connect(NoTls)
             .await?;
-        tokio::spawn(async move {
+        let connection_task = tokio::spawn(async move {
             if let Err(error) = conn.await {
                 eprintln!("pg connection error: {error}");
             }
         });
-        Ok(client)
+        Ok(OwnedPgClient::new(client, connection_task))
     }
 
-    async fn authenticate(client: &Client) -> String {
+    async fn authenticate(client: &TestHttpClient) -> Result<String, String> {
         let config = kalamdb_auth_config();
 
         if let Some(token) =
             try_login(client, &config.base_url, &config.login_username, &config.login_password)
                 .await
         {
-            return token;
+            return Ok(token);
         }
 
         let _ = client
-            .post(format!("{}/v1/api/auth/setup", config.base_url))
-            .json(&serde_json::json!({
+            .post_json(&format!("{}/v1/api/auth/setup", config.base_url), &serde_json::json!({
                 "username": config.setup_username,
                 "password": config.setup_password,
                 "root_password": config.root_password,
-            }))
-            .send()
+            }), None)
             .await;
 
         if let Some(token) =
             try_login(client, &config.base_url, &config.login_username, &config.login_password)
                 .await
         {
-            return token;
+            return Ok(token);
         }
 
         if config.setup_username != config.login_username {
@@ -460,34 +512,32 @@ impl DdlTestEnv {
                 try_login(client, &config.base_url, &config.setup_username, &config.setup_password)
                     .await
             {
-                return token;
+                return Ok(token);
             }
         }
 
-        panic!(
-            "Failed to authenticate KalamDB test environment ({config}). Set KALAMDB_USER/KALAMDB_PASSWORD or KALAMDB_ROOT_PASSWORD to match the running server."
-        );
+        Err(format!(
+            "Failed to authenticate KalamDB test environment ({config}). Set KALAMDB_USER/KALAMDB_PASSWORD or KALAMDB_ROOT_PASSWORD."
+        ))
     }
 }
 
 async fn try_login(
-    client: &Client,
+    client: &TestHttpClient,
     base_url: &str,
     username: &str,
     password: &str,
 ) -> Option<String> {
     let resp = client
-        .post(format!("{base_url}/v1/api/auth/login"))
-        .json(&serde_json::json!({
+        .post_json(&format!("{base_url}/v1/api/auth/login"), &serde_json::json!({
             "username": username,
             "password": password,
-        }))
-        .send()
+        }), None)
         .await
         .ok()?;
-    if !resp.status().is_success() {
+    if !resp.status.is_success() {
         return None;
     }
-    let body: Value = resp.json().await.ok()?;
+    let body: Value = serde_json::from_str(&resp.body).ok()?;
     body["access_token"].as_str().map(ToString::to_string)
 }

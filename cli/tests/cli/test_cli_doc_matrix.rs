@@ -282,6 +282,13 @@ fn test_docs_matrix_has_execution_tests_for_documented_flags_and_commands() {
             tests: &["test_cli_meta_commands_doc_smoke_non_interactive"],
         },
         Coverage {
+            item: "\\sessions",
+            tests: &[
+                "test_parse_sessions",
+                "test_cli_meta_commands_doc_smoke_non_interactive",
+            ],
+        },
+        Coverage {
             item: "\\history",
             tests: &[
                 "test_parse_history",
@@ -848,6 +855,7 @@ fn test_cli_meta_commands_doc_smoke_non_interactive() {
         "\\?",
         "\\info",
         "\\session",
+        "\\sessions",
         "\\history",
         "\\h",
         "\\health",

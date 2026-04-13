@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Remote server configuration consumed by the PostgreSQL extension.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct RemoteServerConfig {
     pub host: String,
     pub port: u16,

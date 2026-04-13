@@ -19,7 +19,7 @@ pub async fn ensure_schema_exists(client: &tokio_postgres::Client, schema: &str)
         .expect("create scenario schema");
 }
 
-pub async fn create_shared_foreign_table_in_schema(
+pub async fn create_shared_kalam_table_in_schema(
     client: &tokio_postgres::Client,
     schema: &str,
     table: &str,
@@ -32,15 +32,13 @@ pub async fn create_shared_foreign_table_in_schema(
         .ok();
     client
         .batch_execute(&format!(
-            "CREATE FOREIGN TABLE {schema}.{table} ({columns}) \
-             SERVER kalam_server \
-             OPTIONS (namespace '{schema}', \"table\" '{table}', table_type 'shared');"
+            "CREATE TABLE {schema}.{table} ({columns}) USING kalamdb WITH (type = 'shared');"
         ))
         .await
-        .expect("create shared scenario foreign table");
+        .expect("create shared Kalam table");
 }
 
-pub async fn create_user_foreign_table_in_schema(
+pub async fn create_user_kalam_table_in_schema(
     client: &tokio_postgres::Client,
     schema: &str,
     table: &str,
@@ -53,15 +51,13 @@ pub async fn create_user_foreign_table_in_schema(
         .ok();
     client
         .batch_execute(&format!(
-            "CREATE FOREIGN TABLE {schema}.{table} ({columns}) \
-             SERVER kalam_server \
-             OPTIONS (namespace '{schema}', \"table\" '{table}', table_type 'user');"
+            "CREATE TABLE {schema}.{table} ({columns}) USING kalamdb WITH (type = 'user');"
         ))
         .await
-        .expect("create user scenario foreign table");
+        .expect("create user Kalam table");
 }
 
-pub async fn drop_foreign_tables(client: &tokio_postgres::Client, schema: &str, tables: &[String]) {
+pub async fn drop_kalam_tables(client: &tokio_postgres::Client, schema: &str, tables: &[String]) {
     for table in tables {
         client
             .batch_execute(&format!("DROP FOREIGN TABLE IF EXISTS {schema}.{table};"))

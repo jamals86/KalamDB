@@ -104,7 +104,7 @@
 //! # Related Modules
 //!
 //! - `kalamdb_commons::schemas` - Table and column definitions
-//! - `kalamdb_sql::ddl` - SQL DDL parsing and type inference
+//! - `kalamdb_dialect::ddl` - SQL DDL parsing and type inference
 //! - `kalamdb_core::schema_cache` - Cached type lookups
 //! - `link/sdks/typescript/client` - Client SDK type definitions
 

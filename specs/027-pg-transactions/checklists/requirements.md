@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [x] No [NEEDS CLARIFICATION] markers remain
+- [x] No NEEDS CLARIFICATION markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -34,5 +34,5 @@
 - All items passed on first validation pass.
 - Assumptions section explicitly scopes out: savepoints, DDL-in-transactions, distributed transactions, serializable isolation.
 - 6 user stories covering P1 (atomic writes, read-your-writes), P2 (isolation, REST/SQL API), P3 (auto-rollback, timeouts).
-- 15 functional requirements, 8 success criteria, 7 edge cases identified.
+- 46 functional requirements, 23 success criteria, 21 edge cases identified, including cross-origin `system.transactions` observability, hidden `_commit_seq` snapshot visibility metadata, non-blocking coordinator rules, and explicit Raft/leader-affinity rules for future cluster-mode enablement.
 - FR-014 ensures backward compatibility with existing pg_kalam RPC contract.

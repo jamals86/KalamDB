@@ -135,13 +135,29 @@ pub fn compute_metrics(ctx: &crate::app_context::AppContext) -> Vec<(String, Str
     // Active WebSocket connections
     let active_connections = ctx.connection_registry().connection_count();
     metrics.push(("active_connections".to_string(), active_connections.to_string()));
+    metrics.push((
+        "active_connections_peak".to_string(),
+        ctx.connection_registry().peak_connection_count().to_string(),
+    ));
+    metrics.push((
+        "max_connections_configured".to_string(),
+        ctx.connection_registry().max_connection_limit().to_string(),
+    ));
 
     // Active Subscriptions
     let active_subscriptions = ctx.connection_registry().subscription_count();
     metrics.push(("active_subscriptions".to_string(), active_subscriptions.to_string()));
     metrics.push((
+        "active_subscriptions_peak".to_string(),
+        ctx.connection_registry().peak_subscription_count().to_string(),
+    ));
+    metrics.push((
         "websocket_sessions".to_string(),
         kalamdb_observability::get_websocket_session_count().to_string(),
+    ));
+    metrics.push((
+        "websocket_sessions_peak".to_string(),
+        kalamdb_observability::get_websocket_session_peak_count().to_string(),
     ));
 
     // Schema cache size and stats

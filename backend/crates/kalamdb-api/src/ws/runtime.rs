@@ -1,8 +1,10 @@
 use actix_ws::{CloseCode, CloseReason, Message, Session};
 use futures_util::StreamExt;
 use kalamdb_commons::{websocket::SerializationType, WebSocketMessage};
-use kalamdb_core::live::{ConnectionEvent, ConnectionRegistration};
-use kalamdb_jobs::health_monitor::{decrement_websocket_sessions, increment_websocket_sessions};
+use kalamdb_jobs::health_monitor::{
+    decrement_websocket_sessions, increment_websocket_sessions, record_activity_now,
+};
+use kalamdb_live::{ConnectionEvent, ConnectionRegistration};
 use log::{debug, error, info, warn};
 
 use super::context::{UpgradeAuth, WsHandlerContext};
@@ -22,6 +24,7 @@ pub(super) async fn run_websocket(
     handler_context: WsHandlerContext,
     pre_auth: Option<UpgradeAuth>,
 ) {
+    record_activity_now();
     increment_websocket_sessions();
 
     let mut event_rx = registration.event_rx;
@@ -88,15 +91,18 @@ pub(super) async fn run_websocket(
                 msg = msg_stream.next() => {
                     match msg {
                         Some(Ok(Message::Ping(bytes))) => {
+                            record_activity_now();
                             connection_state.update_heartbeat();
                             if session.pong(&bytes).await.is_err() {
                                 break;
                             }
                         }
                         Some(Ok(Message::Pong(_))) => {
+                            record_activity_now();
                             connection_state.update_heartbeat();
                         }
                         Some(Ok(Message::Text(text))) => {
+                            record_activity_now();
                             connection_state.update_heartbeat();
 
                             if text.len() > handler_context.max_message_size {
@@ -158,6 +164,7 @@ pub(super) async fn run_websocket(
                             }
                         }
                         Some(Ok(Message::Binary(data))) => {
+                            record_activity_now();
                             connection_state.update_heartbeat();
 
                             if let Err(err) = handle_binary_message(

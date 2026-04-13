@@ -3,7 +3,7 @@
 # Copy this file to config.toml and adjust values for your environment.
 #
 # NOTE: Runtime configuration only!
-# - Namespace and storage location configuration is stored in system tables (via kalamdb-sql)
+# - Namespace and storage location configuration is stored in system tables (via kalamdb-system)
 # - This file contains only server runtime settings (ports, paths, limits, etc.)
 
 [server]
@@ -191,7 +191,7 @@ slow_query_threshold_ms = 1000
 
 [logging.otlp]
 # Export tracing spans to Jaeger OTLP receiver
-enabled = false
+enabled = true
 # Jaeger gRPC OTLP endpoint
 endpoint = "http://127.0.0.1:4317"
 # Protocol: "grpc" or "http"

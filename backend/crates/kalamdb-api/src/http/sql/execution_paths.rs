@@ -6,7 +6,9 @@ use kalamdb_core::app_context::AppContext;
 use kalamdb_core::schema_registry::SchemaRegistry;
 use kalamdb_core::sql::context::ExecutionContext;
 use kalamdb_core::sql::executor::{PreparedExecutionStatement, ScalarValue, SqlExecutor};
+use kalamdb_core::sql::executor::request_transaction_state::RequestTransactionState;
 use kalamdb_core::sql::SqlImpersonationService;
+use kalamdb_sql::classifier::SqlStatementKind;
 use kalamdb_system::FileSubfolderState;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -162,8 +164,8 @@ pub(super) async fn execute_file_upload_path(
 
     let modified_sql = substitute_file_placeholders(&stmt.prepared_statement.sql, &file_refs);
 
-    let modified_parsed = match kalamdb_sql::parse_single_statement(&modified_sql) {
-        Ok(Some(s)) => Some(s),
+    match kalamdb_sql::parse_single_statement(&modified_sql) {
+        Ok(Some(_)) => {},
         Ok(None) => {
             return HttpResponse::BadRequest().json(SqlResponse::error(
                 ErrorCode::InvalidSql,
@@ -190,7 +192,6 @@ pub(super) async fn execute_file_upload_path(
         modified_sql.clone(),
         Some(table_id.clone()),
         Some(table_type),
-        modified_parsed,
         Some(modified_classified),
     );
 
@@ -255,10 +256,101 @@ pub(super) async fn execute_batch_path(
     let mut total_updated = 0usize;
     let mut total_deleted = 0usize;
     let mut params_remaining = Some(params);
+    let mut request_transaction_state = match RequestTransactionState::from_execution_context(exec_ctx)
+    {
+        Ok(state) => state,
+        Err(err) => {
+            return HttpResponse::BadRequest().json(SqlResponse::error(
+                ErrorCode::SqlExecutionError,
+                &err.to_string(),
+                took_ms(start_time),
+            ));
+        },
+    };
+    if let Some(state) = request_transaction_state.as_mut() {
+        state.sync_from_coordinator(app_context);
+    }
 
-    for (idx, stmt) in prepared_statements.iter().enumerate() {
-        let is_last = idx + 1 == stmt_count;
+    let mut idx = 0;
+    while idx < stmt_count {
+        let stmt = &prepared_statements[idx];
 
+        // ── Transaction batch INSERT path ───────────────────────────────
+        // When an explicit transaction is active and we see consecutive INSERT
+        // statements targeting the same table (no EXECUTE AS USER, no params),
+        // collect them and process through the transaction batch insert path.
+        if let Some(state) = request_transaction_state.as_ref() {
+            if let Some(transaction_id) = state.active_transaction_id() {
+                if is_batchable_insert(stmt) {
+                    let batch_table_id = stmt.prepared_statement.table_id.as_ref();
+                    let mut batch_end = idx + 1;
+                    while batch_end < stmt_count
+                        && is_batchable_insert(&prepared_statements[batch_end])
+                        && prepared_statements[batch_end].prepared_statement.table_id.as_ref()
+                            == batch_table_id
+                    {
+                        batch_end += 1;
+                    }
+                    let batch_len = batch_end - idx;
+
+                    if batch_len > 1 {
+                        let batch_stmts: Vec<&PreparedExecutionStatement> =
+                            prepared_statements[idx..batch_end]
+                                .iter()
+                                .map(|s| &s.prepared_statement)
+                                .collect();
+                        let batch_start = Instant::now();
+
+                        match sql_executor
+                            .try_batch_insert_in_transaction(
+                                &batch_stmts,
+                                exec_ctx,
+                                transaction_id,
+                            )
+                        {
+                            Ok(Some(results)) => {
+                                let batch_rows: usize =
+                                    results.iter().map(|r| r.affected_rows()).sum();
+                                let batch_ms = batch_start.elapsed().as_secs_f64() * 1000.0;
+                                log::debug!(
+                                    target: "sql::exec",
+                                    "✅ Batch INSERT ({} stmts, {} rows) | took={:.3}ms",
+                                    batch_len,
+                                    batch_rows,
+                                    batch_ms,
+                                );
+                                total_inserted += batch_rows;
+                                idx = batch_end;
+                                if let Some(state) = request_transaction_state.as_mut() {
+                                    state.sync_from_coordinator(app_context);
+                                }
+                                continue;
+                            },
+                            Ok(None) => { /* fast path not applicable, fall through */ },
+                            Err(err) => {
+                                if let Some(state) = request_transaction_state.as_mut() {
+                                    let _ = state.rollback_if_active(app_context);
+                                }
+                                return HttpResponse::BadRequest().json(
+                                    SqlResponse::error_with_details(
+                                        ErrorCode::SqlExecutionError,
+                                        &format!(
+                                            "Statement {} failed: {}",
+                                            idx + 1,
+                                            err
+                                        ),
+                                        &prepared_statements[idx].prepared_statement.sql,
+                                        took_ms(start_time),
+                                    ),
+                                );
+                            },
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Per-statement execution (original path) ────────────────────
         let execute_as_user =
             match resolve_execute_as_user(stmt, impersonation_service, exec_ctx).await {
                 Ok(uid) => uid,
@@ -290,6 +382,8 @@ pub(super) async fn execute_batch_path(
         let stmt_start = Instant::now();
         let effective_username =
             resolve_result_username(authorized_username, stmt.execute_as_username.as_ref());
+
+        let is_last = idx + 1 == stmt_count;
 
         let stmt_params = if is_last {
             params_remaining.take().unwrap_or_default()
@@ -387,12 +481,24 @@ pub(super) async fn execute_batch_path(
                     if let Some(ref msg) = result.message {
                         if msg.contains("Inserted") {
                             total_inserted += result.row_count;
+                            if let Some(state) = request_transaction_state.as_mut() {
+                                state.sync_from_coordinator(app_context);
+                            }
+                            idx += 1;
                             continue;
                         } else if msg.contains("Updated") {
                             total_updated += result.row_count;
+                            if let Some(state) = request_transaction_state.as_mut() {
+                                state.sync_from_coordinator(app_context);
+                            }
+                            idx += 1;
                             continue;
                         } else if msg.contains("Deleted") {
                             total_deleted += result.row_count;
+                            if let Some(state) = request_transaction_state.as_mut() {
+                                state.sync_from_coordinator(app_context);
+                            }
+                            idx += 1;
                             continue;
                         }
                     }
@@ -401,12 +507,17 @@ pub(super) async fn execute_batch_path(
                 results.push(result);
             },
             Err(err) => {
+                if let Some(state) = request_transaction_state.as_mut() {
+                    let _ = state.rollback_if_active(app_context);
+                }
+
                 if let Some(kalamdb_err) = err.downcast_ref::<kalamdb_core::error::KalamDbError>() {
                     if let Some(response) = handle_not_leader_error(
                         kalamdb_err,
                         http_req,
                         req_for_forward,
                         app_context,
+                        exec_ctx.request_id(),
                         start_time,
                     )
                     .await
@@ -422,6 +533,22 @@ pub(super) async fn execute_batch_path(
                     took_ms(start_time),
                 ));
             },
+        }
+
+        if let Some(state) = request_transaction_state.as_mut() {
+            state.sync_from_coordinator(app_context);
+        }
+        idx += 1;
+    }
+
+    if let Some(state) = request_transaction_state.as_mut() {
+        if state.is_active() {
+            let _ = state.rollback_if_active(app_context);
+            return HttpResponse::BadRequest().json(SqlResponse::error(
+                ErrorCode::SqlExecutionError,
+                "Request completed with an open explicit transaction; rolled back automatically",
+                took_ms(start_time),
+            ));
         }
     }
 
@@ -456,4 +583,22 @@ pub(super) async fn execute_batch_path(
     }
 
     HttpResponse::Ok().json(SqlResponse::success(results, took_ms(start_time)))
+}
+
+/// Check if a prepared statement is a simple INSERT eligible for batching:
+/// no EXECUTE AS USER, has a table_id and table_type, and is classified as INSERT.
+fn is_batchable_insert(stmt: &PreparedApiExecutionStatement) -> bool {
+    if stmt.execute_as_username.is_some() {
+        return false;
+    }
+    if stmt.prepared_statement.table_id.is_none() || stmt.prepared_statement.table_type.is_none() {
+        return false;
+    }
+    matches!(
+        stmt.prepared_statement
+            .classified_statement
+            .as_ref()
+            .map(|c| c.kind()),
+        Some(SqlStatementKind::Insert(_))
+    )
 }

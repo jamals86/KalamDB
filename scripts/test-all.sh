@@ -211,12 +211,14 @@ if $USE_NO_FAIL_FAST; then
     cargo nextest run \
         --workspace \
         --all-targets \
+        --exclude "kalam-pg-extension" \
         --features "kalam-cli/e2e-tests" \
         --no-fail-fast
 else
     cargo nextest run \
         --workspace \
         --all-targets \
+        --exclude "kalam-pg-extension" \
         --features "kalam-cli/e2e-tests"
 fi
 

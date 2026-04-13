@@ -21,6 +21,8 @@ pub struct KalamScanState {
 
 /// State stored in `ResultRelInfo::ri_FdwState` during modify lifecycle.
 pub struct KalamModifyState {
+    /// Remote session id used to scope buffered writes and transactions.
+    pub session_id: String,
     /// Parsed foreign table options.
     pub table_options: TableOptions,
     /// Backend executor for running mutations.

@@ -1,5 +1,5 @@
 use super::common::{
-    create_shared_foreign_table_in_schema, drop_foreign_tables, unique_name, TestEnv,
+    create_shared_kalam_table_in_schema, drop_kalam_tables, unique_name, TestEnv,
 };
 
 #[tokio::test]
@@ -18,28 +18,28 @@ async fn e2e_scenario_iot_agent_fleet_incident_flow() {
     let agent_pg = env.pg_connect().await;
     let operator_pg = env.pg_connect().await;
 
-    create_shared_foreign_table_in_schema(
+    create_shared_kalam_table_in_schema(
         &pg_admin,
         &schema,
         &devices,
         "id TEXT, site_id TEXT, firmware TEXT, status TEXT",
     )
     .await;
-    create_shared_foreign_table_in_schema(
+    create_shared_kalam_table_in_schema(
         &pg_admin,
         &schema,
         &telemetry,
         "id TEXT, device_id TEXT, temperature INTEGER, battery_level INTEGER, health TEXT",
     )
     .await;
-    create_shared_foreign_table_in_schema(
+    create_shared_kalam_table_in_schema(
         &pg_admin,
         &schema,
         &commands,
         "id TEXT, device_id TEXT, action TEXT, status TEXT, issued_by TEXT",
     )
     .await;
-    create_shared_foreign_table_in_schema(
+    create_shared_kalam_table_in_schema(
         &pg_admin,
         &schema,
         &alerts,
@@ -169,5 +169,5 @@ async fn e2e_scenario_iot_agent_fleet_incident_flow() {
         "iot agent commands should be mirrored into KalamDB: {remote_commands_text}"
     );
 
-    drop_foreign_tables(&pg_admin, &schema, &[devices, telemetry, commands, alerts]).await;
+    drop_kalam_tables(&pg_admin, &schema, &[devices, telemetry, commands, alerts]).await;
 }

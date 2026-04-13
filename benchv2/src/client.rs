@@ -56,6 +56,15 @@ impl KalamClient {
     /// Create a multi-endpoint client by logging into every configured URL.
     /// All URLs must be reachable and authenticatable, otherwise creation fails.
     pub async fn login(urls: &[String], username: &str, password: &str) -> Result<Self, String> {
+        Self::login_with_options(urls, username, password, true).await
+    }
+
+    async fn login_with_options(
+        urls: &[String],
+        username: &str,
+        password: &str,
+        ensure_setup: bool,
+    ) -> Result<Self, String> {
         let urls = normalize_http_urls(urls);
         if urls.is_empty() {
             return Err(
@@ -75,6 +84,7 @@ impl KalamClient {
                 password,
                 &timeouts,
                 &ws_local_bind_addresses,
+                ensure_setup,
             )
             .await
             {
@@ -110,7 +120,17 @@ impl KalamClient {
         password: &str,
     ) -> Result<Self, String> {
         let urls = vec![base_url.to_string()];
-        Self::login(&urls, username, password).await
+        Self::login_with_options(&urls, username, password, true).await
+    }
+
+    /// Convenience helper for a single endpoint when setup is already complete.
+    pub async fn login_single_steady_state(
+        base_url: &str,
+        username: &str,
+        password: &str,
+    ) -> Result<Self, String> {
+        let urls = vec![base_url.to_string()];
+        Self::login_with_options(&urls, username, password, false).await
     }
 
     async fn build_authenticated_endpoint(
@@ -119,6 +139,7 @@ impl KalamClient {
         password: &str,
         timeouts: &KalamLinkTimeouts,
         ws_local_bind_addresses: &[String],
+        ensure_setup: bool,
     ) -> Result<EndpointClient, String> {
         // Build an unauthenticated client first — needed for setup + login
         let unauthed = KalamLinkClient::builder()
@@ -128,7 +149,9 @@ impl KalamClient {
             .map_err(|e| format!("failed to build kalam-link client: {}", e))?;
 
         // Complete setup if needed
-        Self::complete_setup_if_needed(&unauthed, username, password).await;
+        if ensure_setup {
+            Self::complete_setup_if_needed(&unauthed, username, password).await;
+        }
 
         // Login
         let login_resp = match unauthed.login(username, password).await {

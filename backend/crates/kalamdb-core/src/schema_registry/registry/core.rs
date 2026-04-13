@@ -3,7 +3,6 @@
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
-use crate::live::models::ChangeNotification;
 use crate::schema_registry::cached_table_data::CachedTableData;
 use chrono::Utc;
 use dashmap::DashMap;
@@ -11,6 +10,7 @@ use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::TableProvider;
 use datafusion::logical_expr::expr::ScalarFunction as ScalarFunctionExpr;
 use datafusion::logical_expr::Expr;
+use kalamdb_live::models::ChangeNotification;
 use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::conversions::json_value_to_scalar;
 use kalamdb_commons::datatypes::KalamDataType;
@@ -180,7 +180,7 @@ impl SchemaRegistry {
                         .create_table(&table_id, &initial)
                         .into_kalamdb_error("Failed to persist initial system schema definition")?;
                     stats.created += 1;
-                    log::info!(
+                    log::debug!(
                         "[SchemaRegistry] persisted missing system table schema {} at version {}",
                         table_id,
                         initial.schema_version
@@ -473,7 +473,7 @@ impl SchemaRegistry {
                             .system_tables()
                             .persisted_table_provider(system_table)
                         {
-                            cached_data.set_system_provider(provider);
+                            cached_data.set_provider(provider);
                         }
                     }
                 }
@@ -482,7 +482,7 @@ impl SchemaRegistry {
                 Ok(kalam_provider) => {
                     let table_provider =
                         Arc::clone(&kalam_provider) as Arc<dyn TableProvider + Send + Sync>;
-                    cached_data.set_kalam_provider(kalam_provider);
+                    cached_data.set_provider(Arc::clone(&table_provider));
 
                     // 3. Register with DataFusion immediately
                     self.register_with_datafusion(&table_id, table_provider)?;
@@ -604,6 +604,7 @@ impl SchemaRegistry {
             Arc::clone(app_ctx.notification_service())
                 as Arc<dyn NotificationService<Notification = ChangeNotification>>,
             app_ctx.clone(),
+            app_ctx.commit_sequence_tracker(),
             Some(app_ctx.topic_publisher() as Arc<dyn kalamdb_system::TopicPublisher>),
         ));
 
@@ -819,9 +820,8 @@ impl SchemaRegistry {
 
     /// Insert a DataFusion provider into the cache for a table
     ///
-    /// Stores the provider in CachedTableData (as a system/plain provider)
-    /// and registers with DataFusion's catalog. For KalamTableProvider-based
-    /// providers, prefer using `put()` which stores the full KalamTableProvider.
+    /// Stores the provider in CachedTableData and registers with DataFusion's
+    /// catalog.
     pub fn insert_provider(
         &self,
         table_id: TableId,
@@ -831,12 +831,12 @@ impl SchemaRegistry {
 
         // Store in CachedTableData (as system provider — no DML support)
         if let Some(cached) = self.get(&table_id) {
-            cached.set_system_provider(provider.clone());
+            cached.set_provider(provider.clone());
         } else {
             // Table not in cache - try to load from persistence first
             if let Some(_table_def) = self.get_table_if_exists(&table_id)? {
                 if let Some(cached) = self.get(&table_id) {
-                    cached.set_system_provider(provider.clone());
+                    cached.set_provider(provider.clone());
                 } else {
                     return Err(KalamDbError::TableNotFound(format!(
                         "Cannot insert provider: table {} not in cache",
@@ -877,17 +877,6 @@ impl SchemaRegistry {
             log::warn!("[SchemaRegistry] Provider NOT FOUND for table {}", table_id);
         }
         result
-    }
-
-    /// Get the `KalamTableProvider` for fast INSERT bypass and future DML operations.
-    ///
-    /// Returns `Some` for User/Shared/Stream tables, `None` for system tables
-    /// or tables not yet loaded.
-    pub fn get_kalam_provider(
-        &self,
-        table_id: &TableId,
-    ) -> Option<Arc<dyn kalamdb_tables::KalamTableProvider>> {
-        self.get(table_id).and_then(|cached| cached.get_kalam_provider())
     }
 
     /// Register a provider with DataFusion's catalog

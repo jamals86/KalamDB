@@ -1,4 +1,6 @@
-use super::common::{ensure_schema_exists, pg_kalam_exec, unique_name, DdlTestEnv};
+use super::common::{ensure_schema_exists, pg_kalam_exec, require_ddl_env, unique_name, DdlTestEnv};
+use std::env;
+use tokio_postgres::{Config, NoTls};
 
 fn contains_status(text: &str, expected_terms: &[&str]) -> bool {
     let normalized = text.to_ascii_lowercase();
@@ -7,10 +9,80 @@ fn contains_status(text: &str, expected_terms: &[&str]) -> bool {
         .any(|term| normalized.contains(&term.to_ascii_lowercase()))
 }
 
+async fn session_row_count_for_backend(env: &DdlTestEnv, backend_pid: i32) -> i64 {
+    let sessions = env
+        .kalamdb_sql(&format!(
+            "SELECT session_id, last_method FROM system.sessions WHERE backend_pid = {backend_pid}"
+        ))
+        .await;
+
+    sessions["results"]
+        .as_array()
+        .and_then(|results| results.first())
+        .and_then(|result| result["row_count"].as_i64())
+        .unwrap_or_default()
+}
+
+async fn wait_for_backend_session_cleanup(env: &DdlTestEnv, backend_pid: i32, context: &str) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+
+    loop {
+        let row_count = session_row_count_for_backend(env, backend_pid).await;
+        if row_count == 0 {
+            return;
+        }
+
+        if std::time::Instant::now() >= deadline {
+            panic!(
+                "backend pid {backend_pid} remained in system.sessions after {context}"
+            );
+        }
+
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+}
+
+struct OwnedPgClient {
+    client: tokio_postgres::Client,
+    connection_task: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl OwnedPgClient {
+    async fn connect() -> Self {
+        let pg_user = env::var("USER").unwrap_or_else(|_| "postgres".to_string());
+        let (client, connection) = Config::new()
+            .host("127.0.0.1")
+            .port(28816)
+            .user(&pg_user)
+            .dbname("kalamdb_test")
+            .connect(NoTls)
+            .await
+            .expect("connect to pgrx PostgreSQL");
+
+        let connection_task = tokio::spawn(async move {
+            if let Err(error) = connection.await {
+                eprintln!("pg connection error: {error}");
+            }
+        });
+
+        Self {
+            client,
+            connection_task: Some(connection_task),
+        }
+    }
+
+    async fn disconnect(mut self) {
+        drop(self.client);
+        if let Some(connection_task) = self.connection_task.take() {
+            let _ = connection_task.await;
+        }
+    }
+}
+
 #[tokio::test]
 #[ntest::timeout(15000)]
-async fn e2e_ddl_create_foreign_table_forwards_shared_options() {
-    let env = DdlTestEnv::global().await;
+async fn e2e_ddl_create_table_using_kalamdb_forwards_shared_options() {
+    let env = require_ddl_env!();
     let pg = env.pg_connect().await;
 
     let ns = unique_name("shared_opts_ns");
@@ -18,20 +90,17 @@ async fn e2e_ddl_create_foreign_table_forwards_shared_options() {
     ensure_schema_exists(&pg, &ns).await;
 
     pg.batch_execute(&format!(
-        "CREATE FOREIGN TABLE {ns}.{table} (
+          "CREATE TABLE {ns}.{table} (
             id BIGINT,
             title TEXT
-         ) SERVER kalam_server
-         OPTIONS (
-            namespace '{ns}',
-            \"table\" '{table}',
-            table_type 'shared',
-            storage_id 'local',
-            access_level 'public'
-         );"
+            ) USING kalamdb WITH (
+                type = 'shared',
+                storage_id = 'local',
+                access_level = 'public'
+            );"
     ))
     .await
-    .expect("create shared foreign table with forwarded options");
+     .expect("create shared Kalam table with forwarded options");
     env.wait_for_kalamdb_table_exists(&ns, &table).await;
 
     let metadata = env
@@ -73,8 +142,8 @@ async fn e2e_ddl_create_foreign_table_forwards_shared_options() {
 
 #[tokio::test]
 #[ntest::timeout(15000)]
-async fn e2e_ddl_create_foreign_table_forwards_stream_ttl() {
-    let env = DdlTestEnv::global().await;
+async fn e2e_ddl_create_table_using_kalamdb_forwards_stream_ttl() {
+    let env = require_ddl_env!();
     let pg = env.pg_connect().await;
 
     let ns = unique_name("stream_opts_ns");
@@ -82,19 +151,16 @@ async fn e2e_ddl_create_foreign_table_forwards_stream_ttl() {
     ensure_schema_exists(&pg, &ns).await;
 
     pg.batch_execute(&format!(
-        "CREATE FOREIGN TABLE {ns}.{table} (
+          "CREATE TABLE {ns}.{table} (
             event_type TEXT,
             payload TEXT
-         ) SERVER kalam_server
-         OPTIONS (
-            namespace '{ns}',
-            \"table\" '{table}',
-            table_type 'stream',
-            ttl_seconds '45'
-         );"
+            ) USING kalamdb WITH (
+                type = 'stream',
+                ttl_seconds = '45'
+            );"
     ))
     .await
-    .expect("create stream foreign table with ttl");
+     .expect("create stream Kalam table with ttl");
     env.wait_for_kalamdb_table_exists(&ns, &table).await;
 
     let metadata = env
@@ -131,8 +197,8 @@ async fn e2e_ddl_create_foreign_table_forwards_stream_ttl() {
 
 #[tokio::test]
 #[ntest::timeout(15000)]
-async fn e2e_ddl_drop_multiple_foreign_tables() {
-    let env = DdlTestEnv::global().await;
+async fn e2e_ddl_drop_multiple_kalam_tables() {
+    let env = require_ddl_env!();
     let pg = env.pg_connect().await;
 
     let ns = unique_name("drop_many_ns");
@@ -142,11 +208,10 @@ async fn e2e_ddl_drop_multiple_foreign_tables() {
 
     for table in [&table_a, &table_b] {
         pg.batch_execute(&format!(
-            "CREATE FOREIGN TABLE {ns}.{table} (
+            "CREATE TABLE {ns}.{table} (
                 id TEXT,
                 payload TEXT
-             ) SERVER kalam_server
-             OPTIONS (namespace '{ns}', \"table\" '{table}', table_type 'shared');"
+             ) USING kalamdb WITH (type = 'shared');"
         ))
         .await
         .expect("create table for multi-drop test");
@@ -159,7 +224,7 @@ async fn e2e_ddl_drop_multiple_foreign_tables() {
 
     pg.batch_execute(&format!("DROP FOREIGN TABLE {ns}.{table_a}, {ns}.{table_b};"))
         .await
-        .expect("drop multiple foreign tables");
+        .expect("drop multiple Kalam tables");
     env.wait_for_kalamdb_table_absent(&ns, &table_a).await;
     env.wait_for_kalamdb_table_absent(&ns, &table_b).await;
 
@@ -172,7 +237,7 @@ async fn e2e_ddl_drop_multiple_foreign_tables() {
 #[tokio::test]
 #[ntest::timeout(20000)]
 async fn e2e_ddl_kalam_exec_passthrough_statements() {
-    let env = DdlTestEnv::global().await;
+    let env = require_ddl_env!();
     let pg = env.pg_connect().await;
 
     let ns = unique_name("exec_ns");
@@ -233,4 +298,106 @@ async fn e2e_ddl_kalam_exec_passthrough_statements() {
     assert!(!env.kalamdb_table_exists(&ns, &table).await);
 
     let _ = pg_kalam_exec(&pg, &format!("DROP NAMESPACE IF EXISTS {ns}")).await;
+}
+
+#[tokio::test]
+#[ntest::timeout(15000)]
+async fn e2e_ddl_create_table_using_kalamdb_disconnect_cleans_session_row() {
+    let env = require_ddl_env!();
+    let pg = OwnedPgClient::connect().await;
+    let backend_pid: i32 = pg
+        .client
+        .query_one("SELECT pg_backend_pid()", &[])
+        .await
+        .expect("query backend pid")
+        .get(0);
+
+    let ns = unique_name("shared_cleanup_ns");
+    let table = unique_name("shared_cleanup_tbl");
+    ensure_schema_exists(&pg.client, &ns).await;
+    pg.client
+        .batch_execute(&format!(
+            "CREATE TABLE {ns}.{table} (
+                id BIGINT,
+                title TEXT
+             ) USING kalamdb WITH (type = 'shared');"
+        ))
+        .await
+        .expect("create shared Kalam table");
+
+    pg.disconnect().await;
+    wait_for_backend_session_cleanup(env, backend_pid, "disconnect after CREATE TABLE USING kalamdb")
+        .await;
+
+    let cleanup = env.pg_connect().await;
+    cleanup
+        .batch_execute(&format!("DROP FOREIGN TABLE IF EXISTS {ns}.{table};"))
+        .await
+        .ok();
+    cleanup
+        .batch_execute(&format!("DROP SCHEMA IF EXISTS {ns} CASCADE;"))
+        .await
+        .ok();
+}
+
+#[tokio::test]
+#[ntest::timeout(10000)]
+async fn e2e_ddl_rejects_unsafe_option_keys() {
+    let env = require_ddl_env!();
+    let pg = env.pg_connect().await;
+
+    let ns = unique_name("unsafe_opts_ns");
+    let table = unique_name("unsafe_opts_tbl");
+    ensure_schema_exists(&pg, &ns).await;
+
+    let error = pg
+        .batch_execute(&format!(
+                "CREATE TABLE {ns}.{table} (
+                id BIGINT,
+                title TEXT
+                 ) USING kalamdb WITH (
+                     type = 'shared',
+                     \"9evil\" = 'should-fail'
+                 );"
+        ))
+        .await
+        .expect_err("unsafe option keys should be rejected");
+
+    let message = super::common::postgres_error_text(&error);
+    assert!(
+        message.contains("invalid KalamDB table option")
+            || message.contains("unsupported KalamDB option name"),
+        "unexpected unsafe option key error: {message}"
+    );
+    assert!(
+        !env.kalamdb_table_exists(&ns, &table).await,
+        "unsafe option keys must not create a backing KalamDB table"
+    );
+
+    pg.batch_execute(&format!("DROP FOREIGN TABLE IF EXISTS {ns}.{table};"))
+        .await
+        .ok();
+    pg.batch_execute(&format!("DROP SCHEMA IF EXISTS {ns} CASCADE;"))
+        .await
+        .ok();
+}
+
+#[tokio::test]
+#[ntest::timeout(15000)]
+async fn e2e_ddl_kalam_exec_disconnect_cleans_session_row() {
+    let env = require_ddl_env!();
+    let pg = OwnedPgClient::connect().await;
+    let backend_pid: i32 = pg
+        .client
+        .query_one("SELECT pg_backend_pid()", &[])
+        .await
+        .expect("query backend pid")
+        .get(0);
+
+    let result = pg_kalam_exec(&pg.client, "SELECT 1 AS ok").await;
+    assert!(result.contains("1"), "unexpected kalam_exec SELECT response: {result}");
+
+    pg.disconnect().await;
+    wait_for_backend_session_cleanup(env, backend_pid, "disconnect after kalam_exec")
+        .await;
 }

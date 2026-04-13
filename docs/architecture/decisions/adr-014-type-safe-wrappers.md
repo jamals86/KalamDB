@@ -256,7 +256,7 @@ fn create_table(
 
 ### Remaining Work
 - [ ] Migrate `UserRecord` in users_provider.rs
-- [ ] Migrate kalamdb-sql models (`Table`, `LiveQuery`, `NamespaceInfo`, etc.)
+- [ ] Migrate the remaining `kalamdb-system` metadata models and `kalamdb-dialect` storage command statements to the latest wrapper types
 - [ ] Migrate storage command statements
 - [ ] Complete test suite updates
 

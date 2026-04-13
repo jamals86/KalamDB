@@ -70,18 +70,14 @@ CREATE TABLE system.storages (
 Located in `/backend/crates/kalamdb-core/src/storage/storage_registry.rs`:
 
 ```rust
-pub struct StorageRegistry {
-    kalam_sql: Arc<KalamSql>,
+pub struct StorageExecutor {
+    app_context: Arc<AppContext>,
 }
 
-impl StorageRegistry {
-    /// Validate template variable ordering
-    pub fn validate_template(
-        &self,
-        template: &str,
-        table_type: &str,
-    ) -> Result<(), String> {
-        // Enforce ordering rules (see below)
+impl StorageExecutor {
+    pub async fn create_storage(&self, storage: &Storage) -> Result<String, ApplierError> {
+        self.app_context.system_tables().storages().create_storage(storage.clone())?;
+        Ok(format!("Storage {} created successfully", storage.storage_id))
     }
 }
 ```
@@ -202,17 +198,13 @@ Storage {
 3. Special case: `storage_id = 'local'` cannot be deleted (hardcoded protection)
 
 ```rust
-let tables = kalam_sql.scan_all_tables()?;
-let referencing_tables: Vec<_> = tables
-    .iter()
-    .filter(|t| t.use_user_storage.as_deref() == Some(&storage_id))
-    .collect();
+let storages = app_context.system_tables().storages();
+let existing = storages.get_storage(&storage_id)?;
 
-if !referencing_tables.is_empty() {
+if existing.is_none() {
     return Err(format!(
-        "Cannot delete storage '{}': {} table(s) still reference it",
-        storage_id,
-        referencing_tables.len()
+        "Storage '{}' does not exist",
+        storage_id
     ));
 }
 ```
@@ -255,10 +247,10 @@ if !referencing_tables.is_empty() {
 - **Specification**: `/specs/004-system-improvements-and/spec.md` (FR-021aa through FR-021ah)
 - **Tasks**: `/specs/004-system-improvements-and/tasks.md` (T164-T193)
 - **Code**:
-  - StorageRegistry: `/backend/crates/kalamdb-core/src/storage/storage_registry.rs`
-  - SQL Commands: `/backend/crates/kalamdb-sql/src/storage_commands.rs`
+    - Storage Executor: `/backend/crates/kalamdb-core/src/applier/executor/storage.rs`
+    - SQL Commands: `/backend/crates/kalamdb-dialect/src/ddl/storage_commands.rs`
   - Executor Integration: `/backend/crates/kalamdb-core/src/sql/executor.rs`
-  - System Table: `/backend/crates/kalamdb-sql/src/models/storage.rs`
+    - System Table: `/backend/crates/kalamdb-system/src/providers/storages/models/storage.rs`
 
 ## Related ADRs
 

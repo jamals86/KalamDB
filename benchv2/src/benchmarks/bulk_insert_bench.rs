@@ -16,7 +16,7 @@ impl Benchmark for BulkInsertBench {
         "Insert"
     }
     fn description(&self) -> &str {
-        "INSERT 50 rows in a single statement"
+        "One INSERT statement with 50 rows (statement-scoped transaction)"
     }
 
     fn setup<'a>(

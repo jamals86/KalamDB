@@ -1,6 +1,6 @@
 use super::common::{
-    count_rows, create_shared_foreign_table_in_schema, create_user_foreign_table_in_schema,
-    drop_foreign_tables, set_user_id, unique_name, TestEnv,
+    count_rows, create_shared_kalam_table_in_schema, create_user_kalam_table_in_schema,
+    drop_kalam_tables, set_user_id, unique_name, TestEnv,
 };
 
 #[tokio::test]
@@ -16,25 +16,25 @@ async fn e2e_scenario_chat_app_support_workspace_flow() {
     let pg_alice = env.pg_connect().await;
     let pg_bob = env.pg_connect().await;
 
-    create_shared_foreign_table_in_schema(
+    create_shared_kalam_table_in_schema(
         &pg_admin,
         &schema,
         &rooms,
         "id TEXT, workspace_id TEXT, title TEXT, channel_kind TEXT, owner_id TEXT",
     )
     .await;
-    create_shared_foreign_table_in_schema(
+    create_shared_kalam_table_in_schema(
         &pg_admin,
         &schema,
         &messages,
         "id TEXT, room_id TEXT, sender_id TEXT, body TEXT, sentiment TEXT, token_count INTEGER",
     )
     .await;
-    create_user_foreign_table_in_schema(
+    create_user_kalam_table_in_schema(
         &pg_admin,
         &schema,
         &drafts,
-        "id TEXT, room_id TEXT, body TEXT, last_model TEXT, _userid TEXT, _seq BIGINT, _deleted BOOLEAN",
+        "id TEXT, room_id TEXT, body TEXT, last_model TEXT",
     )
     .await;
 
@@ -114,5 +114,5 @@ async fn e2e_scenario_chat_app_support_workspace_flow() {
         "chat scenario should mirror escalation messages into KalamDB: {escalation_feed_text}"
     );
 
-    drop_foreign_tables(&pg_admin, &schema, &[rooms, messages, drafts]).await;
+    drop_kalam_tables(&pg_admin, &schema, &[rooms, messages, drafts]).await;
 }

@@ -1106,6 +1106,46 @@ impl RaftManager {
         }
     }
 
+    /// Propose a transaction commit command to a specific data group.
+    pub async fn propose_transaction_commit(
+        &self,
+        group_id: GroupId,
+        transaction_id: kalamdb_commons::models::TransactionId,
+        mutations: Vec<kalamdb_transactions::StagedMutation>,
+    ) -> Result<crate::DataResponse, RaftError> {
+        let cmd = crate::RaftCommand::TransactionCommit {
+            transaction_id,
+            mutations,
+        };
+
+        let response = match group_id {
+            GroupId::DataUserShard(shard) => {
+                if shard >= self.user_shards_count {
+                    return Err(RaftError::InvalidGroup(format!("DataUserShard({})", shard)));
+                }
+                self.propose_to_group(&self.user_data_shards[shard as usize], cmd).await?
+            },
+            GroupId::DataSharedShard(shard) => {
+                if shard >= self.shared_shards_count {
+                    return Err(RaftError::InvalidGroup(format!("DataSharedShard({})", shard)));
+                }
+                self.propose_to_group(&self.shared_data_shards[shard as usize], cmd).await?
+            },
+            GroupId::Meta => {
+                return Err(RaftError::InvalidGroup(
+                    "TransactionCommit cannot target Meta group".to_string(),
+                ));
+            },
+        };
+
+        match response {
+            crate::RaftResponse::Data(r) => Ok(r),
+            _ => Err(RaftError::Internal(
+                "Unexpected response type for TransactionCommit command".to_string(),
+            )),
+        }
+    }
+
     /// Propose a command to any group by GroupId (for RPC server handling)
     ///
     /// Used by the RaftService when receiving a forwarded proposal.
@@ -1678,7 +1718,7 @@ impl RaftManager {
             return Ok(());
         }
 
-        log::info!("[CLUSTER] Node {} leaving cluster...", self.node_id);
+        log::debug!("[CLUSTER] Node {} leaving cluster...", self.node_id);
 
         // Count how many groups we're leading
         let mut groups_leading = 0;
@@ -1689,7 +1729,7 @@ impl RaftManager {
         }
 
         if groups_leading > 0 {
-            log::info!(
+            log::debug!(
                 "[CLUSTER] This node is LEADER of {} groups, attempting leadership transfer...",
                 groups_leading
             );
@@ -1698,7 +1738,7 @@ impl RaftManager {
             // Find the first available peer to transfer leadership to
             if let Some(target_node) = self.config.peers.first() {
                 let target_node_id = target_node.node_id;
-                log::info!("[CLUSTER] Transferring leadership to node {}...", target_node.node_id);
+                log::debug!("[CLUSTER] Transferring leadership to node {}...", target_node.node_id);
 
                 // Transfer leadership for Meta group
                 if self.meta.is_leader() {

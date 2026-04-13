@@ -1,6 +1,6 @@
 # pg-kalam on Docker Hub
 
-PostgreSQL with the pg_kalam extension preinstalled so you can connect PostgreSQL foreign tables to a remote KalamDB server.
+PostgreSQL with the pg_kalam extension preinstalled so you can connect PostgreSQL Kalam-backed tables to a remote KalamDB server.
 
 This image packages stock PostgreSQL with the `pg_kalam` foreign data wrapper extension already installed.
 

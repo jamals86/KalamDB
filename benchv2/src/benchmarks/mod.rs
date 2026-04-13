@@ -31,6 +31,7 @@ pub mod reconnect_subscribe_bench;
 pub mod sequential_crud_bench;
 pub mod subscribe_change_latency_bench;
 pub mod subscribe_initial_load_bench;
+pub mod transaction_multi_insert_bench;
 pub mod wide_column_insert_bench;
 
 use std::future::Future;
@@ -80,6 +81,14 @@ pub trait Benchmark: Send + Sync {
     }
 }
 
+/// Benchmarks included when no explicit `--bench` or `--filter` selection is provided.
+///
+/// `connection_scale` remains opt-in because single-host runs often need extra
+/// loopback aliases or explicit override flags to avoid macOS ephemeral-port limits.
+pub fn enabled_in_default_suite(name: &str) -> bool {
+    !matches!(name, "connection_scale")
+}
+
 /// Returns all registered benchmarks. Add new benchmarks here.
 pub fn all_benchmarks() -> Vec<Box<dyn Benchmark>> {
     vec![
@@ -90,6 +99,7 @@ pub fn all_benchmarks() -> Vec<Box<dyn Benchmark>> {
         Box::new(ddl_bench::DropTableBench),
         Box::new(insert_bench::SingleInsertBench),
         Box::new(bulk_insert_bench::BulkInsertBench),
+        Box::new(transaction_multi_insert_bench::TransactionMultiInsertBench),
         Box::new(select_bench::SelectAllBench),
         Box::new(select_bench::SelectByFilterBench),
         Box::new(select_bench::SelectCountBench),
@@ -123,7 +133,7 @@ pub fn all_benchmarks() -> Vec<Box<dyn Benchmark>> {
         Box::new(load_subscriber_bench::ConcurrentSubscriberBench),
         Box::new(load_publisher_bench::ConcurrentPublisherBench),
         Box::new(load_consumer_bench::ConcurrentConsumerBench),
-        Box::new(load_sql_1k_bench::Sql1kUsersBench),
+        Box::new(load_sql_1k_bench::Sql1kUsersBench::default()),
         Box::new(load_create_user_bench::CreateUserBench {
             counter: std::sync::atomic::AtomicU64::new(0),
         }),
@@ -136,6 +146,6 @@ pub fn all_benchmarks() -> Vec<Box<dyn Benchmark>> {
         Box::new(load_wide_fanout_bench::WideFanoutQueryBench),
         // --- Scale tests (run with --iterations 1 --warmup 0 --filter subscriber_scale) ---
         Box::new(connection_scale_bench::ConnectionScaleBench),
-        Box::new(subscriber_scale_bench::SubscriberScaleBench),
+        Box::new(subscriber_scale_bench::SubscriberScaleBench::default()),
     ]
 }

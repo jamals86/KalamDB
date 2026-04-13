@@ -5,10 +5,13 @@ use crate::runtime_metrics::{current_process_physical_footprint_bytes, SHARED_SY
 /// Global counter for active WebSocket sessions
 /// This is updated by kalamdb-api when sessions start/stop
 static ACTIVE_WEBSOCKET_SESSIONS: AtomicUsize = AtomicUsize::new(0);
+static PEAK_WEBSOCKET_SESSIONS: AtomicUsize = AtomicUsize::new(0);
 
 /// Increment the active WebSocket session count
 pub fn increment_websocket_sessions() -> usize {
-    ACTIVE_WEBSOCKET_SESSIONS.fetch_add(1, Ordering::SeqCst) + 1
+    let count = ACTIVE_WEBSOCKET_SESSIONS.fetch_add(1, Ordering::SeqCst) + 1;
+    PEAK_WEBSOCKET_SESSIONS.fetch_max(count, Ordering::SeqCst);
+    count
 }
 
 /// Decrement the active WebSocket session count
@@ -19,6 +22,11 @@ pub fn decrement_websocket_sessions() -> usize {
 /// Get the current active WebSocket session count
 pub fn get_websocket_session_count() -> usize {
     ACTIVE_WEBSOCKET_SESSIONS.load(Ordering::SeqCst)
+}
+
+/// Get the highest concurrently active WebSocket session count seen since process start.
+pub fn get_websocket_session_peak_count() -> usize {
+    PEAK_WEBSOCKET_SESSIONS.load(Ordering::SeqCst)
 }
 
 /// Health metrics snapshot
@@ -209,8 +217,24 @@ impl HealthMonitor {
         let namespaces = metric_map.get("total_namespaces").copied().unwrap_or("n/a");
         let tables = metric_map.get("total_tables").copied().unwrap_or("n/a");
         let subscriptions = metric_map.get("active_subscriptions").copied().unwrap_or("n/a");
+        let subscriptions_peak = metric_map
+            .get("active_subscriptions_peak")
+            .copied()
+            .unwrap_or("n/a");
         let connections = metric_map.get("active_connections").copied().unwrap_or("n/a");
+        let connections_peak = metric_map
+            .get("active_connections_peak")
+            .copied()
+            .unwrap_or("n/a");
+        let connection_limit = metric_map
+            .get("max_connections_configured")
+            .copied()
+            .unwrap_or("n/a");
         let ws_sessions = metric_map.get("websocket_sessions").copied().unwrap_or("n/a");
+        let ws_sessions_peak = metric_map
+            .get("websocket_sessions_peak")
+            .copied()
+            .unwrap_or("n/a");
         let jobs_running = metric_map.get("jobs_running").copied().unwrap_or("n/a");
         let jobs_queued = metric_map.get("jobs_queued").copied().unwrap_or("n/a");
         let jobs_failed = metric_map.get("jobs_failed").copied().unwrap_or("n/a");
@@ -243,8 +267,14 @@ impl HealthMonitor {
         segments.push(format!("Namespaces: {}", namespaces));
         segments.push(format!("Tables: {}", tables));
         segments.push(format!(
-            "Subscriptions: {} ({} connections, {} ws sessions)",
-            subscriptions, connections, ws_sessions
+            "Subscriptions: {}/{} peak ({} / {} connections, {} / {} ws sessions, limit {})",
+            subscriptions,
+            subscriptions_peak,
+            connections,
+            connections_peak,
+            ws_sessions,
+            ws_sessions_peak,
+            connection_limit,
         ));
         segments.push(format!(
             "Jobs: {} running, {} queued, {} failed (total: {})",
@@ -416,8 +446,12 @@ mod tests {
             ("total_namespaces".to_string(), "29".to_string()),
             ("total_tables".to_string(), "30".to_string()),
             ("active_subscriptions".to_string(), "24".to_string()),
+            ("active_subscriptions_peak".to_string(), "31".to_string()),
             ("active_connections".to_string(), "1".to_string()),
+            ("active_connections_peak".to_string(), "7".to_string()),
+            ("max_connections_configured".to_string(), "100000".to_string()),
             ("websocket_sessions".to_string(), "1".to_string()),
+            ("websocket_sessions_peak".to_string(), "7".to_string()),
             ("jobs_running".to_string(), "0".to_string()),
             ("jobs_queued".to_string(), "0".to_string()),
             ("jobs_failed".to_string(), "0".to_string()),
@@ -433,6 +467,9 @@ mod tests {
         let line = HealthMonitor::format_log_from_pairs(&metrics);
 
         assert!(line.contains("Health metrics: Memory: 109 MB | CPU: 0.23%"));
+        assert!(line.contains(
+            "Subscriptions: 24/31 peak (1 / 7 connections, 1 / 7 ws sessions, limit 100000)"
+        ));
         assert!(line.contains(
             "Open Files: 437 total (68 reg, 250 dir, 80 kqueue, 28 unix, 6 ipv4, 5 other)"
         ));

@@ -11,8 +11,7 @@ use kalamdb_api::limiter::RateLimiter;
 use kalamdb_auth::CachedUsersRepo;
 use kalamdb_commons::{AuthType, Role, StorageId, UserId};
 use kalamdb_configs::ServerConfig;
-use kalamdb_core::live::ConnectionsManager;
-use kalamdb_core::live::LiveQueryManager;
+use kalamdb_live::{ConnectionsManager, LiveQueryManager};
 use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
 use kalamdb_core::sql::executor::handler_registry::HandlerRegistry;
 use kalamdb_core::sql::executor::SqlExecutor;
@@ -131,7 +130,6 @@ pub async fn prepare_components(
     let sql_executor = Arc::new(SqlExecutor::new(app_context.clone(), handler_registry));
 
     app_context.set_sql_executor(sql_executor.clone());
-    live_query_manager.set_sql_executor(sql_executor.clone());
 
     sql_executor.load_existing_tables().await?;
     initialize_dba_namespace(app_context.clone())?;
@@ -349,15 +347,9 @@ pub async fn bootstrap(
     Ok((components, app_context))
 }
 
-/// Bootstrap the server for tests with isolated AppContext
-///
-/// Unlike `bootstrap()`, this does NOT use the global AppContext singleton.
-/// Each call creates a completely fresh AppContext instance, which is essential
-/// for test isolation where each test needs its own independent state.
-///
-/// **Warning**: Only use this in tests! Production code should use `bootstrap()`.
-pub async fn bootstrap_isolated(
+async fn bootstrap_isolated_inner(
     config: &ServerConfig,
+    initialize_cluster: bool,
 ) -> Result<(ApplicationComponents, Arc<kalamdb_core::app_context::AppContext>)> {
     let bootstrap_start = std::time::Instant::now();
 
@@ -395,11 +387,13 @@ pub async fn bootstrap_isolated(
         .start()
         .await
         .map_err(|e| anyhow::anyhow!("Failed to start Raft: {}", e))?;
-    app_context
-        .executor()
-        .initialize_cluster()
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to initialize single-node Raft: {}", e))?;
+    if initialize_cluster {
+        app_context
+            .executor()
+            .initialize_cluster()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to initialize single-node Raft: {}", e))?;
+    }
 
     app_context.wire_raft_appliers();
 
@@ -436,6 +430,31 @@ pub async fn bootstrap_isolated(
     );
 
     Ok((components, app_context))
+}
+
+/// Bootstrap the server for tests with isolated AppContext.
+///
+/// Unlike `bootstrap()`, this does NOT use the global AppContext singleton.
+/// Each call creates a completely fresh AppContext instance, which is essential
+/// for test isolation where each test needs its own independent state.
+///
+/// **Warning**: Only use this in tests! Production code should use `bootstrap()`.
+pub async fn bootstrap_isolated(
+    config: &ServerConfig,
+) -> Result<(ApplicationComponents, Arc<kalamdb_core::app_context::AppContext>)> {
+    bootstrap_isolated_inner(config, true).await
+}
+
+/// Bootstrap the server for tests with isolated AppContext without bootstrapping
+/// the local node as a fresh cluster leader.
+///
+/// This is used by multi-node integration tests for follower/joiner nodes that
+/// must start their RPC and HTTP surfaces before the initial leader adds them to
+/// cluster membership.
+pub async fn bootstrap_isolated_without_cluster_init(
+    config: &ServerConfig,
+) -> Result<(ApplicationComponents, Arc<kalamdb_core::app_context::AppContext>)> {
+    bootstrap_isolated_inner(config, false).await
 }
 
 /// Start the HTTP server and manage graceful shutdown.

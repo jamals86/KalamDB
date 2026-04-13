@@ -1,4 +1,4 @@
-import type { StudioTable } from "@/components/sql-studio-v2/types";
+import type { StudioTable } from "@/components/sql-studio-v2/shared/types";
 
 interface ExplorerTableContextMenuProps {
   contextMenu: { x: number; y: number; table: StudioTable } | null;

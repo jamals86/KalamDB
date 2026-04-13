@@ -7,6 +7,8 @@ mod service;
 mod session_registry;
 
 #[cfg(feature = "server")]
+pub use kalamdb_commons::models::TransactionState;
+#[cfg(feature = "server")]
 pub use operation_executor::{
     delete_request_from_rpc, encode_batches, insert_request_from_rpc, parse_row, parse_table_id,
     parse_table_type, parse_user_id, scan_request_from_rpc, scan_result_to_rpc,
@@ -28,4 +30,4 @@ pub use service::{
     ScanRpcRequest, ScanRpcResponse, UpdateRpcRequest, UpdateRpcResponse,
 };
 #[cfg(feature = "server")]
-pub use session_registry::{RemotePgSession, SessionRegistry, TransactionState};
+pub use session_registry::{LivePgTransaction, RemotePgSession, SessionRegistry};

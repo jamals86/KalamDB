@@ -9,6 +9,7 @@ use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::conversions::arrow_json_conversion::json_rows_to_arrow_batch;
 use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::rows::Row;
+use std::collections::BTreeMap;
 use kalamdb_commons::models::{ReadContext, Role, UserId};
 use kalamdb_session_datafusion::{
     extract_full_user_context as extract_full_user_context_session,
@@ -154,11 +155,18 @@ pub fn inject_system_columns(
     schema: &SchemaRef,
     row: &mut Row,
     seq_value: i64,
+    commit_seq_value: u64,
     deleted_value: bool,
 ) {
     if schema.field_with_name(SystemColumnNames::SEQ).is_ok() {
         row.values
             .insert(SystemColumnNames::SEQ.to_string(), ScalarValue::Int64(Some(seq_value)));
+    }
+    if schema.field_with_name(SystemColumnNames::COMMIT_SEQ).is_ok() {
+        row.values.insert(
+            SystemColumnNames::COMMIT_SEQ.to_string(),
+            ScalarValue::UInt64(Some(commit_seq_value)),
+        );
     }
     if schema.field_with_name(SystemColumnNames::DELETED).is_ok() {
         row.values.insert(
@@ -171,7 +179,10 @@ pub fn inject_system_columns(
 /// Trait implemented by provider row types to expose system columns and JSON payload
 pub trait ScanRow {
     fn row(&self) -> &Row;
+    /// Take ownership of the inner Row, avoiding a clone when consuming.
+    fn into_row(self) -> Row;
     fn seq_value(&self) -> i64;
+    fn commit_seq_value(&self) -> u64;
     fn deleted_flag(&self) -> bool;
 }
 
@@ -180,8 +191,16 @@ impl ScanRow for crate::SharedTableRow {
         &self.fields
     }
 
+    fn into_row(self) -> Row {
+        self.fields
+    }
+
     fn seq_value(&self) -> i64 {
         self._seq.as_i64()
+    }
+
+    fn commit_seq_value(&self) -> u64 {
+        self._commit_seq
     }
 
     fn deleted_flag(&self) -> bool {
@@ -194,8 +213,16 @@ impl ScanRow for crate::UserTableRow {
         &self.fields
     }
 
+    fn into_row(self) -> Row {
+        self.fields
+    }
+
     fn seq_value(&self) -> i64 {
         self._seq.as_i64()
+    }
+
+    fn commit_seq_value(&self) -> u64 {
+        self._commit_seq
     }
 
     fn deleted_flag(&self) -> bool {
@@ -208,8 +235,16 @@ impl ScanRow for crate::StreamTableRow {
         &self.fields
     }
 
+    fn into_row(self) -> Row {
+        self.fields
+    }
+
     fn seq_value(&self) -> i64 {
         self._seq.as_i64()
+    }
+
+    fn commit_seq_value(&self) -> u64 {
+        0
     }
 
     fn deleted_flag(&self) -> bool {
@@ -248,11 +283,30 @@ where
     let mut rows: Vec<Row> = Vec::with_capacity(row_count);
 
     for (_key, row) in kvs.into_iter() {
-        let mut materialized = row.row().clone();
+        let seq = row.seq_value();
+        let commit_seq = row.commit_seq_value();
+        let deleted = row.deleted_flag();
 
-        enrich_row(&mut materialized, &row);
+        // Let the caller inject extra fields (e.g., stream tables add user_id)
+        // while we still have a reference to the typed row.
+        let mut extra = Row::new(BTreeMap::new());
+        enrich_row(&mut extra, &row);
 
-        inject_system_columns(schema, &mut materialized, row.seq_value(), row.deleted_flag());
+        // Take ownership of the Row to avoid cloning the inner BTreeMap.
+        let mut materialized = row.into_row();
+
+        // Merge any caller-injected fields.
+        if !extra.values.is_empty() {
+            materialized.values.extend(extra.values);
+        }
+
+        inject_system_columns(
+            schema,
+            &mut materialized,
+            seq,
+            commit_seq,
+            deleted,
+        );
         rows.push(materialized);
     }
 

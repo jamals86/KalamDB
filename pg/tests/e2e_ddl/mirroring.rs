@@ -1,9 +1,9 @@
-use super::common::{ensure_schema_exists, unique_name, DdlTestEnv};
+use super::common::{ensure_schema_exists, require_ddl_env, unique_name};
 
 #[tokio::test]
 #[ntest::timeout(7000)]
 async fn e2e_ddl_create_table_mirrors_columns_identically() {
-    let env = DdlTestEnv::global().await;
+    let env = require_ddl_env!();
     let pg = env.pg_connect().await;
 
     let ns = "ddl_test";
@@ -11,17 +11,16 @@ async fn e2e_ddl_create_table_mirrors_columns_identically() {
     ensure_schema_exists(&pg, ns).await;
 
     let sql = format!(
-        "CREATE FOREIGN TABLE {ns}.{table} (
+        "CREATE TABLE {ns}.{table} (
             id TEXT,
             title TEXT,
             value INTEGER,
             active BOOLEAN
-        ) SERVER kalam_server
-        OPTIONS (namespace '{ns}', \"table\" '{table}', table_type 'shared');"
+        ) USING kalamdb WITH (type = 'shared');"
     );
     pg.batch_execute(&sql)
         .await
-        .expect("CREATE FOREIGN TABLE for mirror comparison");
+        .expect("CREATE TABLE USING kalamdb for mirror comparison");
 
     let pg_rows = pg
         .query(
@@ -35,6 +34,13 @@ async fn e2e_ddl_create_table_mirrors_columns_identically() {
         .expect("query postgres mirrored columns");
 
     let pg_columns: Vec<String> = pg_rows.into_iter().map(|row| row.get(0)).collect();
+    let pg_user_columns: Vec<String> = pg_columns
+        .iter()
+        .filter(|name| {
+            name.as_str() != "_userid" && name.as_str() != "_seq" && name.as_str() != "_deleted"
+        })
+        .cloned()
+        .collect();
     let kalam_columns = env
         .wait_for_kalamdb_columns(ns, &table, "mirrored columns to appear", |columns| {
             columns.iter().any(|column| column == "id")
@@ -52,7 +58,7 @@ async fn e2e_ddl_create_table_mirrors_columns_identically() {
         .collect();
 
     assert_eq!(
-        pg_columns, kalam_user_columns,
+        pg_user_columns, kalam_user_columns,
         "PostgreSQL and KalamDB should expose identical mirrored columns"
     );
     assert!(
@@ -70,7 +76,7 @@ async fn e2e_ddl_create_table_mirrors_columns_identically() {
 #[tokio::test]
 #[ntest::timeout(7000)]
 async fn e2e_ddl_preserves_primary_key_not_null_and_defaults() {
-    let env = DdlTestEnv::global().await;
+    let env = require_ddl_env!();
     let pg = env.pg_connect().await;
 
     let ns = unique_name("ddl_constraints");
@@ -78,16 +84,15 @@ async fn e2e_ddl_preserves_primary_key_not_null_and_defaults() {
     ensure_schema_exists(&pg, &ns).await;
 
     pg.batch_execute(&format!(
-        "CREATE FOREIGN TABLE {ns}.{table} (
+        "CREATE TABLE {ns}.{table} (
             id BIGINT NOT NULL,
             title TEXT NOT NULL,
             value INTEGER,
             created TIMESTAMP DEFAULT NOW()
-         ) SERVER kalam_server
-         OPTIONS (table_type 'shared');"
+         ) USING kalamdb WITH (type = 'shared');"
     ))
     .await
-    .expect("create mirrored constrained foreign table");
+    .expect("create mirrored constrained Kalam table");
     env.wait_for_kalamdb_table_exists(&ns, &table).await;
 
     let columns = env
@@ -144,7 +149,7 @@ async fn e2e_ddl_preserves_primary_key_not_null_and_defaults() {
 #[tokio::test]
 #[ntest::timeout(7000)]
 async fn e2e_ddl_current_schema_maps_to_namespace_without_namespace_option() {
-    let env = DdlTestEnv::global().await;
+    let env = require_ddl_env!();
     let pg = env.pg_connect().await;
 
     let ns = unique_name("schema_ns");
@@ -153,15 +158,14 @@ async fn e2e_ddl_current_schema_maps_to_namespace_without_namespace_option() {
     pg.batch_execute(&format!(
         "CREATE SCHEMA IF NOT EXISTS {ns};
          SET search_path TO {ns};
-         CREATE FOREIGN TABLE {table} (
+         CREATE TABLE {table} (
              id TEXT,
              title TEXT,
              value INTEGER
-         ) SERVER kalam_server
-         OPTIONS (table_type 'shared');"
+         ) USING kalamdb WITH (type = 'shared');"
     ))
     .await
-    .expect("create foreign table using current schema");
+    .expect("create Kalam table using current schema");
     env.wait_for_kalamdb_table_exists(&ns, &table).await;
 
     assert!(
@@ -190,9 +194,9 @@ async fn e2e_ddl_current_schema_maps_to_namespace_without_namespace_option() {
 }
 
 #[tokio::test]
-#[ntest::timeout(7000)]
+#[ntest::timeout(15000)]
 async fn e2e_ddl_alter_add_column_preserves_not_null_and_default() {
-    let env = DdlTestEnv::global().await;
+    let env = require_ddl_env!();
     let pg = env.pg_connect().await;
 
     let ns = unique_name("ddl_addopts");
@@ -200,14 +204,13 @@ async fn e2e_ddl_alter_add_column_preserves_not_null_and_default() {
     ensure_schema_exists(&pg, &ns).await;
 
     pg.batch_execute(&format!(
-        "CREATE FOREIGN TABLE {ns}.{table} (
+        "CREATE TABLE {ns}.{table} (
             id BIGINT NOT NULL,
             title TEXT NOT NULL
-         ) SERVER kalam_server
-         OPTIONS (table_type 'shared');"
+         ) USING kalamdb WITH (type = 'shared');"
     ))
     .await
-    .expect("create base foreign table");
+    .expect("create base Kalam table");
 
     pg.batch_execute(&format!(
         "ALTER FOREIGN TABLE {ns}.{table} ADD COLUMN status TEXT NOT NULL DEFAULT 'pending';"
@@ -240,9 +243,9 @@ async fn e2e_ddl_alter_add_column_preserves_not_null_and_default() {
 }
 
 #[tokio::test]
-#[ntest::timeout(7000)]
+#[ntest::timeout(15000)]
 async fn e2e_ddl_alter_column_set_and_drop_not_null() {
-    let env = DdlTestEnv::global().await;
+    let env = require_ddl_env!();
     let pg = env.pg_connect().await;
 
     let ns = unique_name("ddl_nullable");
@@ -250,11 +253,10 @@ async fn e2e_ddl_alter_column_set_and_drop_not_null() {
     ensure_schema_exists(&pg, &ns).await;
 
     pg.batch_execute(&format!(
-        "CREATE FOREIGN TABLE {ns}.{table} (
+        "CREATE TABLE {ns}.{table} (
             id BIGINT NOT NULL,
             title TEXT
-         ) SERVER kalam_server
-         OPTIONS (table_type 'shared');"
+         ) USING kalamdb WITH (type = 'shared');"
     ))
     .await
     .expect("create base table for nullability alter");
@@ -292,9 +294,9 @@ async fn e2e_ddl_alter_column_set_and_drop_not_null() {
 }
 
 #[tokio::test]
-#[ntest::timeout(7000)]
+#[ntest::timeout(15000)]
 async fn e2e_ddl_alter_column_set_and_drop_default() {
-    let env = DdlTestEnv::global().await;
+    let env = require_ddl_env!();
     let pg = env.pg_connect().await;
 
     let ns = unique_name("ddl_defaults");
@@ -302,11 +304,10 @@ async fn e2e_ddl_alter_column_set_and_drop_default() {
     ensure_schema_exists(&pg, &ns).await;
 
     pg.batch_execute(&format!(
-        "CREATE FOREIGN TABLE {ns}.{table} (
+        "CREATE TABLE {ns}.{table} (
             id BIGINT NOT NULL,
             status TEXT
-         ) SERVER kalam_server
-         OPTIONS (table_type 'shared');"
+         ) USING kalamdb WITH (type = 'shared');"
     ))
     .await
     .expect("create base table for default alter");

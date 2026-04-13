@@ -4,23 +4,43 @@
 // instance and a locally running KalamDB server.
 #![allow(dead_code)]
 
+pub mod tcp_proxy;
+
+#[path = "../support/http_client.rs"]
+mod http_client;
+
 use std::process::Command;
+use std::hash::{Hash, Hasher};
+use std::ops::{Deref, DerefMut};
 use std::sync::OnceLock;
 use std::time::Duration;
-use std::{env, fmt};
+use std::{env, fmt, future::Future};
 
-use reqwest::Client;
+use http_client::TestHttpClient;
 use serde_json::Value;
 use tokio_postgres::error::SqlState;
 use tokio_postgres::{Config, NoTls};
 
 // ---------------------------------------------------------------------------
-// Constants — pgrx-managed PostgreSQL + local KalamDB
+// Constants — configurable via env vars, with sensible defaults
 // ---------------------------------------------------------------------------
 
-const PG_HOST: &str = "127.0.0.1";
-const PG_PORT: u16 = 28816;
+// Default: pgrx local postgres. Override with KALAMDB_PG_HOST / KALAMDB_PG_PORT.
+const DEFAULT_PG_HOST: &str = "127.0.0.1";
+const DEFAULT_PG_PORT: u16 = 28816;
 const TEST_DB: &str = "kalamdb_test";
+
+fn pg_connection_config() -> (String, u16) {
+    let host = env::var("KALAMDB_PG_HOST")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| DEFAULT_PG_HOST.to_string());
+    let port = env::var("KALAMDB_PG_PORT")
+        .ok()
+        .and_then(|v| v.parse::<u16>().ok())
+        .unwrap_or(DEFAULT_PG_PORT);
+    (host, port)
+}
 
 const DEFAULT_KALAMDB_SERVER_URL: &str = "http://127.0.0.1:8080";
 const DEFAULT_KALAMDB_GRPC_HOST: &str = "127.0.0.1";
@@ -85,7 +105,7 @@ fn kalamdb_auth_config() -> KalamDbAuthConfig {
     }
 }
 
-fn kalamdb_grpc_target() -> (String, u16) {
+pub fn kalamdb_grpc_target() -> (String, u16) {
     let host = env::var("KALAMDB_GRPC_HOST")
         .ok()
         .filter(|value| !value.is_empty())
@@ -98,14 +118,97 @@ fn kalamdb_grpc_target() -> (String, u16) {
     (host, port)
 }
 
+/// gRPC target as seen from *inside* the postgres process.
+/// Defaults to the same as kalamdb_grpc_target(), but can be overridden
+/// with KALAMDB_PG_GRPC_HOST / KALAMDB_PG_GRPC_PORT when postgres runs
+/// inside Docker and kalamdb is reachable via its Docker service name.
+fn kalamdb_pg_grpc_target() -> (String, u16) {
+    let (default_host, default_port) = kalamdb_grpc_target();
+    let host = env::var("KALAMDB_PG_GRPC_HOST")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .unwrap_or(default_host);
+    let port = env::var("KALAMDB_PG_GRPC_PORT")
+        .ok()
+        .and_then(|value| value.parse::<u16>().ok())
+        .unwrap_or(default_port);
+    (host, port)
+}
+
+fn pg_user_from_env() -> String {
+    env::var("KALAMDB_PG_USER")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| env::var("USER").unwrap_or_else(|_| "postgres".to_string()))
+}
+
 // ---------------------------------------------------------------------------
 // TestEnv — shared, singleton local test environment
 // ---------------------------------------------------------------------------
 
 pub struct TestEnv {
     pub bearer_token: String,
-    http_client: Client,
+    http_client: TestHttpClient,
     pg_user: String,
+}
+
+pub struct OwnedPgClient {
+    client: Option<tokio_postgres::Client>,
+    connection_task: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl OwnedPgClient {
+    fn new(client: tokio_postgres::Client, connection_task: tokio::task::JoinHandle<()>) -> Self {
+        Self {
+            client: Some(client),
+            connection_task: Some(connection_task),
+        }
+    }
+
+    pub async fn disconnect(mut self) {
+        self.client.take();
+        if let Some(connection_task) = self.connection_task.take() {
+            let _ = connection_task.await;
+        }
+    }
+
+    pub async fn disconnect_and_wait_for_session_cleanup(mut self) {
+        let backend_pid = if let Some(client) = self.client.as_ref() {
+            Some(pg_backend_pid(client).await)
+        } else {
+            None
+        };
+
+        self.client.take();
+        if let Some(connection_task) = self.connection_task.take() {
+            let _ = connection_task.await;
+        }
+
+        if let Some(backend_pid) = backend_pid {
+            wait_for_remote_pg_session_cleanup(backend_pid, Duration::from_secs(5)).await;
+        }
+    }
+}
+
+impl Deref for OwnedPgClient {
+    type Target = tokio_postgres::Client;
+
+    fn deref(&self) -> &Self::Target {
+        self.client.as_ref().expect("pg client already disconnected")
+    }
+}
+
+impl DerefMut for OwnedPgClient {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.client.as_mut().expect("pg client already disconnected")
+    }
+}
+
+impl Drop for OwnedPgClient {
+    fn drop(&mut self) {
+        self.client.take();
+        let _ = self.connection_task.take();
+    }
 }
 
 static ENV: OnceLock<TestEnv> = OnceLock::new();
@@ -119,10 +222,11 @@ impl TestEnv {
         ENV.get_or_init(|| env)
     }
 
-    pub async fn pg_connect(&self) -> tokio_postgres::Client {
+    pub async fn pg_connect(&self) -> OwnedPgClient {
+        let (pg_host, pg_port) = pg_connection_config();
         self.pg_connect_to(TEST_DB)
             .await
-            .expect("connect to pgrx PostgreSQL (is it running on port 28816?)")
+            .unwrap_or_else(|e| panic!("connect to PostgreSQL at {pg_host}:{pg_port}: {e}"))
     }
 
     pub async fn kalamdb_sql(&self, sql: &str) -> Value {
@@ -131,14 +235,11 @@ impl TestEnv {
         let body = serde_json::json!({ "sql": sql });
         let resp = self
             .http_client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.bearer_token))
-            .json(&body)
-            .send()
+            .post_json(&url, &body, Some(&self.bearer_token))
             .await
             .expect("KalamDB SQL request");
-        let status = resp.status();
-        let text = resp.text().await.unwrap_or_default();
+        let status = resp.status;
+        let text = resp.body;
         assert!(status.is_success(), "KalamDB SQL failed ({status}): {text}\n  SQL: {sql}");
         serde_json::from_str(&text).unwrap_or(Value::Null)
     }
@@ -150,13 +251,10 @@ impl TestEnv {
         let body = serde_json::json!({ "sql": sql });
         let resp = self
             .http_client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.bearer_token))
-            .json(&body)
-            .send()
+            .post_json(&url, &body, Some(&self.bearer_token))
             .await
             .expect("KalamDB table exists check");
-        resp.status().is_success()
+        resp.status.is_success()
     }
 
     pub async fn wait_for_kalamdb_table_exists(&self, namespace: &str, table: &str) {
@@ -182,16 +280,13 @@ impl TestEnv {
         let body = serde_json::json!({ "sql": sql });
         let resp = self
             .http_client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.bearer_token))
-            .json(&body)
-            .send()
+            .post_json(&url, &body, Some(&self.bearer_token))
             .await
             .expect("KalamDB columns check");
-        if !resp.status().is_success() {
+        if !resp.status.is_success() {
             return Vec::new();
         }
-        let text = resp.text().await.unwrap_or_default();
+        let text = resp.body;
         let val: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
         val["results"][0]["schema"]
             .as_array()
@@ -200,11 +295,11 @@ impl TestEnv {
     }
 
     async fn start() -> Self {
-        let http_client = Client::builder().timeout(Duration::from_secs(15)).build().unwrap();
+        let http_client = TestHttpClient::new(Duration::from_secs(15));
 
         Self::wait_for_kalamdb(&http_client).await;
         let bearer_token = Self::authenticate(&http_client).await;
-        let pg_user = std::env::var("USER").unwrap_or_else(|_| "postgres".to_string());
+        let pg_user = pg_user_from_env();
 
         let env = Self {
             bearer_token,
@@ -219,15 +314,14 @@ impl TestEnv {
         env
     }
 
-    async fn wait_for_kalamdb(client: &Client) {
+    async fn wait_for_kalamdb(client: &TestHttpClient) {
         let config = kalamdb_auth_config();
         let url = format!("{}/health", config.base_url);
         for i in 0..10 {
             if client
                 .get(&url)
-                .send()
                 .await
-                .map(|response| response.status().is_success())
+                .map(|response| response.status.is_success())
                 .unwrap_or(false)
             {
                 return;
@@ -244,7 +338,7 @@ impl TestEnv {
         );
     }
 
-    async fn authenticate(client: &Client) -> String {
+    async fn authenticate(client: &TestHttpClient) -> String {
         let config = kalamdb_auth_config();
 
         if let Some(token) =
@@ -255,13 +349,11 @@ impl TestEnv {
         }
 
         let _ = client
-            .post(format!("{}/v1/api/auth/setup", config.base_url))
-            .json(&serde_json::json!({
+            .post_json(&format!("{}/v1/api/auth/setup", config.base_url), &serde_json::json!({
                 "username": config.setup_username,
                 "password": config.setup_password,
                 "root_password": config.root_password,
-            }))
-            .send()
+            }), None)
             .await;
 
         if let Some(token) =
@@ -299,11 +391,13 @@ impl TestEnv {
                 .await
                 .expect("create test database");
         }
+
+        postgres.disconnect().await;
     }
 
     async fn ensure_extension_bootstrap(&self) {
         let pg = self.pg_connect().await;
-        let (grpc_host, grpc_port) = kalamdb_grpc_target();
+        let (grpc_host, grpc_port) = kalamdb_pg_grpc_target();
         const BOOTSTRAP_LOCK_ID: i64 = 8_271_604_221;
 
         pg.batch_execute("CREATE EXTENSION IF NOT EXISTS pg_kalam;")
@@ -336,23 +430,29 @@ impl TestEnv {
             .await
             .expect("release pg_kalam bootstrap advisory lock");
 
+        pg.disconnect().await;
+
         bootstrap_result
     }
 
     async fn wait_for_pg(&self) {
+        let (pg_host, pg_port) = pg_connection_config();
         for i in 0..10 {
             match self.pg_connect_to("postgres").await {
-                Ok(_client) => return,
+                Ok(client) => {
+                    client.disconnect().await;
+                    return;
+                }
                 Err(_) => {
                     if i == 0 {
-                        eprintln!("  waiting for PostgreSQL on port {PG_PORT}...");
+                        eprintln!("  waiting for PostgreSQL on {pg_host}:{pg_port}...");
                     }
                     tokio::time::sleep(Duration::from_secs(1)).await;
                 },
             }
         }
         panic!(
-            "PostgreSQL not reachable at {PG_HOST}:{PG_PORT}\n\
+            "PostgreSQL not reachable at {pg_host}:{pg_port}\n\
              Start with: ./pg/scripts/pgrx-test-setup.sh --start"
         );
     }
@@ -360,50 +460,49 @@ impl TestEnv {
     async fn pg_connect_to(
         &self,
         dbname: &str,
-    ) -> Result<tokio_postgres::Client, tokio_postgres::Error> {
+    ) -> Result<OwnedPgClient, tokio_postgres::Error> {
+        let (pg_host, pg_port) = pg_connection_config();
         let (client, conn) = Config::new()
-            .host(PG_HOST)
-            .port(PG_PORT)
+            .host(&pg_host)
+            .port(pg_port)
             .user(&self.pg_user)
             .dbname(dbname)
             .connect(NoTls)
             .await?;
-        tokio::spawn(async move {
+        let connection_task = tokio::spawn(async move {
             if let Err(e) = conn.await {
                 eprintln!("pg connection error: {e}");
             }
         });
-        Ok(client)
+        Ok(OwnedPgClient::new(client, connection_task))
     }
 }
 
 async fn try_login(
-    client: &Client,
+    client: &TestHttpClient,
     base_url: &str,
     username: &str,
     password: &str,
 ) -> Option<String> {
     let resp = client
-        .post(format!("{base_url}/v1/api/auth/login"))
-        .json(&serde_json::json!({
+        .post_json(&format!("{base_url}/v1/api/auth/login"), &serde_json::json!({
             "username": username,
             "password": password,
-        }))
-        .send()
+        }), None)
         .await
         .ok()?;
-    if !resp.status().is_success() {
+    if !resp.status.is_success() {
         return None;
     }
-    let body: Value = resp.json().await.ok()?;
+    let body: Value = serde_json::from_str(&resp.body).ok()?;
     body["access_token"].as_str().map(ToString::to_string)
 }
 
 // ---------------------------------------------------------------------------
-// Foreign Table helpers
+// Kalam table helpers
 // ---------------------------------------------------------------------------
 
-pub async fn create_shared_foreign_table(
+pub async fn create_shared_kalam_table(
     client: &tokio_postgres::Client,
     table: &str,
     columns: &str,
@@ -412,15 +511,14 @@ pub async fn create_shared_foreign_table(
     let drop = format!("DROP FOREIGN TABLE IF EXISTS e2e.{table};");
     client.batch_execute(&drop).await.expect("drop old table");
     let sql = format!(
-        "CREATE FOREIGN TABLE e2e.{table} ({columns}) \
-         SERVER kalam_server \
-         OPTIONS (namespace 'e2e', \"table\" '{table}', table_type 'shared');"
+        "CREATE TABLE e2e.{table} ({columns}) USING kalamdb WITH (type = 'shared');"
     );
-    client.batch_execute(&sql).await.expect("create foreign table");
+    client.batch_execute(&sql).await.expect("create Kalam table");
     TestEnv::global().await.wait_for_kalamdb_table_exists("e2e", table).await;
+    wait_for_table_queryable(client, &format!("e2e.{table}")).await;
 }
 
-pub async fn create_user_foreign_table(
+pub async fn create_user_kalam_table(
     client: &tokio_postgres::Client,
     table: &str,
     columns: &str,
@@ -429,11 +527,9 @@ pub async fn create_user_foreign_table(
     let drop = format!("DROP FOREIGN TABLE IF EXISTS e2e.{table};");
     client.batch_execute(&drop).await.expect("drop old table");
     let sql = format!(
-        "CREATE FOREIGN TABLE e2e.{table} ({columns}) \
-         SERVER kalam_server \
-         OPTIONS (namespace 'e2e', \"table\" '{table}', table_type 'user');"
+        "CREATE TABLE e2e.{table} ({columns}) USING kalamdb WITH (type = 'user');"
     );
-    client.batch_execute(&sql).await.expect("create foreign table");
+    client.batch_execute(&sql).await.expect("create Kalam table");
     TestEnv::global().await.wait_for_kalamdb_table_exists("e2e", table).await;
 }
 
@@ -442,9 +538,170 @@ pub async fn set_user_id(client: &tokio_postgres::Client, user_id: &str) {
     client.batch_execute(&sql).await.expect("set user_id");
 }
 
+fn sql_row_count(result: &Value) -> i64 {
+    result["results"]
+        .as_array()
+        .and_then(|results| results.first())
+        .and_then(|entry| entry["row_count"].as_i64())
+        .unwrap_or_default()
+}
+
+fn sql_first_cell_i64(result: &Value) -> Option<i64> {
+    result["results"]
+        .as_array()
+        .and_then(|results| results.first())
+        .and_then(|entry| entry["rows"].as_array())
+        .and_then(|rows| rows.first())
+        .and_then(|row| row.as_array())
+        .and_then(|columns| columns.first())
+        .and_then(|value| {
+            value
+                .as_i64()
+                .or_else(|| value.as_u64().and_then(|raw| i64::try_from(raw).ok()))
+                .or_else(|| value.as_str().and_then(|raw| raw.parse::<i64>().ok()))
+        })
+}
+
+pub async fn wait_for_remote_pg_session_cleanup(backend_pid: u32, timeout: Duration) {
+    let env = TestEnv::global().await;
+    let deadline = std::time::Instant::now() + timeout;
+
+    loop {
+        let result = env
+            .kalamdb_sql(&format!(
+                "SELECT COUNT(*) AS session_count FROM system.sessions WHERE backend_pid = {backend_pid} LIMIT 1"
+            ))
+            .await;
+        let count = sql_first_cell_i64(&result).unwrap_or_default();
+        if count == 0 {
+            return;
+        }
+
+        if std::time::Instant::now() >= deadline {
+            panic!(
+                "remote pg session for backend_pid {backend_pid} remained visible in system.sessions past timeout"
+            );
+        }
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+async fn cluster_user_shard_count(env: &TestEnv) -> u32 {
+    let result = env
+        .kalamdb_sql("SELECT group_id FROM system.cluster_groups WHERE group_type = 'user_data'")
+        .await;
+    let count = sql_row_count(&result);
+    if count <= 0 {
+        panic!("system.cluster_groups did not report any user shards");
+    }
+    count as u32
+}
+
+fn user_shard_group_id(user_id: &str, num_user_shards: u32) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    user_id.hash(&mut hasher);
+    let shard = (hasher.finish() % num_user_shards as u64) as u32;
+    100 + shard as u64
+}
+
+pub async fn await_user_shard_leader(user_id: &str) {
+    let env = TestEnv::global().await;
+    let num_user_shards = cluster_user_shard_count(env).await;
+    let group_id = user_shard_group_id(user_id, num_user_shards);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let mut triggered_elections = 0;
+
+    loop {
+        let result = env
+            .kalamdb_sql(&format!(
+                "SELECT group_id FROM system.cluster_groups WHERE group_id = {group_id} AND current_leader IS NOT NULL"
+            ))
+            .await;
+
+        if sql_row_count(&result) == 1 {
+            return;
+        }
+
+        if std::time::Instant::now() >= deadline {
+            panic!("user shard leader not ready for {user_id} ({group_id})");
+        }
+
+        if triggered_elections < 3 {
+            env.kalamdb_sql("CLUSTER TRIGGER ELECTION").await;
+            triggered_elections += 1;
+        }
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+}
+
+pub async fn same_user_shard_pair(first_user_id: &str, second_prefix: &str) -> (String, String) {
+    let env = TestEnv::global().await;
+    let num_user_shards = cluster_user_shard_count(env).await;
+    let target_group = user_shard_group_id(first_user_id, num_user_shards);
+
+    for index in 0..1024 {
+        let candidate = format!("{second_prefix}-{index}");
+        if candidate != first_user_id && user_shard_group_id(&candidate, num_user_shards) == target_group {
+            return (first_user_id.to_string(), candidate);
+        }
+    }
+
+    panic!(
+        "failed to find a user id with prefix '{second_prefix}' on the same shard as '{first_user_id}'"
+    );
+}
+
+pub fn is_transient_user_leader_error(error: &tokio_postgres::Error) -> bool {
+    let mut message = if let Some(db_error) = error.as_db_error() {
+        db_error.message().to_string()
+    } else {
+        error.to_string()
+    };
+
+    if let Some(db_error) = error.as_db_error() {
+        if let Some(detail) = db_error.detail() {
+            message.push_str(" | ");
+            message.push_str(detail);
+        }
+        if let Some(hint) = db_error.hint() {
+            message.push_str(" | ");
+            message.push_str(hint);
+        }
+    }
+
+    message.contains("Not leader for group data:user")
+        || message.contains("leader is node None")
+        || message.contains("Leader unknown")
+}
+
+pub async fn retry_transient_user_leader_error<T, F, Fut>(description: &str, mut op: F) -> T
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<T, tokio_postgres::Error>>,
+{
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+
+    loop {
+        match op().await {
+            Ok(value) => return value,
+            Err(error) if is_transient_user_leader_error(&error) => {
+                if std::time::Instant::now() >= deadline {
+                    panic!(
+                        "{description} did not succeed before user-shard leader was ready: {error}"
+                    );
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+            Err(error) => panic!("{description} failed: {error}"),
+        }
+    }
+}
+
 pub async fn wait_for_table_queryable(client: &tokio_postgres::Client, table: &str) {
     let sql = format!("SELECT 1 FROM {table} LIMIT 0");
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
 
     loop {
         match client.simple_query(&sql).await {
