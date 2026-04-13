@@ -13,7 +13,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use kalamdb_commons::ids::{StreamTableRowId, UserTableRowId};
+use kalamdb_commons::ids::StreamTableRowId;
 use kalamdb_commons::models::rows::Row;
 use kalamdb_commons::models::{OperationKind, TopicOp, TransactionId, UserId};
 use kalamdb_commons::schemas::TableType;
@@ -32,7 +32,7 @@ use crate::providers::base::{find_row_by_pk, BaseTableProvider};
 use crate::providers::{SharedTableProvider, StreamTableProvider, UserTableProvider};
 use crate::transactions::{CommitSideEffectPlan, FanoutOwnerScope};
 use kalamdb_tables::utils::base as table_base;
-use kalamdb_tables::{StreamTableRow, UserTableRow};
+use kalamdb_tables::StreamTableRow;
 
 /// Executor for DML operations (Data Plane)
 ///
@@ -70,6 +70,48 @@ impl DmlExecutor {
         schema_registry
             .get_provider(table_id)
             .ok_or_else(|| ApplierError::not_found(provider_label, table_id))
+    }
+
+    fn table_has_file_columns(&self, table_id: &TableId) -> bool {
+        match self.app_context.schema_registry().get_table_if_exists(table_id) {
+            Ok(Some(table_def)) => table_def.columns.iter().any(|column| {
+                column.data_type
+                    == kalamdb_commons::models::datatypes::KalamDataType::File
+            }),
+            Ok(None) => false,
+            Err(error) => {
+                log::warn!(
+                    "Failed to load table definition for {} while checking file columns: {}",
+                    table_id,
+                    error
+                );
+                false
+            },
+        }
+    }
+
+    async fn emit_autocommit_notification(
+        &self,
+        user_id: Option<&UserId>,
+        notification: ChangeNotification,
+    ) {
+        let has_live_subscribers = NotificationServiceTrait::has_subscribers(
+            self.app_context.notification_service().as_ref(),
+            user_id,
+            &notification.table_id,
+        );
+        let scoped_user = user_id.cloned();
+        let table_id = notification.table_id.clone();
+
+        let _ = self
+            .publish_transaction_notification(user_id, &notification)
+            .await;
+
+        if has_live_subscribers {
+            self.app_context
+                .notification_service()
+                .notify_table_change(scoped_user, table_id, notification);
+        }
     }
 
     // =========================================================================
@@ -154,28 +196,32 @@ impl DmlExecutor {
         let provider_arc = self.load_provider(table_id, "Table provider").await?;
 
         if let Some(provider) = provider_arc.as_any().downcast_ref::<UserTableProvider>() {
-            let prior_row =
-                self.load_user_row_for_cleanup(provider, table_id, user_id, pk_value).await;
-
-            let replaced_refs = prior_row.as_ref().map_or_else(Vec::new, |row| {
-                collect_replaced_file_refs_for_update(
-                    self.app_context.as_ref(),
-                    table_id,
-                    row,
-                    update_row,
-                )
-            });
-
-            let updated = self
-                .update_user_provider(provider, user_id, pk_value, update_row.clone())
-                .await?;
-            if updated > 0 {
-                provider
-                    .patch_latest_commit_seq_by_pk(user_id, pk_value, commit_seq)
+            let replaced_refs = if self.table_has_file_columns(table_id) {
+                self.load_user_row_for_cleanup(provider, table_id, user_id, pk_value)
                     .await
-                    .map_err(|e| {
-                        ApplierError::Execution(format!("Failed to stamp commit_seq: {}", e))
-                    })?;
+                    .as_ref()
+                    .map_or_else(Vec::new, |row| {
+                        collect_replaced_file_refs_for_update(
+                            self.app_context.as_ref(),
+                            table_id,
+                            row,
+                            update_row,
+                        )
+                    })
+            } else {
+                Vec::new()
+            };
+
+            let updated = provider
+                .update_by_pk_value_deferred(user_id, pk_value, update_row.clone(), commit_seq)
+                .await
+                .map_err(|e| ApplierError::Execution(format!("Failed to update row: {}", e)))?;
+
+            if let Some((_row_key, notification)) = updated {
+                if let Some(notification) = notification {
+                    self.emit_autocommit_notification(Some(user_id), notification)
+                        .await;
+                }
                 delete_file_refs_best_effort(
                     self.app_context.as_ref(),
                     table_id,
@@ -184,8 +230,10 @@ impl DmlExecutor {
                     &replaced_refs,
                 )
                 .await;
+                Ok(1)
+            } else {
+                Ok(0)
             }
-            Ok(updated)
         } else if let Some(provider) = provider_arc.as_any().downcast_ref::<StreamTableProvider>() {
             self.update_stream_provider(provider, user_id, pk_value, update_row.clone())
                 .await
@@ -229,24 +277,25 @@ impl DmlExecutor {
         if let Some(provider) = provider_arc.as_any().downcast_ref::<UserTableProvider>() {
             let mut deleted_count = 0;
             for pk_value in pk_values {
-                let file_refs = self
-                    .load_user_row_for_cleanup(provider, table_id, user_id, pk_value)
-                    .await
-                    .map_or_else(Vec::new, |row| {
-                        collect_file_refs_from_row(self.app_context.as_ref(), table_id, &row)
-                    });
+                let file_refs = if self.table_has_file_columns(table_id) {
+                    self.load_user_row_for_cleanup(provider, table_id, user_id, pk_value)
+                        .await
+                        .map_or_else(Vec::new, |row| {
+                            collect_file_refs_from_row(self.app_context.as_ref(), table_id, &row)
+                        })
+                } else {
+                    Vec::new()
+                };
 
-                if provider
-                    .delete_by_id_field(user_id, pk_value)
+                if let Some((_row_key, notification)) = provider
+                    .delete_by_pk_value_deferred(user_id, pk_value, commit_seq)
                     .await
                     .map_err(|e| ApplierError::Execution(format!("Failed to delete row: {}", e)))?
                 {
-                    provider
-                        .patch_latest_commit_seq_by_pk(user_id, pk_value, commit_seq)
-                        .await
-                        .map_err(|e| {
-                            ApplierError::Execution(format!("Failed to stamp commit_seq: {}", e))
-                        })?;
+                    if let Some(notification) = notification {
+                        self.emit_autocommit_notification(Some(user_id), notification)
+                            .await;
+                    }
                     deleted_count += 1;
                     delete_file_refs_best_effort(
                         self.app_context.as_ref(),
@@ -352,33 +401,34 @@ impl DmlExecutor {
         let provider_arc = self.load_provider(table_id, "Shared table provider").await?;
 
         if let Some(provider) = provider_arc.as_any().downcast_ref::<SharedTableProvider>() {
-            let system_user = UserId::system();
             let update_row = updates[0].clone();
 
-            let prior_row = self.load_shared_row_for_cleanup(provider, table_id, pk_value).await;
-
-            let replaced_refs = prior_row.as_ref().map_or_else(Vec::new, |row| {
-                collect_replaced_file_refs_for_update(
-                    self.app_context.as_ref(),
-                    table_id,
-                    row,
-                    &update_row,
-                )
-            });
+            let replaced_refs = if self.table_has_file_columns(table_id) {
+                self.load_shared_row_for_cleanup(provider, table_id, pk_value)
+                    .await
+                    .as_ref()
+                    .map_or_else(Vec::new, |row| {
+                        collect_replaced_file_refs_for_update(
+                            self.app_context.as_ref(),
+                            table_id,
+                            row,
+                            &update_row,
+                        )
+                    })
+            } else {
+                Vec::new()
+            };
 
             let updated = provider
-                .update_by_id_field(&system_user, pk_value, update_row)
+                .update_by_pk_value_deferred(pk_value, update_row, commit_seq)
                 .await
                 .map_err(|e| ApplierError::Execution(format!("Failed to update row: {}", e)))?;
 
             let affected_rows = usize::from(updated.is_some());
-            if affected_rows > 0 {
-                provider
-                    .patch_latest_commit_seq_by_pk(pk_value, commit_seq)
-                    .await
-                    .map_err(|e| {
-                        ApplierError::Execution(format!("Failed to stamp commit_seq: {}", e))
-                    })?;
+            if let Some((_row_key, notification)) = updated {
+                if let Some(notification) = notification {
+                    self.emit_autocommit_notification(None, notification).await;
+                }
                 delete_file_refs_best_effort(
                     self.app_context.as_ref(),
                     table_id,
@@ -432,28 +482,27 @@ impl DmlExecutor {
         let provider_arc = self.load_provider(table_id, "Shared table provider").await?;
 
         if let Some(provider) = provider_arc.as_any().downcast_ref::<SharedTableProvider>() {
-            let system_user = UserId::system();
             let mut deleted_count = 0;
 
             for pk_value in pk_values {
-                let file_refs = self
-                    .load_shared_row_for_cleanup(provider, table_id, pk_value)
-                    .await
-                    .map_or_else(Vec::new, |row| {
-                        collect_file_refs_from_row(self.app_context.as_ref(), table_id, &row)
-                    });
+                let file_refs = if self.table_has_file_columns(table_id) {
+                    self.load_shared_row_for_cleanup(provider, table_id, pk_value)
+                        .await
+                        .map_or_else(Vec::new, |row| {
+                            collect_file_refs_from_row(self.app_context.as_ref(), table_id, &row)
+                        })
+                } else {
+                    Vec::new()
+                };
 
-                if provider
-                    .delete_by_id_field(&system_user, pk_value)
+                if let Some((_row_key, notification)) = provider
+                    .delete_by_pk_value_deferred(pk_value, commit_seq)
                     .await
                     .map_err(|e| ApplierError::Execution(format!("Failed to delete row: {}", e)))?
                 {
-                    provider
-                        .patch_latest_commit_seq_by_pk(pk_value, commit_seq)
-                        .await
-                        .map_err(|e| {
-                            ApplierError::Execution(format!("Failed to stamp commit_seq: {}", e))
-                        })?;
+                    if let Some(notification) = notification {
+                        self.emit_autocommit_notification(None, notification).await;
+                    }
                     deleted_count += 1;
                     delete_file_refs_best_effort(
                         self.app_context.as_ref(),
@@ -817,18 +866,20 @@ impl DmlExecutor {
                             &user_id,
                             mutation.primary_key.as_str(),
                             mutation.payload.clone(),
+                            commit_seq,
                         )
                         .await
                         .map_err(|e| {
                             ApplierError::Execution(format!("Failed to update row: {}", e))
                         })?
-                        .map(|(row_key, notification)| {
-                            (row_key, notification)
-                        })
                 },
                 OperationKind::Delete => {
                     provider
-                        .delete_by_pk_value_deferred(&user_id, mutation.primary_key.as_str())
+                        .delete_by_pk_value_deferred(
+                            &user_id,
+                            mutation.primary_key.as_str(),
+                            commit_seq,
+                        )
                         .await
                         .map_err(|e| {
                             ApplierError::Execution(format!("Failed to delete row: {}", e))
@@ -836,15 +887,9 @@ impl DmlExecutor {
                 },
             };
 
-            let Some((row_key, notification)) = applied else {
+            let Some((_row_key, notification)) = applied else {
                 continue;
             };
-
-            if !matches!(mutation.operation_kind, OperationKind::Insert) {
-                provider.patch_commit_seq_for_row_key(&row_key, commit_seq).await.map_err(|e| {
-                    ApplierError::Execution(format!("Failed to stamp commit_seq: {}", e))
-                })?;
-            }
 
             affected_rows += 1;
             side_effect_plan.record_manifest_update();
@@ -1023,6 +1068,7 @@ impl DmlExecutor {
                         .update_by_pk_value_deferred(
                             mutation.primary_key.as_str(),
                             mutation.payload.clone(),
+                            commit_seq,
                         )
                         .await
                         .map_err(|e| {
@@ -1031,7 +1077,7 @@ impl DmlExecutor {
                 },
                 OperationKind::Delete => {
                     provider
-                        .delete_by_pk_value_deferred(mutation.primary_key.as_str())
+                        .delete_by_pk_value_deferred(mutation.primary_key.as_str(), commit_seq)
                         .await
                         .map_err(|e| {
                             ApplierError::Execution(format!("Failed to delete row: {}", e))
@@ -1039,15 +1085,9 @@ impl DmlExecutor {
                 },
             };
 
-            let Some((row_key, notification)) = applied else {
+            let Some((_row_key, notification)) = applied else {
                 continue;
             };
-
-            if !matches!(mutation.operation_kind, OperationKind::Insert) {
-                provider.patch_commit_seq_for_row_key(&row_key, commit_seq).await.map_err(|e| {
-                    ApplierError::Execution(format!("Failed to stamp commit_seq: {}", e))
-                })?;
-            }
 
             affected_rows += 1;
             side_effect_plan.record_manifest_update();
@@ -1253,37 +1293,6 @@ impl DmlExecutor {
                 );
                 None
             },
-        }
-    }
-
-    /// Update with fallback for UserTableProvider
-    async fn update_user_provider(
-        &self,
-        provider: &UserTableProvider,
-        user_id: &UserId,
-        pk_value: &str,
-        updates: Row,
-    ) -> Result<usize, ApplierError> {
-        match provider.update_by_id_field(user_id, pk_value, updates.clone()).await {
-            Ok(result) => Ok(usize::from(result.is_some())),
-            Err(kalamdb_tables::TableError::NotFound(_)) => {
-                if let Some(key) =
-                    provider.find_row_key_by_id_field(user_id, pk_value).await.map_err(|e| {
-                        ApplierError::Execution(format!("Failed to find row key: {}", e))
-                    })?
-                {
-                    let updated = <UserTableProvider as BaseTableProvider<
-                        UserTableRowId,
-                        UserTableRow,
-                    >>::update(provider, user_id, &key, updates)
-                    .await
-                    .map_err(|e| ApplierError::Execution(format!("Failed to update row: {}", e)))?;
-                    Ok(usize::from(updated.is_some()))
-                } else {
-                    Ok(0)
-                }
-            },
-            Err(e) => Err(ApplierError::Execution(format!("Failed to update row: {}", e))),
         }
     }
 

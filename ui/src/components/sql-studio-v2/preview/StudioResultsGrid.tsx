@@ -22,18 +22,18 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useTableChanges } from "@/hooks/useTableChanges";
-import { CellContextMenu, type CellContextMenuState } from "./CellContextMenu";
-import { InlineCellEditor, type InlineEditContext } from "./InlineCellEditor";
-import { generateSqlStatements } from "./utils/sqlGenerator";
-import { extractTableContext } from "./utils/sqlParser";
+import { CellContextMenu, type CellContextMenuState } from "./table/CellContextMenu";
+import { InlineCellEditor, type InlineEditContext } from "./table/InlineCellEditor";
+import { generateSqlStatements } from "./table/utils/sqlGenerator";
+import { extractTableContext } from "./table/utils/sqlParser";
 import { useSqlPreview } from "@/components/sql-preview";
 import { CellDisplay } from "@/components/datatype-display";
 import { KalamCellValue } from "@kalamdb/client";
 import { executeSql } from "@/lib/kalam-client";
 import { LIVE_META, LIVE_HIGHLIGHT_DURATION_MS } from "@/features/sql-studio/state/sqlStudioWorkspaceSlice";
 import { cn } from "@/lib/utils";
-import { StudioExecutionLog } from "./StudioExecutionLog";
-import type { QueryResultData, SqlStudioResultView, StudioTable } from "./types";
+import { StudioExecutionLog } from "./logs/StudioExecutionLog";
+import type { QueryResultData, SqlStudioResultView, StudioTable } from "../shared/types";
 
 interface StudioResultsGridProps {
   result: QueryResultData | null;

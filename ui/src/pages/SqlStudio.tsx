@@ -1,11 +1,11 @@
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { PanelRightClose, PanelRightOpen } from "lucide-react";
-import { QueryTabStrip } from "@/components/sql-studio-v2/QueryTabStrip";
-import { StudioEditorPanel } from "@/components/sql-studio-v2/StudioEditorPanel";
-import { StudioExplorerPanel } from "@/components/sql-studio-v2/StudioExplorerPanel";
-import { StudioInspectorPanel } from "@/components/sql-studio-v2/StudioInspectorPanel";
-import { StudioResultsGrid } from "@/components/sql-studio-v2/StudioResultsGrid";
+import { StudioExplorerPanel } from "@/components/sql-studio-v2/browser-tree/StudioExplorerPanel";
+import { QueryTabStrip } from "@/components/sql-studio-v2/input-form/QueryTabStrip";
+import { StudioEditorPanel } from "@/components/sql-studio-v2/input-form/StudioEditorPanel";
+import { StudioInspectorPanel } from "@/components/sql-studio-v2/inspector/StudioInspectorPanel";
+import { StudioResultsGrid } from "@/components/sql-studio-v2/preview/StudioResultsGrid";
 import { Button } from "@/components/ui/button";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
@@ -25,7 +25,7 @@ import type {
   QueryTab,
   SavedQuery,
   StudioTable,
-} from "@/components/sql-studio-v2/types";
+} from "@/components/sql-studio-v2/shared/types";
 import {
   executeSqlStudioQuery,
   normalizeSchema,
@@ -116,6 +116,10 @@ function extractWsMessageType(raw: string): string {
   } catch {
     return "raw";
   }
+}
+
+function isWsErrorFrame(messageType: string): boolean {
+  return messageType === "error" || messageType === "auth_error";
 }
 
 function extractMessage(value: unknown, fallback: string): string {
@@ -545,11 +549,7 @@ export default function SqlStudio() {
         schema: [],
         tookMs: 0,
         rowCount: 0,
-        logs: [createLogEntry("Starting live subscription.", "info", user?.username, {
-          event: "live_start",
-          sql: sqlToRun,
-          options: tab.subscriptionOptions,
-        })],
+        logs: [],
       },
     }));
     updateTab(tab.id, { liveStatus: "connecting", isLive: true });
@@ -557,10 +557,11 @@ export default function SqlStudio() {
     // Wire up WS message tracing — every frame in/out appears in the log panel
     setClientSendListener((message: string) => {
       if (liveGenRef.current[tab.id] !== gen) return;
+      const messageType = extractWsMessageType(message);
       dispatch(appendWorkspaceResultLog({
         tabId: tab.id,
         entry: createLogEntry(
-          `WS SEND · ${extractWsMessageType(message)}`,
+          `WS SEND · ${messageType}`,
           "info",
           user?.username,
           { raw: message },
@@ -570,14 +571,17 @@ export default function SqlStudio() {
 
     setClientReceiveListener((message: string) => {
       if (liveGenRef.current[tab.id] !== gen) return;
+      const messageType = extractWsMessageType(message);
+      const isErrorFrame = isWsErrorFrame(messageType);
       dispatch(appendWorkspaceResultLog({
         tabId: tab.id,
         entry: createLogEntry(
-          `WS RECEIVE · ${extractWsMessageType(message)}`,
-          "info",
+          `WS RECEIVE · ${messageType}`,
+          isErrorFrame ? "error" : "info",
           user?.username,
           { raw: message },
         ),
+        statusOverride: isErrorFrame ? "error" : undefined,
       }));
     });
 
@@ -609,18 +613,7 @@ export default function SqlStudio() {
       }));
     });
 
-    setClientLogListener((entry) => {
-      if (liveGenRef.current[tab.id] !== gen) return;
-      dispatch(appendWorkspaceResultLog({
-        tabId: tab.id,
-        entry: createLogEntry(
-          `[SDK ${entry.tag}] ${entry.message}`,
-          entry.level >= 4 ? "error" : "info",
-          user?.username,
-          entry,
-        ),
-      }));
-    });
+    setClientLogListener(undefined);
 
     let hasConnected = false;
 
@@ -630,30 +623,16 @@ export default function SqlStudio() {
 
         switch (msg.type) {
           case "error": {
-            dispatch(appendWorkspaceResultLog({
-              tabId: tab.id,
-              entry: createLogEntry(msg.message ?? "Live query error", "error", user?.username, msg),
-              statusOverride: "error",
-            }));
             updateTab(tab.id, { liveStatus: "error" });
             dispatch(setWorkspaceRunning(false));
             return;
           }
 
           case "auth_success": {
-            dispatch(appendWorkspaceResultLog({
-              tabId: tab.id,
-              entry: createLogEntry("Authentication successful.", "info", user?.username, msg),
-            }));
             return;
           }
 
           case "auth_error": {
-            dispatch(appendWorkspaceResultLog({
-              tabId: tab.id,
-              entry: createLogEntry(`Authentication failed: ${(msg as Record<string, unknown>).message ?? "unknown error"}`, "error", user?.username, msg),
-              statusOverride: "error",
-            }));
             updateTab(tab.id, { liveStatus: "error" });
             dispatch(setWorkspaceRunning(false));
             return;
@@ -667,10 +646,6 @@ export default function SqlStudio() {
                 schema: normalizeSchema(msg.schema as SchemaField[]),
               }));
             }
-            dispatch(appendWorkspaceResultLog({
-              tabId: tab.id,
-              entry: createLogEntry("Live subscription connected.", "info", user?.username, msg),
-            }));
             updateTab(tab.id, { liveStatus: "connected", resultView: "results" });
             dispatch(setWorkspaceRunning(false));
             return;
@@ -686,15 +661,6 @@ export default function SqlStudio() {
               rows,
               changeType: "initial",
               schema: undefined,
-            }));
-            dispatch(appendWorkspaceResultLog({
-              tabId: tab.id,
-              entry: createLogEntry(
-                `Received ${rows.length} row${rows.length === 1 ? "" : "s"} (initial).`,
-                "info",
-                user?.username,
-                msg,
-              ),
             }));
             updateTab(tab.id, { liveStatus: "connected", resultView: "results" });
             dispatch(setWorkspaceRunning(false));
@@ -713,15 +679,6 @@ export default function SqlStudio() {
                 rows: deletedRows,
                 changeType: "delete",
               }));
-              dispatch(appendWorkspaceResultLog({
-                tabId: tab.id,
-                entry: createLogEntry(
-                  `Deleted ${deletedRows.length} row${deletedRows.length === 1 ? "" : "s"}.`,
-                  "info",
-                  user?.username,
-                  msg,
-                ),
-              }));
             } else if (changeType === "update") {
               const updatedRows = normalizeLiveRows(msg.rows ?? []);
               changedRowCount = Math.max(1, updatedRows.length);
@@ -730,15 +687,6 @@ export default function SqlStudio() {
                 rows: updatedRows,
                 changeType: "update",
               }));
-              dispatch(appendWorkspaceResultLog({
-                tabId: tab.id,
-                entry: createLogEntry(
-                  `Updated ${updatedRows.length} row${updatedRows.length === 1 ? "" : "s"}.`,
-                  "info",
-                  user?.username,
-                  msg,
-                ),
-              }));
             } else {
               const insertedRows = normalizeLiveRows(msg.rows ?? []);
               changedRowCount = Math.max(1, insertedRows.length);
@@ -746,15 +694,6 @@ export default function SqlStudio() {
                 tabId: tab.id,
                 rows: insertedRows,
                 changeType: "insert",
-              }));
-              dispatch(appendWorkspaceResultLog({
-                tabId: tab.id,
-                entry: createLogEntry(
-                  `Inserted ${insertedRows.length} row${insertedRows.length === 1 ? "" : "s"}.`,
-                  "info",
-                  user?.username,
-                  msg,
-                ),
               }));
             }
             if (activeTabIdRef.current !== tab.id) {
@@ -768,15 +707,6 @@ export default function SqlStudio() {
           }
 
           default:
-            dispatch(appendWorkspaceResultLog({
-              tabId: tab.id,
-              entry: createLogEntry(
-                `Received message: ${(msg as { type: string }).type}`,
-                "info",
-                user?.username,
-                msg,
-              ),
-            }));
             break;
         }
       }, tab.subscriptionOptions);

@@ -46,7 +46,7 @@ services:
     container_name: pg-kalam-e2e
     depends_on:
       kalamdb:
-        condition: service_started
+        condition: service_healthy
     ports:
       - "${KALAMDB_TEST_PG_PORT:-15433}:5432"
     environment:

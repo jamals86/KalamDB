@@ -180,7 +180,7 @@ impl SchemaRegistry {
                         .create_table(&table_id, &initial)
                         .into_kalamdb_error("Failed to persist initial system schema definition")?;
                     stats.created += 1;
-                    log::info!(
+                    log::debug!(
                         "[SchemaRegistry] persisted missing system table schema {} at version {}",
                         table_id,
                         initial.schema_version

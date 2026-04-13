@@ -1,8 +1,8 @@
-use super::common::{ensure_schema_exists, unique_name, DdlTestEnv};
+use super::common::{ensure_schema_exists, require_ddl_env, unique_name};
 
 #[tokio::test]
 async fn e2e_ddl_create_shared_table() {
-    let env = DdlTestEnv::global().await;
+    let env = require_ddl_env!();
     let pg = env.pg_connect().await;
 
     let ns = "ddl_test";
@@ -34,7 +34,7 @@ async fn e2e_ddl_create_shared_table() {
 
 #[tokio::test]
 async fn e2e_ddl_create_user_table() {
-    let env = DdlTestEnv::global().await;
+    let env = require_ddl_env!();
     let pg = env.pg_connect().await;
 
     let ns = "ddl_test";
@@ -66,7 +66,7 @@ async fn e2e_ddl_create_user_table() {
 
 #[tokio::test]
 async fn e2e_ddl_alter_add_column() {
-    let env = DdlTestEnv::global().await;
+    let env = require_ddl_env!();
     let pg = env.pg_connect().await;
 
     let ns = "ddl_test";
@@ -108,7 +108,7 @@ async fn e2e_ddl_alter_add_column() {
 
 #[tokio::test]
 async fn e2e_ddl_alter_drop_column() {
-    let env = DdlTestEnv::global().await;
+    let env = require_ddl_env!();
     let pg = env.pg_connect().await;
 
     let ns = "ddl_test";
@@ -154,7 +154,7 @@ async fn e2e_ddl_alter_drop_column() {
 
 #[tokio::test]
 async fn e2e_ddl_drop_table() {
-    let env = DdlTestEnv::global().await;
+    let env = require_ddl_env!();
     let pg = env.pg_connect().await;
 
     let ns = "ddl_test";
@@ -183,7 +183,7 @@ async fn e2e_ddl_drop_table() {
 
 #[tokio::test]
 async fn e2e_ddl_drop_if_exists_no_error() {
-    let env = DdlTestEnv::global().await;
+    let env = require_ddl_env!();
     let pg = env.pg_connect().await;
 
     let result = pg.batch_execute("DROP FOREIGN TABLE IF EXISTS nonexistent_table_xyz;").await;
@@ -195,7 +195,7 @@ async fn e2e_ddl_drop_if_exists_no_error() {
 
 #[tokio::test]
 async fn e2e_ddl_full_lifecycle() {
-    let env = DdlTestEnv::global().await;
+    let env = require_ddl_env!();
     let pg = env.pg_connect().await;
 
     let ns = "ddl_test";
@@ -245,7 +245,7 @@ async fn e2e_ddl_full_lifecycle() {
 
 #[tokio::test]
 async fn e2e_ddl_schema_qualified_create() {
-    let env = DdlTestEnv::global().await;
+    let env = require_ddl_env!();
     let pg = env.pg_connect().await;
 
     let ns = unique_name("schemans");
@@ -306,18 +306,21 @@ async fn e2e_ddl_schema_qualified_create() {
 
 #[tokio::test]
 async fn e2e_ddl_non_kalam_server_ignored() {
-    let env = DdlTestEnv::global().await;
+    let env = require_ddl_env!();
     let pg = env.pg_connect().await;
 
     let result = pg
         .batch_execute(
-            "CREATE EXTENSION IF NOT EXISTS file_fdw;
-             CREATE SERVER IF NOT EXISTS file_server FOREIGN DATA WRAPPER file_fdw;
+            "DROP FOREIGN TABLE IF EXISTS dummy_file_table;
+             DROP SERVER IF EXISTS dummy_server CASCADE;
+             DROP FOREIGN DATA WRAPPER IF EXISTS dummy_fdw CASCADE;
+             CREATE FOREIGN DATA WRAPPER dummy_fdw;
+             CREATE SERVER dummy_server FOREIGN DATA WRAPPER dummy_fdw;
              CREATE FOREIGN TABLE IF NOT EXISTS dummy_file_table (line TEXT)
-                 SERVER file_server
-                 OPTIONS (filename '/dev/null', format 'text');
+                 SERVER dummy_server;
              DROP FOREIGN TABLE IF EXISTS dummy_file_table;
-             DROP SERVER IF EXISTS file_server CASCADE;",
+             DROP SERVER IF EXISTS dummy_server CASCADE;
+             DROP FOREIGN DATA WRAPPER IF EXISTS dummy_fdw CASCADE;",
         )
         .await;
     assert!(result.is_ok(), "DDL on non-kalam foreign tables should be silently ignored");

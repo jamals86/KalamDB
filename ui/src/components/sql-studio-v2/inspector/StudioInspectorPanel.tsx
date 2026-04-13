@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import type { QueryRunSummary, StudioTable } from "./types";
+import type { QueryRunSummary, StudioTable } from "../shared/types";
 
 interface StudioInspectorPanelProps {
   selectedTable: StudioTable | null;

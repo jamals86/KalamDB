@@ -219,7 +219,7 @@ pub fn test_app_context_simple() -> Arc<AppContext> {
     test_config.execution.max_parameters = 50;
     test_config.execution.max_parameter_size_bytes = 512 * 1024;
 
-    let app_ctx = AppContext::init(
+    let app_ctx = AppContext::init_test(
         storage_backend,
         NodeId::new(1),
         storage_base_path.to_string_lossy().to_string(),

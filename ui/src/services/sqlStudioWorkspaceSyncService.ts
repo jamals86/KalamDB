@@ -1,8 +1,8 @@
-import type { QueryTab, SavedQuery } from "@/components/sql-studio-v2/types";
+import type { QueryTab, SavedQuery } from "@/components/sql-studio-v2/shared/types";
 import type {
   SqlStudioPersistedQueryTab,
   SqlStudioPersistedSavedQuery,
-} from "@/components/sql-studio-v2/workspaceState";
+} from "@/components/sql-studio-v2/shared/workspaceState";
 import { subscribeRows, executeSql, type Unsubscribe } from "@/lib/kalam-client";
 import { toPersistedTab } from "@/features/sql-studio/utils/workspaceHelpers";
 

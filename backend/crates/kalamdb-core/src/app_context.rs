@@ -190,7 +190,7 @@ impl AppContext {
         storage_base_path: String,
         config: ServerConfig,
     ) -> Arc<AppContext> {
-        Self::create_impl(storage_backend, node_id, storage_base_path, config)
+        Self::create_impl(storage_backend, node_id, storage_base_path, config, true)
     }
 
     /// Create an isolated AppContext instance for tests
@@ -205,7 +205,22 @@ impl AppContext {
         storage_base_path: String,
         config: ServerConfig,
     ) -> Arc<AppContext> {
-        Self::create_impl(storage_backend, node_id, storage_base_path, config)
+        Self::create_impl(storage_backend, node_id, storage_base_path, config, true)
+    }
+
+    /// Like `init`, but uses in-memory Raft storage instead of persistent.
+    ///
+    /// This is significantly faster because it skips creating a RocksDB
+    /// partition for Raft logs and avoids snapshot directory I/O.
+    /// Use for unit tests that don't need durable Raft state.
+    #[cfg(any(test, feature = "test-helpers"))]
+    pub fn init_test(
+        storage_backend: Arc<dyn StorageBackend>,
+        node_id: NodeId,
+        storage_base_path: String,
+        config: ServerConfig,
+    ) -> Arc<AppContext> {
+        Self::create_impl(storage_backend, node_id, storage_base_path, config, false)
     }
 
     /// Internal implementation that creates an AppContext
@@ -216,6 +231,7 @@ impl AppContext {
         node_id: NodeId,
         storage_base_path: String,
         config: ServerConfig,
+        persistent_raft: bool,
     ) -> Arc<AppContext> {
         let node_id = Arc::new(node_id); // Wrap NodeId in Arc for zero-copy sharing (FR-000)
         let config = Arc::new(config); // Wrap config in Arc for zero-copy sharing
@@ -387,15 +403,19 @@ impl AppContext {
             raft_config.rpc_tls = config.rpc_tls.clone();
 
             log::debug!("Creating RaftManager...");
-            let snapshots_dir = config.storage.resolved_snapshots_dir();
-            let manager = Arc::new(
-                kalamdb_raft::manager::RaftManager::new_persistent(
-                    raft_config,
-                    storage_backend.clone(),
-                    snapshots_dir,
+            let manager = if persistent_raft {
+                let snapshots_dir = config.storage.resolved_snapshots_dir();
+                Arc::new(
+                    kalamdb_raft::manager::RaftManager::new_persistent(
+                        raft_config,
+                        storage_backend.clone(),
+                        snapshots_dir,
+                    )
+                    .expect("Failed to create persistent RaftManager"),
                 )
-                .expect("Failed to create persistent RaftManager"),
-            );
+            } else {
+                Arc::new(kalamdb_raft::manager::RaftManager::new(raft_config))
+            };
 
             log::debug!("Creating RaftExecutor...");
             let server_start_time = Instant::now();
@@ -414,7 +434,12 @@ impl AppContext {
             let notification_service = NotificationService::new(Arc::clone(&connection_registry));
 
             // Create unified topic publisher service for pub/sub infrastructure
-            let topic_publisher = Arc::new(TopicPublisherService::new(storage_backend.clone()));
+            let visibility_timeout =
+                Duration::from_secs(config.topics.visibility_timeout_secs);
+            let topic_publisher = Arc::new(TopicPublisherService::with_visibility_timeout(
+                storage_backend.clone(),
+                visibility_timeout,
+            ));
 
             // Create the shared committed snapshot tracker used by the transaction coordinator
             let commit_sequence_tracker = Arc::new(CommitSequenceTracker::new(0));
@@ -800,7 +825,12 @@ impl AppContext {
         let notification_service = NotificationService::new(Arc::clone(&connection_registry));
 
         // Create unified topic publisher service for tests
-        let topic_publisher = Arc::new(TopicPublisherService::new(storage_backend.clone()));
+        let visibility_timeout =
+            Duration::from_secs(config.topics.visibility_timeout_secs);
+        let topic_publisher = Arc::new(TopicPublisherService::with_visibility_timeout(
+            storage_backend.clone(),
+            visibility_timeout,
+        ));
 
         // Create transaction snapshot tracker for tests
         let commit_sequence_tracker = Arc::new(CommitSequenceTracker::new(0));

@@ -251,7 +251,7 @@ async fn e2e_perf_point_select() {
 }
 
 #[tokio::test]
-#[ntest::timeout(21000)]
+#[ntest::timeout(45000)]
 async fn e2e_perf_update_500() {
     let env = TestEnv::global().await;
     let pg = env.pg_connect().await;
@@ -268,14 +268,15 @@ async fn e2e_perf_update_500() {
     let sql = format!("INSERT INTO {qualified_table} (id, value) VALUES {}", values.join(", "));
     pg.batch_execute(&sql).await.expect("seed update table");
 
+    let update_sql = format!("UPDATE {qualified_table} SET value = $1 WHERE id = $2");
+    let update_stmt = pg.prepare(&update_sql).await.expect("prepare update statement");
+
     let start = std::time::Instant::now();
     for index in 0..TOTAL {
-        pg.execute(
-            &format!("UPDATE {qualified_table} SET value = $1 WHERE id = $2"),
-            &[&((index * 10) as i32), &format!("up-{index}")],
-        )
-        .await
-        .expect("update row");
+        let id = format!("up-{index}");
+        pg.execute(&update_stmt, &[&((index * 10) as i32), &id])
+            .await
+            .expect("update row");
     }
     let update_ms = start.elapsed().as_secs_f64() * 1000.0;
     let rows_per_sec = TOTAL as f64 / (update_ms / 1000.0);

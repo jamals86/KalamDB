@@ -1,9 +1,9 @@
-use super::common::{ensure_schema_exists, unique_name, DdlTestEnv};
+use super::common::{ensure_schema_exists, require_ddl_env, unique_name};
 
 #[tokio::test]
 #[ntest::timeout(7000)]
 async fn e2e_ddl_create_table_mirrors_columns_identically() {
-    let env = DdlTestEnv::global().await;
+    let env = require_ddl_env!();
     let pg = env.pg_connect().await;
 
     let ns = "ddl_test";
@@ -76,7 +76,7 @@ async fn e2e_ddl_create_table_mirrors_columns_identically() {
 #[tokio::test]
 #[ntest::timeout(7000)]
 async fn e2e_ddl_preserves_primary_key_not_null_and_defaults() {
-    let env = DdlTestEnv::global().await;
+    let env = require_ddl_env!();
     let pg = env.pg_connect().await;
 
     let ns = unique_name("ddl_constraints");
@@ -149,7 +149,7 @@ async fn e2e_ddl_preserves_primary_key_not_null_and_defaults() {
 #[tokio::test]
 #[ntest::timeout(7000)]
 async fn e2e_ddl_current_schema_maps_to_namespace_without_namespace_option() {
-    let env = DdlTestEnv::global().await;
+    let env = require_ddl_env!();
     let pg = env.pg_connect().await;
 
     let ns = unique_name("schema_ns");
@@ -196,7 +196,7 @@ async fn e2e_ddl_current_schema_maps_to_namespace_without_namespace_option() {
 #[tokio::test]
 #[ntest::timeout(15000)]
 async fn e2e_ddl_alter_add_column_preserves_not_null_and_default() {
-    let env = DdlTestEnv::global().await;
+    let env = require_ddl_env!();
     let pg = env.pg_connect().await;
 
     let ns = unique_name("ddl_addopts");
@@ -245,7 +245,7 @@ async fn e2e_ddl_alter_add_column_preserves_not_null_and_default() {
 #[tokio::test]
 #[ntest::timeout(15000)]
 async fn e2e_ddl_alter_column_set_and_drop_not_null() {
-    let env = DdlTestEnv::global().await;
+    let env = require_ddl_env!();
     let pg = env.pg_connect().await;
 
     let ns = unique_name("ddl_nullable");
@@ -296,7 +296,7 @@ async fn e2e_ddl_alter_column_set_and_drop_not_null() {
 #[tokio::test]
 #[ntest::timeout(15000)]
 async fn e2e_ddl_alter_column_set_and_drop_default() {
-    let env = DdlTestEnv::global().await;
+    let env = require_ddl_env!();
     let pg = env.pg_connect().await;
 
     let ns = unique_name("ddl_defaults");

@@ -1819,6 +1819,7 @@ impl SharedTableProvider {
         &self,
         pk_value: &str,
         updates: Row,
+        commit_seq: u64,
     ) -> Result<Option<(SharedTableRowId, Option<ChangeNotification>)>, KalamDbError> {
         let span = tracing::debug_span!(
             "table.update",
@@ -1861,12 +1862,8 @@ impl SharedTableProvider {
                     })?
                 };
 
-            let coerced = coerce_updates(updates, &self.schema_ref()).map_err(|e| {
-                KalamDbError::InvalidOperation(format!("Schema coercion failed: {}", e))
-            })?;
-
             let mut merged = latest_row.fields.values.clone();
-            for (key, value) in coerced.values {
+            for (key, value) in updates.values {
                 merged.insert(key, value);
             }
             let new_fields = Row::new(merged);
@@ -1892,7 +1889,7 @@ impl SharedTableProvider {
             })?;
             let entity = SharedTableRow {
                 _seq: seq_id,
-                _commit_seq: 0,
+                _commit_seq: commit_seq,
                 _deleted: false,
                 fields: new_fields,
             };
@@ -1945,6 +1942,7 @@ impl SharedTableProvider {
     pub async fn delete_by_pk_value_deferred(
         &self,
         pk_value: &str,
+        commit_seq: u64,
     ) -> Result<Option<(SharedTableRowId, Option<ChangeNotification>)>, KalamDbError> {
         let span = tracing::debug_span!(
             "table.delete",
@@ -1985,7 +1983,7 @@ impl SharedTableProvider {
 
             let entity = SharedTableRow {
                 _seq: seq_id,
-                _commit_seq: 0,
+                _commit_seq: commit_seq,
                 _deleted: true,
                 fields: Row::new(latest_row.fields.values.clone()),
             };

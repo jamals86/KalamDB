@@ -1,5 +1,17 @@
 pub use crate::e2e_ddl_common::DdlTestEnv;
 
+/// Early-return from a DDL test when pgrx prerequisites are not met.
+/// Usage: `let env = require_ddl_env!();`
+macro_rules! require_ddl_env {
+    () => {
+        match crate::e2e_ddl_common::DdlTestEnv::global().await {
+            Some(env) => env,
+            None => return, // prerequisites not met — test is skipped
+        }
+    };
+}
+pub(crate) use require_ddl_env;
+
 pub async fn ensure_schema_exists(pg: &tokio_postgres::Client, schema: &str) {
     pg.batch_execute(&format!("CREATE SCHEMA IF NOT EXISTS {schema};"))
         .await

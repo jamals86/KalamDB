@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { FileCode2, Plus, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { QueryTab } from "./types";
+import type { QueryTab } from "../shared/types";
 
 interface QueryTabStripProps {
   tabs: QueryTab[];

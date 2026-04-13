@@ -38,6 +38,22 @@ The extension is built with `pgrx` and supports PostgreSQL `pg13` through `pg18`
 
 Run these commands from the repository root.
 
+For generic repo-wide Rust test runs, exclude the PostgreSQL extension from the
+workspace nextest phase and run its tests through the dedicated PG lane instead.
+
+```bash
+cargo nextest run \
+  --workspace \
+  --all-targets \
+  --exclude kalam-pg-extension \
+  --features "kalam-cli/e2e-tests"
+```
+
+Run `cargo pgrx ...` commands either from `pg/` or from the repository root with
+`--manifest-path pg/Cargo.toml`. Running them from another workspace member such
+as `cli/` will fail because Cargo resolves the root workspace, not the PG
+extension manifest.
+
 ```bash
 PG_MAJOR=16
 PG_FEATURE="pg${PG_MAJOR}"
@@ -52,6 +68,13 @@ cargo pgrx install \
   --no-default-features \
   --profile release-pg \
   -F "${PG_FEATURE}"
+```
+
+If you want `pgrx` to manage a local PostgreSQL install for you instead of
+pointing at an existing `pg_config`, initialize it first with:
+
+```bash
+cargo pgrx init --pg16 download
 ```
 
 For a different PostgreSQL major, change `PG_MAJOR` and point `PG_CONFIG` at that server's `pg_config`.

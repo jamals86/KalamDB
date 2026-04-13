@@ -1718,7 +1718,7 @@ impl RaftManager {
             return Ok(());
         }
 
-        log::info!("[CLUSTER] Node {} leaving cluster...", self.node_id);
+        log::debug!("[CLUSTER] Node {} leaving cluster...", self.node_id);
 
         // Count how many groups we're leading
         let mut groups_leading = 0;
@@ -1729,7 +1729,7 @@ impl RaftManager {
         }
 
         if groups_leading > 0 {
-            log::info!(
+            log::debug!(
                 "[CLUSTER] This node is LEADER of {} groups, attempting leadership transfer...",
                 groups_leading
             );
@@ -1738,7 +1738,7 @@ impl RaftManager {
             // Find the first available peer to transfer leadership to
             if let Some(target_node) = self.config.peers.first() {
                 let target_node_id = target_node.node_id;
-                log::info!("[CLUSTER] Transferring leadership to node {}...", target_node.node_id);
+                log::debug!("[CLUSTER] Transferring leadership to node {}...", target_node.node_id);
 
                 // Transfer leadership for Meta group
                 if self.meta.is_leader() {

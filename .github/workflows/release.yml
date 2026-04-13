@@ -1230,16 +1230,27 @@ jobs:
           shared-key: pg-extension-tests-native
           cache-on-failure: true
 
+      - name: Cache pgrx PostgreSQL install
+        id: cache-pgrx-install
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.pgrx/${{ env.PG_EXTENSION_MAJOR }}.*
+          key: ${{ runner.os }}-pgrx-install-${{ env.PGRX_VERSION }}-pg${{ env.PG_EXTENSION_MAJOR }}
+
       - name: Install cargo-nextest and cargo-pgrx
         shell: bash
         run: |
           set -euo pipefail
           curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C ${CARGO_HOME:-~/.cargo}/bin
-          cargo install cargo-pgrx --version "${PGRX_VERSION}" --locked --force
+          if ! command -v cargo-pgrx >/dev/null 2>&1 || ! cargo pgrx --version | grep -q "cargo-pgrx ${PGRX_VERSION}$"; then
+            cargo install cargo-pgrx --version "${PGRX_VERSION}" --locked
+          fi
           cargo nextest --version
           cargo pgrx --version
 
       - name: Initialize pgrx PostgreSQL
+        if: steps.cache-pgrx-install.outputs.cache-hit != 'true'
         shell: bash
         run: |
           set -euo pipefail

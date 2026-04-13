@@ -25,6 +25,8 @@ pub struct ServerConfig {
     #[serde(default)]
     pub stream: StreamSettings,
     #[serde(default)]
+    pub topics: TopicSettings,
+    #[serde(default)]
     pub websocket: WebSocketSettings,
     #[serde(default)]
     pub rate_limit: RateLimitSettings,
@@ -683,6 +685,24 @@ pub struct StreamSettings {
     pub eviction_interval_seconds: u64,
 }
 
+/// Topic / consumer-group settings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TopicSettings {
+    /// Visibility timeout in seconds for pending consumer claims.
+    /// If a consumer fetches messages but does not ack within this window,
+    /// the claimed range is released for re-delivery. Default: 60.
+    #[serde(default = "default_topic_visibility_timeout_secs")]
+    pub visibility_timeout_secs: u64,
+}
+
+impl Default for TopicSettings {
+    fn default() -> Self {
+        Self {
+            visibility_timeout_secs: default_topic_visibility_timeout_secs(),
+        }
+    }
+}
+
 /// WebSocket settings for connection management
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebSocketSettings {
@@ -1149,6 +1169,7 @@ impl Default for ServerConfig {
             manifest_cache: ManifestCacheSettings::default(),
             retention: RetentionSettings::default(),
             stream: StreamSettings::default(),
+            topics: TopicSettings::default(),
             websocket: WebSocketSettings::default(),
             rate_limit: RateLimitSettings::default(),
             auth: AuthSettings::default(),

@@ -201,6 +201,10 @@ pub fn default_stream_eviction_interval() -> u64 {
     60 // 60 seconds = 1 minute
 }
 
+pub fn default_topic_visibility_timeout_secs() -> u64 {
+    60 // 60 seconds
+}
+
 pub fn default_user_deletion_grace_period() -> i64 {
     30 // 30 days
 }

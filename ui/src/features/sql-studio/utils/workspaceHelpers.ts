@@ -3,8 +3,8 @@ import type {
   QueryResultData,
   QueryTab,
   SqlStudioResultView,
-} from "@/components/sql-studio-v2/types";
-import type { SqlStudioPersistedQueryTab } from "@/components/sql-studio-v2/workspaceState";
+} from "@/components/sql-studio-v2/shared/types";
+import type { SqlStudioPersistedQueryTab } from "@/components/sql-studio-v2/shared/workspaceState";
 
 export const DEFAULT_SQL = "SELECT * FROM system.namespaces LIMIT 100;";
 

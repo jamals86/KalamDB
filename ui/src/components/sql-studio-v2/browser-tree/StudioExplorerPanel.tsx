@@ -23,8 +23,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import type { StudioNamespace, StudioTable } from "./types";
-import type { SavedQuery } from "./types";
+import type { SavedQuery, StudioNamespace, StudioTable } from "../shared/types";
 
 interface StudioExplorerPanelProps {
   schema: StudioNamespace[];

@@ -1,4 +1,4 @@
-use super::common::{ensure_schema_exists, pg_kalam_exec, unique_name, DdlTestEnv};
+use super::common::{ensure_schema_exists, pg_kalam_exec, require_ddl_env, unique_name, DdlTestEnv};
 use std::env;
 use tokio_postgres::{Config, NoTls};
 
@@ -82,7 +82,7 @@ impl OwnedPgClient {
 #[tokio::test]
 #[ntest::timeout(15000)]
 async fn e2e_ddl_create_table_using_kalamdb_forwards_shared_options() {
-    let env = DdlTestEnv::global().await;
+    let env = require_ddl_env!();
     let pg = env.pg_connect().await;
 
     let ns = unique_name("shared_opts_ns");
@@ -143,7 +143,7 @@ async fn e2e_ddl_create_table_using_kalamdb_forwards_shared_options() {
 #[tokio::test]
 #[ntest::timeout(15000)]
 async fn e2e_ddl_create_table_using_kalamdb_forwards_stream_ttl() {
-    let env = DdlTestEnv::global().await;
+    let env = require_ddl_env!();
     let pg = env.pg_connect().await;
 
     let ns = unique_name("stream_opts_ns");
@@ -198,7 +198,7 @@ async fn e2e_ddl_create_table_using_kalamdb_forwards_stream_ttl() {
 #[tokio::test]
 #[ntest::timeout(15000)]
 async fn e2e_ddl_drop_multiple_kalam_tables() {
-    let env = DdlTestEnv::global().await;
+    let env = require_ddl_env!();
     let pg = env.pg_connect().await;
 
     let ns = unique_name("drop_many_ns");
@@ -237,7 +237,7 @@ async fn e2e_ddl_drop_multiple_kalam_tables() {
 #[tokio::test]
 #[ntest::timeout(20000)]
 async fn e2e_ddl_kalam_exec_passthrough_statements() {
-    let env = DdlTestEnv::global().await;
+    let env = require_ddl_env!();
     let pg = env.pg_connect().await;
 
     let ns = unique_name("exec_ns");
@@ -303,7 +303,7 @@ async fn e2e_ddl_kalam_exec_passthrough_statements() {
 #[tokio::test]
 #[ntest::timeout(15000)]
 async fn e2e_ddl_create_table_using_kalamdb_disconnect_cleans_session_row() {
-    let env = DdlTestEnv::global().await;
+    let env = require_ddl_env!();
     let pg = OwnedPgClient::connect().await;
     let backend_pid: i32 = pg
         .client
@@ -343,7 +343,7 @@ async fn e2e_ddl_create_table_using_kalamdb_disconnect_cleans_session_row() {
 #[tokio::test]
 #[ntest::timeout(10000)]
 async fn e2e_ddl_rejects_unsafe_option_keys() {
-    let env = DdlTestEnv::global().await;
+    let env = require_ddl_env!();
     let pg = env.pg_connect().await;
 
     let ns = unique_name("unsafe_opts_ns");
@@ -385,7 +385,7 @@ async fn e2e_ddl_rejects_unsafe_option_keys() {
 #[tokio::test]
 #[ntest::timeout(15000)]
 async fn e2e_ddl_kalam_exec_disconnect_cleans_session_row() {
-    let env = DdlTestEnv::global().await;
+    let env = require_ddl_env!();
     let pg = OwnedPgClient::connect().await;
     let backend_pid: i32 = pg
         .client

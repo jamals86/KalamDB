@@ -4,7 +4,6 @@ import { Loader2 } from "lucide-react";
 import { AuthProvider } from "./lib/auth";
 import { BackendStatusProvider } from "./lib/backend-status";
 import { SqlPreviewProvider } from "./components/sql-preview";
-import BackendStatusFooter from "./components/layout/BackendStatusFooter";
 import ProtectedRoute from "./components/auth/ProtectedRoute";
 import SetupGuard from "./components/auth/SetupGuard";
 import Layout from "./components/layout/Layout";
@@ -72,7 +71,6 @@ function App() {
                   </Suspense>
                 </SetupGuard>
               </div>
-              <BackendStatusFooter />
             </div>
           </SqlPreviewProvider>
         </BackendStatusProvider>

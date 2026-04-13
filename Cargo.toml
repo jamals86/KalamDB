@@ -51,7 +51,7 @@ members = [
 exclude = ["benchv2"]
 
 [workspace.package]
-version = "0.4.2-rc1"
+version = "0.4.2-rc2"
 edition = "2021"
 rust-version = "1.92"
 authors = ["KalamDB Team"]
@@ -161,7 +161,7 @@ prost-types = "0.14.3"
 
 # Additional dependencies
 bcrypt = "0.19.0"
-rand = "0.10.0"
+rand = "0.10.1"
 rcgen = "0.14.1"
 x509-parser = "0.18.1"
 kalamdb-commons = { path = "backend/crates/kalamdb-commons" }
@@ -189,7 +189,7 @@ dashmap = "6.1"
 bytes = "1.11.1"
 http-body = "1.0.0"
 http-body-util = "0.1.2"
-cc = "1.2.59"
+cc = "1.2.60"
 proc-macro2 = "1.0.106"
 quote = "1.0.44"
 syn = { version = "2.0.117", features = ["full", "extra-traits"] }
@@ -209,13 +209,13 @@ storekey = "0.11"
 moka = { version = "0.12.15", features = ["future", "sync"] }
 ntest = "0.9.5"
 ipnet = "2.11.0"
-wasm-bindgen = { version = "0.2.117" }
-wasm-bindgen-futures = { version = "0.4.67" }
-js-sys = { version = "0.3.92" }
-libc = "0.2.184"
+wasm-bindgen = { version = "0.2.118" }
+wasm-bindgen-futures = { version = "0.4.68" }
+js-sys = { version = "0.3.95" }
+libc = "0.2.185"
 libmimalloc-sys = { version = "0.1.44", features = ["extended"] }
-web-sys = { version = "0.3.92" }
-tsify-next = { version = "0.5.6", default-features = false, features = ["js"] }
+web-sys = { version = "0.3.95" }
+tsify = { version = "0.5.6", default-features = false, features = ["js"] }
 serde-wasm-bindgen = "0.6.5"
 flate2 = "1.1.9"
 tar = "0.4"

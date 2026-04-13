@@ -22,12 +22,25 @@ use tokio_postgres::error::SqlState;
 use tokio_postgres::{Config, NoTls};
 
 // ---------------------------------------------------------------------------
-// Constants — pgrx-managed PostgreSQL + local KalamDB
+// Constants — configurable via env vars, with sensible defaults
 // ---------------------------------------------------------------------------
 
-const PG_HOST: &str = "127.0.0.1";
-const PG_PORT: u16 = 28816;
+// Default: pgrx local postgres. Override with KALAMDB_PG_HOST / KALAMDB_PG_PORT.
+const DEFAULT_PG_HOST: &str = "127.0.0.1";
+const DEFAULT_PG_PORT: u16 = 28816;
 const TEST_DB: &str = "kalamdb_test";
+
+fn pg_connection_config() -> (String, u16) {
+    let host = env::var("KALAMDB_PG_HOST")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| DEFAULT_PG_HOST.to_string());
+    let port = env::var("KALAMDB_PG_PORT")
+        .ok()
+        .and_then(|v| v.parse::<u16>().ok())
+        .unwrap_or(DEFAULT_PG_PORT);
+    (host, port)
+}
 
 const DEFAULT_KALAMDB_SERVER_URL: &str = "http://127.0.0.1:8080";
 const DEFAULT_KALAMDB_GRPC_HOST: &str = "127.0.0.1";
@@ -103,6 +116,30 @@ pub fn kalamdb_grpc_target() -> (String, u16) {
         .unwrap_or(DEFAULT_KALAMDB_GRPC_PORT);
 
     (host, port)
+}
+
+/// gRPC target as seen from *inside* the postgres process.
+/// Defaults to the same as kalamdb_grpc_target(), but can be overridden
+/// with KALAMDB_PG_GRPC_HOST / KALAMDB_PG_GRPC_PORT when postgres runs
+/// inside Docker and kalamdb is reachable via its Docker service name.
+fn kalamdb_pg_grpc_target() -> (String, u16) {
+    let (default_host, default_port) = kalamdb_grpc_target();
+    let host = env::var("KALAMDB_PG_GRPC_HOST")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .unwrap_or(default_host);
+    let port = env::var("KALAMDB_PG_GRPC_PORT")
+        .ok()
+        .and_then(|value| value.parse::<u16>().ok())
+        .unwrap_or(default_port);
+    (host, port)
+}
+
+fn pg_user_from_env() -> String {
+    env::var("KALAMDB_PG_USER")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| env::var("USER").unwrap_or_else(|_| "postgres".to_string()))
 }
 
 // ---------------------------------------------------------------------------
@@ -186,9 +223,10 @@ impl TestEnv {
     }
 
     pub async fn pg_connect(&self) -> OwnedPgClient {
+        let (pg_host, pg_port) = pg_connection_config();
         self.pg_connect_to(TEST_DB)
             .await
-            .expect("connect to pgrx PostgreSQL (is it running on port 28816?)")
+            .unwrap_or_else(|e| panic!("connect to PostgreSQL at {pg_host}:{pg_port}: {e}"))
     }
 
     pub async fn kalamdb_sql(&self, sql: &str) -> Value {
@@ -261,7 +299,7 @@ impl TestEnv {
 
         Self::wait_for_kalamdb(&http_client).await;
         let bearer_token = Self::authenticate(&http_client).await;
-        let pg_user = std::env::var("USER").unwrap_or_else(|_| "postgres".to_string());
+        let pg_user = pg_user_from_env();
 
         let env = Self {
             bearer_token,
@@ -359,7 +397,7 @@ impl TestEnv {
 
     async fn ensure_extension_bootstrap(&self) {
         let pg = self.pg_connect().await;
-        let (grpc_host, grpc_port) = kalamdb_grpc_target();
+        let (grpc_host, grpc_port) = kalamdb_pg_grpc_target();
         const BOOTSTRAP_LOCK_ID: i64 = 8_271_604_221;
 
         pg.batch_execute("CREATE EXTENSION IF NOT EXISTS pg_kalam;")
@@ -398,6 +436,7 @@ impl TestEnv {
     }
 
     async fn wait_for_pg(&self) {
+        let (pg_host, pg_port) = pg_connection_config();
         for i in 0..10 {
             match self.pg_connect_to("postgres").await {
                 Ok(client) => {
@@ -406,14 +445,14 @@ impl TestEnv {
                 }
                 Err(_) => {
                     if i == 0 {
-                        eprintln!("  waiting for PostgreSQL on port {PG_PORT}...");
+                        eprintln!("  waiting for PostgreSQL on {pg_host}:{pg_port}...");
                     }
                     tokio::time::sleep(Duration::from_secs(1)).await;
                 },
             }
         }
         panic!(
-            "PostgreSQL not reachable at {PG_HOST}:{PG_PORT}\n\
+            "PostgreSQL not reachable at {pg_host}:{pg_port}\n\
              Start with: ./pg/scripts/pgrx-test-setup.sh --start"
         );
     }
@@ -422,9 +461,10 @@ impl TestEnv {
         &self,
         dbname: &str,
     ) -> Result<OwnedPgClient, tokio_postgres::Error> {
+        let (pg_host, pg_port) = pg_connection_config();
         let (client, conn) = Config::new()
-            .host(PG_HOST)
-            .port(PG_PORT)
+            .host(&pg_host)
+            .port(pg_port)
             .user(&self.pg_user)
             .dbname(dbname)
             .connect(NoTls)

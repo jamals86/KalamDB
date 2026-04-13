@@ -12,7 +12,7 @@ import {
   DropdownMenuShortcut,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import type { LiveSubscriptionOptions, StudioNamespace } from "@/components/sql-studio-v2/types";
+import type { LiveSubscriptionOptions, StudioNamespace } from "../shared/types";
 
 type ExecuteMode = "all" | "selected";
 

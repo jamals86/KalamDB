@@ -1327,8 +1327,16 @@ async fn test_topic_ack_failure_recovery_no_message_loss_with_latency() {
         claimed_by_a.len()
     );
 
-    // Topic visibility timeout is 60s in publisher service.
-    tokio::time::sleep(Duration::from_secs(65)).await;
+    // Topic visibility timeout defaults to 60s (configurable via [topics]
+    // visibility_timeout_secs in server.toml). Sleep long enough for the
+    // server's timeout to expire so Consumer B can re-deliver the range.
+    // With the default 60s config this sleeps 65s; set a shorter timeout
+    // on the server for faster test runs.
+    let visibility_timeout_secs: u64 = std::env::var("KALAMDB_VISIBILITY_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(60);
+    tokio::time::sleep(Duration::from_secs(visibility_timeout_secs + 5)).await;
 
     let client = create_test_client().await;
     let mut consumer_b = client

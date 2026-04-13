@@ -1,5 +1,5 @@
 import { createSlice, type PayloadAction } from "@reduxjs/toolkit";
-import type { SqlStudioPanelLayout } from "@/components/sql-studio-v2/types";
+import type { SqlStudioPanelLayout } from "@/components/sql-studio-v2/shared/types";
 
 interface SqlStudioUiState {
   schemaFilter: string;

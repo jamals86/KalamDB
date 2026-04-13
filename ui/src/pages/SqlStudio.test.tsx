@@ -656,8 +656,10 @@ describe("SqlStudio page", () => {
       const tabResults = store.getState().sqlStudioWorkspace.tabResults;
       const activeResult = Object.values(tabResults).find((result) => result !== null);
       const messages = activeResult?.logs.map((entry) => entry.message) ?? [];
-      expect(messages).toContain("WS SEND · subscribe");
-      expect(messages).toContain("WS RECEIVE · subscription_ack");
+      expect(messages).toEqual([
+        "WS SEND · subscribe",
+        "WS RECEIVE · subscription_ack",
+      ]);
     });
   });
 
