@@ -26,7 +26,7 @@ const SIDEBAR_COLLAPSED_STORAGE_KEY = "kalamdb-admin-sidebar-collapsed";
 const navigation = [
   { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { name: "SQL Studio", href: "/sql", icon: Terminal },
-  { name: "Streaming", href: "/streaming/topics", icon: RadioTower },
+  { name: "Streaming", href: "/streaming/topics", icon: RadioTower, activePrefix: "/streaming" },
   { name: "Users", href: "/users", icon: Users },
   { name: "Jobs", href: "/jobs", icon: Briefcase },
   { name: "Live Queries", href: "/live-queries", icon: Wifi },
@@ -54,7 +54,7 @@ export default function Sidebar() {
       >
         <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto p-2">
           {navigation.map((item) => {
-            const isActive = location.pathname.startsWith(item.href);
+            const isActive = location.pathname.startsWith(item.activePrefix ?? item.href);
             console.log("Sidebar item:", item.name, "href:", item.href, "pathname:", location.pathname, "isActive:", isActive);
             return (
               <Tooltip key={item.name} disableHoverableContent>
