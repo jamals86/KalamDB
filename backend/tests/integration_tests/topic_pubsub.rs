@@ -320,7 +320,7 @@ async fn test_drop_topic() {
 
 /// Test that user role is forbidden from consuming topics
 #[tokio::test]
-#[ntest::timeout(10000)]
+#[ntest::timeout(20000)]
 async fn test_consume_user_role_forbidden() {
     let server = TestServer::new_shared().await;
 

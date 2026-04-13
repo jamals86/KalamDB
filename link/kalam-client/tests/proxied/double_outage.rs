@@ -91,12 +91,12 @@ async fn test_proxy_server_down_while_reconnecting() {
     // Briefly resume the proxy so the client starts its reconnect attempt,
     // then kill it again immediately.
     proxy.simulate_server_up();
-    for _ in 0..20 {
-        if connect_count.load(Ordering::SeqCst) >= 2 || proxy.active_count().await >= 1 {
-            break;
-        }
-        sleep(Duration::from_millis(100)).await;
-    }
+    assert!(
+        proxy
+            .wait_for_active_connections(1, Duration::from_secs(10))
+            .await,
+        "client should begin reconnecting before the second outage"
+    );
 
     // ── Second outage while reconnecting ────────────────────────────────
     let dc2 = disconnect_count.load(Ordering::SeqCst);
@@ -126,13 +126,13 @@ async fn test_proxy_server_down_while_reconnecting() {
     let expected_connects = connect_count.load(Ordering::SeqCst) + 1;
     proxy.simulate_server_up();
 
-    for _ in 0..100 {
-        if connect_count.load(Ordering::SeqCst) >= expected_connects && client.is_connected().await
-        {
-            break;
-        }
-        sleep(Duration::from_millis(100)).await;
-    }
+    wait_for_reconnect(
+        &client,
+        &connect_count,
+        expected_connects,
+        "double outage final recovery",
+    )
+    .await;
     assert!(client.is_connected().await, "client should recover after double outage");
 
     let mut resumed_ids = Vec::<String>::new();

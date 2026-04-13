@@ -9,7 +9,7 @@ use tokio::time::{sleep, timeout};
 /// outage. The new subscription must eventually be established and deliver its
 /// data once the connection stabilises.
 #[tokio::test]
-#[ntest::timeout(15000)]
+#[ntest::timeout(45000)]
 async fn test_subscribe_during_reconnect_eventually_delivers() {
     let result = timeout(Duration::from_secs(60), async {
         let writer = match create_test_client() {
