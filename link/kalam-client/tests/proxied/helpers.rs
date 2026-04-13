@@ -14,7 +14,7 @@ use std::time::Duration;
 use tokio::time::{sleep, Instant};
 
 pub const TEST_TIMEOUT: Duration = Duration::from_secs(10);
-pub const RECONNECT_WAIT_TIMEOUT: Duration = Duration::from_secs(15);
+pub const RECONNECT_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn reconnect_test_timeouts() -> KalamLinkTimeouts {
     KalamLinkTimeouts {
@@ -23,14 +23,15 @@ fn reconnect_test_timeouts() -> KalamLinkTimeouts {
         // suite) do not time out before the in-process isolated server finishes
         // the WebSocket handshake.  When the TCP proxy is paused, connections
         // fail immediately regardless of this value.
-        connection_timeout: Duration::from_secs(10),
+        connection_timeout: Duration::from_secs(15),
         receive_timeout: Duration::from_secs(5),
         send_timeout: Duration::from_secs(2),
-        // Reconnect involves auth + resubscribe handshakes. Keep these high
-        // enough for a loaded debug build, but do not inflate the overall test
-        // wall-clock timeout; the outer test timeout remains the guardrail.
-        subscribe_timeout: Duration::from_secs(5),
-        auth_timeout: Duration::from_secs(5),
+        // Reconnect involves auth + resubscribe handshakes. CI full-suite runs
+        // regularly push the isolated server beyond 5s here, so keep the
+        // handshake budget above that while the outer test timeout remains the
+        // main guardrail.
+        subscribe_timeout: Duration::from_secs(10),
+        auth_timeout: Duration::from_secs(10),
         initial_data_timeout: Duration::from_secs(30),
         idle_timeout: Duration::ZERO,
         keepalive_interval: Duration::from_secs(1),

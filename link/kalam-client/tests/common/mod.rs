@@ -29,9 +29,13 @@ struct AutoTestServer {
     _running: RunningTestHttpServer,
 }
 
-const AUTO_SERVER_READY_TIMEOUT: Duration = Duration::from_secs(15);
+// Full-suite CI can delay isolated bootstrap and login well past 20s even when
+// the server eventually becomes healthy, so keep the blocking bridge wider than
+// the HTTP polling window used inside the helper itself.
+const AUTO_SERVER_READY_TIMEOUT: Duration = Duration::from_secs(30);
 const AUTO_SERVER_RETRY_INTERVAL: Duration = Duration::from_millis(100);
-const AUTO_SERVER_HTTP_TIMEOUT: Duration = Duration::from_secs(10);
+const AUTO_SERVER_HTTP_TIMEOUT: Duration = Duration::from_secs(15);
+const AUTO_SERVER_BLOCKING_TIMEOUT: Duration = Duration::from_secs(60);
 
 fn should_auto_start_test_server() -> bool {
     if std::env::var("KALAMDB_SERVER_URL").is_ok() {
@@ -74,7 +78,7 @@ fn ensure_auto_test_server(
                 let _ = tx.send(result);
             });
 
-            match rx.recv_timeout(Duration::from_secs(20)) {
+            match rx.recv_timeout(AUTO_SERVER_BLOCKING_TIMEOUT) {
                 Ok(result) => result,
                 Err(err) => Err(format!("Timed out starting test server: {}", err)),
             }
@@ -307,7 +311,7 @@ fn root_access_token_blocking_for_base_url(
             let _ = tx.send(result);
         });
 
-        match rx.recv_timeout(Duration::from_secs(20)) {
+        match rx.recv_timeout(AUTO_SERVER_BLOCKING_TIMEOUT) {
             Ok(Ok(token)) => return Ok(token),
             Ok(Err(err)) => return Err(err.into()),
             Err(err) => return Err(err.to_string().into()),
