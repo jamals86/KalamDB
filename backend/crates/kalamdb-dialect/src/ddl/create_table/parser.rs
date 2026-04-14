@@ -10,7 +10,7 @@ use kalamdb_commons::schemas::{ColumnDefault, TableType};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use sqlparser::ast::{ColumnOption, CreateTable, ObjectNamePart, Statement, TableConstraint};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 static RE_ALPHANUMERIC: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[a-zA-Z0-9_]+$").unwrap());
@@ -277,11 +277,23 @@ impl CreateTableStatement {
                     }
                 }
 
+                let mut seen_column_names: HashSet<String> = HashSet::new();
                 for col in columns {
                     let col_name = col.name.value;
                     if !RE_ALPHANUMERIC.is_match(&col_name) {
                         return Err(format!(
                             "Invalid column name '{}'. Only alphanumeric characters and underscores are allowed.",
+                            col_name
+                        ));
+                    }
+
+                    // Column names are case-insensitive (folded to lowercase), so
+                    // `name` / `Name` / `NAME` all refer to the same column and
+                    // would produce a broken table with duplicate columns.
+                    let col_name_lower = col_name.to_ascii_lowercase();
+                    if !seen_column_names.insert(col_name_lower.clone()) {
+                        return Err(format!(
+                            "Duplicate column name '{}'. Column names are case-insensitive.",
                             col_name
                         ));
                     }
@@ -543,6 +555,43 @@ WITH (
         assert_eq!(stmt.namespace_id.as_str(), "sales");
         assert_eq!(stmt.storage_id.unwrap().as_str(), "s3-us");
         assert!(matches!(stmt.flush_policy, Some(FlushPolicy::Combined { .. })));
+    }
+
+    #[test]
+    fn duplicate_column_names_are_rejected_case_insensitively() {
+        // KalamDB folds column names to lowercase, so `name`, `Name`, and `NAME`
+        // all refer to the same column. Without this check, CREATE TABLE would
+        // succeed but produce a permanently broken table.
+        let sql = r#"
+CREATE TABLE sales.widgets (
+    id BIGINT PRIMARY KEY,
+    name STRING,
+    Name STRING
+);
+"#;
+
+        let err = CreateTableStatement::parse(sql, DEFAULT_NS).unwrap_err();
+        assert!(
+            err.contains("Duplicate column name"),
+            "expected duplicate-column error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn exact_duplicate_column_names_are_rejected() {
+        let sql = r#"
+CREATE TABLE sales.widgets (
+    id BIGINT PRIMARY KEY,
+    label STRING,
+    label STRING
+);
+"#;
+
+        let err = CreateTableStatement::parse(sql, DEFAULT_NS).unwrap_err();
+        assert!(
+            err.contains("Duplicate column name"),
+            "expected duplicate-column error, got: {err}"
+        );
     }
 
     #[test]
