@@ -1826,6 +1826,8 @@ jobs:
           push: true
           platforms: linux/amd64
           build-args: |
+            PG_MAJOR=${{ env.PG_EXTENSION_MAJOR }}
+            POSTGRES_BASE_IMAGE=public.ecr.aws/docker/library/postgres:${{ env.PG_EXTENSION_MAJOR }}-bookworm
             OCI_IMAGE_DESCRIPTION=${{ steps.pg_image_description.outputs.value }}
           labels: |
             org.opencontainers.image.title=pg-kalam
