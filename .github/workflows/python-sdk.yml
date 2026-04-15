@@ -53,16 +53,28 @@ jobs:
         with:
           workspaces: link/sdks/python -> target
 
-      - name: Install maturin and pytest
-        run: pip install maturin pytest pytest-asyncio
-
-      - name: Build SDK in develop mode
+      - name: Create venv and install maturin + pytest
         working-directory: link/sdks/python
-        run: maturin develop --release
+        shell: bash
+        run: |
+          python -m venv .venv
+          if [ -f .venv/bin/activate ]; then source .venv/bin/activate; else source .venv/Scripts/activate; fi
+          python -m pip install --upgrade pip
+          pip install maturin pytest pytest-asyncio
+
+      - name: Build SDK in develop mode (inside venv)
+        working-directory: link/sdks/python
+        shell: bash
+        run: |
+          if [ -f .venv/bin/activate ]; then source .venv/bin/activate; else source .venv/Scripts/activate; fi
+          maturin develop --release
 
       - name: Run unit tests (no server required)
         working-directory: link/sdks/python
-        run: pytest tests/test_auth.py tests/test_exceptions.py tests/test_agent.py -v
+        shell: bash
+        run: |
+          if [ -f .venv/bin/activate ]; then source .venv/bin/activate; else source .venv/Scripts/activate; fi
+          pytest tests/test_auth.py tests/test_exceptions.py tests/test_agent.py -v
 
   build-wheels:
     name: Build wheels (${{ matrix.os }})
