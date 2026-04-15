@@ -1319,7 +1319,22 @@ jobs:
           set -euo pipefail
           ./pg/scripts/pgrx-test-setup.sh 2>&1 | tee pg-pgrx-setup-output.txt
 
-      - name: Run native PG extension e2e tests
+      - name: Run native PG extension perf tests first
+        shell: bash
+        env:
+          KALAMDB_SERVER_URL: "http://127.0.0.1:8080"
+          KALAMDB_ROOT_PASSWORD: "kalamdb123"
+        run: |
+          set -euo pipefail
+          : > pg-native-test-output.txt
+          cargo nextest run \
+            -p kalam-pg-extension \
+            --features e2e \
+            --test e2e_perf \
+            --test-threads 1 \
+            2>&1 | tee pg-native-test-output.txt
+
+      - name: Run remaining native PG extension e2e tests
         shell: bash
         env:
           KALAMDB_SERVER_URL: "http://127.0.0.1:8080"
@@ -1329,9 +1344,13 @@ jobs:
           cargo nextest run \
             -p kalam-pg-extension \
             --features e2e \
-            -E 'test(e2e)' \
+            --test e2e_ddl \
+            --test e2e_dml \
+            --test e2e_scenarios \
+            --test extension_metadata \
+            --test session_settings \
             --test-threads 1 \
-            2>&1 | tee pg-native-test-output.txt
+            2>&1 | tee -a pg-native-test-output.txt
 
       - name: Stop pgrx PostgreSQL
         if: always()
