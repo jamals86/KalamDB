@@ -33,14 +33,14 @@ use models::AuthErrorResponse;
 ///
 /// Uses generic error messages to prevent user enumeration attacks.
 /// Sensitive errors (user not found, wrong password) return the same
-/// "Invalid username or password" message.
+/// "Invalid credentials" message.
 pub(crate) fn map_auth_error_to_response(err: AuthError) -> HttpResponse {
     match err {
         AuthError::InvalidCredentials(_)
         | AuthError::UserNotFound(_)
         | AuthError::UserDeleted
         | AuthError::AuthenticationFailed(_) => HttpResponse::Unauthorized()
-            .json(AuthErrorResponse::new("unauthorized", "Invalid username or password")),
+            .json(AuthErrorResponse::new("unauthorized", "Invalid credentials")),
         AuthError::SetupRequired(message) => {
             // HTTP 428 Precondition Required - server requires initial setup
             HttpResponse::build(actix_web::http::StatusCode::PRECONDITION_REQUIRED)
@@ -54,13 +54,18 @@ pub(crate) fn map_auth_error_to_response(err: AuthError) -> HttpResponse {
         },
         AuthError::MalformedAuthorization(message)
         | AuthError::MissingAuthorization(message)
-        | AuthError::MissingClaim(message)
         | AuthError::WeakPassword(message) => {
             HttpResponse::Unauthorized().json(AuthErrorResponse::new("unauthorized", message))
         },
+        AuthError::MissingClaim(_) => HttpResponse::Unauthorized().json(AuthErrorResponse::new(
+            "unauthorized",
+            "Token is missing required claims",
+        )),
         AuthError::TokenExpired | AuthError::InvalidSignature | AuthError::UntrustedIssuer(_) => {
-            HttpResponse::Unauthorized()
-                .json(AuthErrorResponse::new("unauthorized", "Invalid username or password"))
+            HttpResponse::Unauthorized().json(AuthErrorResponse::new(
+                "unauthorized",
+                "Invalid credentials",
+            ))
         },
         AuthError::DatabaseError(_) | AuthError::HashingError(_) => {
             HttpResponse::InternalServerError()

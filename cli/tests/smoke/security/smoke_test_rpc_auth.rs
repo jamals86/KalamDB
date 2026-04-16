@@ -11,6 +11,7 @@
 //!   cargo nextest run --test smoke smoke_security_rpc_auth
 
 use crate::common::*;
+use base64::{engine::general_purpose, Engine as _};
 use reqwest::Client;
 use serde_json::json;
 use std::time::Duration;
@@ -30,6 +31,10 @@ fn sql_url() -> String {
 
 fn me_url() -> String {
     format!("{}/v1/api/auth/me", server_url())
+}
+
+fn refresh_url() -> String {
+    format!("{}/v1/api/auth/refresh", server_url())
 }
 
 fn health_url() -> String {
@@ -165,6 +170,59 @@ fn smoke_rpc_sql_basic_auth_returns_401() {
         "SQL endpoint with Basic auth must return 401/403, got {}",
         status
     );
+}
+
+/// Protected non-login auth endpoints must reject Basic auth.
+#[ntest::timeout(30000)]
+#[test]
+fn smoke_rpc_non_login_auth_endpoints_reject_basic_auth() {
+    if !is_server_running() {
+        eprintln!(
+            "Skipping smoke_rpc_non_login_auth_endpoints_reject_basic_auth: server not running"
+        );
+        return;
+    }
+
+    block(async {
+        let auth_header = reqwest::header::HeaderValue::from_str(&format!(
+            "Basic {}",
+            general_purpose::STANDARD.encode(format!(
+                "{}:{}",
+                admin_username(),
+                admin_password()
+            ))
+        ))
+        .expect("valid basic auth header");
+
+        let me_status = http_client()
+            .get(me_url())
+            .header(reqwest::header::AUTHORIZATION, auth_header.clone())
+            .send()
+            .await
+            .expect("/auth/me request failed")
+            .status();
+
+        let refresh_status = http_client()
+            .post(refresh_url())
+            .header(reqwest::header::AUTHORIZATION, auth_header)
+            .send()
+            .await
+            .expect("/auth/refresh request failed")
+            .status();
+
+        assert_eq!(
+            me_status.as_u16(),
+            401,
+            "/auth/me with Basic auth must return 401, got {}",
+            me_status
+        );
+        assert_eq!(
+            refresh_status.as_u16(),
+            401,
+            "/auth/refresh with Basic auth must return 401, got {}",
+            refresh_status
+        );
+    });
 }
 
 /// GET /v1/api/auth/me without credentials must return 401.

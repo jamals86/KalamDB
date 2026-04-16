@@ -18,7 +18,7 @@ use actix_web::{test, web, App};
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use kalamdb_auth::providers::jwt_auth::{JwtClaims as AuthJwtClaims, KALAMDB_ISSUER};
 use kalamdb_auth::{CoreUsersRepo, UserRepository};
-use kalamdb_commons::{Role, UserId, UserName};
+use kalamdb_commons::{Role, UserId};
 use serde::Serialize;
 use std::sync::Arc;
 
@@ -51,7 +51,6 @@ fn create_test_jwt_token(
         iss: issuer.to_string(),
         exp: ((now as i64) + exp_offset_secs) as usize,
         iat: now,
-        username: Some(UserName::new(username)),
         email: Some(format!("{}@example.com", username)),
         role: Some(Role::User),
         token_type: None,

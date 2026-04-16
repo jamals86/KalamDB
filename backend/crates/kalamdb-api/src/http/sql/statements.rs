@@ -21,9 +21,6 @@ pub(super) struct PreparedApiExecutionStatement {
 }
 
 pub(super) fn authorized_username(exec_ctx: &ExecutionContext) -> Username {
-    if let Some(username) = &exec_ctx.user_context().username {
-        return username.clone();
-    }
     Username::from(exec_ctx.user_id().as_str())
 }
 

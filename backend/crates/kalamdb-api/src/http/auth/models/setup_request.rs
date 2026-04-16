@@ -1,14 +1,15 @@
 //! Server setup request model
 
-use super::login_request::validate_password_length;
-use kalamdb_commons::models::UserName;
+use super::login_request::{validate_password_length, validate_user_length};
 use serde::Deserialize;
 
 /// Server setup request body
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ServerSetupRequest {
-    /// Username for the new DBA user
-    pub username: UserName,
+    /// Canonical user identifier for the new DBA account
+    #[serde(deserialize_with = "validate_user_length")]
+    pub user: String,
     /// Password for the new DBA user
     #[serde(deserialize_with = "validate_password_length")]
     pub password: String,

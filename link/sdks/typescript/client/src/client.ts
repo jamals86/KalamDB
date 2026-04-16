@@ -42,7 +42,7 @@ import type {
   SubscriptionOptions,
   Unsubscribe,
   UploadProgress,
-  Username,
+  UserId,
   ServerMessage,
   SubscriptionInfo,
 } from './types.js';
@@ -666,30 +666,30 @@ export class KalamDBClient {
     return value.replace(/'/g, "''");
   }
 
-  private static wrapExecuteAsUser(sql: string, username: string): string {
+  private static wrapExecuteAsUser(sql: string, user: string): string {
     const inner = sql.trim().replace(/;+\s*$/g, '');
     if (!inner) {
       throw new Error('executeAsUser requires a non-empty SQL statement');
     }
-    const escapedUsername = KalamDBClient.escapeSqlStringLiteral(username.trim());
-    if (!escapedUsername) {
-      throw new Error('executeAsUser requires a non-empty username');
+    const escapedUser = KalamDBClient.escapeSqlStringLiteral(user.trim());
+    if (!escapedUser) {
+      throw new Error('executeAsUser requires a non-empty user');
     }
-    return `EXECUTE AS USER '${escapedUsername}' (${inner})`;
+    return `EXECUTE AS USER '${escapedUser}' (${inner})`;
   }
 
   /**
    * Execute a single SQL statement as another user.
    *
    * Wraps the SQL using:
-   * `EXECUTE AS USER 'username' ( <single statement> )`
+   * `EXECUTE AS USER 'user' ( <single statement> )`
    */
   async executeAsUser(
     sql: string,
-    username: Username | string,
+    user: UserId | string,
     params?: unknown[],
   ): Promise<QueryResponse> {
-    const wrappedSql = KalamDBClient.wrapExecuteAsUser(sql, String(username));
+    const wrappedSql = KalamDBClient.wrapExecuteAsUser(sql, String(user));
     return this.query(wrappedSql, params);
   }
 
@@ -1074,9 +1074,9 @@ export class KalamDBClient {
   async login(): Promise<LoginResponse> {
     await this.initialize();
     if (this.auth.type !== 'basic') {
-      throw new Error('login() requires Basic auth credentials. Use authProvider returning Auth.basic(username, password)');
+      throw new Error('login() requires Basic auth credentials. Use authProvider returning Auth.basic(user, password)');
     }
-    const response = await this.performDirectBasicLogin(this.auth.username, this.auth.password);
+    const response = await this.performDirectBasicLogin(this.auth.user, this.auth.password);
 
     this.wasmClient = WasmClient.withJwt(this.url, response.access_token);
     this.attachWasmClientState();
@@ -1403,11 +1403,11 @@ export class KalamDBClient {
     }
   }
 
-  private async performDirectBasicLogin(username: string, password: string): Promise<LoginResponse> {
+  private async performDirectBasicLogin(user: string, password: string): Promise<LoginResponse> {
     const response = await fetch(`${this.url}/v1/api/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({ user, password }),
     });
 
     if (!response.ok) {
@@ -1437,7 +1437,7 @@ export class KalamDBClient {
 
     if (creds.type === 'basic') {
       this.log(LogLevel.Debug, 'auth', 'Auth provider returned basic — performing direct HTTP login for JWT...');
-      const loginResp = await this.performDirectBasicLogin(creds.username, creds.password);
+      const loginResp = await this.performDirectBasicLogin(creds.user, creds.password);
       this.auth = { type: 'jwt', token: loginResp.access_token };
       this.log(LogLevel.Debug, 'auth', 'Login successful via authProvider bridge (direct fetch)');
       return { jwt: { token: loginResp.access_token } };

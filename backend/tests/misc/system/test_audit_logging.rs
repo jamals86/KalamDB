@@ -4,7 +4,7 @@
 
 use super::test_support::TestServer;
 use kalam_client::models::ResponseStatus;
-use kalamdb_commons::models::{AuthType, Role, UserId, UserName};
+use kalamdb_commons::models::{AuthType, Role, UserId};
 use kalamdb_system::providers::storages::models::StorageMode;
 
 async fn create_system_user(server: &TestServer, username: &str) -> UserId {
@@ -13,7 +13,6 @@ async fn create_system_user(server: &TestServer, username: &str) -> UserId {
 
     let user = kalamdb_system::User {
         user_id: user_id.clone(),
-        username: UserName::new(username),
         password_hash: "hashed".to_string(),
         role: Role::System,
         email: Some(format!("{}@kalamdb.local", username)),

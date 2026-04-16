@@ -12,7 +12,7 @@
 use super::test_support::{auth_helper, TestServer};
 use base64::Engine as _;
 use kalamdb_commons::{
-    models::{ConnectionInfo, UserName},
+    models::{ConnectionInfo},
     Role,
 };
 use std::sync::Arc;
@@ -35,7 +35,6 @@ async fn test_bearer_auth_success() {
     let secret = kalamdb_configs::defaults::default_auth_jwt_secret();
     let (token, _claims) = kalamdb_auth::providers::jwt_auth::create_and_sign_token(
         &kalamdb_commons::models::UserId::new(username),
-        &UserName::new(username),
         &Role::User,
         Some("alice@example.com"),
         Some(1),
@@ -62,7 +61,7 @@ async fn test_bearer_auth_success() {
         result.as_ref().err()
     );
     let auth_result = result.unwrap();
-    assert_eq!(auth_result.user.username, UserName::from(username));
+    assert_eq!(auth_result.user.user_id.as_str(), username);
     assert_eq!(auth_result.user.role, Role::User);
 
     println!("✓ Bearer auth test passed - User authenticated successfully");
@@ -175,7 +174,6 @@ async fn test_basic_auth_nonexistent_user() {
     let secret = kalamdb_configs::defaults::default_auth_jwt_secret();
     let (token, _claims) = kalamdb_auth::providers::jwt_auth::create_and_sign_token(
         &kalamdb_commons::models::UserId::new("nonexistent"),
-        &UserName::new("nonexistent"),
         &Role::User,
         Some("nonexistent@example.com"),
         Some(1),

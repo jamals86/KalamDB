@@ -6,7 +6,6 @@ use crate::providers::storages::models::StorageMode;
 use crate::providers::users::models::auth_data::AuthData;
 use kalamdb_commons::datatypes::KalamDataType;
 use kalamdb_commons::models::{ids::UserId, AuthType, Role, StorageId};
-use kalamdb_commons::UserName;
 use kalamdb_macros::table;
 use serde::{Deserialize, Serialize};
 
@@ -22,7 +21,6 @@ pub const DEFAULT_LOCKOUT_DURATION_MINUTES: i64 = 15;
 ///
 /// ## Fields
 /// - `user_id`: Unique user identifier (e.g., "u_123456")
-/// - `username`: Unique username for authentication
 /// - `password_hash`: bcrypt hash of password (cost factor 12)
 /// - `role`: User role (User, Service, DBA, System)
 /// - `email`: Optional email address
@@ -46,11 +44,10 @@ pub const DEFAULT_LOCKOUT_DURATION_MINUTES: i64 = 15;
 ///
 /// ```rust
 /// use kalamdb_system::User;
-/// use kalamdb_commons::{UserId, Role, AuthType, StorageMode, StorageId, UserName};
+/// use kalamdb_commons::{UserId, Role, AuthType, StorageMode, StorageId};
 ///
 /// let user = User {
 ///     user_id: UserId::new("u_123456"),
-///     username: UserName::new("alice"),
 ///     password_hash: "$2b$12$...".to_string(),
 ///     role: Role::User,
 ///     email: Some("alice@example.com".to_string()),
@@ -149,16 +146,6 @@ pub struct User {
         comment = "User identifier (UUID)"
     )]
     pub user_id: UserId,
-    #[column(
-        id = 2,
-        ordinal = 2,
-        data_type(KalamDataType::Text),
-        nullable = false,
-        primary_key = false,
-        default = "None",
-        comment = "Unique username for authentication"
-    )]
-    pub username: UserName,
     #[column(
         id = 3,
         ordinal = 3,
@@ -296,7 +283,6 @@ mod tests {
     fn create_test_user() -> User {
         User {
             user_id: UserId::new("u_123"),
-            username: "alice".into(),
             password_hash: "$2b$12$hash".to_string(),
             role: Role::User,
             email: Some("test@example.com".to_string()),

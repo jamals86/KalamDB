@@ -30,7 +30,8 @@ describe('Auth', { timeout: 30_000 }, () => {
     assert.ok(resp.refresh_token, 'expected refresh_token');
     assert.ok(resp.user, 'expected user info');
     assert.equal(typeof resp.user.id, 'string');
-    assert.equal(typeof resp.user.username, 'string');
+    assert.equal(typeof resp.user.role, 'string');
+    assert.equal(typeof resp.admin_ui_access, 'boolean');
 
     await client.disconnect();
   });

@@ -51,7 +51,7 @@ export {
   LogLevel,
   MessageType,
   SeqId,
-  Username,
+  UserId,
   wrapRowMap,
 } from './types.js';
 
@@ -82,6 +82,7 @@ export type {
   OnSendCallback,
   QueryResponse,
   QueryResult,
+  Role,
   ResponseStatus,
   RowData,
   SchemaField,

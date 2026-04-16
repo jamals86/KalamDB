@@ -29,7 +29,7 @@ export type {
   NoAuthCredentials,
   QueryResponse,
   RowData,
-  Username,
+  UserId,
 } from '@kalamdb/client';
 
 export { createConsumerClient, KalamConsumerClient } from './client.js';

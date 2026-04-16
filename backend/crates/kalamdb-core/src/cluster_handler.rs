@@ -9,7 +9,7 @@ use kalamdb_auth::{authenticate, AuthRequest, CoreUsersRepo, UserRepository};
 use kalamdb_commons::conversions::{
     mask_sensitive_rows_for_role, record_batch_to_json_arrays, schema_fields_from_arrow_schema,
 };
-use kalamdb_commons::models::{ConnectionInfo, KalamCellValue, NamespaceId, Username};
+use kalamdb_commons::models::{ConnectionInfo, KalamCellValue, NamespaceId, UserId, Username};
 use kalamdb_commons::schemas::SchemaField;
 use kalamdb_commons::Role;
 use kalamdb_raft::{
@@ -207,10 +207,12 @@ impl CoreClusterHandler {
     }
 
     fn resolve_result_username(
-        authenticated_username: &Username,
+        authenticated_user_id: &UserId,
         execute_as_username: Option<&Username>,
     ) -> Username {
-        execute_as_username.cloned().unwrap_or_else(|| authenticated_username.clone())
+        execute_as_username
+            .cloned()
+            .unwrap_or_else(|| Username::from(authenticated_user_id.as_str()))
     }
 
     fn prepare_forwarded_statement(
@@ -292,12 +294,10 @@ impl ClusterMessageHandler for CoreClusterHandler {
             ));
         }
 
-        let authenticated_username = auth_result.user.username.clone();
         let authenticated_role = auth_result.user.role;
 
-        let mut session = AuthSession::with_username_and_auth_details(
+        let mut session = AuthSession::with_auth_details(
             auth_result.user.user_id,
-            authenticated_username.clone(),
             authenticated_role,
             connection_info,
             auth_result.method,
@@ -459,7 +459,7 @@ impl ClusterMessageHandler for CoreClusterHandler {
                 },
             };
             let effective_username = Self::resolve_result_username(
-                &authenticated_username,
+                exec_ctx.user_id(),
                 execute_as_username.as_ref(),
             );
             let effective_role = if execute_as_user.is_some() {

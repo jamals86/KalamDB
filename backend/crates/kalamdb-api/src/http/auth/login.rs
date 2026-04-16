@@ -45,7 +45,7 @@ pub async fn login_handler(
 
     // Authenticate using unified auth flow (includes localhost/empty password rules)
     let auth_request = AuthRequest::Credentials {
-        username: body.username.clone(),
+        user: body.user.clone(),
         password: body.password.clone(),
     };
 
@@ -61,7 +61,6 @@ pub async fn login_handler(
     // Generate JWT access token
     let (token, _claims) = match create_and_sign_token(
         &user.user_id,
-        &user.username,
         &user.role,
         user.email.as_deref(),
         Some(config.jwt_expiry_hours),
@@ -81,7 +80,6 @@ pub async fn login_handler(
     let refresh_expiry_hours = config.jwt_expiry_hours * 7;
     let (refresh_token, _refresh_claims) = match create_and_sign_refresh_token(
         &user.user_id,
-        &user.username,
         &user.role,
         user.email.as_deref(),
         Some(refresh_expiry_hours),
@@ -125,7 +123,6 @@ pub async fn login_handler(
         .json(LoginResponse {
             user: UserInfo {
                 id: user.user_id,
-                username: user.username,
                 role: user.role,
                 email: user.email,
                 created_at,

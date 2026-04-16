@@ -903,10 +903,6 @@ pub struct AuthSettings {
     #[serde(default = "default_auth_allow_remote_setup")]
     pub allow_remote_setup: bool,
 
-    /// Auto-create local users from trusted external auth provider subject when missing.
-    #[serde(default = "default_auth_auto_create_users_from_provider")]
-    pub auto_create_users_from_provider: bool,
-
     /// Pre-shared token for authenticating pg_kalam FDW gRPC calls.
     /// When set, the PG extension must send this value in the `authorization` gRPC metadata.
     /// Override via `KALAMDB_PG_AUTH_TOKEN` env var.
@@ -1013,7 +1009,6 @@ impl Default for AuthSettings {
             bcrypt_cost: default_auth_bcrypt_cost(),
             enforce_password_complexity: default_auth_enforce_password_complexity(),
             allow_remote_setup: default_auth_allow_remote_setup(),
-            auto_create_users_from_provider: default_auth_auto_create_users_from_provider(),
             pg_auth_token: None,
         }
     }

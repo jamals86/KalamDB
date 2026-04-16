@@ -319,7 +319,7 @@ impl TestAuthManager {
             .post(format!("{}/v1/api/sql", base_url))
             .bearer_auth(&root_token)
             .json(&json!({
-                "sql": "SELECT username FROM system.users WHERE username = 'admin' LIMIT 1"
+                "sql": "SELECT user_id FROM system.users WHERE user_id = 'admin' LIMIT 1"
             }))
             .send()
             .await?;
@@ -2423,7 +2423,7 @@ pub fn execute_sql_via_cli_as_with_timing(
     let output = Command::new(env!("CARGO_BIN_EXE_kalam"))
         .arg("-u")
         .arg(server_url())
-        .arg("--username")
+        .arg("--user")
         .arg(username)
         .arg("--password")
         .arg(password)
@@ -2573,7 +2573,7 @@ fn execute_sql_via_cli_as_with_args_and_urls(
             if let Some(token) = token {
                 child.arg("--token").arg(token);
             } else {
-                child.arg("--username").arg(username).arg("--password").arg(password);
+                child.arg("--user").arg(username).arg("--password").arg(password);
             }
 
             child
@@ -3520,7 +3520,7 @@ pub fn create_cli_command_with_auth_for_server(
     let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(server)
-        .arg("--username")
+        .arg("--user")
         .arg(username)
         .arg("--password")
         .arg(password);

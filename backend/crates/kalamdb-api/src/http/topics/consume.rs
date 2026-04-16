@@ -146,8 +146,8 @@ pub async fn consume_handler(
         .iter()
         .map(|msg| {
             use base64::Engine;
-            // Resolve user_id to username for the consumer (cached)
-            let username = msg.user_id.as_ref().and_then(|uid| {
+            // Resolve the producer user id for the consumer response.
+            let user = msg.user_id.as_ref().and_then(|uid| {
                 user_cache
                     .entry(uid.clone())
                     .or_insert_with(|| {
@@ -157,7 +157,7 @@ pub async fn consume_handler(
                             .get_user_by_id(uid)
                             .ok()
                             .flatten()
-                            .map(|u| u.username.into_string())
+                            .map(|u| u.user_id.as_str().to_string())
                     })
                     .clone()
             });
@@ -168,7 +168,7 @@ pub async fn consume_handler(
                 payload: b64_engine.encode(&msg.payload),
                 key: msg.key.clone(),
                 timestamp_ms: msg.timestamp_ms,
-                username,
+                user,
                 op: match msg.op {
                     kalamdb_commons::models::TopicOp::Insert => "Insert".to_owned(),
                     kalamdb_commons::models::TopicOp::Update => "Update".to_owned(),

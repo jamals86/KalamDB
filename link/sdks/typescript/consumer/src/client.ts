@@ -10,7 +10,7 @@ import type {
   LoginResponse,
   QueryResponse,
   RowData,
-  Username,
+  UserId,
 } from '@kalamdb/client';
 import type {
   AckResponse,
@@ -140,10 +140,10 @@ export class KalamConsumerClient {
 
   async executeAsUser(
     sql: string,
-    username: Username | string,
+    user: UserId | string,
     params?: unknown[],
   ): Promise<QueryResponse> {
-    return this.sqlClient.executeAsUser(sql, username, params);
+    return this.sqlClient.executeAsUser(sql, user, params);
   }
 
   async login(): Promise<LoginResponse> {
@@ -194,7 +194,7 @@ export class KalamConsumerClient {
 
             let acked = false;
             const ctx: ConsumeContext = {
-              username: message.username,
+              user: message.user,
               message,
               ack: async () => {
                 if (acked) {
@@ -336,14 +336,14 @@ export class KalamConsumerClient {
       return auth;
     }
 
-    const response = await this.performDirectBasicLogin(auth.username, auth.password);
+    const response = await this.performDirectBasicLogin(auth.user, auth.password);
     return { type: 'jwt', token: response.access_token };
   }
 
   private authSourceKey(auth: AuthCredentials): string {
     switch (auth.type) {
       case 'basic':
-        return `basic:${auth.username}:${auth.password}`;
+        return `basic:${auth.user}:${auth.password}`;
       case 'jwt':
         return `jwt:${auth.token}`;
       case 'none':
@@ -355,11 +355,11 @@ export class KalamConsumerClient {
     }
   }
 
-  private async performDirectBasicLogin(username: string, password: string): Promise<LoginResponse> {
+  private async performDirectBasicLogin(user: string, password: string): Promise<LoginResponse> {
     const response = await fetch(`${this.url}/v1/api/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({ user, password }),
     });
 
     if (!response.ok) {
