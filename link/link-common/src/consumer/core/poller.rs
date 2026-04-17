@@ -81,7 +81,9 @@ impl ConsumerPoller {
     async fn ensure_request_auth(&self) -> Result<AuthProvider> {
         let current_auth = self.auth.lock().unwrap().clone();
         match current_auth {
-            AuthProvider::BasicAuth(user, password) => self.login_with_password_auth(&user, &password).await,
+            AuthProvider::BasicAuth(user, password) => {
+                self.login_with_password_auth(&user, &password).await
+            },
             auth => Ok(auth),
         }
     }
@@ -136,7 +138,10 @@ impl ConsumerPoller {
                         response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
 
                     if status.is_client_error() {
-                        if status.as_u16() == 401 && attempt < max_retries && self.refresh_auth_if_possible().await? {
+                        if status.as_u16() == 401
+                            && attempt < max_retries
+                            && self.refresh_auth_if_possible().await?
+                        {
                             attempt += 1;
                             continue;
                         }
@@ -226,10 +231,8 @@ impl ConsumerPoller {
                 });
             }
 
-            let retry_error_text = retry_response
-                .text()
-                .await
-                .unwrap_or_else(|_| "Unknown error".to_string());
+            let retry_error_text =
+                retry_response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
             return Err(KalamLinkError::ServerError {
                 status_code: retry_status.as_u16(),
                 message: retry_error_text,

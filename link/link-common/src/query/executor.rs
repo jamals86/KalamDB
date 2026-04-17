@@ -129,7 +129,8 @@ impl QueryExecutor {
 
         let refresher = self.auth_refresher.as_ref().ok_or_else(|| {
             KalamLinkError::AuthenticationError(
-                "User/password credentials require a login exchange before executing SQL requests.".to_string(),
+                "User/password credentials require a login exchange before executing SQL requests."
+                    .to_string(),
             )
         })?;
 

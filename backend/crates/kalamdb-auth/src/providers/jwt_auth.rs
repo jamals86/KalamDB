@@ -73,13 +73,7 @@ pub fn refresh_jwt_token(
     let user_id = UserId::new(&old_claims.sub);
     let role = old_claims.role.as_ref().cloned().unwrap_or(Role::User);
 
-    create_and_sign_token(
-        &user_id,
-        &role,
-        old_claims.email.as_deref(),
-        expiry_hours,
-        secret,
-    )
+    create_and_sign_token(&user_id, &role, old_claims.email.as_deref(), expiry_hours, secret)
 }
 
 /// Validate a JWT token and extract claims.
@@ -239,9 +233,8 @@ mod tests {
         let user_id = UserId::new("u_refresh");
         let role = Role::User;
 
-        let (refresh_token, _) =
-            create_and_sign_refresh_token(&user_id, &role, None, None, secret)
-                .expect("Failed to create refresh token");
+        let (refresh_token, _) = create_and_sign_refresh_token(&user_id, &role, None, None, secret)
+            .expect("Failed to create refresh token");
 
         let claims =
             validate_jwt_token(&refresh_token, secret, &trusted).expect("Token validation failed");
@@ -261,9 +254,8 @@ mod tests {
         let user_id = UserId::new("u_access");
         let role = Role::User;
 
-        let (access_token, _) =
-            create_and_sign_token(&user_id, &role, None, None, secret)
-                .expect("Failed to create access token");
+        let (access_token, _) = create_and_sign_token(&user_id, &role, None, None, secret)
+            .expect("Failed to create access token");
 
         let claims =
             validate_jwt_token(&access_token, secret, &trusted).expect("Token validation failed");
@@ -282,8 +274,7 @@ mod tests {
         let user_id = UserId::new("u_distinct");
         let role = Role::User;
 
-        let (access, _) =
-            create_and_sign_token(&user_id, &role, None, None, secret).unwrap();
+        let (access, _) = create_and_sign_token(&user_id, &role, None, None, secret).unwrap();
 
         let (refresh, _) =
             create_and_sign_refresh_token(&user_id, &role, None, None, secret).unwrap();

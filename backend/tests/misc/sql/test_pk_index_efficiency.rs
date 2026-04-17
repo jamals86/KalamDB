@@ -64,9 +64,8 @@ async fn test_user_table_pk_index_update() {
 
     // Insert 100 rows in one batch
     {
-        let values: Vec<String> = (1..=100)
-            .map(|i| format!("({}, 'item_{}', {})", i, i, i * 10))
-            .collect();
+        let values: Vec<String> =
+            (1..=100).map(|i| format!("({}, 'item_{}', {})", i, i, i * 10)).collect();
         let insert_response = server
             .execute_sql_as_user(
                 &format!(
@@ -235,9 +234,8 @@ async fn test_shared_table_pk_index_update() {
 
     // Insert 100 rows in one batch
     {
-        let values: Vec<String> = (1..=100)
-            .map(|i| format!("({}, 'product_{}', {})", i, i, i * 100))
-            .collect();
+        let values: Vec<String> =
+            (1..=100).map(|i| format!("({}, 'product_{}', {})", i, i, i * 100)).collect();
         let insert_response = server
             .execute_sql(&format!(
                 "INSERT INTO {}.products (id, name, price) VALUES {}",
@@ -499,14 +497,10 @@ async fn test_user_table_pk_index_delete() {
     for batch_start in (1..=300usize).step_by(100) {
         let batch_end = (batch_start + 99).min(300);
         let values: Vec<String> =
-            (batch_start..=batch_end).map(|i| format!("({}, 'desc_{}')" , i, i)).collect();
+            (batch_start..=batch_end).map(|i| format!("({}, 'desc_{}')", i, i)).collect();
         let insert_response = server
             .execute_sql_as_user(
-                &format!(
-                    "INSERT INTO {}.items (id, description) VALUES {}",
-                    ns,
-                    values.join(", ")
-                ),
+                &format!("INSERT INTO {}.items (id, description) VALUES {}", ns, values.join(", ")),
                 "delete_user",
             )
             .await;
@@ -545,14 +539,10 @@ async fn test_user_table_pk_index_delete() {
     for batch_start in (301..=1500usize).step_by(100) {
         let batch_end = (batch_start + 99).min(1500);
         let values: Vec<String> =
-            (batch_start..=batch_end).map(|i| format!("({}, 'desc_{}')" , i, i)).collect();
+            (batch_start..=batch_end).map(|i| format!("({}, 'desc_{}')", i, i)).collect();
         let insert_response = server
             .execute_sql_as_user(
-                &format!(
-                    "INSERT INTO {}.items (id, description) VALUES {}",
-                    ns,
-                    values.join(", ")
-                ),
+                &format!("INSERT INTO {}.items (id, description) VALUES {}", ns, values.join(", ")),
                 "delete_user",
             )
             .await;

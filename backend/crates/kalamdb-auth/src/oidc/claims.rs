@@ -42,14 +42,7 @@ impl JwtClaims {
         expiry_hours: Option<i64>,
         issuer: &str,
     ) -> Self {
-        Self::with_token_type(
-            user_id,
-            role,
-            email,
-            expiry_hours,
-            TokenType::Access,
-            issuer,
-        )
+        Self::with_token_type(user_id, role, email, expiry_hours, TokenType::Access, issuer)
     }
 
     pub fn with_token_type(

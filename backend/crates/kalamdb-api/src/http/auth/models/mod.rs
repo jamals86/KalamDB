@@ -10,9 +10,9 @@ mod setup_response;
 mod user_info;
 
 pub use error_response::AuthErrorResponse;
-pub use user_info::CurrentUserResponse;
 pub use login_request::LoginRequest;
 pub use login_response::LoginResponse;
 pub use setup_request::ServerSetupRequest;
 pub use setup_response::ServerSetupResponse;
+pub use user_info::CurrentUserResponse;
 pub use user_info::UserInfo;

@@ -57,7 +57,6 @@ pub async fn refresh_handler(
         ));
     }
 
-    // Use the subject claim (user_id) to look up the user
     let user_id = kalamdb_commons::UserId::new(&claims.sub);
 
     // Verify user still exists and is active by user_id

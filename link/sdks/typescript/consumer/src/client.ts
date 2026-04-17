@@ -179,13 +179,25 @@ export class KalamConsumerClient {
 
   consumer(options: ConsumeRequest): ConsumerHandle {
     let stopRequested = false;
+    let nextStart = options.start;
 
     return {
       run: async (handler: ConsumerHandler): Promise<void> => {
         stopRequested = false;
+        nextStart = options.start;
 
         while (!stopRequested) {
-          const response = await this.consumeBatch(options);
+          const response = await this.consumeBatch({
+            ...options,
+            ...(nextStart === undefined ? {} : { start: nextStart }),
+          });
+
+          // Keep the server cursor after empty polls so start='latest'
+          // continues from the observed high-water mark instead of skipping
+          // later inserts by recalculating "latest" on every loop.
+          if (response.messages.length === 0) {
+            nextStart = { offset: response.next_offset };
+          }
 
           for (const message of response.messages) {
             if (stopRequested) {

@@ -135,8 +135,14 @@ async fn test_oauth_subject_matching() {
 
     // Verify both users exist with different subjects
     let users_provider = server.app_context.system_tables().users();
-    let user1 = users_provider.get_user_by_id(&UserId::new(user1_name.as_str())).unwrap().unwrap();
-    let user2 = users_provider.get_user_by_id(&UserId::new(user2_name.as_str())).unwrap().unwrap();
+    let user1 = users_provider
+        .get_user_by_id(&UserId::new(user1_name.as_str()))
+        .unwrap()
+        .unwrap();
+    let user2 = users_provider
+        .get_user_by_id(&UserId::new(user2_name.as_str()))
+        .unwrap()
+        .unwrap();
 
     let auth_data1 = user1.auth_data.as_ref().unwrap();
     let auth_data2 = user2.auth_data.as_ref().unwrap();
@@ -227,7 +233,10 @@ async fn test_oauth_azure_provider() {
 
     // Verify user was created with Azure provider
     let users_provider = server.app_context.system_tables().users();
-    let user = users_provider.get_user_by_id(&UserId::new(oauth_username.as_str())).unwrap().unwrap();
+    let user = users_provider
+        .get_user_by_id(&UserId::new(oauth_username.as_str()))
+        .unwrap()
+        .unwrap();
     let auth_data = user.auth_data.as_ref().unwrap();
 
     assert_eq!(auth_data.provider_type, OAuthProvider::AzureAd);

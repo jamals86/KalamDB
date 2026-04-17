@@ -136,8 +136,7 @@ fn test_cli_color_output() {
 
     // Test with color enabled (default behavior)
     let mut cmd = create_cli_command_with_root_auth();
-    cmd.arg("--command")
-        .arg("SELECT 'color' as test");
+    cmd.arg("--command").arg("SELECT 'color' as test");
 
     let output = cmd.output().unwrap();
     assert!(
@@ -149,9 +148,7 @@ fn test_cli_color_output() {
 
     // Test with color disabled
     let mut cmd = create_cli_command_with_root_auth();
-    cmd.arg("--no-color")
-        .arg("--command")
-        .arg("SELECT 'nocolor' as test");
+    cmd.arg("--no-color").arg("--command").arg("SELECT 'nocolor' as test");
 
     let output = cmd.output().unwrap();
     assert!(
@@ -172,8 +169,7 @@ fn test_cli_session_timeout() {
 
     // Note: --timeout flag not yet implemented, just test that command executes
     let mut cmd = create_cli_command_with_root_auth();
-    cmd.arg("--command")
-        .arg("SELECT 1");
+    cmd.arg("--command").arg("SELECT 1");
 
     let output = cmd.output().unwrap();
     assert!(

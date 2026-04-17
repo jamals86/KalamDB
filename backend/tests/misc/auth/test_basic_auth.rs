@@ -12,10 +12,7 @@
 use super::test_support::{auth_helper, TestServer};
 use base64::Engine as _;
 use kalamdb_auth::AuthError;
-use kalamdb_commons::{
-    models::{ConnectionInfo},
-    Role,
-};
+use kalamdb_commons::{models::ConnectionInfo, Role};
 use std::sync::Arc;
 
 /// Test successful Bearer auth with valid token

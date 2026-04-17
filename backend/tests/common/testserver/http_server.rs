@@ -247,11 +247,7 @@ impl HttpTestServer {
     }
 
     /// Creates a JWT token for the specified user with explicit user_id.
-    pub fn create_jwt_token_with_id(
-        &self,
-        user_id: &UserId,
-        role: &Role,
-    ) -> String {
+    pub fn create_jwt_token_with_id(&self, user_id: &UserId, role: &Role) -> String {
         let (token, _claims) = kalamdb_auth::providers::jwt_auth::create_and_sign_token(
             user_id,
             role,
@@ -357,8 +353,7 @@ impl HttpTestServer {
         self.execute_sql(&create_sql).await?;
 
         // Now fetch the user_id
-        let get_id_sql =
-            format!("SELECT user_id FROM system.users WHERE user_id = '{}'", username);
+        let get_id_sql = format!("SELECT user_id FROM system.users WHERE user_id = '{}'", username);
         let resp = self.execute_sql(&get_id_sql).await?;
         let user_id = resp
             .rows_as_maps()

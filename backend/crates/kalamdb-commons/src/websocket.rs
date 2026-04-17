@@ -1264,7 +1264,11 @@ mod tests {
         let bytes = rmp_serde::to_vec_named(&msg).unwrap();
         let parsed: WebSocketMessage = rmp_serde::from_slice(&bytes).unwrap();
         match parsed {
-            WebSocketMessage::AuthSuccess { user, role, protocol } => {
+            WebSocketMessage::AuthSuccess {
+                user,
+                role,
+                protocol,
+            } => {
                 assert_eq!(user, UserId::from("user-1"));
                 assert_eq!(role, crate::models::Role::Dba);
                 assert_eq!(protocol.serialization, SerializationType::MessagePack);

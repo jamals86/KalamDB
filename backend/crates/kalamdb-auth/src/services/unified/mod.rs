@@ -51,11 +51,7 @@ pub fn init_auth_config(
         }
     }
 
-    jwt_config::init_jwt_config(
-        &auth.jwt_secret,
-        &auth.jwt_trusted_issuers,
-        issuer_audiences,
-    );
+    jwt_config::init_jwt_config(&auth.jwt_secret, &auth.jwt_trusted_issuers, issuer_audiences);
 }
 
 /// Authenticate a request using the unified authentication flow.
@@ -166,19 +162,13 @@ mod tests {
             user: "testuser".to_string(),
             password: "secret".to_string(),
         };
-        assert_eq!(
-            extract_user_id_for_audit(&request),
-            UserId::from("testuser")
-        );
+        assert_eq!(extract_user_id_for_audit(&request), UserId::from("testuser"));
     }
 
     #[test]
     fn test_extract_user_id_from_bearer_header() {
         let request = AuthRequest::Header("Bearer some.jwt.token".to_string());
-        assert_eq!(
-            extract_user_id_for_audit(&request),
-            UserId::anonymous()
-        );
+        assert_eq!(extract_user_id_for_audit(&request), UserId::anonymous());
     }
 
     #[test]
@@ -191,10 +181,7 @@ mod tests {
 
         let token = format!("{}.{}.{}", header, payload, signature);
         let request = AuthRequest::Jwt { token };
-        assert_eq!(
-            extract_user_id_for_audit(&request),
-            UserId::from("user_from_sub")
-        );
+        assert_eq!(extract_user_id_for_audit(&request), UserId::from("user_from_sub"));
     }
 
     #[test]
@@ -202,10 +189,7 @@ mod tests {
         let request = AuthRequest::Jwt {
             token: "invalid_token".to_string(),
         };
-        assert_eq!(
-            extract_user_id_for_audit(&request),
-            UserId::anonymous()
-        );
+        assert_eq!(extract_user_id_for_audit(&request), UserId::anonymous());
     }
 
     #[test]
@@ -218,10 +202,7 @@ mod tests {
 
         let token = format!("{}.{}.{}", header, payload, signature);
         let request = AuthRequest::Header(format!("Bearer {}", token));
-        assert_eq!(
-            extract_user_id_for_audit(&request),
-            UserId::from("bearer_user")
-        );
+        assert_eq!(extract_user_id_for_audit(&request), UserId::from("bearer_user"));
     }
 
     #[cfg(feature = "websocket")]

@@ -110,7 +110,10 @@ async fn test_proxy_server_down_while_reconnecting() {
         }
         sleep(Duration::from_millis(50)).await;
     }
-    assert!(begin_reconnect_seen, "client should begin reconnecting before the second outage");
+    assert!(
+        begin_reconnect_seen,
+        "client should begin reconnecting before the second outage"
+    );
 
     // ── Second outage while reconnecting ────────────────────────────────
     let dc2 = disconnect_count.load(Ordering::SeqCst);

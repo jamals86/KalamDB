@@ -143,12 +143,7 @@ pub async fn create_session(
     }
 
     // Helper function to exchange user/password for a JWT token
-    async fn try_login(
-        server_url: &str,
-        user: &str,
-        password: &str,
-        verbose: bool,
-    ) -> LoginResult {
+    async fn try_login(server_url: &str, user: &str, password: &str, verbose: bool) -> LoginResult {
         // Create a temporary client just for login (no auth needed for login endpoint)
         let temp_client = match KalamLinkClient::builder()
             .base_url(server_url)
@@ -455,9 +450,9 @@ pub async fn create_session(
             LoginResult::SetupRequired => {
                 setup_and_login(server_url, verbose, instance, credential_store, true).await
             },
-            LoginResult::Failed(_) => Err(CLIError::ConfigurationError(
-                "Login failed: invalid credentials".to_string(),
-            )),
+            LoginResult::Failed(_) => {
+                Err(CLIError::ConfigurationError("Login failed: invalid credentials".to_string()))
+            },
         }
     }
 
@@ -744,9 +739,7 @@ pub async fn create_session(
                         LoginResult::Failed(_) => (AuthProvider::None, None, false),
                     }
                 } else {
-                    eprintln!(
-                        "Please login again with --user and --password --save-credentials"
-                    );
+                    eprintln!("Please login again with --user and --password --save-credentials");
                     (AuthProvider::None, None, false)
                 }
             }

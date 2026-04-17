@@ -595,7 +595,7 @@ mod tests {
             storage_type: kalamdb_system::providers::storages::models::StorageType::Filesystem,
             base_directory: "/tmp/local".to_string(),
             credentials: None,
-            config_json: Some(r#"{"type":"local"}"#.to_string()),
+            config_json: Some(serde_json::json!({ "type": "local" })),
             shared_tables_template: "shared".to_string(),
             user_tables_template: "user".to_string(),
             created_at: 0,

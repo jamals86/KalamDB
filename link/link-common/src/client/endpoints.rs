@@ -84,11 +84,7 @@ impl KalamLinkClient {
 
     /// Login with user and password to obtain a JWT token.
     #[cfg(feature = "auth-flows")]
-    pub async fn login(
-        &self,
-        user: &str,
-        password: &str,
-    ) -> Result<crate::models::LoginResponse> {
+    pub async fn login(&self, user: &str, password: &str) -> Result<crate::models::LoginResponse> {
         let url = format!("{}/v1/api/auth/login", self.base_url);
         log::debug!("[LOGIN] Authenticating user '{}' at url={}", user, url);
 
@@ -129,11 +125,7 @@ impl KalamLinkClient {
         }
 
         let login_response = response.json::<crate::models::LoginResponse>().await?;
-        log::debug!(
-            "[LOGIN] Successfully authenticated user '{}' in {:?}",
-            user,
-            start.elapsed()
-        );
+        log::debug!("[LOGIN] Successfully authenticated user '{}' in {:?}", user, start.elapsed());
 
         Ok(login_response)
     }

@@ -339,7 +339,11 @@ impl KalamLinkClient {
         self.resolved_auth.resolve().await
     }
 
-    async fn exchange_login_credentials(&self, user: &str, password: &str) -> Result<LoginResponse> {
+    async fn exchange_login_credentials(
+        &self,
+        user: &str,
+        password: &str,
+    ) -> Result<LoginResponse> {
         let url = format!("{}/v1/api/auth/login", self.base_url);
         let body = serde_json::json!({
             "user": user,

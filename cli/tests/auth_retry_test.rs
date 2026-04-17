@@ -130,9 +130,7 @@ fn test_expired_token_flow() {
     println!("\n=== Manual Token Expiry Test ===");
     println!("\nSteps to test expired token handling:");
     println!("1. Login and save credentials:");
-    println!(
-        "   cargo run --release -- --user testuser --password testpass --save-credentials"
-    );
+    println!("   cargo run --release -- --user testuser --password testpass --save-credentials");
     println!("\n2. Wait for the access token to expire (or manually edit the expiry in credentials file)");
     println!("\n3. Run CLI without arguments:");
     println!("   cargo run --release");

@@ -124,6 +124,97 @@ test('ack exchanges basic auth once and reuses the cached JWT for later requests
   }
 });
 
+test('consumer run preserves the latest cursor after an empty poll', async () => {
+  const originalFetch = globalThis.fetch;
+  const consumeBodies = [];
+  const ackBodies = [];
+  let consumeCallCount = 0;
+
+  globalThis.fetch = async (url, options) => {
+    if (url.endsWith('/v1/api/topics/consume')) {
+      const body = JSON.parse(options.body);
+      consumeBodies.push(body);
+      consumeCallCount += 1;
+
+      if (consumeCallCount === 1) {
+        return jsonResponse({
+          messages: [],
+          next_offset: 41,
+          has_more: false,
+        });
+      }
+
+      if (consumeCallCount === 2) {
+        return jsonResponse({
+          messages: [{
+            topic_id: 'events',
+            partition_id: 0,
+            offset: 41,
+            payload: Buffer.from(JSON.stringify({ row: { status: 'live' } }), 'utf8').toString('base64'),
+          }],
+          next_offset: 42,
+          has_more: false,
+        });
+      }
+
+      throw new Error(`Unexpected consume call ${consumeCallCount}`);
+    }
+
+    ackBodies.push(JSON.parse(options.body));
+    return jsonResponse({
+      success: true,
+      acknowledged_offset: ackBodies[ackBodies.length - 1].upto_offset,
+    });
+  };
+
+  try {
+    const client = createConsumerClient({
+      url: 'http://127.0.0.1:8080',
+      authProvider: async () => Auth.jwt('jwt-123'),
+    });
+
+    const handle = client.consumer({
+      topic: 'events',
+      group_id: 'latest-reader',
+      start: 'latest',
+    });
+
+    let calls = 0;
+    await handle.run(async (ctx) => {
+      calls += 1;
+      assert.equal(ctx.message.offset, 41);
+      await ctx.ack();
+      handle.stop();
+    });
+
+    assert.equal(calls, 1);
+    assert.deepEqual(consumeBodies, [
+      {
+        topic_id: 'events',
+        group_id: 'latest-reader',
+        start: 'Latest',
+        limit: 10,
+        partition_id: 0,
+      },
+      {
+        topic_id: 'events',
+        group_id: 'latest-reader',
+        start: { Offset: 41 },
+        limit: 10,
+        partition_id: 0,
+      },
+    ]);
+    assert.deepEqual(ackBodies, [{
+      topic_id: 'events',
+      group_id: 'latest-reader',
+      partition_id: 0,
+      upto_offset: 41,
+    }]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('consumer run supports manual and auto acknowledgments', async () => {
   const originalFetch = globalThis.fetch;
   const consumeResponses = [

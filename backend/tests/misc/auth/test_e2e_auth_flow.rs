@@ -124,8 +124,7 @@ async fn test_e2e_auth_flow() {
     );
     if let Some(err) = response.error {
         assert!(
-            err.message.contains("Invalid credentials")
-                || err.code == "INVALID_CREDENTIALS",
+            err.message.contains("Invalid credentials") || err.code == "INVALID_CREDENTIALS",
             "Expected authentication failure for deleted user, got: {}",
             err.message
         );

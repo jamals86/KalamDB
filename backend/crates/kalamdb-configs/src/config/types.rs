@@ -149,11 +149,6 @@ pub struct SecuritySettings {
     #[serde(default)]
     pub trusted_proxy_ranges: Vec<String>,
 
-    /// Allowed WebSocket origins for connection validation
-    /// If empty, falls back to CORS allowed_origins
-    #[serde(default)]
-    pub allowed_ws_origins: Vec<String>,
-
     /// Maximum WebSocket message size in bytes (default: 1MB)
     #[serde(default = "default_max_ws_message_size")]
     pub max_ws_message_size: usize,
@@ -172,7 +167,6 @@ impl Default for SecuritySettings {
         Self {
             cors: CorsSettings::default(),
             trusted_proxy_ranges: Vec::new(),
-            allowed_ws_origins: Vec::new(),
             max_ws_message_size: default_max_ws_message_size(),
             strict_ws_origin_check: false,
             max_request_body_size: default_max_request_body_size(),

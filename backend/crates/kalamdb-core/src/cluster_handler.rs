@@ -458,10 +458,8 @@ impl ClusterMessageHandler for CoreClusterHandler {
                     ));
                 },
             };
-            let effective_username = Self::resolve_result_username(
-                exec_ctx.user_id(),
-                execute_as_username.as_ref(),
-            );
+            let effective_username =
+                Self::resolve_result_username(exec_ctx.user_id(), execute_as_username.as_ref());
             let effective_role = if execute_as_user.is_some() {
                 Role::User
             } else {

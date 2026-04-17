@@ -107,10 +107,8 @@ pub async fn server_setup_handler(
     let dba_user_id = match UserId::try_new(body.user.clone()) {
         Ok(user_id) => user_id,
         Err(_) => {
-            return HttpResponse::BadRequest().json(AuthErrorResponse::new(
-                "invalid_user",
-                "Invalid user value",
-            ));
+            return HttpResponse::BadRequest()
+                .json(AuthErrorResponse::new("invalid_user", "Invalid user value"));
         },
     };
 

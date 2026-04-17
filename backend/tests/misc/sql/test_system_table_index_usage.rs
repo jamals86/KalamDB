@@ -92,10 +92,8 @@ async fn test_system_users_user_id_index() {
     println!("✓ User ID query latency: {:?}", latency_indexed);
 
     // Test 2: Query specific user_id and verify it returns correct user
-    let query_specific = format!(
-        "SELECT user_id, email FROM system.users WHERE user_id = '{}_10'",
-        id_prefix
-    );
+    let query_specific =
+        format!("SELECT user_id, email FROM system.users WHERE user_id = '{}_10'", id_prefix);
     let response2 = server.execute_sql(&query_specific).await;
 
     assert_eq!(response2.status, ResponseStatus::Success);
@@ -150,7 +148,10 @@ async fn test_system_jobs_status_index() {
             job_type: JobType::Unknown,
             status,
             leader_status: None,
-            parameters: Some(format!(r#"{{"table":"test_{}", "iteration":{}}}"#, i, i)),
+            parameters: Some(serde_json::json!({
+                "table": format!("test_{}", i),
+                "iteration": i,
+            })),
             message: None,
             exception_trace: None,
             idempotency_key: Some(format!("idem_key_{}_{}", job_prefix, i)),

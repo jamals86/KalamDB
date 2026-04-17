@@ -202,7 +202,7 @@ fn make_scan_request(table_id: &TableId, session_id: Option<&str>) -> ScanReques
         columns: vec![],
         limit: None,
         user_id: None,
-    filters: vec![],
+        filters: vec![],
     }
 }
 

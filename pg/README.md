@@ -138,6 +138,34 @@ Type note for KalamDB-specific columns:
 - `CREATE TABLE ... USING kalamdb (... attachment FILE ...)` keeps `FILE` as the remote KalamDB type, but the mirrored PostgreSQL foreign table column is created as `JSONB`
 - Read and write the column from PostgreSQL as a JSON `FileRef` payload
 
+## JSON and JSONB behavior
+
+`pg_kalam` maps PostgreSQL `JSON` and `JSONB` columns to KalamDB `JSON`.
+On the `CREATE TABLE ... USING kalamdb` path, the local PostgreSQL column keeps the type you declared, so use `JSONB` when you want PostgreSQL's richer local JSON operator surface.
+`FILE` remains the special case and is always mirrored locally as `JSONB`.
+
+With a local `JSONB` column, foreign-table queries can use normal PostgreSQL JSON syntax:
+
+```sql
+CREATE TABLE app.events (
+  id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
+  payload JSONB NOT NULL
+) USING kalamdb WITH (
+  type = 'shared'
+);
+
+SELECT payload->>'kind' AS kind
+FROM app.events
+WHERE payload ? 'kind';
+```
+
+If you use direct SQL passthrough via `kalam_exec(...)`, KalamDB itself also understands the common PostgreSQL-style JSON operators `->`, `->>`, and `?`, along with helper functions such as `json_get`, `json_as_text`, `json_contains`, `json_length`, `json_object_keys`, `json_get_int`, `json_get_float`, and `json_get_bool`.
+
+Current scope:
+
+- KalamDB-side operator planning currently covers `->`, `->>`, and `?`.
+- Do not assume full PostgreSQL `jsonb` operator parity for operators such as `#>`, `#>>`, or `@>` yet.
+
 If you need to reinstall during development:
 
 ```sql

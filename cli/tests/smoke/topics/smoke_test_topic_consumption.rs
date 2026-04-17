@@ -91,7 +91,7 @@ async fn poll_records_until(
         match consumer.poll().await {
             Ok(batch) => {
                 if batch.is_empty() {
-                    tokio::time::sleep(Duration::from_millis(120)).await;
+                    tokio::time::sleep(Duration::from_millis(20)).await;
                     continue;
                 }
 
@@ -111,7 +111,7 @@ async fn poll_records_until(
                     || message.contains("network")
                     || message.contains("NetworkError")
                 {
-                    tokio::time::sleep(Duration::from_millis(120)).await;
+                    tokio::time::sleep(Duration::from_millis(20)).await;
                     continue;
                 }
                 panic!("Failed to poll: {}", message);

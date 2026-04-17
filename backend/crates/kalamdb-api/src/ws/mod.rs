@@ -92,14 +92,9 @@ mod tests {
         app_context.system_tables().users().create_user(user.clone()).unwrap();
 
         let secret = app_context.config().auth.jwt_secret.clone();
-        let (token, _) = create_and_sign_token(
-            &user.user_id,
-            &user.role,
-            user.email.as_deref(),
-            None,
-            &secret,
-        )
-        .unwrap();
+        let (token, _) =
+            create_and_sign_token(&user.user_id, &user.role, user.email.as_deref(), None, &secret)
+                .unwrap();
 
         let rate_limiter = Arc::new(RateLimiter::new());
         let live_query_manager = app_context.live_query_manager();

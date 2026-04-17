@@ -1,6 +1,6 @@
+use kalamdb_commons::{Role, UserId};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use kalamdb_commons::{Role, UserId};
 
 use crate::models::KalamCellValue;
 use crate::models::SchemaField;

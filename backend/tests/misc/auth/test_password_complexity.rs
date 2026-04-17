@@ -31,9 +31,7 @@ async fn create_admin_user(app_context: &Arc<AppContext>) -> UserId {
     let now = chrono::Utc::now().timestamp_millis();
 
     // If user already exists (singleton AppContext across tests), return existing id
-    if let Ok(Some(existing)) =
-        app_context.system_tables().users().get_user_by_id(&user_id)
-    {
+    if let Ok(Some(existing)) = app_context.system_tables().users().get_user_by_id(&user_id) {
         return existing.user_id;
     }
 

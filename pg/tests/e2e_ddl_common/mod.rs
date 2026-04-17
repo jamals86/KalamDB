@@ -483,8 +483,7 @@ impl DdlTestEnv {
         let config = kalamdb_auth_config();
 
         if let Some(token) =
-            try_login(client, &config.base_url, &config.login_user, &config.login_password)
-                .await
+            try_login(client, &config.base_url, &config.login_user, &config.login_password).await
         {
             return Ok(token);
         }
@@ -502,8 +501,7 @@ impl DdlTestEnv {
             .await;
 
         if let Some(token) =
-            try_login(client, &config.base_url, &config.login_user, &config.login_password)
-                .await
+            try_login(client, &config.base_url, &config.login_user, &config.login_password).await
         {
             return Ok(token);
         }

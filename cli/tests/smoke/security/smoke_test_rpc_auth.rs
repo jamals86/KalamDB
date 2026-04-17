@@ -186,11 +186,7 @@ fn smoke_rpc_non_login_auth_endpoints_reject_basic_auth() {
     block(async {
         let auth_header = reqwest::header::HeaderValue::from_str(&format!(
             "Basic {}",
-            general_purpose::STANDARD.encode(format!(
-                "{}:{}",
-                admin_username(),
-                admin_password()
-            ))
+            general_purpose::STANDARD.encode(format!("{}:{}", admin_username(), admin_password()))
         ))
         .expect("valid basic auth header");
 

@@ -17,7 +17,8 @@ pub fn handle_credentials(cli: &Cli, credential_store: &mut FileCredentialStore)
             for instance in instances {
                 // Show additional info if available
                 if let Ok(Some(creds)) = credential_store.get_credentials(&instance) {
-                    let user_info = creds.user.as_ref().map(|user| user.as_str()).unwrap_or("unknown");
+                    let user_info =
+                        creds.user.as_ref().map(|user| user.as_str()).unwrap_or("unknown");
                     let expired = if creds.is_expired() { " (expired)" } else { "" };
                     println!("  • {} (user: {}){}", instance, user_info, expired);
                 } else {

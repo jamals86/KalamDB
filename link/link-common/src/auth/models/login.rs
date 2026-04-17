@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use kalamdb_commons::{Role, UserId};
+use serde::{Deserialize, Serialize};
 
 /// Login request body for authentication
 #[derive(Debug, Clone, Serialize, Deserialize)]

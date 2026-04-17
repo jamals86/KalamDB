@@ -136,7 +136,7 @@ function parseChatRow(message) {
 async function insertUserMessage(client, tableName, room, messageId, content) {
   const sql = [
     `INSERT INTO ${tableName} (id, room, role, sender_username, content)`,
-    `VALUES ('${messageId}', '${room}', 'user', '${username}', '${content.replace(/'/g, "''")}')`,
+    `VALUES ('${messageId}', '${room}', 'user', '${user}', '${content.replace(/'/g, "''")}')`,
   ].join(' ');
   await client.query(sql);
 }

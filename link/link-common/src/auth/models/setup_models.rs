@@ -1,7 +1,7 @@
 //! Server setup request and response models.
 
-use serde::{Deserialize, Serialize};
 use kalamdb_commons::{Role, UserId};
+use serde::{Deserialize, Serialize};
 
 /// Server setup request body
 #[derive(Debug, Clone, Serialize, Deserialize)]

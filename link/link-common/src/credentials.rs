@@ -409,10 +409,7 @@ mod tests {
             store.get_credentials("local").unwrap().unwrap().user,
             Some(UserId::from("alice"))
         );
-        assert_eq!(
-            store.get_credentials("prod").unwrap().unwrap().user,
-            Some(UserId::from("bob"))
-        );
+        assert_eq!(store.get_credentials("prod").unwrap().unwrap().user, Some(UserId::from("bob")));
         assert_eq!(
             store.get_credentials("dev").unwrap().unwrap().user,
             Some(UserId::from("carol"))

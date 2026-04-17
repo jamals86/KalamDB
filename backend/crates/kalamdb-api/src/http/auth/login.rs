@@ -11,8 +11,10 @@ use kalamdb_auth::{
 };
 use kalamdb_commons::Role;
 use kalamdb_configs::AuthSettings;
+use kalamdb_core::app_context::AppContext;
 use std::sync::Arc;
 
+use super::audit;
 use super::map_auth_error_to_response;
 use super::models::{AuthErrorResponse, LoginRequest, LoginResponse, UserInfo};
 use crate::limiter::RateLimiter;
@@ -25,6 +27,7 @@ use kalamdb_jobs::health_monitor::record_activity_now;
 /// distinguish normal API tokens from accounts allowed to enter the Admin UI.
 pub async fn login_handler(
     req: HttpRequest,
+    app_context: web::Data<Arc<AppContext>>,
     user_repo: web::Data<Arc<dyn UserRepository>>,
     config: web::Data<AuthSettings>,
     rate_limiter: web::Data<Arc<RateLimiter>>,
@@ -116,6 +119,10 @@ pub async fn login_handler(
     let updated_at = chrono::DateTime::from_timestamp_millis(user.updated_at)
         .unwrap_or_else(chrono::Utc::now)
         .to_rfc3339();
+
+    if admin_ui_access {
+        audit::record_admin_login(app_context.get_ref(), &user.user_id, &connection_info).await;
+    }
 
     HttpResponse::Ok()
         .cookie(auth_cookie)

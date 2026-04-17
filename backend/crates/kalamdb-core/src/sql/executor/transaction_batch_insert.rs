@@ -291,7 +291,9 @@ fn prepare_statement_default(
         )),
         FastInsertDefaultTemplate::CurrentUser => {
             let user_id = exec_ctx.user_id();
-            Ok(PreparedDefaultValue::Constant(ScalarValue::Utf8(Some(user_id.as_str().to_string()))))
+            Ok(PreparedDefaultValue::Constant(ScalarValue::Utf8(Some(
+                user_id.as_str().to_string(),
+            ))))
         },
         FastInsertDefaultTemplate::SnowflakeId => {
             Ok(PreparedDefaultValue::Volatile(VolatileDefaultFunction::SnowflakeId))

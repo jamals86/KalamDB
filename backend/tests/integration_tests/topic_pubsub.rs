@@ -584,9 +584,7 @@ async fn test_http_api_consume_ack_option_combinations() {
     let topic = format!("{}.{}", namespace, topic_table);
     let source_table = format!("{}.{}", namespace, table);
 
-    let auth_header = server
-        .bearer_auth_header("root")
-        .expect("Failed to create root auth header");
+    let auth_header = server.bearer_auth_header("root").expect("Failed to create root auth header");
 
     let create_namespace = server
         .execute_sql(&format!("CREATE NAMESPACE {}", namespace))

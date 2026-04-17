@@ -40,7 +40,7 @@ const MAX_AGENT_EVENTS = 40;
 
 const ROOM = import.meta.env.VITE_CHAT_ROOM ?? 'main';
 const ROOM_SQL = ROOM.replace(/'/g, "''");
-const CHAT_USER = import.meta.env.VITE_KALAMDB_USER ?? 'admin';
+const CHAT_USERNAME = import.meta.env.VITE_KALAMDB_USER ?? 'admin';
 const CHAT_SQL = [
   'SELECT id, role, author, content, created_at',
   'FROM chat_demo.messages',
@@ -56,7 +56,7 @@ function createAuthedClient() {
   return createClient({
     url: import.meta.env.VITE_KALAMDB_URL ?? 'http://127.0.0.1:8080',
     authProvider: async () => Auth.basic(
-      CHAT_USER,
+      CHAT_USERNAME,
       import.meta.env.VITE_KALAMDB_PASSWORD ?? 'kalamdb123',
     ),
     disableCompression: true,

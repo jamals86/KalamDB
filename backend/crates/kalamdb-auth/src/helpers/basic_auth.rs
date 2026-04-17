@@ -68,7 +68,9 @@ fn extract_credentials(credentials: &str) -> AuthResult<(String, String)> {
     })?;
 
     let password = parts.next().ok_or_else(|| {
-        AuthError::MalformedAuthorization("Credentials must be in format 'user:password'".to_string())
+        AuthError::MalformedAuthorization(
+            "Credentials must be in format 'user:password'".to_string(),
+        )
     })?;
 
     Ok((user.to_string(), password.to_string()))

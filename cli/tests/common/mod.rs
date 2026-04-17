@@ -553,11 +553,11 @@ impl TestAuthManager {
                 .timeouts(
                     KalamLinkTimeouts::builder()
                         .connection_timeout_secs(5)
-                        .receive_timeout_secs(120)
-                        .send_timeout_secs(30)
+                        .receive_timeout_secs(30)
+                        .send_timeout_secs(10)
                         .subscribe_timeout_secs(10)
                         .auth_timeout_secs(10)
-                        .initial_data_timeout(Duration::from_secs(120))
+                        .initial_data_timeout(Duration::from_secs(30))
                         .build(),
                 )
                 .build()
@@ -571,11 +571,11 @@ impl TestAuthManager {
             .timeouts(
                 KalamLinkTimeouts::builder()
                     .connection_timeout_secs(5)
-                    .receive_timeout_secs(120)
-                    .send_timeout_secs(30)
+                    .receive_timeout_secs(30)
+                    .send_timeout_secs(10)
                     .subscribe_timeout_secs(10)
                     .auth_timeout_secs(10)
-                    .initial_data_timeout(Duration::from_secs(120))
+                    .initial_data_timeout(Duration::from_secs(30))
                     .build(),
             )
             .build()
@@ -3024,11 +3024,11 @@ fn execute_sql_via_client_internal(
                 {
                     let timeouts = KalamLinkTimeouts::builder()
                         .connection_timeout_secs(5)
-                        .receive_timeout_secs(120)
-                        .send_timeout_secs(30)
-                        .subscribe_timeout_secs(20)
+                        .receive_timeout_secs(30)
+                        .send_timeout_secs(10)
+                        .subscribe_timeout_secs(10)
                         .auth_timeout_secs(10)
-                        .initial_data_timeout(Duration::from_secs(120))
+                        .initial_data_timeout(Duration::from_secs(30))
                         .build();
 
                     let client = if username == default_username() && password == default_password()
@@ -3502,10 +3502,7 @@ pub fn ensure_cli_auth_ready_on_server(username: &str, password: &str, server: &
     }
 
     if get_access_token_for_url_sync(server, username, password).is_none() {
-        panic!(
-            "Failed to prepare CLI login for user '{}' on {}",
-            username, server
-        );
+        panic!("Failed to prepare CLI login for user '{}' on {}", username, server);
     }
 
     let timeouts = KalamLinkTimeouts::builder()
@@ -3521,9 +3518,9 @@ pub fn ensure_cli_auth_ready_on_server(username: &str, password: &str, server: &
     let mut last_error = None;
     for _ in 0..3 {
         match build_client_for_url_with_timeouts(server, username, password, timeouts.clone()) {
-            Ok(client) => match get_shared_runtime().block_on(async {
-                client.execute_query(query, None, None, None).await
-            }) {
+            Ok(client) => match get_shared_runtime()
+                .block_on(async { client.execute_query(query, None, None, None).await })
+            {
                 Ok(_) => return,
                 Err(err) => last_error = Some(err.to_string()),
             },
@@ -3991,11 +3988,11 @@ impl SubscriptionListener {
                     default_password(),
                     KalamLinkTimeouts::builder()
                         .connection_timeout_secs(5)
-                        .receive_timeout_secs(120)
-                        .send_timeout_secs(30)
+                        .receive_timeout_secs(30)
+                        .send_timeout_secs(10)
                         .subscribe_timeout_secs(10)
                         .auth_timeout_secs(10)
-                        .initial_data_timeout(Duration::from_secs(120))
+                        .initial_data_timeout(Duration::from_secs(30))
                         .build(),
                 ) {
                     Ok(c) => c,

@@ -317,10 +317,8 @@ fn test_preprovisioned_oauth_user_via_bearer() {
         escaped_user_id
     )));
 
-    let create_sql = format!(
-        "CREATE USER '{}' WITH OAUTH '{}' ROLE 'user'",
-        escaped_user_id, escaped_payload
-    );
+    let create_sql =
+        format!("CREATE USER '{}' WITH OAUTH '{}' ROLE 'user'", escaped_user_id, escaped_payload);
     rt.block_on(execute_sql_via_http_as_root(&create_sql))
         .expect("Failed to pre-create Keycloak OAuth user");
 
@@ -385,10 +383,7 @@ fn test_preprovisioned_oauth_user_via_bearer() {
     }
 
     // Cleanup
-    let _ = rt.block_on(execute_sql_via_http_as_root(&format!(
-        "DROP USER '{}'",
-        escaped_user_id
-    )));
+    let _ = rt.block_on(execute_sql_via_http_as_root(&format!("DROP USER '{}'", escaped_user_id)));
 }
 
 /// Verify that HS256 tokens claiming an external (Keycloak) issuer are rejected.

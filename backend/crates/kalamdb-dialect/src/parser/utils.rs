@@ -3,10 +3,15 @@
 //! This module provides shared parsing helpers to avoid code duplication across
 //! custom parsers (CREATE STORAGE, STORAGE FLUSH, KILL JOB, etc.).
 
+use core::ops::ControlFlow;
 use kalamdb_commons::TableId;
 use once_cell::sync::Lazy;
 use regex::Regex;
-use sqlparser::ast::{ObjectNamePart, Statement, TableFactor, TableObject};
+use sqlparser::ast::{
+    BinaryOperator, Expr, Function, FunctionArg, FunctionArgExpr, FunctionArgumentList,
+    FunctionArguments, Ident, ObjectName, ObjectNamePart, Statement, TableFactor, TableObject,
+    VisitMut, VisitorMut,
+};
 use sqlparser::dialect::Dialect;
 use sqlparser::parser::{Parser, ParserError, ParserOptions};
 use sqlparser::tokenizer::{Span, Token};
@@ -52,9 +57,83 @@ pub fn rewrite_context_functions_for_datafusion(sql: &str) -> String {
     let sql = CURRENT_USER_CALL_RE.replace_all(&sql, "KDB_CURRENT_USER()");
     let sql = CURRENT_ROLE_CALL_RE.replace_all(&sql, "KDB_CURRENT_ROLE()");
     let sql = CURRENT_USER_KEYWORD_RE.replace_all(&sql, "${1}KDB_CURRENT_USER()${3}");
-    CURRENT_ROLE_KEYWORD_RE
+    let sql = CURRENT_ROLE_KEYWORD_RE
         .replace_all(&sql, "${1}KDB_CURRENT_ROLE()${3}")
-        .into_owned()
+        .into_owned();
+
+    rewrite_json_operators_for_datafusion(&sql)
+}
+
+fn rewrite_json_operators_for_datafusion(sql: &str) -> String {
+    let dialect = KalamDbDialect::default();
+    let mut statements = match parse_sql_statements(sql, &dialect) {
+        Ok(statements) => statements,
+        Err(_) => return sql.to_string(),
+    };
+
+    let mut visitor = JsonOperatorRewriter;
+    let _ = statements.visit(&mut visitor);
+
+    statements_to_sql(&statements)
+}
+
+fn statements_to_sql(statements: &[Statement]) -> String {
+    statements
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+struct JsonOperatorRewriter;
+
+impl VisitorMut for JsonOperatorRewriter {
+    type Break = ();
+
+    fn post_visit_expr(&mut self, expr: &mut Expr) -> ControlFlow<Self::Break> {
+        if let Some(rewritten) = rewrite_json_expr(expr) {
+            *expr = rewritten;
+        }
+        ControlFlow::Continue(())
+    }
+}
+
+fn rewrite_json_expr(expr: &Expr) -> Option<Expr> {
+    let Expr::BinaryOp { left, op, right } = expr else {
+        return None;
+    };
+
+    let function_name = match op {
+        BinaryOperator::Arrow => "json_get_json",
+        BinaryOperator::LongArrow => "json_as_text",
+        BinaryOperator::Question => "json_contains",
+        _ => return None,
+    };
+
+    Some(make_function_call(
+        function_name,
+        vec![(**left).clone(), (**right).clone()],
+    ))
+}
+
+fn make_function_call(name: &str, args: Vec<Expr>) -> Expr {
+    Expr::Function(Function {
+        name: ObjectName::from(vec![Ident::new(name)]),
+        uses_odbc_syntax: false,
+        parameters: FunctionArguments::None,
+        args: FunctionArguments::List(FunctionArgumentList {
+            duplicate_treatment: None,
+            args: args
+                .into_iter()
+                .map(|arg| FunctionArg::Unnamed(FunctionArgExpr::Expr(arg)))
+                .collect(),
+            clauses: vec![],
+        }),
+        filter: None,
+        null_treatment: None,
+        over: None,
+        within_group: vec![],
+    })
 }
 
 /// Parse SQL into statements using KalamDB defaults (options + recursion limit)
@@ -632,5 +711,60 @@ mod tests {
             "SELECT CURRENT_USER AS username, CURRENT_ROLE AS role",
         );
         assert_eq!(rewritten, "SELECT KDB_CURRENT_USER() AS username, KDB_CURRENT_ROLE() AS role");
+    }
+
+    #[test]
+    fn test_rewrite_json_arrow_operator_for_datafusion() {
+        let rewritten = rewrite_context_functions_for_datafusion(
+            "SELECT doc->'profile' AS profile FROM docs",
+        );
+        assert_eq!(
+            rewritten,
+            "SELECT json_get_json(doc, 'profile') AS profile FROM docs"
+        );
+    }
+
+    #[test]
+    fn test_rewrite_json_long_arrow_operator_for_datafusion() {
+        let rewritten = rewrite_context_functions_for_datafusion(
+            "SELECT doc->>'name' AS name FROM docs",
+        );
+        assert_eq!(
+            rewritten,
+            "SELECT json_as_text(doc, 'name') AS name FROM docs"
+        );
+    }
+
+    #[test]
+    fn test_rewrite_json_question_operator_for_datafusion() {
+        let rewritten = rewrite_context_functions_for_datafusion(
+            "SELECT doc ? 'customer_id' FROM docs",
+        );
+        assert_eq!(
+            rewritten,
+            "SELECT json_contains(doc, 'customer_id') FROM docs"
+        );
+    }
+
+    #[test]
+    fn test_rewrite_nested_json_operators_for_datafusion() {
+        let rewritten = rewrite_context_functions_for_datafusion(
+            "SELECT doc->'user'->'address'->>'zip' AS zip FROM docs",
+        );
+        assert_eq!(
+            rewritten,
+            "SELECT json_as_text(json_get_json(json_get_json(doc, 'user'), 'address'), 'zip') AS zip FROM docs"
+        );
+    }
+
+    #[test]
+    fn test_rewrite_json_operator_in_where_clause_for_datafusion() {
+        let rewritten = rewrite_context_functions_for_datafusion(
+            "SELECT doc->>'priority' AS p FROM docs WHERE doc->>'status' = 'active'",
+        );
+        assert_eq!(
+            rewritten,
+            "SELECT json_as_text(doc, 'priority') AS p FROM docs WHERE json_as_text(doc, 'status') = 'active'"
+        );
     }
 }

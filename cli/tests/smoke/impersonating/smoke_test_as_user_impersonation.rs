@@ -94,8 +94,7 @@ fn smoke_as_user_blocked_for_regular_user() {
     create_user_with_retry(&target_user, password, "user");
 
     // Get the target user's user_id (UUID)
-    let target_user_id =
-        get_user_id(&target_user).expect("Failed to get target user_id");
+    let target_user_id = get_user_id(&target_user).expect("Failed to get target user_id");
 
     // Attempt INSERT AS USER as regular user - should FAIL
     let insert_sql = format!(
@@ -160,8 +159,7 @@ fn smoke_as_user_insert_with_service_role() {
     create_user_with_retry(&target_user, password, "user");
 
     // Get user_ids
-    let target_user_id =
-        get_user_id(&target_user).expect("Failed to get target user_id");
+    let target_user_id = get_user_id(&target_user).expect("Failed to get target user_id");
 
     // INSERT AS USER target_user (executed by service user)
     let insert_sql = format!(
@@ -235,8 +233,7 @@ fn smoke_as_user_update_with_dba_role() {
     create_user_with_retry(&target_user, password, "user");
 
     // Get user_id
-    let target_user_id =
-        get_user_id(&target_user).expect("Failed to get target user_id");
+    let target_user_id = get_user_id(&target_user).expect("Failed to get target user_id");
 
     // INSERT AS USER first
     let insert_sql = format!(
@@ -381,8 +378,7 @@ fn smoke_as_user_rejected_on_shared_table() {
     create_user_with_retry(&target_user, password, "user");
 
     // Get user_id
-    let target_user_id =
-        get_user_id(&target_user).expect("Failed to get target user_id");
+    let target_user_id = get_user_id(&target_user).expect("Failed to get target user_id");
 
     // Attempt INSERT AS USER on SHARED table - should FAIL
     let insert_sql = format!(
