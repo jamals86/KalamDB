@@ -11,6 +11,7 @@
 
 use super::test_support::{auth_helper, TestServer};
 use base64::Engine as _;
+use kalamdb_auth::AuthError;
 use kalamdb_commons::{
     models::{ConnectionInfo},
     Role,
@@ -189,4 +190,49 @@ async fn test_basic_auth_nonexistent_user() {
     assert!(result.is_err(), "Authentication should fail for non-existent user");
 
     println!("✓ Nonexistent user correctly rejected");
+}
+
+/// Test authentication failure when a bearer token carries a stale elevated role.
+#[tokio::test]
+async fn test_bearer_auth_rejects_role_claim_mismatch() {
+    let server = TestServer::new_shared().await;
+
+    let username = "elevated_user";
+    let password = "SecurePassword123!";
+    auth_helper::create_test_user(&server, username, password, Role::Dba).await;
+
+    let user_id = kalamdb_commons::models::UserId::new(username);
+    let users_provider = server.app_context.system_tables().users();
+    let mut stored_user = users_provider
+        .get_user_by_id(&user_id)
+        .expect("Failed to load test user")
+        .expect("Test user should exist");
+    stored_user.role = Role::User;
+    stored_user.updated_at = chrono::Utc::now().timestamp_millis();
+    users_provider
+        .update_user(stored_user)
+        .expect("Failed to downgrade test user role");
+
+    use kalamdb_auth::{authenticate, AuthRequest, CoreUsersRepo, UserRepository};
+
+    let connection_info = ConnectionInfo::new(Some("127.0.0.1".to_string()));
+    let secret = kalamdb_configs::defaults::default_auth_jwt_secret();
+    let (token, _claims) = kalamdb_auth::providers::jwt_auth::create_and_sign_token(
+        &user_id,
+        &Role::Dba,
+        Some("elevated_user@example.com"),
+        Some(1),
+        &secret,
+    )
+    .expect("Failed to create JWT token");
+    let auth_request = AuthRequest::Header(format!("Bearer {}", token));
+
+    let user_repo: Arc<dyn UserRepository> =
+        Arc::new(CoreUsersRepo::new(server.app_context.system_tables().users()));
+
+    let result = authenticate(auth_request, &connection_info, &user_repo).await;
+
+    assert!(matches!(result, Err(AuthError::InvalidCredentials(_))));
+
+    println!("✓ Stale elevated bearer token correctly rejected");
 }

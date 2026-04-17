@@ -73,7 +73,7 @@ fn test_cli_subscription_commands() {
     let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(server_url())
-        .arg("--username")
+        .arg("--user")
         .arg(default_username())
         .arg("--password")
         .arg(root_password())
@@ -86,7 +86,7 @@ fn test_cli_subscription_commands() {
     let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(server_url())
-        .arg("--username")
+        .arg("--user")
         .arg(default_username())
         .arg("--password")
         .arg(root_password())
@@ -200,7 +200,7 @@ fn test_cli_subscription_with_initial_data() {
     let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(server_url())
-        .arg("--username")
+        .arg("--user")
         .arg(default_username())
         .arg("--password")
         .arg(root_password())
@@ -254,7 +254,7 @@ fn test_cli_subscription_comprehensive_crud() {
     let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(server_url())
-        .arg("--username")
+        .arg("--user")
         .arg(default_username())
         .arg("--password")
         .arg(root_password())
@@ -276,7 +276,7 @@ fn test_cli_subscription_comprehensive_crud() {
     let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(server_url())
-        .arg("--username")
+        .arg("--user")
         .arg(default_username())
         .arg("--password")
         .arg(root_password())
@@ -349,7 +349,7 @@ fn test_cli_subscription_comprehensive_crud() {
     let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(server_url())
-        .arg("--username")
+        .arg("--user")
         .arg(default_username())
         .arg("--password")
         .arg(root_password())

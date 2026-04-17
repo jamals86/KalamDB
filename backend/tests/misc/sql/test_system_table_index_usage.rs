@@ -4,13 +4,13 @@
 //! for efficient lookups rather than full table scans.
 //!
 //! ## Tests Covered
-//! - system.users: username index for `WHERE username = '...'` queries
+//! - system.users: user_id index for `WHERE user_id = '...'` queries
 //! - system.jobs: status index for `WHERE status = '...'` queries
 //! - system.live: active subscription visibility (basic verification)
 //!
 //! ## Strategy
 //! 1. Insert multiple records
-//! 2. Query with indexed filter (e.g., WHERE username = 'user1')
+//! 2. Query with indexed filter (e.g., WHERE user_id = 'user1')
 //! 3. Verify correct results are returned
 //! 4. Measure performance to ensure O(1) lookup behavior
 
@@ -35,7 +35,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 /// 4. Compare query latency
 #[actix_web::test]
 #[ntest::timeout(60000)]
-async fn test_system_users_username_index() {
+async fn test_system_users_user_id_index() {
     let server = TestServer::new_shared().await;
     let run_id = SystemTime::now()
         .duration_since(UNIX_EPOCH)

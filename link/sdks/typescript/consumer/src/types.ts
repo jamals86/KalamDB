@@ -14,7 +14,6 @@ export type {
   JwtAuthCredentials,
   LoginResponse,
   LoginUserInfo,
-  NoAuthCredentials,
   QueryResponse,
   RowData,
   UserId,

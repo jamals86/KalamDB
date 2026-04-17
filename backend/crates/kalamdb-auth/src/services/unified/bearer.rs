@@ -85,7 +85,21 @@ pub(super) async fn authenticate_bearer(
             ));
         }
 
-        let role = claims.role.unwrap_or(user.role);
+        if let Some(claimed_role) = claims.role {
+            if claimed_role != user.role {
+                log::warn!(
+                    "Bearer token role mismatch: claimed={:?}, actual={:?} for user={}",
+                    claimed_role,
+                    user.role,
+                    user.user_id.as_str()
+                );
+                return Err(AuthError::InvalidCredentials(
+                    "Token role does not match user role".to_string(),
+                ));
+            }
+        }
+
+        let role = user.role;
 
         tracing::trace!(user_id = %user.user_id, role = ?role, "Bearer authentication succeeded");
 

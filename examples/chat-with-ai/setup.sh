@@ -57,7 +57,7 @@ curl -fsS "$KALAMDB_URL/health" >/dev/null || fail "KalamDB is not reachable at 
 
 ACCESS_TOKEN="$(curl -fsS -X POST "$KALAMDB_URL/v1/api/auth/login" \
   -H "Content-Type: application/json" \
-  -d "{\"username\":\"root\",\"password\":\"$ROOT_PASSWORD\"}" | jq -r '.access_token // empty')"
+  -d "{\"user\":\"root\",\"password\":\"$ROOT_PASSWORD\"}" | jq -r '.access_token // empty')"
 [[ -n "$ACCESS_TOKEN" ]] || fail "Failed to obtain root access token"
 
 execute_sql() {

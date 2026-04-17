@@ -266,7 +266,7 @@ async fn test_password_security_e2e() {
 
     // Verify user exists by querying system.users
     let query_sql = format!(
-        "SELECT user_id, username, role FROM system.users WHERE user_id = '{}'",
+        "SELECT user_id, role FROM system.users WHERE user_id = '{}'",
         user.user_id.as_str()
     );
     let response = server.execute_sql_as_user(&query_sql, "system").await;

@@ -461,17 +461,17 @@ export interface ClientOptions {
   /**
    * Authentication provider callback.
    *
-   * Called before each (re-)connection to obtain credentials — supports
-   * JWT, basic, and anonymous auth. Ideal for refresh-token flows where
+    * Called before each (re-)connection to obtain credentials. Ideal for
+    * refresh-token flows where
    * the callback is responsible for refreshing expired tokens.
    *
    * Return `Auth.jwt(token)` for JWT-based auth, `Auth.basic(user, pass)`
-  * for user/password (the SDK automatically exchanges these for a JWT
-   * before opening the WebSocket), or `Auth.none()` for anonymous access.
+    * for user/password (the SDK automatically exchanges these for a JWT
+    * before opening the WebSocket).
    *
    * @example
    * ```typescript
-  * import { Auth, type AuthProvider } from '@kalamdb/client';
+    * import { Auth, type AuthProvider } from '@kalamdb/client';
    *
    * // JWT with auto-refresh
    * const authProvider: AuthProvider = async () => {

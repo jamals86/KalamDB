@@ -177,10 +177,10 @@ pub enum WebSocketMessage {
     /// Always sent as JSON text, even when msgpack was negotiated; the
     /// negotiated protocol takes effect for all *subsequent* frames.
     AuthSuccess {
-        /// Authenticated user ID
-        user_id: UserId,
+        /// Authenticated canonical user identifier
+        user: UserId,
         /// User role
-        role: String,
+        role: crate::models::Role,
         /// Negotiated protocol echoed back to the client.
         protocol: ProtocolOptions,
     },
@@ -1213,8 +1213,8 @@ mod tests {
     #[test]
     fn test_auth_success_with_protocol() {
         let msg = WebSocketMessage::AuthSuccess {
-            user_id: UserId::from("user-1"),
-            role: "admin".to_string(),
+            user: UserId::from("user-1"),
+            role: crate::models::Role::Dba,
             protocol: ProtocolOptions {
                 serialization: SerializationType::MessagePack,
                 compression: CompressionType::Gzip,
@@ -1254,8 +1254,8 @@ mod tests {
     #[test]
     fn test_websocket_message_msgpack_roundtrip() {
         let msg = WebSocketMessage::AuthSuccess {
-            user_id: UserId::from("user-1"),
-            role: "admin".to_string(),
+            user: UserId::from("user-1"),
+            role: crate::models::Role::Dba,
             protocol: ProtocolOptions {
                 serialization: SerializationType::MessagePack,
                 compression: CompressionType::None,
@@ -1264,13 +1264,9 @@ mod tests {
         let bytes = rmp_serde::to_vec_named(&msg).unwrap();
         let parsed: WebSocketMessage = rmp_serde::from_slice(&bytes).unwrap();
         match parsed {
-            WebSocketMessage::AuthSuccess {
-                user_id,
-                role,
-                protocol,
-            } => {
-                assert_eq!(user_id, UserId::from("user-1"));
-                assert_eq!(role, "admin");
+            WebSocketMessage::AuthSuccess { user, role, protocol } => {
+                assert_eq!(user, UserId::from("user-1"));
+                assert_eq!(role, crate::models::Role::Dba);
                 assert_eq!(protocol.serialization, SerializationType::MessagePack);
             },
             _ => panic!("Expected AuthSuccess"),

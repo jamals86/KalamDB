@@ -33,14 +33,12 @@ export {
   isAuthenticated,
   isBasicAuth,
   isJwtAuth,
-  isNoAuth,
 } from './auth.js';
 
 export type {
   AuthCredentials,
   BasicAuthCredentials,
   JwtAuthCredentials,
-  NoAuthCredentials,
   AuthProvider,
 } from './auth.js';
 

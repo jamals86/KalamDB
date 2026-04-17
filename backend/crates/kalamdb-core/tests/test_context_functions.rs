@@ -1,42 +1,16 @@
 //! Integration tests for SQL context functions: KDB_CURRENT_USER(), KDB_CURRENT_USER_ID(), KDB_CURRENT_ROLE()
 
 use datafusion::prelude::SessionContext;
-use kalamdb_commons::{NodeId, Role, UserId};
-use kalamdb_configs::ServerConfig;
-use kalamdb_core::app_context::AppContext;
+use kalamdb_commons::{Role, UserId};
 use kalamdb_core::sql::context::ExecutionContext;
-use kalamdb_core::sql::context::ExecutionResult;
 use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
-use kalamdb_core::sql::executor::handler_registry::HandlerRegistry;
-use kalamdb_core::sql::executor::SqlExecutor;
 use kalamdb_session::AuthSession;
-use kalamdb_store::test_utils::TestDb;
 use std::sync::Arc;
-
-fn create_executor(app_context: Arc<AppContext>) -> SqlExecutor {
-    let registry = Arc::new(HandlerRegistry::new());
-    kalamdb_handlers::register_all_handlers(&registry, app_context.clone(), false);
-    SqlExecutor::new(app_context, registry)
-}
 
 fn create_test_session() -> Arc<SessionContext> {
     let factory =
         DataFusionSessionFactory::new().expect("Failed to create DataFusionSessionFactory");
     Arc::new(factory.create_session())
-}
-
-fn create_test_app_context() -> Arc<AppContext> {
-    let test_db = TestDb::with_system_tables().expect("Failed to create test database");
-    let storage_base_path = test_db.storage_dir().expect("Failed to create storage directory");
-    let app_context = AppContext::create_isolated(
-        test_db.backend(),
-        NodeId::new(1),
-        storage_base_path.to_string_lossy().into_owned(),
-        ServerConfig::default(),
-    );
-
-    std::mem::forget(test_db);
-    app_context
 }
 
 #[tokio::test]
@@ -299,10 +273,10 @@ async fn test_all_three_functions_together() {
 }
 
 #[tokio::test]
-async fn test_sql_standard_context_function_aliases() {
+async fn test_context_function_execution_uses_rewritten_aliases() {
     let user_id = UserId::new("u_admin");
     let role = Role::Dba;
-    let app_context = create_test_app_context();
+    let session_context = create_test_session();
 
     let auth_session = AuthSession::with_auth_details(
         user_id,
@@ -311,22 +285,17 @@ async fn test_sql_standard_context_function_aliases() {
         kalamdb_session::AuthMethod::Bearer,
     );
 
-    let exec_ctx = ExecutionContext::from_session(auth_session, app_context.base_session_context());
-    let executor = create_executor(app_context);
+    let exec_ctx = ExecutionContext::from_session(auth_session, session_context);
+    let session = exec_ctx.create_session_with_user();
 
-    let result = executor
-        .execute(
-            "SELECT CURRENT_USER() AS current_user, CURRENT_USER_ID() AS user_id, CURRENT_ROLE() AS role",
-            &exec_ctx,
-            vec![],
+    let result = session
+        .sql(
+            "SELECT KDB_CURRENT_USER() AS current_user, KDB_CURRENT_USER_ID() AS user_id, KDB_CURRENT_ROLE() AS role",
         )
         .await;
     assert!(result.is_ok(), "Query failed: {:?}", result.err());
 
-    let batches = match result.unwrap() {
-        ExecutionResult::Rows { batches, .. } => batches,
-        other => panic!("Expected row result, got {:?}", other),
-    };
+    let batches = result.unwrap().collect().await.unwrap();
     assert_eq!(batches.len(), 1);
     assert_eq!(batches[0].num_rows(), 1);
 

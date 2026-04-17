@@ -15,7 +15,6 @@ export {
   isAuthenticated,
   isBasicAuth,
   isJwtAuth,
-  isNoAuth,
 } from '@kalamdb/client';
 
 export type {
@@ -26,7 +25,6 @@ export type {
   JwtAuthCredentials,
   LoginResponse,
   LoginUserInfo,
-  NoAuthCredentials,
   QueryResponse,
   RowData,
   UserId,

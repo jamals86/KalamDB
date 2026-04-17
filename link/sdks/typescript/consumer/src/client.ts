@@ -122,7 +122,7 @@ export class KalamConsumerClient {
     return this.sqlClient;
   }
 
-  getAuthType(): 'basic' | 'jwt' | 'none' {
+  getAuthType(): 'basic' | 'jwt' | null {
     return this.sqlClient.getAuthType();
   }
 
@@ -346,8 +346,6 @@ export class KalamConsumerClient {
         return `basic:${auth.user}:${auth.password}`;
       case 'jwt':
         return `jwt:${auth.token}`;
-      case 'none':
-        return 'none';
       default: {
         const exhaustive: never = auth;
         return String(exhaustive);

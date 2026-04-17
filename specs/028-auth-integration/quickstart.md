@@ -40,13 +40,32 @@ Implement the breaking auth cutover so every supported path uses one canonical i
 1. Run one backend compile batch after the major auth/system/session edit set.
 
 ```bash
-cd /Users/jamal/git/KalamDB/backend && cargo check > ../auth-integration-backend-check.txt 2>&1
+cd /Users/jamal/git/KalamDB && CARGO_TERM_COLOR=never cargo check \
+   -p kalamdb-server \
+   -p kalamdb-api \
+   -p kalamdb-auth \
+   -p kalamdb-session \
+   -p kalamdb-session-datafusion \
+   -p kalamdb-core \
+   -p kalamdb-system \
+   -p kalamdb-configs \
+   -p kalamdb-commons \
+   -p kalamdb-handlers-user \
+   -p kalamdb-raft \
+   -p kalamdb-plan-cache \
+   -p kalam-cli \
+   > auth-integration-backend-check.txt 2>&1
 ```
 
 2. Run one link workspace compile batch after the `link-common`, Dart bridge, and consumer edits.
 
 ```bash
-cd /Users/jamal/git/KalamDB/link && cargo check > ../auth-integration-link-check.txt 2>&1
+cd /Users/jamal/git/KalamDB && CARGO_TERM_COLOR=never cargo check \
+   -p link-common \
+   -p kalam-consumer \
+   -p kalam-consumer-wasm \
+   -p kalam-link-dart \
+   > auth-integration-link-check.txt 2>&1
 ```
 
 3. Regenerate the Dart SDK/bridge artifacts after the link model changes.

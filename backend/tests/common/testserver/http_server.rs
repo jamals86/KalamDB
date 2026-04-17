@@ -44,7 +44,7 @@ pub async fn acquire_test_lock() -> tokio::sync::MutexGuard<'static, ()> {
 
 fn root_jwt_auth_header(jwt_secret: &str) -> String {
     let (token, _claims) = kalamdb_auth::providers::jwt_auth::create_and_sign_token(
-        &UserId::new("1"),
+        &UserId::root(),
         &Role::System,
         None,
         Some(1),
@@ -272,10 +272,9 @@ impl HttpTestServer {
         } else {
             Role::User
         };
-        // Use username as user_id for non-root users in tests
-        // This allows USER tables to work correctly with partitioning
+        // Use the real built-in root user id, and otherwise mirror the test user id.
         let user_id = if username == "root" {
-            UserId::new("1")
+            UserId::root()
         } else {
             UserId::new(username)
         };

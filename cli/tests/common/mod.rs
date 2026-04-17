@@ -198,7 +198,7 @@ impl TestAuthManager {
         let setup_response = client
             .post(format!("{}/v1/api/auth/setup", base_url))
             .json(&json!({
-                "username": "admin",
+                "user": "admin",
                 "password": "kalamdb123",
                 "root_password": root_password,
                 "email": null
@@ -244,7 +244,7 @@ impl TestAuthManager {
             let response = client
                 .post(format!("{}/v1/api/auth/login", base_url))
                 .json(&json!({
-                    "username": username,
+                    "user": username,
                     "password": password
                 }))
                 .send()
@@ -3496,6 +3496,51 @@ pub fn create_cli_command() -> assert_cmd::Command {
     cmd
 }
 
+pub fn ensure_cli_auth_ready_on_server(username: &str, password: &str, server: &str) {
+    if !server_requires_auth_for_url(server).unwrap_or(true) {
+        return;
+    }
+
+    if get_access_token_for_url_sync(server, username, password).is_none() {
+        panic!(
+            "Failed to prepare CLI login for user '{}' on {}",
+            username, server
+        );
+    }
+
+    let timeouts = KalamLinkTimeouts::builder()
+        .connection_timeout_secs(10)
+        .receive_timeout_secs(30)
+        .send_timeout_secs(30)
+        .subscribe_timeout_secs(5)
+        .auth_timeout_secs(5)
+        .initial_data_timeout_secs(30)
+        .build();
+
+    let query = "SELECT name FROM system.namespaces LIMIT 1";
+    let mut last_error = None;
+    for _ in 0..3 {
+        match build_client_for_url_with_timeouts(server, username, password, timeouts.clone()) {
+            Ok(client) => match get_shared_runtime().block_on(async {
+                client.execute_query(query, None, None, None).await
+            }) {
+                Ok(_) => return,
+                Err(err) => last_error = Some(err.to_string()),
+            },
+            Err(err) => last_error = Some(err.to_string()),
+        }
+
+        std::thread::sleep(Duration::from_millis(250));
+    }
+
+    if let Some(err) = last_error {
+        panic!(
+            "Failed to prepare CLI query path for user '{}' on {}: {}",
+            username, server, err
+        );
+    }
+}
+
 /// Helper to create a CLI command with explicit authentication and URL.
 pub fn create_cli_command_with_auth(username: &str, password: &str) -> assert_cmd::Command {
     let base_url = if is_cluster_mode() {
@@ -3516,6 +3561,8 @@ pub fn create_cli_command_with_auth_for_server(
     SETUP_DONE.get_or_init(|| {
         ensure_cli_server_setup().expect("Failed to prepare CLI server setup");
     });
+
+    ensure_cli_auth_ready_on_server(username, password, server);
 
     let mut cmd = create_cli_command();
     cmd.arg("-u")

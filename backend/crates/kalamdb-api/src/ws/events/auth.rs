@@ -90,8 +90,8 @@ pub async fn complete_ws_auth(
     connection_state.set_protocol(protocol);
 
     let msg = WebSocketMessage::AuthSuccess {
-        user_id: user_id.clone(),
-        role: format!("{:?}", role),
+        user: user_id.clone(),
+        role,
         protocol,
     };
     let _ = send_json(session, &msg, compression).await;
@@ -119,8 +119,8 @@ pub async fn send_current_auth_success(
     if let (Some(user_id), Some(role)) = (connection_state.user_id(), connection_state.user_role())
     {
         let msg = WebSocketMessage::AuthSuccess {
-            user_id: user_id.clone(),
-            role: format!("{:?}", role),
+            user: user_id.clone(),
+            role,
             protocol: connection_state.protocol(),
         };
         let _ = send_json(session, &msg, compression).await;

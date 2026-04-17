@@ -191,7 +191,7 @@ pub async fn create_session(
 
     /// Run the server setup wizard
     ///
-    /// Returns the user id and password that were set up so the caller can login.
+    /// Returns the user and password that were set up so the caller can log in.
     async fn run_setup_wizard(server_url: &str) -> std::result::Result<(String, String), String> {
         println!();
         println!("╔═══════════════════════════════════════════════════════════════════╗");
@@ -205,7 +205,7 @@ pub async fn create_session(
         println!("╚═══════════════════════════════════════════════════════════════════╝");
         println!();
 
-        // Get DBA user id
+        // Get DBA user
         print!("Enter the user for your DBA account: ");
         io::stdout().flush().map_err(|e| e.to_string())?;
         let mut username = String::new();
@@ -395,7 +395,7 @@ pub async fn create_session(
         }
         println!();
 
-        // Prompt for user id
+        // Prompt for user
         print!("User: ");
         io::stdout()
             .flush()

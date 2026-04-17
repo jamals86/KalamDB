@@ -36,19 +36,19 @@ fn sql_first_cell_i64(result: &serde_json::Value) -> Option<i64> {
 }
 
 async fn create_kalam_test_user(env: &TestEnv, prefix: &str) -> KalamTestUser {
-    let username = unique_name(prefix);
-    let password = format!("pw_{username}");
+    let user_id = unique_name(prefix);
+    let password = format!("pw_{user_id}");
 
-    env.kalamdb_sql(&format!("CREATE USER '{username}' WITH PASSWORD '{password}' ROLE user"))
+    env.kalamdb_sql(&format!("CREATE USER '{user_id}' WITH PASSWORD '{password}' ROLE user"))
         .await;
 
     let lookup = env
-        .kalamdb_sql(&format!("SELECT user_id FROM system.users WHERE username = '{username}'"))
+        .kalamdb_sql(&format!("SELECT user_id FROM system.users WHERE user_id = '{user_id}'"))
         .await;
     let user_id = sql_first_cell_string(&lookup)
-        .unwrap_or_else(|| panic!("expected user_id for Kalam test user {username}"));
+        .unwrap_or_else(|| panic!("expected user_id for Kalam test user {user_id}"));
 
-    KalamTestUser { username, user_id }
+    KalamTestUser { username: user_id.clone(), user_id }
 }
 
 async fn wait_for_execute_as_user_count(

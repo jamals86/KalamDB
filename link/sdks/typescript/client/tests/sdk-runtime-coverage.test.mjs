@@ -180,7 +180,7 @@ function createRuntimeCoverageWasmClient() {
 test('queryRows wraps named_rows into KalamRow with typed cell access', async () => {
   const client = createClient({
     url: 'http://127.0.0.1:8080',
-    authProvider: async () => Auth.none(),
+    authProvider: async () => Auth.jwt('coverage-token'),
   });
   const fakeWasmClient = createRuntimeCoverageWasmClient();
   client.initialized = true;
@@ -203,7 +203,7 @@ test('queryRows wraps named_rows into KalamRow with typed cell access', async ()
 test('subscribeRows wraps change rows and oldValues as KalamRow instances', async () => {
   const client = createClient({
     url: 'http://127.0.0.1:8080',
-    authProvider: async () => Auth.none(),
+    authProvider: async () => Auth.jwt('coverage-token'),
   });
   const fakeWasmClient = createRuntimeCoverageWasmClient();
   client.initialized = true;
@@ -233,7 +233,7 @@ test('subscribeRows wraps change rows and oldValues as KalamRow instances', asyn
 test('liveTableRows delegates to live using SELECT * sugar', async () => {
   const client = createClient({
     url: 'http://127.0.0.1:8080',
-    authProvider: async () => Auth.none(),
+    authProvider: async () => Auth.jwt('coverage-token'),
   });
   const fakeWasmClient = createRuntimeCoverageWasmClient();
   client.initialized = true;
@@ -260,7 +260,7 @@ test('liveTableRows delegates to live using SELECT * sugar', async () => {
 test('live passes key columns through to Rust materialization', async () => {
   const client = createClient({
     url: 'http://127.0.0.1:8080',
-    authProvider: async () => Auth.none(),
+    authProvider: async () => Auth.jwt('coverage-token'),
   });
   const fakeWasmClient = createRuntimeCoverageWasmClient();
   client.initialized = true;

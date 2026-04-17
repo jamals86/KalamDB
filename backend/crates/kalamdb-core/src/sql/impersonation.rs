@@ -28,7 +28,7 @@ impl SqlImpersonationService {
         let app_ctx = self.app_context.clone();
         let target_name = target_user.to_string();
 
-        let target_user = tokio::task::spawn_blocking(move || {
+        let resolved_user = tokio::task::spawn_blocking(move || {
             let users_provider = app_ctx.system_tables().users();
             let target_user_id = UserId::from(target_name.clone());
             let user = users_provider
@@ -51,17 +51,17 @@ impl SqlImpersonationService {
         .map_err(|e| KalamDbError::ExecutionError(format!("Task join error: {}", e)))??;
 
         // No-op impersonation is always allowed.
-        if &target_user.user_id == actor_user_id {
-            return Ok(target_user.user_id);
+        if &resolved_user.user_id == actor_user_id {
+            return Ok(resolved_user.user_id);
         }
 
-        if !can_impersonate_role(actor_role, target_user.role) {
+        if !can_impersonate_role(actor_role, resolved_user.role) {
             return Err(KalamDbError::Unauthorized(format!(
                 "Role {:?} cannot execute as user '{}' with role {:?}",
-                actor_role, target_user, target_user.role
+                actor_role, target_user, resolved_user.role
             )));
         }
 
-        Ok(target_user.user_id)
+        Ok(resolved_user.user_id)
     }
 }

@@ -47,7 +47,7 @@ login_root() {
   local response
   response="$(curl -fsS -X POST "$KALAMDB_URL/v1/api/auth/login" \
     -H "Content-Type: application/json" \
-    -d "{\"username\":\"root\",\"password\":\"$ROOT_PASSWORD\"}")"
+    -d "{\"user\":\"root\",\"password\":\"$ROOT_PASSWORD\"}")"
 
   ACCESS_TOKEN="$(echo "$response" | jq -r '.access_token // empty')"
   if [[ -z "$ACCESS_TOKEN" ]]; then

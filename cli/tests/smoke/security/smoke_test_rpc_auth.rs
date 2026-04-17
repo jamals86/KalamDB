@@ -279,7 +279,7 @@ fn smoke_rpc_login_wrong_password_returns_401_generic_message() {
         let response = http_client()
             .post(login_url())
             .json(&json!({
-                "username": "admin",
+                "user": "admin",
                 "password": "this-is-definitely-wrong-password-xyz"
             }))
             .send()
@@ -327,7 +327,7 @@ fn smoke_rpc_login_nonexistent_user_matches_wrong_password_response() {
     let (status_real_user, msg_real_user) = block(async {
         let resp = http_client()
             .post(login_url())
-            .json(&json!({ "username": "admin", "password": "wrong-pass-abc123" }))
+            .json(&json!({ "user": "admin", "password": "wrong-pass-abc123" }))
             .send()
             .await
             .expect("Request failed");
@@ -346,7 +346,7 @@ fn smoke_rpc_login_nonexistent_user_matches_wrong_password_response() {
         let resp = http_client()
             .post(login_url())
             .json(&json!({
-                "username": "this_user_definitely_does_not_exist_xyz",
+                "user": "this_user_definitely_does_not_exist_xyz",
                 "password": "wrong-pass-abc123"
             }))
             .send()

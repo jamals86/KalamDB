@@ -90,7 +90,7 @@ type NodeUrlShim = {
   fileURLToPath(url: URL): string;
 };
 
-type WasmAuthProviderResult = { jwt: { token: string } } | null;
+type WasmAuthProviderResult = { jwt: { token: string } };
 
 const dynamicImport = new Function(
   'specifier',
@@ -114,7 +114,7 @@ function getNodeProcess(): NodeProcessShim | undefined {
  * Features:
  * - SQL query execution (via WASM)
  * - Real-time WebSocket subscriptions
- * - Multiple auth methods (Basic, JWT, Anonymous)
+ * - Multiple auth methods (Basic, JWT)
  * - Cross-platform (Node.js & Browser)
  * - Subscription tracking & management
  *
@@ -143,8 +143,8 @@ export class KalamDBClient {
   private initialized = false;
   private connecting: Promise<void> | null = null;
   private url: string;
-  /** Current auth state — updated by initialize() and mutated by login()/refreshToken(). */
-  private auth: AuthCredentials = { type: 'none' };
+  /** Current auth state — resolved lazily from authProvider during initialization. */
+  private auth: AuthCredentials | null = null;
   private _authProvider: AuthProvider;
   private authProviderMaxAttempts: number;
   private authProviderInitialBackoffMs: number;
@@ -273,9 +273,9 @@ export class KalamDBClient {
   /*  Auth helpers                                                    */
   /* ---------------------------------------------------------------- */
 
-  /** Get the current authentication type */
-  getAuthType(): 'basic' | 'jwt' | 'none' {
-    return this.auth.type;
+  /** Get the current authentication type, or null before authProvider resolves. */
+  getAuthType(): 'basic' | 'jwt' | null {
+    return this.auth?.type ?? null;
   }
 
   /* ---------------------------------------------------------------- */
@@ -317,15 +317,11 @@ export class KalamDBClient {
           // Keep basic credentials in TypeScript and exchange them for JWT
           // before the first authenticated operation.
           this.wasmClient = WasmClient.anonymous(this.url);
-          this.log(LogLevel.Debug, 'init', 'Created anonymous WASM client placeholder for basic auth');
+          this.log(LogLevel.Debug, 'init', 'Created JWT-less WASM placeholder for basic auth bootstrap');
           break;
         case 'jwt':
           this.wasmClient = WasmClient.withJwt(this.url, initialCreds.token);
           this.log(LogLevel.Debug, 'init', 'Created WASM client with JWT auth');
-          break;
-        case 'none':
-          this.wasmClient = WasmClient.anonymous(this.url);
-          this.log(LogLevel.Debug, 'init', 'Created WASM client with anonymous auth');
           break;
       }
 
@@ -373,7 +369,7 @@ export class KalamDBClient {
         this.wasmClient.setAutoReconnect(this.autoReconnectEnabled);
 
         // Auto-login: exchange Basic credentials for JWT before WebSocket connect.
-        if (this.auth.type === 'basic') {
+        if (this.auth?.type === 'basic') {
           this.log(LogLevel.Debug, 'auth', 'Auto-login: exchanging basic creds for JWT...');
           await this.login();
           this.log(LogLevel.Debug, 'auth', 'Auto-login successful');
@@ -1073,10 +1069,11 @@ export class KalamDBClient {
    */
   async login(): Promise<LoginResponse> {
     await this.initialize();
-    if (this.auth.type !== 'basic') {
+    const auth = this.auth;
+    if (!auth || auth.type !== 'basic') {
       throw new Error('login() requires Basic auth credentials. Use authProvider returning Auth.basic(user, password)');
     }
-    const response = await this.performDirectBasicLogin(this.auth.user, this.auth.password);
+    const response = await this.performDirectBasicLogin(auth.user, auth.password);
 
     this.wasmClient = WasmClient.withJwt(this.url, response.access_token);
     this.attachWasmClientState();
@@ -1428,11 +1425,8 @@ export class KalamDBClient {
     this.log(LogLevel.Debug, 'auth', `Auth provider resolved: type=${creds.type}`);
 
     if (creds.type === 'jwt') {
+      this.auth = creds;
       return { jwt: { token: creds.token } };
-    }
-
-    if (creds.type === 'none') {
-      return null;
     }
 
     if (creds.type === 'basic') {
@@ -1460,7 +1454,7 @@ export class KalamDBClient {
   }
 
   private async ensureJwtForBasicAuth(): Promise<void> {
-    if (this.auth.type === 'basic') {
+    if (this.auth?.type === 'basic') {
       await this.login();
     }
   }
@@ -1473,12 +1467,10 @@ export class KalamDBClient {
   private async reauthenticateFromAuthProvider(): Promise<void> {
     try {
       const result = await this.resolveWasmAuthProvider();
-      if (result?.jwt?.token) {
-        this.auth = { type: 'jwt', token: result.jwt.token };
-        if (this.wasmClient) {
-          this.wasmClient = WasmClient.withJwt(this.url, result.jwt.token);
-          this.attachWasmClientState();
-        }
+      this.auth = { type: 'jwt', token: result.jwt.token };
+      if (this.wasmClient) {
+        this.wasmClient = WasmClient.withJwt(this.url, result.jwt.token);
+        this.attachWasmClientState();
       }
     } catch (error) {
       this.log(LogLevel.Warn, 'auth', `Failed to reauthenticate: ${error}`);

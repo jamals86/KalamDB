@@ -68,7 +68,7 @@
 - [x] T006 [US1] Refactor Basic/password authentication to accept canonical users instead of usernames in `backend/crates/kalamdb-auth/src/helpers/basic_auth.rs`, `backend/crates/kalamdb-auth/src/services/unified/password.rs`, and `backend/crates/kalamdb-api/src/http/auth/models/login_request.rs`
 - [x] T007 [US1] Rewrite bearer/OIDC authentication to resolve pre-existing accounts by `sub` / `UserId` and enforce allowlisted user admission in `backend/crates/kalamdb-auth/src/services/unified/bearer.rs`
 - [x] T008 [US1] Update public auth model modules and handler outputs to `user` / `id` naming plus user-facing messages in `backend/crates/kalamdb-api/src/http/auth/models/login_response.rs`, `backend/crates/kalamdb-api/src/http/auth/models/user_info.rs`, `backend/crates/kalamdb-api/src/http/auth/models/setup_request.rs`, `backend/crates/kalamdb-api/src/http/auth/models/setup_response.rs`, `backend/crates/kalamdb-api/src/http/auth/setup.rs`, `backend/crates/kalamdb-api/src/http/auth/me.rs`, and `backend/crates/kalamdb-api/src/http/auth/mod.rs`
-- [ ] T009 [P] [US1] Convert SQL user management and impersonation to canonical user identity in `backend/crates/kalamdb-handlers/crates/user/src/user/create.rs`, `backend/crates/kalamdb-handlers/crates/user/src/user/alter.rs`, `backend/crates/kalamdb-handlers/crates/user/src/user/drop.rs`, and `backend/crates/kalamdb-core/src/sql/impersonation.rs`
+- [x] T009 [P] [US1] Convert SQL user management and impersonation to canonical user identity in `backend/crates/kalamdb-handlers/crates/user/src/user/create.rs`, `backend/crates/kalamdb-handlers/crates/user/src/user/alter.rs`, `backend/crates/kalamdb-handlers/crates/user/src/user/drop.rs`, and `backend/crates/kalamdb-core/src/sql/impersonation.rs`
 - [x] T010 [P] [US1] Update CLI auth/setup flags, namespaced env handling, and displayed messages to `--user` / `KALAMDB_USER` semantics in `cli/src/args.rs`, `cli/src/connect.rs`, and `cli/src/commands/init.rs`
 
 **Checkpoint**: Canonical sign-in works end-to-end, public/operator-facing naming is `user` / `id`, and no supported login or setup path resolves users by username.
@@ -128,15 +128,15 @@
 
 **Purpose**: Finish documentation, security hardening, batched validation, and the final requested end-to-end sweep.
 
-- [ ] T017 [P] Update user-facing docs and examples for `user` / `id` naming in `cli/README.md`, `link/README.md`, `docs/`, and `examples/`, plus sync SDK docs in `../KalamSite/content/sdk/`
+- [x] T017 [P] Update user-facing docs and examples for `user` / `id` naming in `cli/README.md`, `link/README.md`, `docs/`, and `examples/`, plus sync SDK docs in `../KalamSite/content/sdk/`
 - [x] T017A [P] Update example setup scripts and env files to use `"user"` JSON key and `KALAMDB_USER` env var in `examples/chat-with-ai/setup.sh`, `examples/simple-typescript/setup.sh`, `examples/simple-typescript/.env.example`, `examples/summarizer-agent/setup.sh`, and `examples/summarizer-agent/.env.example`
-- [ ] T018 [P] Run batched backend and link compile validation using `auth-integration-backend-check.txt` and `auth-integration-link-check.txt`, then fix all auth/session/link compile drift in touched files
+- [x] T018 [P] Run batched backend and link compile validation using `auth-integration-backend-check.txt` and `auth-integration-link-check.txt`, then fix all auth/session/link compile drift in touched files
 - [x] T018A [P] Update backend test harness in `backend/tests/common/testserver/test_server.rs` and `backend/tests/common/testserver/auth_helper.rs` to remove `UserName` usage, switch user creation to `UserId`-keyed patterns, and fix `create_jwt_token` calls across all `backend/tests/scenarios/scenario_*.rs` files
 - [x] T018B [P] Update CLI test assertions in `cli/tests/auth_retry_test.rs`, `cli/tests/auth/test_auth.rs`, `cli/tests/auth/test_keycloak_auth.rs`, and `cli/tests/cluster/*.rs` to use `--user` flag, query `system.users` without `username` column, and expect post-cutover auth contract
 - [x] T018C [P] Update PG extension e2e test harness in `pg/tests/e2e_ddl_common/mod.rs` to rename `login_username` / `setup_username` fields, send `"user"` instead of `"username"` in login/setup JSON payloads, and update `pg/docker/test.sh` for the same
 - [x] T018D [P] Update benchmark login helper parameter naming from `username` to `user` in `benchv2/src/client.rs`
-- [ ] T019 Review and harden auth/server security in `backend/crates/kalamdb-auth/src/services/unified/bearer.rs`, `backend/crates/kalamdb-auth/src/providers/jwt_auth.rs`, `backend/crates/kalamdb-api/src/http/auth/`, and `backend/crates/kalamdb-configs/src/config/types.rs` against the `AGENTS.md` security checklist
-- [ ] T020 Validate the documented migration flow in `specs/028-auth-integration/quickstart.md`, including the namespaced `KALAMDB_USER` surface and user-facing message expectations, and fix any drift in touched auth/CLI/link files
+- [x] T019 Review and harden auth/server security in `backend/crates/kalamdb-auth/src/services/unified/bearer.rs`, `backend/crates/kalamdb-auth/src/providers/jwt_auth.rs`, `backend/crates/kalamdb-api/src/http/auth/`, and `backend/crates/kalamdb-configs/src/config/types.rs` against the `AGENTS.md` security checklist
+- [x] T020 Validate the documented migration flow in `specs/028-auth-integration/quickstart.md`, including the namespaced `KALAMDB_USER` surface and user-facing message expectations, and fix any drift in touched auth/CLI/link files
 - [ ] T021 Start a fresh backend from `backend/` and run `cli/run-tests.sh` from `cli/`, fixing any remaining end-to-end failures until the full suite passes
 
 ---

@@ -76,7 +76,7 @@ pub struct User {
     // 8-byte aligned fields first (i64, Option<i64>, String/pointer types)
     #[column(
         id = 10,
-        ordinal = 10,
+        ordinal = 12,
         data_type(KalamDataType::Timestamp),
         nullable = false,
         primary_key = false,
@@ -86,7 +86,7 @@ pub struct User {
     pub created_at: i64,
     #[column(
         id = 11,
-        ordinal = 11,
+        ordinal = 13,
         data_type(KalamDataType::Timestamp),
         nullable = false,
         primary_key = false,
@@ -97,7 +97,7 @@ pub struct User {
     /// Unix timestamp in milliseconds when account lockout expires (None = not locked)
     #[column(
         id = 15,
-        ordinal = 15,
+        ordinal = 10,
         data_type(KalamDataType::Timestamp),
         nullable = true,
         primary_key = false,
@@ -108,7 +108,7 @@ pub struct User {
     /// Unix timestamp in milliseconds of last successful login
     #[column(
         id = 16,
-        ordinal = 16,
+        ordinal = 11,
         data_type(KalamDataType::Timestamp),
         nullable = true,
         primary_key = false,
@@ -118,7 +118,7 @@ pub struct User {
     pub last_login_at: Option<i64>,
     #[column(
         id = 12,
-        ordinal = 12,
+        ordinal = 14,
         data_type(KalamDataType::Timestamp),
         nullable = true,
         primary_key = false,
@@ -128,7 +128,7 @@ pub struct User {
     pub last_seen: Option<i64>,
     #[column(
         id = 13,
-        ordinal = 13,
+        ordinal = 15,
         data_type(KalamDataType::Timestamp),
         nullable = true,
         primary_key = false,
@@ -148,7 +148,7 @@ pub struct User {
     pub user_id: UserId,
     #[column(
         id = 3,
-        ordinal = 3,
+        ordinal = 2,
         data_type(KalamDataType::Text),
         nullable = false,
         primary_key = false,
@@ -158,7 +158,7 @@ pub struct User {
     pub password_hash: String,
     #[column(
         id = 5,
-        ordinal = 5,
+        ordinal = 4,
         data_type(KalamDataType::Text),
         nullable = true,
         primary_key = false,
@@ -168,7 +168,7 @@ pub struct User {
     pub email: Option<String>,
     #[column(
         id = 7,
-        ordinal = 7,
+        ordinal = 6,
         data_type(KalamDataType::Json),
         nullable = true,
         primary_key = false,
@@ -178,7 +178,7 @@ pub struct User {
     pub auth_data: Option<AuthData>,
     #[column(
         id = 9,
-        ordinal = 9,
+        ordinal = 8,
         data_type(KalamDataType::Text),
         nullable = true,
         primary_key = false,
@@ -190,7 +190,7 @@ pub struct User {
     /// Number of consecutive failed login attempts (reset on successful login)
     #[column(
         id = 14,
-        ordinal = 14,
+        ordinal = 9,
         data_type(KalamDataType::Int),
         nullable = false,
         primary_key = false,
@@ -200,7 +200,7 @@ pub struct User {
     pub failed_login_attempts: i32,
     #[column(
         id = 4,
-        ordinal = 4,
+        ordinal = 3,
         data_type(KalamDataType::Text),
         nullable = false,
         primary_key = false,
@@ -210,7 +210,7 @@ pub struct User {
     pub role: Role,
     #[column(
         id = 6,
-        ordinal = 6,
+        ordinal = 5,
         data_type(KalamDataType::Text),
         nullable = false,
         primary_key = false,
@@ -220,7 +220,7 @@ pub struct User {
     pub auth_type: AuthType,
     #[column(
         id = 8,
-        ordinal = 8,
+        ordinal = 7,
         data_type(KalamDataType::Text),
         nullable = false,
         primary_key = false,

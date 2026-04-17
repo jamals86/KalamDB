@@ -189,7 +189,7 @@ pub struct CLISession {
     /// Enable spinners/animations
     animations: bool,
 
-    /// Authenticated username
+    /// Authenticated user identifier
     username: String,
 
     /// Session start time
@@ -1292,7 +1292,7 @@ impl CLISession {
         );
         println!();
         println!("  {}  {}", "📡".dimmed(), format!("Connected to: {}", self.server_url).cyan());
-        println!("  {}  {}", "👤".dimmed(), format!("User: {}", self.username).cyan());
+        println!("  {}  {}", "👤".dimmed(), format!("User ID: {}", self.username).cyan());
 
         if let Some(ref version) = self.server_version {
             println!("  {}  {}", "🏷️ ".dimmed(), format!("Server version: {}", version).dimmed());
@@ -3201,13 +3201,13 @@ mod tests {
                             "HTTP/1.1 200 OK",
                             json!({
                                 "user": {
-                                    "id": "user-1",
-                                    "username": "admin",
+                                    "id": "admin",
                                     "role": "dba",
                                     "email": null,
                                     "created_at": "2026-03-17T00:00:00Z",
                                     "updated_at": "2026-03-17T00:00:00Z"
                                 },
+                                "admin_ui_access": true,
                                 "expires_at": "2099-01-01T00:00:00Z",
                                 "access_token": "fresh-token",
                                 "refresh_token": "fresh-refresh-token",
@@ -3322,6 +3322,39 @@ mod tests {
             CLISession::extract_subscribe_options("SELECT * FROM table OPTIONS (last_rows=50);");
         assert_eq!(sql, "SELECT * FROM table");
         assert!(options.is_some());
+    }
+
+    #[tokio::test]
+    #[timeout(5000)]
+    async fn test_build_auth_refresher_refreshes_and_persists_tokens() {
+        let server = TestServer::spawn().await;
+        let (mut store, _temp_dir) = create_temp_store();
+        let creds = Credentials::with_refresh_token(
+            "local".to_string(),
+            "expired-token".to_string(),
+            "admin".to_string(),
+            "2000-01-01T00:00:00Z".to_string(),
+            Some(server.base_url.clone()),
+            Some("refresh-token".to_string()),
+            Some("2099-01-01T00:00:00Z".to_string()),
+        );
+        store.set_credentials(&creds).expect("store initial credentials");
+
+        let refresher = CLISession::build_auth_refresher(
+            &server.base_url,
+            Some("local"),
+            Some(Arc::new(Mutex::new(store))),
+        )
+        .expect("build auth refresher");
+
+        let refreshed_auth = refresher().await.expect("refresh should succeed");
+        assert!(matches!(
+            refreshed_auth,
+            AuthProvider::JwtToken(token) if token == "fresh-token"
+        ));
+
+        let state = server.state.lock().await;
+        assert_eq!(state.refresh_authorization_headers, vec!["Bearer refresh-token".to_string()]);
     }
 
     #[tokio::test]
