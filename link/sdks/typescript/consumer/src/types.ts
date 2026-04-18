@@ -3,7 +3,7 @@ import type {
   LoginResponse,
   QueryResponse,
   RowData,
-  Username,
+  UserId,
 } from '@kalamdb/client';
 
 export type {
@@ -14,10 +14,9 @@ export type {
   JwtAuthCredentials,
   LoginResponse,
   LoginUserInfo,
-  NoAuthCredentials,
   QueryResponse,
   RowData,
-  Username,
+  UserId,
 } from '@kalamdb/client';
 
 export interface ConsumerClientOptions extends ClientOptions {
@@ -51,7 +50,7 @@ export interface ConsumeMessage {
   partition_id: number;
   topic: string;
   group_id: string;
-  username?: Username;
+  user?: UserId;
   value: unknown;
 }
 
@@ -67,7 +66,7 @@ export interface AckResponse {
 }
 
 export interface ConsumeContext {
-  readonly username: Username | undefined;
+  readonly user: UserId | undefined;
   readonly message: ConsumeMessage;
   ack: () => Promise<void>;
 }
@@ -134,7 +133,7 @@ export interface AgentContext<TRow extends Record<string, unknown>> {
   readonly maxAttempts: number;
   readonly message: ConsumeMessage;
   readonly row: TRow;
-  readonly username: Username | undefined;
+  readonly user: UserId | undefined;
   readonly systemPrompt: string | undefined;
   readonly llm: AgentLLMContext | null;
   sql: (sql: string, params?: unknown[]) => Promise<QueryResponse>;

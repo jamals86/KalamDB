@@ -45,16 +45,16 @@ await runAgent({
     maxBackoffMs: 2_000,
   },
   onRow: async (ctx, row) => {
-    const username = String(ctx.username ?? '').trim();
+    const user = String(ctx.user ?? '').trim();
     const body = String(row.body ?? '').trim();
-    if (!username || !body) {
+    if (!user || !body) {
       return;
     }
 
     const summary = `Support summary: ${body.slice(0, 120)}`;
     await client.executeAsUser(
       'INSERT INTO support.inbox (room, role, body) VALUES ($1, $2, $3)',
-      username,
+      user,
       ['main', 'assistant', summary],
     );
   },
@@ -106,7 +106,7 @@ if (batch.messages.length > 0) {
 
 ## Notes
 
-- `Auth.basic(...)` is exchanged to JWT automatically before topic requests.
+- `Auth.basic(user, password)` is exchanged on `POST /v1/api/auth/login` before topic requests.
 - Topic payloads are decoded from the HTTP API's base64 payload field.
 - When you only need browser/app features, install `@kalamdb/client` alone.
 - Low-level worker bindings are also available at `@kalamdb/consumer/wasm`.

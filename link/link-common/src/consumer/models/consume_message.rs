@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-use crate::auth::models::Username;
 use crate::models::RowData;
+use kalamdb_commons::UserId;
 
 /// A single consumed message from a topic.
 ///
@@ -37,9 +37,9 @@ pub struct ConsumeMessage {
     /// Consumer group ID
     pub group_id: String,
 
-    /// Username of the user who produced this message/event
+    /// Canonical user identifier of the user who produced this message/event
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub username: Option<Username>,
+    pub user: Option<UserId>,
 
     /// Decoded message payload as a named-column row (`column → value`).
     /// Mirrors the subscription row shape: `HashMap<String, KalamCellValue>`.

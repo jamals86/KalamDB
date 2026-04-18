@@ -100,6 +100,18 @@ impl ErrorCode {
             ErrorCode::InvalidMimeType => "INVALID_MIME_TYPE",
         }
     }
+
+    #[inline]
+    fn public_message(&self) -> Option<&'static str> {
+        match self {
+            ErrorCode::BatchParseError => Some("Failed to parse SQL batch"),
+            ErrorCode::SqlExecutionError => Some("SQL statement failed"),
+            ErrorCode::InvalidSql => Some("SQL statement is invalid or not allowed"),
+            ErrorCode::TableNotFound => Some("Requested table is not available"),
+            ErrorCode::InternalError => Some("SQL request failed"),
+            _ => None,
+        }
+    }
 }
 
 impl fmt::Display for ErrorCode {
@@ -273,6 +285,22 @@ impl SqlResponse {
         }
     }
 
+    /// Create an error response and optionally redact sensitive SQL details.
+    pub fn error_for_privilege(
+        code: ErrorCode,
+        message: &str,
+        took: f64,
+        include_sensitive_details: bool,
+    ) -> Self {
+        if !include_sensitive_details {
+            if let Some(public_message) = code.public_message() {
+                return Self::error(code, public_message, took);
+            }
+        }
+
+        Self::error(code, message, took)
+    }
+
     /// Create an error response with additional details
     pub fn error_with_details(code: ErrorCode, message: &str, details: &str, took: f64) -> Self {
         Self {
@@ -285,6 +313,23 @@ impl SqlResponse {
                 details: Some(details.to_string()),
             }),
         }
+    }
+
+    /// Create an error response with optional redaction of sensitive SQL details.
+    pub fn error_with_details_for_privilege(
+        code: ErrorCode,
+        message: &str,
+        details: &str,
+        took: f64,
+        include_sensitive_details: bool,
+    ) -> Self {
+        if !include_sensitive_details {
+            if let Some(public_message) = code.public_message() {
+                return Self::error(code, public_message, took);
+            }
+        }
+
+        Self::error_with_details(code, message, details, took)
     }
 }
 
@@ -461,6 +506,38 @@ mod tests {
         assert!(json.contains("error"));
         assert!(json.contains("INVALID_SQL"));
         assert!(json.contains("Syntax error"));
+    }
+
+    #[test]
+    fn test_non_admin_sql_errors_are_redacted() {
+        let response = SqlResponse::error_with_details_for_privilege(
+            ErrorCode::SqlExecutionError,
+            "Statement 1 failed: table 'secret.payroll' not found",
+            "SELECT * FROM secret.payroll",
+            5.0,
+            false,
+        );
+
+        let error = response.error.expect("error response should include an error payload");
+        assert_eq!(error.code, ErrorCode::SqlExecutionError);
+        assert_eq!(error.message, "SQL statement failed");
+        assert!(error.details.is_none());
+    }
+
+    #[test]
+    fn test_admin_sql_errors_preserve_full_details() {
+        let response = SqlResponse::error_with_details_for_privilege(
+            ErrorCode::SqlExecutionError,
+            "Statement 1 failed: table 'secret.payroll' not found",
+            "SELECT * FROM secret.payroll",
+            5.0,
+            true,
+        );
+
+        let error = response.error.expect("error response should include an error payload");
+        assert_eq!(error.code, ErrorCode::SqlExecutionError);
+        assert_eq!(error.message, "Statement 1 failed: table 'secret.payroll' not found");
+        assert_eq!(error.details.as_deref(), Some("SELECT * FROM secret.payroll"));
     }
 
     #[test]

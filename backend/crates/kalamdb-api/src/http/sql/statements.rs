@@ -1,5 +1,6 @@
 use actix_web::HttpResponse;
 use kalamdb_commons::models::{NamespaceId, UserId, Username};
+use kalamdb_core::error::KalamDbError;
 use kalamdb_core::sql::context::ExecutionContext;
 use kalamdb_core::sql::executor::{PreparedExecutionStatement, SqlExecutor};
 use kalamdb_core::sql::SqlImpersonationService;
@@ -21,9 +22,6 @@ pub(super) struct PreparedApiExecutionStatement {
 }
 
 pub(super) fn authorized_username(exec_ctx: &ExecutionContext) -> Username {
-    if let Some(username) = &exec_ctx.user_context().username {
-        return username.clone();
-    }
     Username::from(exec_ctx.user_id().as_str())
 }
 
@@ -39,7 +37,7 @@ pub(super) async fn resolve_execute_as_user(
     statement: &PreparedApiExecutionStatement,
     impersonation_service: &SqlImpersonationService,
     exec_ctx: &ExecutionContext,
-) -> Result<Option<UserId>, String> {
+) -> Result<Option<UserId>, KalamDbError> {
     match statement.execute_as_username.as_ref() {
         Some(target_username) => impersonation_service
             .resolve_execute_as_user(
@@ -48,8 +46,7 @@ pub(super) async fn resolve_execute_as_user(
                 target_username.as_str(),
             )
             .await
-            .map(Some)
-            .map_err(|err| err.to_string()),
+            .map(Some),
         None => Ok(None),
     }
 }
@@ -88,17 +85,19 @@ pub(super) fn classify_sql(
     )
     .map_err(|err| match err {
         kalamdb_sql::classifier::StatementClassificationError::Unauthorized(msg) => {
-            HttpResponse::Forbidden().json(SqlResponse::error(
+            HttpResponse::Forbidden().json(SqlResponse::error_for_privilege(
                 ErrorCode::PermissionDenied,
                 &msg,
                 took_ms(start_time),
+                exec_ctx.is_admin(),
             ))
         },
         kalamdb_sql::classifier::StatementClassificationError::InvalidSql { message, .. } => {
-            HttpResponse::BadRequest().json(SqlResponse::error(
+            HttpResponse::BadRequest().json(SqlResponse::error_for_privilege(
                 ErrorCode::InvalidSql,
                 &message,
                 took_ms(start_time),
+                exec_ctx.is_admin(),
             ))
         },
     })
@@ -133,10 +132,11 @@ fn prepare_api_statement(
     start_time: Instant,
 ) -> Result<PreparedApiExecutionStatement, HttpResponse> {
     let parsed = parse_execute_statement(raw_statement).map_err(|err| {
-        HttpResponse::BadRequest().json(SqlResponse::error(
+        HttpResponse::BadRequest().json(SqlResponse::error_for_privilege(
             ErrorCode::InvalidInput,
             &err,
             took_ms(start_time),
+            exec_ctx.is_admin(),
         ))
     })?;
 
@@ -144,18 +144,20 @@ fn prepare_api_statement(
         .prepare_statement_metadata(&parsed.sql, exec_ctx)
         .map_err(|err| match err {
             kalamdb_sql::classifier::StatementClassificationError::Unauthorized(msg) => {
-                HttpResponse::Forbidden().json(SqlResponse::error(
+                HttpResponse::Forbidden().json(SqlResponse::error_for_privilege(
                     ErrorCode::PermissionDenied,
                     &msg,
                     took_ms(start_time),
+                    exec_ctx.is_admin(),
                 ))
             },
             kalamdb_sql::classifier::StatementClassificationError::InvalidSql {
                 message, ..
-            } => HttpResponse::BadRequest().json(SqlResponse::error(
+            } => HttpResponse::BadRequest().json(SqlResponse::error_for_privilege(
                 ErrorCode::InvalidSql,
                 &message,
                 took_ms(start_time),
+                exec_ctx.is_admin(),
             )),
         })?;
 
@@ -181,18 +183,20 @@ pub(super) fn split_and_prepare_statements(
     }
 
     let raw_statements = kalamdb_sql::split_statements(sql).map_err(|err| {
-        HttpResponse::BadRequest().json(SqlResponse::error(
+        HttpResponse::BadRequest().json(SqlResponse::error_for_privilege(
             ErrorCode::BatchParseError,
             &format!("Failed to parse SQL batch: {}", err),
             took_ms(start_time),
+            exec_ctx.is_admin(),
         ))
     })?;
 
     if raw_statements.is_empty() {
-        return Err(HttpResponse::BadRequest().json(SqlResponse::error(
+        return Err(HttpResponse::BadRequest().json(SqlResponse::error_for_privilege(
             ErrorCode::EmptySql,
             "No SQL statements provided",
             took_ms(start_time),
+            exec_ctx.is_admin(),
         )));
     }
 

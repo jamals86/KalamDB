@@ -1,7 +1,7 @@
 use base64::Engine;
 use wasm_bindgen::prelude::*;
 
-use link_common::models::{AckResponse, ConsumeMessage, ConsumeResponse, RowData, Username};
+use link_common::models::{AckResponse, ConsumeMessage, ConsumeResponse, RowData, UserId};
 
 use crate::helpers::{
     fetch_json_response, js_value_to_json_string, response_text, serialize_json_to_js_value,
@@ -163,7 +163,7 @@ fn decode_consume_message(
             .unwrap_or(topic)
             .to_string(),
         group_id: group_id.to_string(),
-        username: raw.get("username").and_then(serde_json::Value::as_str).map(Username::from),
+        user: raw.get("user").and_then(serde_json::Value::as_str).map(UserId::from),
         value: decode_payload_value(raw.get("payload")),
     }
 }
