@@ -473,7 +473,7 @@ export function JobList({ initialFilters, compact = false, onJobClick }: JobList
                 </div>
               </div>
               
-              {selectedJob.message && (
+              {selectedJob.message && selectedJob.status?.toLowerCase() === 'failed' && (
                 <div>
                   <Alert variant="destructive">
                     <AlertCircle className="h-4 w-4" />
@@ -487,6 +487,12 @@ export function JobList({ initialFilters, compact = false, onJobClick }: JobList
                       />
                     </AlertDescription>
                   </Alert>
+                </div>
+              )}
+              {selectedJob.message && selectedJob.status?.toLowerCase() !== 'failed' && (
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">Message</label>
+                  <CodeBlock value={selectedJob.message} jsonPreferred maxHeightClassName="max-h-[260px]" />
                 </div>
               )}
 

@@ -1,16 +1,12 @@
-import { bigint, boolean, doublePrecision, integer, pgTable, text } from 'drizzle-orm/pg-core';
-
-export const dba_favorites = pgTable('dba.favorites', {
-  id: text('id').notNull(),
-  payload: text('payload'),
-});
+import { bigint, boolean, doublePrecision, integer, jsonb, pgTable, text } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
 
 export const dba_notifications = pgTable('dba.notifications', {
   id: text('id').notNull(),
   user_id: text('user_id').notNull(),
   title: text('title').notNull(),
   body: text('body'),
-  is_read: boolean('is_read').notNull(),
+  is_read: boolean('is_read').default(sql``).notNull(),
   created_at: bigint('created_at', { mode: 'number' }).notNull(),
   updated_at: bigint('updated_at', { mode: 'number' }).notNull(),
 });
@@ -41,10 +37,10 @@ export const system_job_nodes = pgTable('system.job_nodes', {
   node_id: bigint('node_id', { mode: 'number' }).notNull(),
   status: text('status').notNull(),
   error_message: text('error_message'),
-  created_at: bigint('created_at', { mode: 'number' }).notNull(),
+  created_at: bigint('created_at', { mode: 'number' }).default(sql``).notNull(),
   started_at: bigint('started_at', { mode: 'number' }),
   finished_at: bigint('finished_at', { mode: 'number' }),
-  updated_at: bigint('updated_at', { mode: 'number' }).notNull(),
+  updated_at: bigint('updated_at', { mode: 'number' }).default(sql``).notNull(),
 });
 
 export const system_jobs = pgTable('system.jobs', {
@@ -52,7 +48,7 @@ export const system_jobs = pgTable('system.jobs', {
   job_type: text('job_type').notNull(),
   status: text('status').notNull(),
   leader_status: text('leader_status'),
-  parameters: text('parameters'),
+  parameters: jsonb('parameters'),
   message: text('message'),
   exception_trace: text('exception_trace'),
   idempotency_key: text('idempotency_key'),
@@ -80,14 +76,14 @@ export const system_manifest = pgTable('system.manifest', {
   last_accessed: bigint('last_accessed', { mode: 'number' }).notNull(),
   in_memory: boolean('in_memory').notNull(),
   sync_state: text('sync_state').notNull(),
-  manifest_json: text('manifest_json').notNull(),
+  manifest_json: jsonb('manifest_json').notNull(),
 });
 
 export const system_namespaces = pgTable('system.namespaces', {
   namespace_id: text('namespace_id').notNull(),
   name: text('name').notNull(),
   created_at: bigint('created_at', { mode: 'number' }).notNull(),
-  options: text('options'),
+  options: jsonb('options'),
   table_count: integer('table_count').notNull(),
 });
 
@@ -98,10 +94,10 @@ export const system_schemas = pgTable('system.schemas', {
   table_type: text('table_type').notNull(),
   created_at: bigint('created_at', { mode: 'number' }).notNull(),
   schema_version: integer('schema_version').notNull(),
-  columns: text('columns').notNull(),
+  columns: jsonb('columns').notNull(),
   table_comment: text('table_comment'),
   updated_at: bigint('updated_at', { mode: 'number' }).notNull(),
-  options: text('options'),
+  options: jsonb('options'),
   access_level: text('access_level'),
   is_latest: boolean('is_latest').notNull(),
   storage_id: text('storage_id'),
@@ -114,8 +110,8 @@ export const system_storages = pgTable('system.storages', {
   description: text('description'),
   storage_type: text('storage_type').notNull(),
   base_directory: text('base_directory').notNull(),
-  credentials: text('credentials'),
-  config_json: text('config_json'),
+  credentials: jsonb('credentials'),
+  config_json: jsonb('config_json'),
   shared_tables_template: text('shared_tables_template').notNull(),
   user_tables_template: text('user_tables_template').notNull(),
   created_at: bigint('created_at', { mode: 'number' }).notNull(),
@@ -137,7 +133,7 @@ export const system_topics = pgTable('system.topics', {
   partitions: integer('partitions').notNull(),
   retention_seconds: bigint('retention_seconds', { mode: 'number' }),
   retention_max_bytes: bigint('retention_max_bytes', { mode: 'number' }),
-  routes: text('routes').notNull(),
+  routes: jsonb('routes').notNull(),
   created_at: bigint('created_at', { mode: 'number' }).notNull(),
   updated_at: bigint('updated_at', { mode: 'number' }).notNull(),
 });
@@ -149,7 +145,7 @@ export const system_users = pgTable('system.users', {
   role: text('role').notNull(),
   email: text('email'),
   auth_type: text('auth_type').notNull(),
-  auth_data: text('auth_data'),
+  auth_data: jsonb('auth_data'),
   storage_mode: text('storage_mode').notNull(),
   storage_id: text('storage_id'),
   created_at: bigint('created_at', { mode: 'number' }).notNull(),

@@ -1,0 +1,147 @@
+import { describe, it, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { generateSchema } from '../dist/index.js';
+import { requirePassword, createTestClient } from './helpers.mjs';
+
+requirePassword();
+
+let client;
+let fullSchema;
+
+before(async () => {
+  client = createTestClient();
+  await client.initialize();
+
+  await client.query('CREATE NAMESPACE IF NOT EXISTS test_gen');
+  await client.query('CREATE TABLE IF NOT EXISTS test_gen.uploads (id BIGINT PRIMARY KEY, doc FILE)');
+  await client.query('CREATE TABLE IF NOT EXISTS test_gen.with_defaults (id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(), name TEXT NOT NULL, created_at TIMESTAMP DEFAULT NOW())');
+  await client.query("CREATE TABLE IF NOT EXISTS test_gen.with_literal_default (id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(), status TEXT DEFAULT 'pending' NOT NULL)");
+
+  fullSchema = await generateSchema(client);
+});
+
+after(async () => {
+  await client.query('DROP TABLE IF EXISTS test_gen.uploads');
+  await client.query('DROP TABLE IF EXISTS test_gen.with_defaults');
+  await client.query('DROP TABLE IF EXISTS test_gen.with_literal_default');
+  await client.query('DROP NAMESPACE IF EXISTS test_gen');
+  await client?.disconnect();
+});
+
+describe('generateSchema', () => {
+  it('generates valid TypeScript with pgTable imports', () => {
+    assert.ok(fullSchema.includes("import {"));
+    assert.ok(fullSchema.includes("from 'drizzle-orm/pg-core'"));
+    assert.ok(fullSchema.includes("pgTable"));
+  });
+
+  it('includes system tables', () => {
+    assert.ok(fullSchema.includes("system_users"));
+    assert.ok(fullSchema.includes("system_audit_log"));
+    assert.ok(fullSchema.includes("system_jobs"));
+    assert.ok(fullSchema.includes("system_storages"));
+  });
+
+  it('includes hidden system tables', () => {
+    assert.ok(fullSchema.includes("system_live"));
+    assert.ok(fullSchema.includes("system_server_logs"));
+    assert.ok(fullSchema.includes("system_settings"));
+    assert.ok(fullSchema.includes("system_stats"));
+    assert.ok(fullSchema.includes("system_cluster"));
+  });
+
+  it('includes dba tables', () => {
+    assert.ok(fullSchema.includes("dba_"));
+  });
+
+  it('uses snake_case for field names', () => {
+    assert.ok(fullSchema.includes("user_id:"));
+    assert.ok(fullSchema.includes("actor_username:"));
+    assert.ok(!fullSchema.includes("userId:"));
+    assert.ok(!fullSchema.includes("actorUsername:"));
+  });
+
+  it('maps timestamps to bigint with mode number', () => {
+    assert.ok(fullSchema.includes("bigint('created_at', { mode: 'number' })"));
+  });
+
+  it('marks non-nullable columns with notNull()', () => {
+    assert.ok(fullSchema.includes(".notNull()"));
+  });
+
+  it('filters out underscore-prefixed columns', () => {
+    assert.ok(!fullSchema.includes("_seq:"));
+    assert.ok(!fullSchema.includes("_deleted:"));
+  });
+
+  it('maps FILE columns to file() with @kalamdb/orm import', () => {
+    assert.ok(fullSchema.includes("file('doc')"));
+    assert.ok(fullSchema.includes("from '@kalamdb/orm'"));
+  });
+
+  it('marks columns with server defaults as optional via .default()', () => {
+    assert.ok(fullSchema.includes(".default(sql``)"));
+  });
+
+  it('imports sql from drizzle-orm when defaults are present', () => {
+    assert.ok(fullSchema.includes("import { sql } from 'drizzle-orm'"));
+  });
+
+  it('marks default columns in user-defined table with SNOWFLAKE_ID and NOW', () => {
+    assert.ok(fullSchema.includes("test_gen_with_defaults"));
+    const lines = fullSchema.split('\n');
+    const tableStart = lines.findIndex((l) => l.includes('test_gen_with_defaults'));
+    const tableLines = lines.slice(tableStart, tableStart + 6);
+    const idDef = tableLines.find((l) => l.trim().startsWith('id:'));
+    const createdDef = tableLines.find((l) => l.trim().startsWith('created_at:'));
+    const nameDef = tableLines.find((l) => l.trim().startsWith('name:'));
+    assert.ok(idDef.includes(".default(sql``)"), 'id should have default');
+    assert.ok(createdDef.includes(".default(sql``)"), 'created_at should have default');
+    assert.ok(!nameDef.includes('.default('), 'name should not have default');
+  });
+
+  it('marks literal default columns', () => {
+    assert.ok(fullSchema.includes('test_gen_with_literal_default'));
+    const lines = fullSchema.split('\n');
+    const tableStart = lines.findIndex((l) => l.includes('test_gen_with_literal_default'));
+    const tableLines = lines.slice(tableStart, tableStart + 5);
+    const statusDef = tableLines.find((l) => l.trim().startsWith('status:'));
+    assert.ok(statusDef.includes(".default(sql``)"), 'status should have default');
+  });
+
+  it('does not add .default() to columns without server defaults', () => {
+    const uploadLines = fullSchema.split('\n').filter((l) => l.includes("file('doc')"));
+    assert.equal(uploadLines.length, 1);
+    assert.ok(!uploadLines[0].includes('.default('));
+  });
+
+  it('excludes system tables when excludeSystem is true', async () => {
+    await new Promise((r) => setTimeout(r, 1000));
+    const excluded = await generateSchema(client, { excludeSystem: true });
+    assert.ok(!excluded.includes("system_users"));
+    assert.ok(!excluded.includes("system_audit_log"));
+    assert.ok(!excluded.includes("dba_"));
+  });
+
+  it('excludeSystem still includes user tables', async () => {
+    await new Promise((r) => setTimeout(r, 1000));
+    const excluded = await generateSchema(client, { excludeSystem: true });
+    assert.ok(excluded.includes("test_gen_uploads"));
+    assert.ok(excluded.includes("test_gen_with_defaults"));
+  });
+
+  it('filters by namespace', async () => {
+    await new Promise((r) => setTimeout(r, 1000));
+    const dbaOnly = await generateSchema(client, { namespaces: ['dba'] });
+    assert.ok(dbaOnly.includes("dba_"));
+    assert.ok(!dbaOnly.includes("system_users"));
+    assert.ok(!dbaOnly.includes("test_gen_"));
+  });
+
+  it('throws when excludeSystem conflicts with system namespace filter', async () => {
+    await assert.rejects(
+      () => generateSchema(client, { excludeSystem: true, namespaces: ['system'] }),
+      { message: 'Cannot use excludeSystem with system/dba namespaces' },
+    );
+  });
+});
