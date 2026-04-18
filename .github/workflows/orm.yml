@@ -66,4 +66,4 @@ jobs:
         working-directory: link/sdks/typescript/orm
         env:
           KALAMDB_TEST_PASSWORD: testpass123
-        run: node --test tests/driver.test.mjs tests/generate.test.mjs tests/cli.test.mjs
+        run: node --test tests/driver.test.mjs tests/generate.test.mjs tests/cli.test.mjs tests/live.test.mjs
