@@ -598,7 +598,7 @@ start_cluster() {
         echo "Setup note: the setup wizard is skipped for clusters started with this script"
         echo ""
         echo "Connect with CLI:"
-        echo "  kalam --url http://127.0.0.1:$NODE1_HTTP --username root --password \"$ROOT_PASSWORD\" --save-credentials"
+        echo "  kalam --url http://127.0.0.1:$NODE1_HTTP --user root --password \"$ROOT_PASSWORD\" --save-credentials"
         echo ""
         echo "Run cluster tests:"
         echo "  cd cli && cargo test --test cluster"

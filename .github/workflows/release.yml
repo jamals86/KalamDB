@@ -1145,7 +1145,7 @@ jobs:
           set -euo pipefail
           ./kalamcli \
             -u "$KALAMDB_SERVER_URL" \
-            --username root \
+            --user root \
             --password kalamdb123 \
             --json \
             --command "SELECT 1 AS packaged_cli_release_check" \
