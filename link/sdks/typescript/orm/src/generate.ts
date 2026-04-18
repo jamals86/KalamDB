@@ -65,23 +65,8 @@ async function fetchTables(client: KalamDBClient): Promise<TableInfo[]> {
   }));
 }
 
-async function fetchColumnsFromSystem(client: KalamDBClient, namespace: string, table: string): Promise<ColumnInfo[]> {
-  const response: QueryResponse = await client.query(
-    'SELECT * FROM system.columns WHERE namespace_id = $1 AND table_name = $2',
-    [namespace, table],
-  );
-  const rows = (response.results?.[0]?.named_rows ?? []) as Record<string, unknown>[];
-  return rows
-    .map((row) => ({
-      name: String(row.column_name),
-      dataType: String(row.data_type),
-      nullable: row.nullable === true || row.nullable === 'true',
-      hasDefault: row.default_value != null,
-    }))
-    .filter((col) => !col.name.startsWith('_'));
-}
-
-async function fetchColumnsFromDescribe(client: KalamDBClient, qualifiedName: string): Promise<ColumnInfo[]> {
+async function fetchColumns(client: KalamDBClient, tableId: string): Promise<ColumnInfo[]> {
+  const qualifiedName = tableId.replace(':', '.');
   const response: QueryResponse = await client.query(`DESCRIBE ${qualifiedName}`);
   const rows = (response.results?.[0]?.named_rows ?? []) as Record<string, unknown>[];
   return rows
@@ -91,13 +76,6 @@ async function fetchColumnsFromDescribe(client: KalamDBClient, qualifiedName: st
       nullable: String(row.is_nullable) === 'YES',
     }))
     .filter((col) => !col.name.startsWith('_'));
-}
-
-async function fetchColumns(client: KalamDBClient, tableId: string): Promise<ColumnInfo[]> {
-  const [namespace, table] = tableId.replace(':', '.').split('.');
-  const columns = await fetchColumnsFromSystem(client, namespace, table);
-  if (columns.length > 0) return columns;
-  return fetchColumnsFromDescribe(client, `${namespace}.${table}`);
 }
 
 function generateTableDefinition(table: TableInfo, columns: ColumnInfo[]): string {
