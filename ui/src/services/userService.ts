@@ -14,12 +14,12 @@ import {
 } from "@/services/sql/queries/userQueries";
 
 type UserModel = InferSelectModel<typeof system_users>;
-export type User = Omit<UserModel, "password_hash">;
+export type User = Omit<UserModel, "password_hash"> & { username: string };
 
 type UserWithoutPasswordHash = User;
 
 type UserWithOptionalUsername = Omit<UserWithoutPasswordHash, "username"> & {
-  username?: UserModel["username"] | null;
+  username?: string | null;
 };
 
 export type { CreateUserInput, UpdateUserInput };
@@ -36,7 +36,6 @@ export async function fetchUsers() {
   const rows = await db
     .select({
       user_id: system_users.user_id,
-      username: system_users.username,
       role: system_users.role,
       email: system_users.email,
       auth_type: system_users.auth_type,
@@ -53,7 +52,7 @@ export async function fetchUsers() {
     })
     .from(system_users)
     .where(isNull(system_users.deleted_at))
-    .orderBy(asc(system_users.username));
+    .orderBy(asc(system_users.user_id));
 
   return mapUsers(rows);
 }

@@ -10,7 +10,7 @@ describe("mapUsers", () => {
         email: "root@localhost",
         auth_type: "password",
         auth_data: null,
-        storage_mode: null,
+        storage_mode: "table",
         storage_id: null,
         failed_login_attempts: 0,
         locked_until: null,
