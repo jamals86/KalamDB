@@ -23,39 +23,14 @@ export interface Setting {
 
 export function mapSettingsRows(rows: Record<string, unknown>[]): Setting[] {
   if (rows.length === 0) {
-    return [
-      {
-        name: "server.version",
-        value: "0.1.0",
-        description: "KalamDB server version",
-        category: "Server",
-      },
-      {
-        name: "storage.default_backend",
-        value: "rocksdb",
-        description: "Default storage backend for write operations",
-        category: "Storage",
-      },
-      {
-        name: "query.max_rows",
-        value: "10000",
-        description: "Maximum rows returned per query",
-        category: "Query",
-      },
-      {
-        name: "auth.jwt_expiry",
-        value: "3600",
-        description: "JWT token expiry in seconds",
-        category: "Authentication",
-      },
-    ];
+    return [];
   }
 
   return rows.map((row) => ({
-    name: String(row.name ?? ""),
+    name: String(row.name ?? row.key ?? ""),
     value: String(row.value ?? ""),
     description: String(row.description ?? ""),
-    category: String(row.category ?? ""),
+    category: String(row.category ?? "server"),
   }));
 }
 

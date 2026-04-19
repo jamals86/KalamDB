@@ -16,7 +16,8 @@
     "build": "tsc && vite build",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
-    "test": "vitest"
+    "test": "vitest",
+    "test:flows": "vitest run src/components/auth/LoginForm.test.tsx src/components/auth/ProtectedRoute.test.tsx src/components/auth/SetupGuard.test.tsx src/pages/SetupWizard.test.tsx src/pages/SqlStudio.test.tsx"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
@@ -40,8 +41,8 @@
     "clsx": "^2.1.1",
     "@kalamdb/client": "file:../link/sdks/typescript/client",
     "lucide-react": "^1.7.0",
-    "react": "^19.2.4",
-    "react-dom": "^19.2.4",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5",
     "react-hook-form": "^7.72.1",
     "react-redux": "^9.2.0",
     "react-resizable-panels": "^4.9.0",
@@ -68,7 +69,7 @@
     "postcss": "^8.5.8",
     "tailwindcss": "^4.2.2",
     "typescript": "^6.0.2",
-    "vite": "^8.0.5",
-    "vitest": "^4.1.2"
+    "vite": "^8.0.8",
+    "vitest": "^4.1.4"
   }
 }

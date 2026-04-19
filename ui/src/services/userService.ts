@@ -41,7 +41,7 @@ function toNullableString(value: unknown): string | null {
 export function mapUsers(rows: Record<string, unknown>[]): User[] {
   return rows.map((row) => ({
     user_id: String(row.user_id ?? ""),
-    username: String(row.username ?? ""),
+    username: String(row.username ?? row.user_id ?? ""),
     role: String(row.role ?? ""),
     email: row.email as string | null,
     auth_type: String(row.auth_type ?? "internal"),
