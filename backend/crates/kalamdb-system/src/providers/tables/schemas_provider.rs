@@ -15,6 +15,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 /// System.tables table provider using consolidated store with versioning
+#[derive(Clone)]
 pub struct SchemasTableProvider {
     store: SchemasStore,
 }
@@ -274,12 +275,36 @@ impl SchemasTableProvider {
         &self,
         namespace_id: &kalamdb_commons::NamespaceId,
     ) -> Result<RecordBatch, SystemError> {
-        let tables = self.store.scan_namespace(namespace_id)?;
-        if tables.is_empty() {
+        let versions = self.store.scan_namespace_with_versions(namespace_id)?;
+        if versions.is_empty() {
             return Ok(RecordBatch::new_empty(schemas_arrow_schema()));
         }
 
-        self.build_table_def_batch(tables.into_iter().map(|(_, def)| (def, true)).collect())
+        let mut max_versions: HashMap<TableId, u32> = HashMap::new();
+        for (table_id, table_def) in &versions {
+            max_versions
+                .entry(table_id.clone())
+                .and_modify(|max| {
+                    if table_def.schema_version > *max {
+                        *max = table_def.schema_version;
+                    }
+                })
+                .or_insert(table_def.schema_version);
+        }
+
+        self.build_table_def_batch(
+            versions
+                .into_iter()
+                .map(|(table_id, def)| {
+                    let is_latest = max_versions
+                        .get(&table_id)
+                        .copied()
+                        .unwrap_or(def.schema_version)
+                        == def.schema_version;
+                    (def, is_latest)
+                })
+                .collect(),
+        )
     }
 
     /// Build a RecordBatch from a vec of (TableDefinition, is_latest) pairs.
@@ -348,7 +373,18 @@ impl SchemasTableProvider {
             }
         }
 
-        // Check for namespace equality filter → use scan_namespace-based construction
+        if let (Some(ns_str), Some(table_name)) = (
+            extract_filter_value(filters, "namespace_id"),
+            extract_filter_value(filters, "table_name"),
+        ) {
+            let table_id = TableId::new(
+                kalamdb_commons::NamespaceId::new(&ns_str),
+                kalamdb_commons::TableName::new(&table_name),
+            );
+            return self.build_versions_batch_for_table(&table_id);
+        }
+
+        // Check for namespace equality filter → use namespace-scoped history scan
         if let Some(ns_str) = extract_filter_value(filters, "namespace_id") {
             let namespace_id = kalamdb_commons::NamespaceId::new(&ns_str);
             return self.build_versions_batch_for_namespace(&namespace_id);
@@ -379,6 +415,7 @@ crate::impl_simple_system_table_provider!(
 mod tests {
     use super::*;
     use datafusion::datasource::TableProvider;
+    use datafusion::logical_expr::{col, lit};
     use kalamdb_commons::datatypes::KalamDataType;
     use kalamdb_commons::schemas::{
         ColumnDefinition, TableDefinition, TableOptions, TableType as KalamTableType,
@@ -505,6 +542,55 @@ mod tests {
         // Scan - should have 2 rows (2 versioned entries, lat pointers are skipped)
         let batch = provider.scan_all_tables().unwrap();
         assert_eq!(batch.num_rows(), 2);
+    }
+
+    #[test]
+    fn test_scan_to_batch_filtered_preserves_history_for_namespace_and_table_filters() {
+        let provider = create_test_provider();
+
+        let (table_id, mut table_def) = create_test_table("default", "users");
+        provider.create_table(&table_id, &table_def).unwrap();
+
+        table_def.schema_version = 2;
+        provider.update_table(&table_id, &table_def).unwrap();
+
+        let batch = provider
+            .scan_to_batch_filtered(
+                &[
+                    col("namespace_id").eq(lit("default")),
+                    col("table_name").eq(lit("users")),
+                ],
+                None,
+            )
+            .unwrap();
+
+        assert_eq!(batch.num_rows(), 2);
+    }
+
+    #[test]
+    fn test_build_versions_batch_for_namespace_marks_only_latest_version() {
+        let provider = create_test_provider();
+
+        let (table_id, mut table_def) = create_test_table("default", "users");
+        provider.create_table(&table_id, &table_def).unwrap();
+
+        table_def.schema_version = 2;
+        provider.update_table(&table_id, &table_def).unwrap();
+
+        let batch = provider
+            .build_versions_batch_for_namespace(table_id.namespace_id())
+            .unwrap();
+
+        assert_eq!(batch.num_rows(), 2);
+
+        let is_latest = batch
+            .column_by_name("is_latest")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<datafusion::arrow::array::BooleanArray>()
+            .unwrap();
+        assert!(!is_latest.value(0));
+        assert!(is_latest.value(1));
     }
 
     #[tokio::test]

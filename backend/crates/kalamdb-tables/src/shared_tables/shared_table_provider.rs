@@ -15,7 +15,9 @@ use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use crate::manifest::manifest_helpers::{ensure_manifest_ready, load_row_from_parquet_by_seq};
 use crate::shared_tables::{SharedTableIndexedStore, SharedTablePkIndex, SharedTableRow};
-use crate::utils::base::{self, BaseTableProvider, TableProviderCore};
+use crate::utils::base::{
+    self, BaseTableProvider, DeferredMvccScanProvider, TableProviderCore,
+};
 use crate::utils::row_utils::extract_full_user_context;
 use async_trait::async_trait;
 
@@ -39,13 +41,15 @@ use kalamdb_commons::websocket::ChangeNotification;
 use kalamdb_commons::NotLeaderError;
 use kalamdb_commons::StorageKey;
 use kalamdb_commons::TableType;
+use kalamdb_datafusion_sources::provider::{
+    merged_projection_scan_descriptor, mvcc_filter_capability, FilterCapability, ScanDescriptor,
+    SourceProvider,
+};
 use kalamdb_session_datafusion::{
     check_shared_table_access, check_shared_table_write_access, session_error_to_datafusion,
 };
 use kalamdb_store::EntityStore;
-use kalamdb_transactions::{
-    extract_transaction_query_context, StagedMutation, TransactionOverlayExec,
-};
+use kalamdb_transactions::{extract_transaction_query_context, StagedMutation};
 use kalamdb_vector::{
     new_indexed_shared_vector_hot_store, SharedVectorHotOpId, SharedVectorHotStore,
 };
@@ -65,6 +69,7 @@ use crate::utils::version_resolution::resolve_latest_kvs_from_cold_batch;
 /// - Shared core via Arc<TableProviderCore> (holds schema, pk_name, column_defaults, non_null_columns, table_def)
 /// - NO RLS - user_id parameter ignored in all operations
 /// - Uses SharedTableIndexedStore for efficient PK lookups
+#[derive(Clone)]
 pub struct SharedTableProvider {
     /// Shared core (services, schema, pk_name, column_defaults, non_null_columns, table_def)
     core: Arc<TableProviderCore>,
@@ -602,6 +607,155 @@ mod tests {
         let other_prefix = pk_index.build_pk_prefix("1700000000001:node-a:cpu_usage_percent");
         let remaining_other = store.scan_by_index(0, Some(&other_prefix), None).unwrap();
         assert_eq!(remaining_other.len(), 1);
+    }
+}
+
+#[derive(Clone)]
+pub struct SharedScanContext {
+    snapshot_commit_seq: Option<u64>,
+}
+
+#[async_trait]
+impl DeferredMvccScanProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider {
+    type ScanContext = SharedScanContext;
+
+    fn scan_source_name(&self) -> &'static str {
+        "shared_table_scan"
+    }
+
+    fn build_scan_context(&self, state: &dyn Session) -> Result<Self::ScanContext, KalamDbError> {
+        Ok(SharedScanContext {
+            snapshot_commit_seq: extract_transaction_query_context(state)
+                .map(|context| context.snapshot_commit_seq),
+        })
+    }
+
+    async fn scan_rows_with_context(
+        &self,
+        scan_context: &Self::ScanContext,
+        projection: Option<&Vec<usize>>,
+        filter: Option<&Expr>,
+        limit: Option<usize>,
+    ) -> Result<RecordBatch, KalamDbError> {
+        let snapshot_commit_seq = scan_context.snapshot_commit_seq;
+        let schema = self.schema_ref();
+        let pk_name = self.primary_key_field_name();
+
+        if snapshot_commit_seq.is_none() {
+            if let Some(expr) = filter {
+                if let Some(pk_literal) = base::extract_pk_equality_literal(expr, pk_name) {
+                    let pk_field = schema.field_with_name(pk_name).ok();
+                    let pk_scalar = if let Some(field) = pk_field {
+                        kalamdb_commons::conversions::parse_string_as_scalar(
+                            &pk_literal.to_string(),
+                            field.data_type(),
+                        )
+                        .ok()
+                        .unwrap_or(pk_literal)
+                    } else {
+                        pk_literal
+                    };
+
+                    let found = self.find_by_pk(&pk_scalar).await?;
+                    if let Some((row_id, row)) = found {
+                        log::debug!(
+                            "[SharedProvider] PK fast-path hit for {}={}, _seq={}",
+                            pk_name,
+                            pk_scalar,
+                            row_id.as_i64()
+                        );
+                        return crate::utils::base::rows_to_arrow_batch(
+                            &schema,
+                            vec![(row_id, row)],
+                            projection,
+                            |_, _| {},
+                        );
+                    }
+
+                    if self.pk_tombstoned_in_hot(&pk_scalar).await? {
+                        log::debug!(
+                            "[SharedProvider] PK fast-path tombstone for {}={}",
+                            pk_name,
+                            pk_scalar
+                        );
+                        return crate::utils::base::rows_to_arrow_batch(
+                            &schema,
+                            Vec::<(SharedTableRowId, SharedTableRow)>::new(),
+                            projection,
+                            |_, _| {},
+                        );
+                    }
+
+                    let cold_found = base::find_row_by_pk(self, None, &pk_scalar.to_string()).await?;
+                    if let Some((row_id, row)) = cold_found {
+                        log::debug!(
+                            "[SharedProvider] PK fast-path cold hit for {}={}",
+                            pk_name,
+                            pk_scalar
+                        );
+                        return crate::utils::base::rows_to_arrow_batch(
+                            &schema,
+                            vec![(row_id, row)],
+                            projection,
+                            |_, _| {},
+                        );
+                    }
+
+                    log::debug!("[SharedProvider] PK fast-path miss for {}={}", pk_name, pk_scalar);
+                    return crate::utils::base::rows_to_arrow_batch(
+                        &schema,
+                        Vec::<(SharedTableRowId, SharedTableRow)>::new(),
+                        projection,
+                        |_, _| {},
+                    );
+                }
+            }
+        }
+
+        if let Some(proj) = projection {
+            if proj.is_empty() && filter.is_none() {
+                let count = self.count_resolved_rows_async(snapshot_commit_seq).await?;
+                return base::build_count_only_batch(count);
+            }
+        }
+
+        let (since_seq, _until_seq) = if let Some(expr) = filter {
+            base::extract_seq_bounds_from_filter(expr)
+        } else {
+            (None, None)
+        };
+
+        let keep_deleted = filter.map(base::filter_uses_deleted_column).unwrap_or(false);
+        let cold_columns = base::compute_cold_columns(projection, &schema, pk_name);
+
+        let kvs = self
+            .scan_with_version_resolution_to_kvs_async(
+                base::system_user_id(),
+                filter,
+                since_seq,
+                limit,
+                keep_deleted,
+                cold_columns.as_deref(),
+                snapshot_commit_seq,
+            )
+            .await?;
+
+        crate::utils::base::rows_to_arrow_batch(&schema, kvs, projection, |_, _| {})
+    }
+}
+
+impl SourceProvider for SharedTableProvider {
+    fn filter_capability(&self, filter: &Expr) -> FilterCapability {
+        mvcc_filter_capability(filter, self.primary_key_field_name())
+    }
+
+    fn scan_descriptor(
+        &self,
+        projection: Option<&Vec<usize>>,
+        filters: &[Expr],
+        limit: Option<usize>,
+    ) -> ScanDescriptor {
+        merged_projection_scan_descriptor(self.schema_ref(), projection, filters, limit)
     }
 }
 
@@ -1148,132 +1302,9 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         filter: Option<&Expr>,
         limit: Option<usize>,
     ) -> Result<RecordBatch, KalamDbError> {
-        let snapshot_commit_seq =
-            extract_transaction_query_context(state).map(|context| context.snapshot_commit_seq);
-        let schema = self.schema_ref();
-        let pk_name = self.primary_key_field_name();
-
-        // ── PK equality fast-path ────────────────────────────────────────────
-        // If the filter is `pk_col = <literal>`, use the PK index for O(1)
-        // lookup instead of scanning the entire table + MVCC resolution.
-        if snapshot_commit_seq.is_none() {
-            if let Some(expr) = filter {
-                if let Some(pk_literal) = base::extract_pk_equality_literal(expr, pk_name) {
-                    // Coerce the literal to the PK column's Arrow data type
-                    let pk_field = schema.field_with_name(pk_name).ok();
-                    let pk_scalar = if let Some(field) = pk_field {
-                        kalamdb_commons::conversions::parse_string_as_scalar(
-                            &pk_literal.to_string(),
-                            field.data_type(),
-                        )
-                        .ok()
-                        .unwrap_or(pk_literal)
-                    } else {
-                        pk_literal
-                    };
-
-                    // Try hot storage PK index (O(1))
-                    let found = self.find_by_pk(&pk_scalar).await?;
-                    if let Some((row_id, row)) = found {
-                        log::debug!(
-                            "[SharedProvider] PK fast-path hit for {}={}, _seq={}",
-                            pk_name,
-                            pk_scalar,
-                            row_id.as_i64()
-                        );
-                        return crate::utils::base::rows_to_arrow_batch(
-                            &schema,
-                            vec![(row_id, row)],
-                            projection,
-                            |_, _| {},
-                        );
-                    }
-
-                    // Not in hot storage — check if it is tombstoned before trying cold storage.
-                    // A tombstone in hot storage means the row was deleted; falling back to Parquet
-                    // would surface a stale version and violate MVCC visibility rules.
-                    if self.pk_tombstoned_in_hot(&pk_scalar).await? {
-                        log::debug!(
-                            "[SharedProvider] PK fast-path tombstone for {}={}",
-                            pk_name,
-                            pk_scalar
-                        );
-                        return crate::utils::base::rows_to_arrow_batch(
-                            &schema,
-                            Vec::<(SharedTableRowId, SharedTableRow)>::new(),
-                            projection,
-                            |_, _| {},
-                        );
-                    }
-
-                    // Not in hot storage — check cold storage via manifest-based lookup
-                    let cold_found =
-                        base::find_row_by_pk(self, None, &pk_scalar.to_string()).await?;
-                    if let Some((row_id, row)) = cold_found {
-                        log::debug!(
-                            "[SharedProvider] PK fast-path cold hit for {}={}",
-                            pk_name,
-                            pk_scalar
-                        );
-                        return crate::utils::base::rows_to_arrow_batch(
-                            &schema,
-                            vec![(row_id, row)],
-                            projection,
-                            |_, _| {},
-                        );
-                    }
-
-                    // PK not found anywhere — return empty batch
-                    log::debug!("[SharedProvider] PK fast-path miss for {}={}", pk_name, pk_scalar);
-                    return crate::utils::base::rows_to_arrow_batch(
-                        &schema,
-                        Vec::<(SharedTableRowId, SharedTableRow)>::new(),
-                        projection,
-                        |_, _| {},
-                    );
-                }
-            }
-        }
-
-        // ── Count-only fast-path ─────────────────────────────────────────────
-        // When projection is empty (e.g., COUNT(*)), avoid loading full row data.
-        // Only decode metadata (seq, deleted, pk) for version resolution.
-        if let Some(proj) = projection {
-            if proj.is_empty() && filter.is_none() {
-                let count = self.count_resolved_rows_async(snapshot_commit_seq).await?;
-                return base::build_count_only_batch(count);
-            }
-        }
-
-        // ── Full scan path (no PK equality filter) ──────────────────────────
-        // Extract sequence bounds from filter to optimize RocksDB scan
-        let (since_seq, _until_seq) = if let Some(expr) = filter {
-            base::extract_seq_bounds_from_filter(expr)
-        } else {
-            (None, None)
-        };
-
-        let keep_deleted = filter.map(base::filter_uses_deleted_column).unwrap_or(false);
-
-        // Compute cold-path column projection: when DataFusion provides a projection,
-        // we only need to decode the projected columns + system columns + PK from Parquet.
-        let cold_columns = base::compute_cold_columns(projection, &schema, pk_name);
-
-        // NO user_id extraction - shared tables scan ALL rows
-        let kvs = self
-            .scan_with_version_resolution_to_kvs_async(
-                base::system_user_id(),
-                filter,
-                since_seq,
-                limit,
-                keep_deleted,
-                cold_columns.as_deref(),
-                snapshot_commit_seq,
-            )
-            .await?;
-
-        // Convert to JSON rows aligned with schema
-        crate::utils::base::rows_to_arrow_batch(&schema, kvs, projection, |_, _| {})
+        let scan_context = self.build_scan_context(state)?;
+        self.scan_rows_with_context(&scan_context, projection, filter, limit)
+            .await
     }
 
     async fn scan_with_version_resolution_to_kvs_async(
@@ -2090,33 +2121,19 @@ impl TableProvider for SharedTableProvider {
             }
         }
 
-        let Some(transaction_query_context) = extract_transaction_query_context(state) else {
-            return self.base_scan(state, projection, filters, limit).await;
-        };
-        let Some(table_overlay) =
-            transaction_query_context.overlay_view.overlay_for_table(self.core.table_id())
-        else {
-            return self.base_scan(state, projection, filters, limit).await;
-        };
+        let table_overlay = extract_transaction_query_context(state)
+            .and_then(|context| context.overlay_view.overlay_for_table(self.core.table_id()));
 
-        let overlay_projection = crate::utils::datafusion_dml::prepare_overlay_scan_projection(
-            &self.schema_ref(),
+        <Self as BaseTableProvider<SharedTableRowId, SharedTableRow>>::base_scan_with_overlay(
+            self,
+            state,
             projection,
-            self.primary_key_field_name(),
-        )?;
-        let base_plan = self
-            .base_scan(state, overlay_projection.effective_projection.as_ref(), filters, limit)
-            .await?;
-
-        Ok(Arc::new(TransactionOverlayExec::try_new(
-            base_plan,
-            self.core.table_id().clone(),
-            self.primary_key_field_name().to_string(),
+            filters,
+            limit,
             table_overlay,
             None,
-            overlay_projection.final_projection,
-            None,
-        )?))
+        )
+        .await
     }
 
     async fn insert_into(

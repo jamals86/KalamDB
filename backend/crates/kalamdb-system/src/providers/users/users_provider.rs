@@ -19,9 +19,6 @@ use crate::system_row_mapper::{model_to_system_row, system_row_to_model};
 use crate::SystemTable;
 use datafusion::arrow::array::RecordBatch;
 use datafusion::arrow::datatypes::SchemaRef;
-use datafusion::error::Result as DataFusionResult;
-use datafusion::logical_expr::Expr;
-use datafusion::logical_expr::TableProviderFilterPushDown;
 use kalamdb_commons::models::rows::SystemTableRow;
 use kalamdb_commons::UserId;
 use kalamdb_store::entity_store::EntityStore;
@@ -35,6 +32,7 @@ pub type UsersStore = IndexedEntityStore<UserId, SystemTableRow>;
 ///
 /// All insert/update/delete operations automatically maintain secondary indexes
 /// using RocksDB's atomic WriteBatch - no manual index management needed.
+#[derive(Clone)]
 pub struct UsersTableProvider {
     store: UsersStore,
 }
@@ -179,11 +177,6 @@ impl UsersTableProvider {
             .clone()
     }
 
-    fn filter_pushdown(filters: &[&Expr]) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
-        // Inexact pushdown: we may use filters for index/prefix scans,
-        // but DataFusion must still apply them for correctness.
-        Ok(vec![TableProviderFilterPushDown::Inexact; filters.len()])
-    }
 }
 
 crate::impl_indexed_system_table_provider!(
@@ -192,9 +185,7 @@ crate::impl_indexed_system_table_provider!(
     value = SystemTableRow,
     store = store,
     definition = provider_definition,
-    build_batch = create_batch,
-    load_batch = scan_all_users,
-    pushdown = UsersTableProvider::filter_pushdown
+    build_batch = create_batch
 );
 
 #[cfg(test)]

@@ -3,12 +3,14 @@
 //! This module provides:
 //! - BaseTableProvider<K, V> trait for generic table operations
 //! - TableProviderCore shared structure for common services
+//! - Shared MVCC-oriented scan helpers for user and shared tables
 //!
 //! **Design Rationale**:
-//! - Eliminates ~1200 lines of duplicate code across User/Shared/Stream providers
+//! - Eliminates most of the historic duplicate code across User/Shared/Stream providers
 //! - Generic over storage key (K) and value (V) types
 //! - No separate handlers - DML logic implemented directly in providers
 //! - Shared core reduces memory overhead (Arc<TableProviderCore> vs per-provider fields)
+//! - New planning-only helpers are moving into `kalamdb-datafusion-sources`
 //!
 //! ## Streaming vs MVCC Constraints
 //!
@@ -34,23 +36,27 @@
 //! - Are append-only (no updates, no version resolution needed)
 //! - Use TTL-based eviction instead of tombstones
 //! - Can return rows as they're scanned with early termination on LIMIT
+//! - They now use the exec-backed path in `stream_table_provider.rs` instead of
+//!   the legacy `base_scan()` flow below
 //!
 //! ## Architecture
 //!
 //! ```text
-//! TableProvider::scan()
-//!        │
-//!        ▼
-//! base_scan() ── combines filters, calls scan_rows()
-//!        │
-//!        ▼
+//! User/Shared TableProvider::scan()
+//!             │
+//!             ▼
+//! base_scan() ── combines filters, remaps projections, calls scan_rows()
+//!             │
+//!             ▼
 //! scan_rows() ── extracts user context, calls scan_with_version_resolution_to_kvs()
-//!        │
-//!        ▼
+//!             │
+//!             ▼
 //! scan_with_version_resolution_to_kvs() ── provider-specific implementation:
 //!   • User: user-scoped RocksDB prefix + Parquet, MVCC merge
 //!   • Shared: full RocksDB + Parquet, MVCC merge
-//!   • Stream: user-scoped RocksDB only, TTL filter, streamable
+//!
+//! Stream tables bypass this path and build deferred execution descriptors in
+//! `stream_table_provider.rs` so the hot-store scan runs at execute time.
 //! ```
 
 use crate::error::KalamDbError;
@@ -63,10 +69,11 @@ use datafusion::arrow::array::{Array, BooleanArray, Float32Array, Int64Array, UI
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::catalog::Session;
-use datafusion::datasource::memory::MemTable;
+use datafusion::common::DFSchema;
 use datafusion::datasource::TableProvider;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::{utils::expr_to_columns, Expr, TableProviderFilterPushDown};
+use datafusion::physical_expr::PhysicalExpr;
 use datafusion::physical_plan::{ExecutionPlan, Statistics};
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::constants::SystemColumnNames;
@@ -77,11 +84,21 @@ use kalamdb_commons::models::{NamespaceId, TableName, UserId};
 use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::NotLeaderError;
 use kalamdb_commons::{StorageKey, TableId};
+use kalamdb_datafusion_sources::exec::{
+    finalize_deferred_batch, DeferredBatchExec, DeferredBatchSource,
+};
+use kalamdb_datafusion_sources::pruning::mvcc_filter_evaluation;
+use kalamdb_datafusion_sources::provider::{
+    combined_filter, pushdown_results_for_filters, remap_projection_indices, SourceProvider,
+};
 use kalamdb_filestore::registry::ListResult;
 use kalamdb_system::ClusterCoordinator as ClusterCoordinatorTrait;
 use kalamdb_system::Manifest;
 use kalamdb_system::SchemaRegistry as SchemaRegistryTrait;
-use kalamdb_transactions::{extract_transaction_query_context, TransactionAccessError};
+use kalamdb_transactions::{
+    extract_transaction_query_context, TransactionAccessError, TransactionOverlay,
+    TransactionOverlayExec,
+};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -92,6 +109,102 @@ pub use crate::utils::row_utils::{
     extract_full_user_context, extract_seq_bounds_from_filter, resolve_user_scope, system_user_id,
 };
 pub use crate::utils::row_utils::{inject_system_columns, rows_to_arrow_batch, ScanRow};
+
+#[async_trait]
+pub trait DeferredMvccScanProvider<K: StorageKey, V>:
+    BaseTableProvider<K, V> + Clone + Send + Sync + 'static
+where
+    K: StorageKey + Clone + Send + Sync + 'static,
+    V: Send + Sync + 'static,
+{
+    type ScanContext: Clone + Send + Sync + 'static;
+
+    fn scan_source_name(&self) -> &'static str;
+
+    fn build_scan_context(&self, state: &dyn Session) -> Result<Self::ScanContext, KalamDbError>;
+
+    async fn scan_rows_with_context(
+        &self,
+        scan_context: &Self::ScanContext,
+        projection: Option<&Vec<usize>>,
+        filter: Option<&Expr>,
+        limit: Option<usize>,
+    ) -> Result<RecordBatch, KalamDbError>;
+}
+
+struct DeferredMvccScanSource<P, K, V>
+where
+    P: DeferredMvccScanProvider<K, V>,
+    K: StorageKey + Clone + Send + Sync + 'static,
+    V: Send + Sync + 'static,
+{
+    provider: P,
+    scan_context: P::ScanContext,
+    projection: Option<Vec<usize>>,
+    filter: Option<Expr>,
+    physical_filter: Option<Arc<dyn PhysicalExpr>>,
+    output_projection: Option<Vec<usize>>,
+    output_schema: SchemaRef,
+    _marker: std::marker::PhantomData<(K, V)>,
+}
+
+impl<P, K, V> std::fmt::Debug for DeferredMvccScanSource<P, K, V>
+where
+    P: DeferredMvccScanProvider<K, V>,
+    K: StorageKey + Clone + Send + Sync + 'static,
+    V: Send + Sync + 'static,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DeferredMvccScanSource")
+            .field("source", &self.provider.scan_source_name())
+            .field("projection", &self.projection)
+            .field("has_filter", &self.filter.is_some())
+            .finish()
+    }
+}
+
+#[async_trait]
+impl<P, K, V> DeferredBatchSource for DeferredMvccScanSource<P, K, V>
+where
+    P: DeferredMvccScanProvider<K, V>,
+    K: StorageKey + Clone + Send + Sync + 'static,
+    V: Send + Sync + 'static,
+{
+    fn source_name(&self) -> &'static str {
+        self.provider.scan_source_name()
+    }
+
+    fn schema(&self) -> SchemaRef {
+        Arc::clone(&self.output_schema)
+    }
+
+    async fn produce_batch(&self) -> DataFusionResult<RecordBatch> {
+        let batch = self
+            .provider
+            .scan_rows_with_context(
+                &self.scan_context,
+                self.projection.as_ref(),
+                self.filter.as_ref(),
+                None,
+            )
+            .await
+            .map_err(|error| {
+                DataFusionError::Execution(format!(
+                    "{} failed: {}",
+                    self.source_name(),
+                    error
+                ))
+            })?;
+
+        finalize_deferred_batch(
+            batch,
+            self.physical_filter.as_ref(),
+            self.output_projection.as_deref(),
+            None,
+            self.source_name(),
+        )
+    }
+}
 
 /// Unified trait for all table providers with generic storage abstraction
 ///
@@ -386,12 +499,13 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     fn base_supports_filters_pushdown(
         &self,
         filters: &[&Expr],
-    ) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
-        // We support Inexact pushdown for all filters because:
-        // 1. We use them for partition pruning (Parquet)
-        // 2. We use them for prefix scan / range scan (RocksDB)
-        // But we still need DataFusion to apply the filter afterwards to be safe/exact.
-        Ok(vec![TableProviderFilterPushDown::Inexact; filters.len()])
+    ) -> DataFusionResult<Vec<TableProviderFilterPushDown>>
+    where
+        Self: SourceProvider,
+    {
+        Ok(pushdown_results_for_filters(filters, |filter| {
+            self.filter_capability(filter)
+        }))
     }
 
     /// Default implementation for statistics
@@ -407,83 +521,113 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
         projection: Option<&Vec<usize>>,
         filters: &[Expr],
         limit: Option<usize>,
-    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+    ) -> DataFusionResult<Arc<dyn ExecutionPlan>>
+    where
+        Self: SourceProvider + DeferredMvccScanProvider<K, V> + Sized,
+        K: Clone + Send + Sync + 'static,
+        V: Send + Sync + 'static,
+    {
         self.validate_transaction_table_access(state)?;
         self.ensure_leader_read(state).await.map_err(kalam_error_to_datafusion)?;
 
-        let _ = limit;
+        let descriptor = self.scan_descriptor(projection, filters, limit);
+        let pruning = descriptor.pruning_request();
+        let filter_evaluation =
+            mvcc_filter_evaluation(pruning.filters.filters.as_ref(), self.primary_key_field_name());
+        let _ = pruning.limit.limit;
+        let source_filter = combined_filter(filter_evaluation.inexact.filters.as_ref());
+        let exact_filter = combined_filter(filter_evaluation.exact.filters.as_ref());
+        let effective_projection = pruning
+            .projection
+            .columns
+            .as_ref()
+            .map(|indices| indices.as_ref().to_vec());
 
-        // Combine filters (AND) for pruning and pass to scan_rows
-        let combined_filter: Option<Expr> = if filters.is_empty() {
+        let merged_schema = match effective_projection.as_ref() {
+            Some(indices) => descriptor
+                .schema
+                .project(indices)
+                .map(Arc::new)
+                .map_err(|error| DataFusionError::ArrowError(Box::new(error), None))?,
+            None => Arc::clone(&descriptor.schema),
+        };
+        let output_projection = if pruning.filters.filters.is_empty() {
             None
         } else {
-            let first = filters[0].clone();
-            Some(filters[1..].iter().cloned().fold(first, |acc, e| acc.and(e)))
-        };
-
-        // Compute a merged projection that includes both the requested projection columns
-        // AND any columns referenced by filters. This avoids reading all columns for wide
-        // tables when only a subset is needed.
-        let merged_projection: Option<Vec<usize>>;
-        let effective_projection = if filters.is_empty() {
-            merged_projection = None;
             projection
-        } else if let Some(proj) = projection {
-            let schema = self.schema_ref();
-            let mut needed: HashSet<usize> = proj.iter().copied().collect();
-            let mut filter_cols = HashSet::new();
-            for filter in filters {
-                let _ = expr_to_columns(filter, &mut filter_cols);
-            }
-            for col in &filter_cols {
-                if let Some((idx, _)) = schema.column_with_name(&col.name) {
-                    needed.insert(idx);
-                }
-            }
-            let mut indices: Vec<usize> = needed.into_iter().collect();
-            indices.sort_unstable();
-            merged_projection = Some(indices);
-            merged_projection.as_ref()
+                .map(|indices| remap_projection_indices(&descriptor.schema, &merged_schema, indices))
+        };
+        let output_schema = match projection {
+            Some(indices) => descriptor
+                .schema
+                .project(indices)
+                .map(Arc::new)
+                .map_err(|error| DataFusionError::ArrowError(Box::new(error), None))?,
+            None => Arc::clone(&descriptor.schema),
+        };
+        let physical_filter = if let Some(filter) = exact_filter.clone() {
+            let df_schema = DFSchema::try_from(Arc::clone(&merged_schema))?;
+            Some(state.create_physical_expr(filter, &df_schema)?)
         } else {
-            merged_projection = None;
             None
         };
+        let scan_context = self.build_scan_context(state).map_err(kalam_error_to_datafusion)?;
 
-        let batch = self
-            // Provider-level LIMIT pushdown is unsafe here because scan() does not know
-            // whether an ORDER BY will execute above this table scan.
-            .scan_rows(state, effective_projection, combined_filter.as_ref(), None)
-            .await
-            .map_err(|e| DataFusionError::Execution(format!("scan_rows failed: {}", e)))?;
+        Ok(Arc::new(DeferredBatchExec::new(Arc::new(
+            DeferredMvccScanSource::<Self, K, V> {
+                provider: self.clone(),
+                scan_context,
+                projection: effective_projection,
+                filter: source_filter,
+                physical_filter,
+                output_projection,
+                output_schema,
+                _marker: std::marker::PhantomData,
+            },
+        ))))
+    }
 
-        let mem = MemTable::try_new(batch.schema(), vec![vec![batch]])?;
-
-        // When we used a merged projection (proj + filter cols), the batch schema differs
-        // from the original table schema. We need to remap the original projection indices
-        // to the merged batch's column positions for MemTable's final scan.
-        let remapped_projection: Option<Vec<usize>>;
-        let final_projection = if filters.is_empty() {
-            // No filters: batch is already exactly projected → scan all MemTable columns.
-            None
-        } else if let (Some(proj), Some(_)) = (projection, merged_projection.as_ref()) {
-            // Build a mapping from original schema index → merged batch column position.
-            let batch_schema = mem.schema();
-            let original_schema = self.schema_ref();
-            let mut remap = Vec::with_capacity(proj.len());
-            for &orig_idx in proj {
-                let col_name = original_schema.field(orig_idx).name();
-                if let Some((batch_idx, _)) = batch_schema.column_with_name(col_name) {
-                    remap.push(batch_idx);
-                }
-            }
-            remapped_projection = Some(remap);
-            remapped_projection.as_ref()
-        } else {
-            // No projection requested: scan all columns.
-            None
+    async fn base_scan_with_overlay(
+        &self,
+        state: &dyn Session,
+        projection: Option<&Vec<usize>>,
+        filters: &[Expr],
+        limit: Option<usize>,
+        overlay: Option<TransactionOverlay>,
+        overlay_user: Option<UserId>,
+    ) -> DataFusionResult<Arc<dyn ExecutionPlan>>
+    where
+        Self: SourceProvider + DeferredMvccScanProvider<K, V> + Sized,
+        K: Clone + Send + Sync + 'static,
+        V: Send + Sync + 'static,
+    {
+        let Some(overlay) = overlay else {
+            return self.base_scan(state, projection, filters, limit).await;
         };
 
-        mem.scan(state, final_projection, filters, None).await
+        let overlay_projection = crate::utils::datafusion_dml::prepare_overlay_scan_projection(
+            &self.schema_ref(),
+            projection,
+            self.primary_key_field_name(),
+        )?;
+        let base_plan = self
+            .base_scan(
+                state,
+                overlay_projection.effective_projection.as_ref(),
+                filters,
+                limit,
+            )
+            .await?;
+
+        Ok(Arc::new(TransactionOverlayExec::try_new(
+            base_plan,
+            self.table_id().clone(),
+            self.primary_key_field_name().to_string(),
+            overlay,
+            overlay_user,
+            overlay_projection.final_projection,
+            None,
+        )?))
     }
 
     fn validate_transaction_table_access(&self, state: &dyn Session) -> DataFusionResult<()> {
@@ -1642,6 +1786,13 @@ pub fn build_notification_row(fields: &Row, seq: SeqId, commit_seq: u64, deleted
     values.insert(SystemColumnNames::SEQ.to_string(), ScalarValue::Int64(Some(seq.as_i64())));
     values.insert(SystemColumnNames::COMMIT_SEQ.to_string(), ScalarValue::UInt64(Some(commit_seq)));
     values.insert(SystemColumnNames::DELETED.to_string(), ScalarValue::Boolean(Some(deleted)));
+    Row::new(values)
+}
+
+/// Build a notification row for append-only stream tables.
+pub fn build_stream_notification_row(fields: &Row, seq: SeqId) -> Row {
+    let mut values = fields.values.clone();
+    values.insert(SystemColumnNames::SEQ.to_string(), ScalarValue::Int64(Some(seq.as_i64())));
     Row::new(values)
 }
 

@@ -73,16 +73,6 @@ impl RocksDBBackend {
         Self::new_internal(db, false, false, RocksDbSettings::default())
     }
 
-    /// Creates a new RocksDB backend with custom write options.
-    ///
-    /// # Arguments
-    /// * `db` - Database handle
-    /// * `sync_writes` - If true, sync to disk on each write (slower but more durable)
-    /// * `disable_wal` - If true, disable WAL entirely (fastest but data loss on crash)
-    pub fn with_options(db: Arc<DB>, sync_writes: bool, disable_wal: bool) -> Self {
-        Self::new_internal(db, sync_writes, disable_wal, RocksDbSettings::default())
-    }
-
     /// Creates a new backend with write options and explicit RocksDB tuning settings.
     pub fn with_options_and_settings(
         db: Arc<DB>,
@@ -99,11 +89,6 @@ impl RocksDBBackend {
     /// `cleanup_orphaned_partitions()` to identify CFs not belonging to any table.
     pub fn set_known_cf_names(&self, names: Vec<String>) {
         *self.known_cf_names.write().unwrap() = names;
-    }
-
-    /// Returns a reference to the underlying database.
-    pub fn db(&self) -> &Arc<DB> {
-        &self.db
     }
 
     /// Gets a column family handle by partition name.
@@ -525,10 +510,6 @@ impl StorageBackend for RocksDBBackend {
                 ))
             })?;
         Ok(())
-    }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
     }
 }
 

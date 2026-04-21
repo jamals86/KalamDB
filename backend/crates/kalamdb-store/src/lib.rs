@@ -81,16 +81,3 @@ pub fn open_storage_backend(
     backend.set_known_cf_names(cf_names.clone());
     Ok((backend, cf_names.len()))
 }
-
-/// Attempt to extract a RocksDB handle from a generic `StorageBackend`.
-///
-/// Returns `Some(Arc<rocksdb::DB>)` when the backend is a RocksDB-backed implementation,
-/// otherwise returns `None`.
-pub fn try_extract_rocksdb_db(
-    backend: &std::sync::Arc<dyn crate::storage_trait::StorageBackend>,
-) -> Option<std::sync::Arc<rocksdb::DB>> {
-    backend
-        .as_any()
-        .downcast_ref::<crate::rocksdb_impl::RocksDBBackend>()
-        .map(|rb| rb.db().clone())
-}

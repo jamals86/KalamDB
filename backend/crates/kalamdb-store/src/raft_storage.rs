@@ -301,7 +301,7 @@ impl RaftPartitionStore {
     }
 
     /// Returns the first (lowest) log index, or None if log is empty.
-    pub fn first_log_index(&self) -> Result<Option<u64>> {
+    fn first_log_index(&self) -> Result<Option<u64>> {
         let prefix = self.make_key("log:");
 
         let iter = self.backend.scan(&self.partition, Some(&prefix), None, Some(1))?;
@@ -475,7 +475,7 @@ impl RaftPartitionStore {
     }
 
     /// Clears all snapshot data (meta and data reference).
-    pub fn clear_snapshot(&self) -> Result<()> {
+    fn clear_snapshot(&self) -> Result<()> {
         let ops = vec![
             Operation::Delete {
                 partition: self.partition.clone(),

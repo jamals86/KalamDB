@@ -50,6 +50,20 @@ impl std::fmt::Debug for ManifestTableProvider {
     }
 }
 
+impl Clone for ManifestTableProvider {
+    fn clone(&self) -> Self {
+        let in_memory_checker = match self.in_memory_checker.read() {
+            Ok(guard) => guard.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        };
+
+        Self {
+            store: self.store.clone(),
+            in_memory_checker: RwLock::new(in_memory_checker),
+        }
+    }
+}
+
 impl ManifestTableProvider {
     /// Create a new manifest table provider with indexes
     ///

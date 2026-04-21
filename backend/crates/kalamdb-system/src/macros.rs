@@ -194,7 +194,7 @@ macro_rules! finish_array {
 /// This macro centralizes the repeated implementations for:
 /// - `SystemTableScan`
 /// - `TableProvider`
-/// - direct `TableProvider` implementations
+/// - shared deferred-scan boilerplate for indexed providers
 ///
 /// It only wires the provider surface; business logic stays in each provider module.
 #[macro_export]
@@ -205,9 +205,7 @@ macro_rules! impl_indexed_system_table_provider {
         value = $value:ty,
         store = $store_field:ident,
         definition = $definition_method:ident,
-        build_batch = $build_batch_method:ident,
-        load_batch = $load_batch_method:ident,
-        pushdown = $pushdown_fn:expr
+        build_batch = $build_batch_method:ident
     ) => {
         impl $crate::providers::base::SystemTableScan<$key, $value> for $provider {
             fn store(&self) -> &kalamdb_store::IndexedEntityStore<$key, $value> {
@@ -263,7 +261,7 @@ macro_rules! impl_indexed_system_table_provider {
             ) -> datafusion::error::Result<
                 Vec<datafusion::logical_expr::TableProviderFilterPushDown>,
             > {
-                ($pushdown_fn)(filters)
+                $crate::providers::base::exact_filter_pushdown(filters)
             }
 
             async fn scan(
@@ -287,26 +285,6 @@ macro_rules! impl_indexed_system_table_provider {
         }
 
     };
-    (
-        provider = $provider:ty,
-        key = $key:ty,
-        value = $value:ty,
-        store = $store_field:ident,
-        definition = $definition_method:ident,
-        build_batch = $build_batch_method:ident,
-        load_batch = $load_batch_method:ident
-    ) => {
-        $crate::impl_indexed_system_table_provider!(
-            provider = $provider,
-            key = $key,
-            value = $value,
-            store = $store_field,
-            definition = $definition_method,
-            build_batch = $build_batch_method,
-            load_batch = $load_batch_method,
-            pushdown = $crate::providers::base::unsupported_filter_pushdown
-        );
-    };
 }
 
 /// Implement the common provider boilerplate for non-indexed/simple system tables.
@@ -318,8 +296,7 @@ macro_rules! impl_simple_system_table_provider {
         value = $value:ty,
         definition = $definition_method:ident,
         scan_all = $scan_all_method:ident,
-        scan_filtered = $scan_filtered_method:ident,
-        pushdown = $pushdown_fn:expr
+        scan_filtered = $scan_filtered_method:ident
     ) => {
         impl $crate::providers::base::SimpleSystemTableScan<$key, $value> for $provider {
             fn table_name(&self) -> &str {
@@ -368,7 +345,7 @@ macro_rules! impl_simple_system_table_provider {
             ) -> datafusion::error::Result<
                 Vec<datafusion::logical_expr::TableProviderFilterPushDown>,
             > {
-                ($pushdown_fn)(filters)
+                $crate::providers::base::exact_filter_pushdown(filters)
             }
 
             async fn scan(
@@ -391,23 +368,5 @@ macro_rules! impl_simple_system_table_provider {
             }
         }
 
-    };
-    (
-        provider = $provider:ty,
-        key = $key:ty,
-        value = $value:ty,
-        definition = $definition_method:ident,
-        scan_all = $scan_all_method:ident,
-        scan_filtered = $scan_filtered_method:ident
-    ) => {
-        $crate::impl_simple_system_table_provider!(
-            provider = $provider,
-            key = $key,
-            value = $value,
-            definition = $definition_method,
-            scan_all = $scan_all_method,
-            scan_filtered = $scan_filtered_method,
-            pushdown = $crate::providers::base::unsupported_filter_pushdown
-        );
     };
 }

@@ -24,9 +24,6 @@ use crate::system_row_mapper::{model_to_system_row, system_row_to_model};
 use crate::JobStatus;
 use datafusion::arrow::array::RecordBatch;
 use datafusion::arrow::datatypes::SchemaRef;
-use datafusion::error::Result as DataFusionResult;
-use datafusion::logical_expr::Expr;
-use datafusion::logical_expr::TableProviderFilterPushDown;
 use kalamdb_commons::models::rows::SystemTableRow;
 use kalamdb_commons::JobId;
 use kalamdb_commons::SystemTable;
@@ -43,6 +40,7 @@ pub type JobsStore = IndexedEntityStore<JobId, SystemTableRow>;
 ///
 /// All insert/update/delete operations automatically maintain secondary indexes
 /// using RocksDB's atomic WriteBatch - no manual index management needed.
+#[derive(Clone)]
 pub struct JobsTableProvider {
     store: JobsStore,
 }
@@ -626,21 +624,6 @@ impl JobsTableProvider {
         }
     }
 
-    fn filter_pushdown(filters: &[&Expr]) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
-        // Only push down exact equality filters we can leverage for indexes.
-        Ok(filters
-            .iter()
-            .map(|filter| {
-                if let Some((col, _val)) = kalamdb_store::extract_string_equality(filter) {
-                    if matches!(col, "status" | "job_id" | "idempotency_key") {
-                        return TableProviderFilterPushDown::Inexact;
-                    }
-                }
-                TableProviderFilterPushDown::Unsupported
-            })
-            .collect())
-    }
-
     fn schema() -> SchemaRef {
         static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
         SCHEMA
@@ -657,9 +640,7 @@ crate::impl_indexed_system_table_provider!(
     value = SystemTableRow,
     store = store,
     definition = provider_definition,
-    build_batch = create_batch,
-    load_batch = scan_all_jobs,
-    pushdown = JobsTableProvider::filter_pushdown
+    build_batch = create_batch
 );
 
 #[cfg(test)]

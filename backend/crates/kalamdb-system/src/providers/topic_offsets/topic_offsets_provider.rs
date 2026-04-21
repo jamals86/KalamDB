@@ -30,6 +30,7 @@ pub type TopicOffsetsStore = IndexedEntityStore<TopicOffsetKey, SystemTableRow>;
 ///
 /// Uses a composite primary key (topic_id, group_id, partition_id) for
 /// efficient offset tracking per consumer group and partition.
+#[derive(Clone)]
 pub struct TopicOffsetsTableProvider {
     store: TopicOffsetsStore,
 }

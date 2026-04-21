@@ -17,6 +17,7 @@ use std::sync::{Arc, OnceLock};
 
 pub type JobNodesStore = IndexedEntityStore<JobNodeId, SystemTableRow>;
 
+#[derive(Clone)]
 pub struct JobNodesTableProvider {
     store: JobNodesStore,
 }
@@ -257,6 +258,5 @@ crate::impl_indexed_system_table_provider!(
     value = SystemTableRow,
     store = store,
     definition = provider_definition,
-    build_batch = create_batch,
-    load_batch = scan_all_job_nodes
+    build_batch = create_batch
 );

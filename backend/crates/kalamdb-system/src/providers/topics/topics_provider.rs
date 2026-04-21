@@ -8,9 +8,6 @@ use crate::providers::base::{system_rows_to_batch, IndexedProviderDefinition};
 use crate::system_row_mapper::{model_to_system_row, system_row_to_model};
 use datafusion::arrow::array::RecordBatch;
 use datafusion::arrow::datatypes::SchemaRef;
-use datafusion::error::Result as DataFusionResult;
-use datafusion::logical_expr::Expr;
-use datafusion::logical_expr::TableProviderFilterPushDown;
 use kalamdb_commons::models::rows::SystemTableRow;
 use kalamdb_commons::models::TopicId;
 use kalamdb_commons::SystemTable;
@@ -27,6 +24,7 @@ pub type TopicsStore = IndexedEntityStore<TopicId, SystemTableRow>;
 ///
 /// All insert/update/delete operations automatically maintain secondary indexes
 /// using RocksDB's atomic WriteBatch - no manual index management needed.
+#[derive(Clone)]
 pub struct TopicsTableProvider {
     store: TopicsStore,
 }
@@ -207,10 +205,6 @@ impl TopicsTableProvider {
         }
     }
 
-    fn filter_pushdown(filters: &[&Expr]) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
-        Ok(vec![TableProviderFilterPushDown::Inexact; filters.len()])
-    }
-
     fn schema() -> SchemaRef {
         static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
         SCHEMA
@@ -227,9 +221,7 @@ crate::impl_indexed_system_table_provider!(
     value = SystemTableRow,
     store = store,
     definition = provider_definition,
-    build_batch = build_batch_from_pairs,
-    load_batch = scan_all_topics_batch,
-    pushdown = TopicsTableProvider::filter_pushdown
+    build_batch = build_batch_from_pairs
 );
 
 #[cfg(test)]

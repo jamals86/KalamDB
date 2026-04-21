@@ -16,6 +16,7 @@ members = [
     "backend/crates/kalamdb-session",
     "backend/crates/kalamdb-session-datafusion",
     "backend/crates/kalamdb-transactions",
+    "backend/crates/kalamdb-datafusion-sources",
     "backend/crates/kalamdb-system",
     "backend/crates/kalamdb-tables",
     "backend/crates/kalamdb-dba",
@@ -174,6 +175,7 @@ kalamdb-commons = { path = "backend/crates/kalamdb-commons", default-features = 
 kalamdb-plan-cache = { path = "backend/crates/kalamdb-plan-cache" }
 kalamdb-tables = { path = "backend/crates/kalamdb-tables" }
 kalamdb-views = { path = "backend/crates/kalamdb-views" }
+kalamdb-datafusion-sources = { path = "backend/crates/kalamdb-datafusion-sources" }
 cookie = "0.18"
 colored = "3.1.1"
 fern = "0.7"

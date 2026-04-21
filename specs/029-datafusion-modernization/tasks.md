@@ -30,9 +30,9 @@
 
 **Purpose**: Establish the shared execution crate and workspace wiring so the modernization removes duplication instead of spreading it across existing crates.
 
-- [ ] T001 Create the shared DataFusion source crate and workspace wiring in `Cargo.toml`, `backend/Cargo.toml`, `backend/crates/kalamdb-datafusion-sources/Cargo.toml`, and `backend/crates/kalamdb-datafusion-sources/src/lib.rs`
-- [ ] T002 [P] Add documented module boundaries and thin public APIs for descriptors, capability reporting, execution nodes, stream adapters, pruning, and statistics in `backend/crates/kalamdb-datafusion-sources/src/provider.rs`, `backend/crates/kalamdb-datafusion-sources/src/exec.rs`, `backend/crates/kalamdb-datafusion-sources/src/stream.rs`, `backend/crates/kalamdb-datafusion-sources/src/pruning.rs`, and `backend/crates/kalamdb-datafusion-sources/src/stats.rs`
-- [ ] T003 [P] Wire the new shared crate into consuming manifests in `backend/crates/kalamdb-tables/Cargo.toml`, `backend/crates/kalamdb-system/Cargo.toml`, `backend/crates/kalamdb-views/Cargo.toml`, `backend/crates/kalamdb-vector/Cargo.toml`, and `backend/crates/kalamdb-transactions/Cargo.toml`
+- [X] T001 Create the shared DataFusion source crate and workspace wiring in `Cargo.toml`, `backend/Cargo.toml`, `backend/crates/kalamdb-datafusion-sources/Cargo.toml`, and `backend/crates/kalamdb-datafusion-sources/src/lib.rs`
+- [X] T002 [P] Add documented module boundaries and thin public APIs for descriptors, capability reporting, execution nodes, stream adapters, pruning, and statistics in `backend/crates/kalamdb-datafusion-sources/src/provider.rs`, `backend/crates/kalamdb-datafusion-sources/src/exec.rs`, `backend/crates/kalamdb-datafusion-sources/src/stream.rs`, `backend/crates/kalamdb-datafusion-sources/src/pruning.rs`, and `backend/crates/kalamdb-datafusion-sources/src/stats.rs`
+- [X] T003 [P] Wire the new shared crate into consuming manifests in `backend/crates/kalamdb-tables/Cargo.toml`, `backend/crates/kalamdb-system/Cargo.toml`, `backend/crates/kalamdb-views/Cargo.toml`, `backend/crates/kalamdb-vector/Cargo.toml`, and `backend/crates/kalamdb-transactions/Cargo.toml`
 
 ---
 
@@ -42,13 +42,13 @@
 
 **⚠️ CRITICAL**: No user story work should begin until this phase is complete.
 
-- [ ] T004 Record phase-0 explain and performance baselines in `benchv2/src/benchmarks/point_lookup_bench.rs`, `benchv2/src/benchmarks/load_sql_1k_bench.rs`, `benchv2/src/benchmarks/load_mixed_rw_bench.rs`, `cli/tests/smoke/query/smoke_test_queries_benchmark.rs`, and `cli/tests/smoke/query/smoke_test_00_parallel_query_burst.rs`
-- [ ] T005 [P] Extract common scan descriptors, provider traits, and plan-property builders from `backend/crates/kalamdb-tables/src/utils/base.rs` and `backend/crates/kalamdb-system/src/providers/base.rs` into `backend/crates/kalamdb-datafusion-sources/src/provider.rs` and `backend/crates/kalamdb-datafusion-sources/src/stats.rs`, leaving storage-specific behavior behind crate-local adapters
+- [X] T004 Record phase-0 explain and performance baselines in `benchv2/src/benchmarks/point_lookup_bench.rs`, `benchv2/src/benchmarks/load_sql_1k_bench.rs`, `benchv2/src/benchmarks/load_mixed_rw_bench.rs`, `cli/tests/smoke/query/smoke_test_queries_benchmark.rs`, and `cli/tests/smoke/query/smoke_test_00_parallel_query_burst.rs`
+- [X] T005 [P] Extract common scan descriptors, provider traits, and plan-property builders from `backend/crates/kalamdb-tables/src/utils/base.rs` and `backend/crates/kalamdb-system/src/providers/base.rs` into `backend/crates/kalamdb-datafusion-sources/src/provider.rs` and `backend/crates/kalamdb-datafusion-sources/src/stats.rs`, leaving storage-specific behavior behind crate-local adapters
 - [ ] T006 [P] Extract shared execution-node and record-batch stream utilities from `backend/crates/kalamdb-transactions/src/overlay_exec.rs` and provider helpers into `backend/crates/kalamdb-datafusion-sources/src/exec.rs` and `backend/crates/kalamdb-datafusion-sources/src/stream.rs` using DataFusion `ExecutionPlan` and `SendableRecordBatchStream` primitives instead of custom row buffers
-- [ ] T007 [P] Create unified filter, projection, limit, and pruning descriptors in `backend/crates/kalamdb-datafusion-sources/src/pruning.rs` and wire them into `backend/crates/kalamdb-tables/src/utils/base.rs` and `backend/crates/kalamdb-system/src/providers/base.rs`
-- [ ] T008 [P] Wire the shared source crate into `backend/crates/kalamdb-tables/src/utils/mod.rs` and `backend/crates/kalamdb-system/src/providers/mod.rs`, and add only minimal integration entry points in `backend/crates/kalamdb-views/src/lib.rs` and `backend/crates/kalamdb-vector/src/sql/mod.rs`
-- [ ] T009 [P] Add shared descriptor, version-merge, plan-properties, and current-API contract tests in `backend/crates/kalamdb-datafusion-sources/tests/descriptor_contract.rs`, `backend/crates/kalamdb-datafusion-sources/tests/version_merge_contract.rs`, `backend/crates/kalamdb-datafusion-sources/tests/plan_properties_contract.rs`, and `backend/crates/kalamdb-datafusion-sources/tests/current_api_surface.rs`
-- [ ] T010 [P] Add module-level docs and focused architectural comments in `backend/crates/kalamdb-datafusion-sources/src/*.rs` and remove stale old-design comments from `backend/crates/kalamdb-tables/src/utils/base.rs` and `backend/crates/kalamdb-system/src/providers/base.rs`
+- [X] T007 [P] Create unified filter, projection, limit, and pruning descriptors in `backend/crates/kalamdb-datafusion-sources/src/pruning.rs` and wire them into `backend/crates/kalamdb-tables/src/utils/base.rs` and `backend/crates/kalamdb-system/src/providers/base.rs`
+- [X] T008 [P] Wire the shared source crate into `backend/crates/kalamdb-tables/src/utils/mod.rs` and `backend/crates/kalamdb-system/src/providers/mod.rs`, and add only minimal integration entry points in `backend/crates/kalamdb-views/src/lib.rs` and `backend/crates/kalamdb-vector/src/sql/mod.rs`
+- [X] T009 [P] Add shared descriptor, version-merge, plan-properties, and current-API contract tests in `backend/crates/kalamdb-datafusion-sources/tests/descriptor_contract.rs`, `backend/crates/kalamdb-datafusion-sources/tests/version_merge_contract.rs`, `backend/crates/kalamdb-datafusion-sources/tests/plan_properties_contract.rs`, and `backend/crates/kalamdb-datafusion-sources/tests/current_api_surface.rs`
+- [X] T010 [P] Add module-level docs and focused architectural comments in `backend/crates/kalamdb-datafusion-sources/src/*.rs` and remove stale old-design comments from `backend/crates/kalamdb-tables/src/utils/base.rs` and `backend/crates/kalamdb-system/src/providers/base.rs`
 
 **Checkpoint**: The new shared crate exists, common traits and execution helpers are centralized, baseline evidence is captured, and the codebase is ready for provider-family cutovers without layering new duplication onto the old design.
 
@@ -62,14 +62,14 @@
 
 ### Tests for User Story 1
 
-- [ ] T011 [P] [US1] Add lightweight planning regression coverage for stream tables in `backend/crates/kalamdb-tables/tests/stream_provider_lightweight_scan.rs`
-- [ ] T012 [P] [US1] Add CLI explain coverage for exec-backed stream planning in `cli/tests/smoke/query/smoke_test_stream_explain_planning.rs`
+- [X] T011 [P] [US1] Add lightweight planning regression coverage for stream tables in `backend/crates/kalamdb-tables/tests/stream_provider_lightweight_scan.rs`
+- [X] T012 [P] [US1] Add CLI explain coverage for exec-backed stream planning in `cli/tests/smoke/query/smoke_test_stream_explain_planning.rs`
 
 ### Implementation for User Story 1
 
-- [ ] T013 [US1] Refactor `backend/crates/kalamdb-tables/src/stream_tables/stream_table_provider.rs` to return shared execution descriptors from `backend/crates/kalamdb-datafusion-sources/src/provider.rs` instead of materialized scan results
-- [ ] T014 [US1] Move stream-table execution and batching logic onto shared execution nodes in `backend/crates/kalamdb-datafusion-sources/src/exec.rs`, `backend/crates/kalamdb-datafusion-sources/src/stream.rs`, and `backend/crates/kalamdb-tables/src/stream_tables/stream_table_provider.rs`
-- [ ] T015 [US1] Delete legacy stream-table scan fallbacks and obsolete TODO-based update and delete paths from `backend/crates/kalamdb-tables/src/stream_tables/stream_table_provider.rs` and `backend/crates/kalamdb-tables/src/utils/base.rs`
+- [X] T013 [US1] Refactor `backend/crates/kalamdb-tables/src/stream_tables/stream_table_provider.rs` to return shared execution descriptors from `backend/crates/kalamdb-datafusion-sources/src/provider.rs` instead of materialized scan results
+- [X] T014 [US1] Move stream-table execution and batching logic onto shared execution nodes in `backend/crates/kalamdb-datafusion-sources/src/exec.rs`, `backend/crates/kalamdb-datafusion-sources/src/stream.rs`, and `backend/crates/kalamdb-tables/src/stream_tables/stream_table_provider.rs`
+- [X] T015 [US1] Delete legacy stream-table scan fallbacks and obsolete TODO-based update and delete paths from `backend/crates/kalamdb-tables/src/stream_tables/stream_table_provider.rs` and `backend/crates/kalamdb-tables/src/utils/base.rs`
 
 **Checkpoint**: Stream tables are the first exec-backed provider family and demonstrate lightweight planning without backward-compatibility shims.
 
@@ -83,16 +83,16 @@
 
 ### Tests for User Story 2
 
-- [ ] T016 [P] [US2] Add provider-family execution-model coverage in `backend/crates/kalamdb-system/tests/system_provider_exec_models.rs`, `backend/crates/kalamdb-views/tests/view_provider_exec_models.rs`, `backend/crates/kalamdb-vector/tests/vector_provider_exec_models.rs`, and `backend/crates/kalamdb-tables/tests/provider_source_models.rs`
-- [ ] T017 [P] [US2] Add mixed-provider explain smoke coverage in `cli/tests/smoke/query/smoke_test_provider_exec_models.rs`
+- [X] T016 [P] [US2] Add provider-family execution-model coverage in `backend/crates/kalamdb-system/tests/system_provider_exec_models.rs`, `backend/crates/kalamdb-views/tests/view_provider_exec_models.rs`, `backend/crates/kalamdb-vector/tests/vector_provider_exec_models.rs`, and `backend/crates/kalamdb-tables/tests/provider_source_models.rs`
+- [X] T017 [P] [US2] Add mixed-provider explain smoke coverage in `cli/tests/smoke/query/smoke_test_provider_exec_models.rs`
 
 ### Implementation for User Story 2
 
-- [ ] T018 [P] [US2] Migrate all system table providers onto shared descriptor and capability traits plus one streaming scan path in `backend/crates/kalamdb-system/src/providers/base.rs`, `backend/crates/kalamdb-system/src/macros.rs`, and `backend/crates/kalamdb-system/src/providers/`
-- [ ] T019 [P] [US2] Replace generic view `MemTable` wrapping with a shared one-shot execution descriptor and node in `backend/crates/kalamdb-views/src/view_base.rs`, `backend/crates/kalamdb-views/src/describe.rs`, and `backend/crates/kalamdb-views/src/lib.rs`
-- [ ] T020 [P] [US2] Wrap vector search results in the shared execution model while keeping TVF-specific lookup logic local in `backend/crates/kalamdb-vector/src/sql/vector_search.rs` and `backend/crates/kalamdb-vector/src/sql/mod.rs`
-- [ ] T021 [US2] Refactor `backend/crates/kalamdb-tables/src/user_tables/user_table_provider.rs`, `backend/crates/kalamdb-tables/src/shared_tables/shared_table_provider.rs`, and `backend/crates/kalamdb-tables/src/stream_tables/stream_table_provider.rs` to consume one shared provider facade for schema, scan descriptors, pushdown hooks, and notification-row helpers, leaving MVCC merge details to US3
-- [ ] T022 [US2] Remove duplicate provider glue and old wrapper code from `backend/crates/kalamdb-tables/src/utils/base.rs`, `backend/crates/kalamdb-system/src/providers/base.rs`, `backend/crates/kalamdb-system/src/macros.rs`, and `backend/crates/kalamdb-views/src/view_base.rs`
+- [X] T018 [P] [US2] Migrate all system table providers onto shared descriptor and capability traits plus one streaming scan path in `backend/crates/kalamdb-system/src/providers/base.rs`, `backend/crates/kalamdb-system/src/macros.rs`, and `backend/crates/kalamdb-system/src/providers/`
+- [X] T019 [P] [US2] Replace generic view `MemTable` wrapping with a shared one-shot execution descriptor and node in `backend/crates/kalamdb-views/src/view_base.rs`, `backend/crates/kalamdb-views/src/describe.rs`, and `backend/crates/kalamdb-views/src/lib.rs`
+- [X] T020 [P] [US2] Wrap vector search results in the shared execution model while keeping TVF-specific lookup logic local in `backend/crates/kalamdb-vector/src/sql/vector_search.rs` and `backend/crates/kalamdb-vector/src/sql/mod.rs`
+- [X] T021 [US2] Refactor `backend/crates/kalamdb-tables/src/user_tables/user_table_provider.rs`, `backend/crates/kalamdb-tables/src/shared_tables/shared_table_provider.rs`, and `backend/crates/kalamdb-tables/src/stream_tables/stream_table_provider.rs` to consume one shared provider facade for schema, scan descriptors, pushdown hooks, and notification-row helpers, leaving MVCC merge details to US3
+- [X] T022 [US2] Remove duplicate provider glue and old wrapper code from `backend/crates/kalamdb-tables/src/utils/base.rs`, `backend/crates/kalamdb-system/src/providers/base.rs`, `backend/crates/kalamdb-system/src/macros.rs`, and `backend/crates/kalamdb-views/src/view_base.rs`
 
 **Checkpoint**: Provider families use the source model that fits their semantics, system tables share one logic path, and duplicated provider glue has been removed instead of preserved.
 
@@ -106,14 +106,14 @@
 
 ### Tests for User Story 3
 
-- [ ] T023 [P] [US3] Add filter-pushdown contract coverage in `backend/crates/kalamdb-tables/tests/filter_pushdown_contract.rs` and `backend/crates/kalamdb-system/tests/filter_pushdown_contract.rs`
-- [ ] T024 [P] [US3] Add selective-read smoke coverage for source-side filtering in `cli/tests/smoke/query/smoke_test_filter_pushdown.rs`
+- [X] T023 [P] [US3] Add filter-pushdown contract coverage in `backend/crates/kalamdb-tables/tests/filter_pushdown_contract.rs` and `backend/crates/kalamdb-system/tests/filter_pushdown_contract.rs`
+- [X] T024 [P] [US3] Add selective-read smoke coverage for source-side filtering in `cli/tests/smoke/query/smoke_test_filter_pushdown.rs`
 
 ### Implementation for User Story 3
 
-- [ ] T025 [US3] Replace blanket pushdown reporting with a shared capability matrix for `Exact`, `Inexact`, and `Unsupported` filter shapes in `backend/crates/kalamdb-datafusion-sources/src/provider.rs`, `backend/crates/kalamdb-tables/src/utils/base.rs`, and `backend/crates/kalamdb-system/src/providers/base.rs`
-- [ ] T026 [P] [US3] Implement precise pushdown handling for stream, system, view, and vector sources in `backend/crates/kalamdb-tables/src/stream_tables/stream_table_provider.rs`, `backend/crates/kalamdb-system/src/providers/base.rs`, `backend/crates/kalamdb-views/src/view_base.rs`, and `backend/crates/kalamdb-vector/src/sql/vector_search.rs`
-- [ ] T027 [US3] Implement shared exact and inexact filter evaluation for MVCC-backed user and shared tables in `backend/crates/kalamdb-tables/src/user_tables/user_table_provider.rs`, `backend/crates/kalamdb-tables/src/shared_tables/shared_table_provider.rs`, and `backend/crates/kalamdb-datafusion-sources/src/pruning.rs`
+- [X] T025 [US3] Replace blanket pushdown reporting with a shared capability matrix for `Exact`, `Inexact`, and `Unsupported` filter shapes in `backend/crates/kalamdb-datafusion-sources/src/provider.rs`, `backend/crates/kalamdb-tables/src/utils/base.rs`, and `backend/crates/kalamdb-system/src/providers/base.rs`
+- [X] T026 [P] [US3] Implement precise pushdown handling for stream, system, view, and vector sources in `backend/crates/kalamdb-tables/src/stream_tables/stream_table_provider.rs`, `backend/crates/kalamdb-system/src/providers/base.rs`, `backend/crates/kalamdb-views/src/view_base.rs`, and `backend/crates/kalamdb-vector/src/sql/vector_search.rs`
+- [X] T027 [US3] Implement shared exact and inexact filter evaluation for MVCC-backed user and shared tables in `backend/crates/kalamdb-tables/src/user_tables/user_table_provider.rs`, `backend/crates/kalamdb-tables/src/shared_tables/shared_table_provider.rs`, and `backend/crates/kalamdb-datafusion-sources/src/pruning.rs`
 - [ ] T062 [US3] Rebuild hot+cold MVCC version resolution as a lazy metadata-first merge execution plan that honors `(commit_seq, seq_id)` ordering, snapshot visibility, and early-stop hints while emitting shared batch slices wherever possible in `backend/crates/kalamdb-datafusion-sources/src/exec.rs`, `backend/crates/kalamdb-datafusion-sources/src/stream.rs`, `backend/crates/kalamdb-tables/src/utils/version_resolution.rs`, `backend/crates/kalamdb-tables/src/user_tables/user_table_provider.rs`, and `backend/crates/kalamdb-tables/src/shared_tables/shared_table_provider.rs`
 - [ ] T063 [US3] Replace callers of `merge_versioned_rows`, `resolve_latest_kvs_from_cold_batch`, and `count_resolved_from_metadata` with the shared merge execution plan and delete the superseded helper paths from `backend/crates/kalamdb-tables/src/utils/version_resolution.rs` and `backend/crates/kalamdb-tables/src/utils/base.rs` once the new contract tests pass
 - [ ] T064 [US3] Preserve and modernize primary-key lookup and count-only fast paths on the streaming merge in `backend/crates/kalamdb-tables/src/utils/pk/existence_checker.rs`, `backend/crates/kalamdb-tables/src/user_tables/user_table_provider.rs`, `backend/crates/kalamdb-tables/src/shared_tables/shared_table_provider.rs`, and `backend/crates/kalamdb-datafusion-sources/src/exec.rs`, with regression coverage in `backend/crates/kalamdb-tables/tests/pk_count_fast_paths.rs`
@@ -216,7 +216,7 @@
 
 ### Tests for User Story 8
 
-- [ ] T046 [P] [US8] Add current-API compile guards and interface-audit coverage in `backend/crates/kalamdb-datafusion-sources/tests/current_api_surface.rs`, `backend/crates/kalamdb-tables/tests/current_api_surface.rs`, `backend/crates/kalamdb-system/tests/current_api_surface.rs`, `backend/crates/kalamdb-views/tests/current_api_surface.rs`, `backend/crates/kalamdb-vector/tests/current_api_surface.rs`, and `backend/crates/kalamdb-transactions/tests/current_api_surface.rs`
+- [X] T046 [P] [US8] Add current-API compile guards and interface-audit coverage in `backend/crates/kalamdb-datafusion-sources/tests/current_api_surface.rs`, `backend/crates/kalamdb-tables/tests/current_api_surface.rs`, `backend/crates/kalamdb-system/tests/current_api_surface.rs`, `backend/crates/kalamdb-views/tests/current_api_surface.rs`, `backend/crates/kalamdb-vector/tests/current_api_surface.rs`, and `backend/crates/kalamdb-transactions/tests/current_api_surface.rs`
 
 ### Implementation for User Story 8
 

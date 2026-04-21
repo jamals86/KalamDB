@@ -15,7 +15,9 @@ use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use crate::manifest::manifest_helpers::{ensure_manifest_ready, load_row_from_parquet_by_seq};
 use crate::user_tables::{UserTableIndexedStore, UserTablePkIndex, UserTableRow};
-use crate::utils::base::{self, BaseTableProvider, TableProviderCore};
+use crate::utils::base::{
+    self, BaseTableProvider, DeferredMvccScanProvider, TableProviderCore,
+};
 use crate::utils::row_utils::extract_user_context;
 use async_trait::async_trait;
 
@@ -40,10 +42,12 @@ use kalamdb_session::can_read_all_users;
 use kalamdb_session_datafusion::{
     check_user_table_access, check_user_table_write_access, session_error_to_datafusion,
 };
-use kalamdb_store::EntityStore;
-use kalamdb_transactions::{
-    extract_transaction_query_context, StagedMutation, TransactionOverlayExec,
+use kalamdb_datafusion_sources::provider::{
+    merged_projection_scan_descriptor, mvcc_filter_capability, FilterCapability, ScanDescriptor,
+    SourceProvider,
 };
+use kalamdb_store::EntityStore;
+use kalamdb_transactions::{extract_transaction_query_context, StagedMutation};
 use kalamdb_vector::{new_indexed_user_vector_hot_store, UserVectorHotOpId, UserVectorHotStore};
 use std::any::Any;
 use std::collections::{HashMap, HashSet};
@@ -64,6 +68,7 @@ use kalamdb_commons::websocket::ChangeNotification;
 /// - Shared core via Arc<TableProviderCore> (holds schema, pk_name, column_defaults, non_null_columns)
 /// - RLS enforced via user_id parameter
 /// - PK Index for efficient row lookup (Phase 14)
+#[derive(Clone)]
 pub struct UserTableProvider {
     /// Shared core (services, schema, pk_name, column_defaults, non_null_columns)
     core: Arc<TableProviderCore>,
@@ -680,6 +685,187 @@ impl UserTableProvider {
     }
 }
 
+#[derive(Clone)]
+pub struct UserScanContext {
+    user_id: UserId,
+    allow_all_users: bool,
+    snapshot_commit_seq: Option<u64>,
+}
+
+#[async_trait]
+impl DeferredMvccScanProvider<UserTableRowId, UserTableRow> for UserTableProvider {
+    type ScanContext = UserScanContext;
+
+    fn scan_source_name(&self) -> &'static str {
+        "user_table_scan"
+    }
+
+    fn build_scan_context(&self, state: &dyn Session) -> Result<Self::ScanContext, KalamDbError> {
+        let (user_id, role) = extract_user_context(state)?;
+        Ok(UserScanContext {
+            user_id: user_id.clone(),
+            allow_all_users: can_read_all_users(role),
+            snapshot_commit_seq: extract_transaction_query_context(state)
+                .map(|context| context.snapshot_commit_seq),
+        })
+    }
+
+    async fn scan_rows_with_context(
+        &self,
+        scan_context: &Self::ScanContext,
+        projection: Option<&Vec<usize>>,
+        filter: Option<&Expr>,
+        limit: Option<usize>,
+    ) -> Result<RecordBatch, KalamDbError> {
+        let user_id = &scan_context.user_id;
+        let allow_all_users = scan_context.allow_all_users;
+        let snapshot_commit_seq = scan_context.snapshot_commit_seq;
+        let schema = self.schema_ref();
+        let pk_name = self.primary_key_field_name();
+
+        if !allow_all_users && snapshot_commit_seq.is_none() {
+            if let Some(expr) = filter {
+                if let Some(pk_literal) = base::extract_pk_equality_literal(expr, pk_name) {
+                    let pk_field = schema.field_with_name(pk_name).ok();
+                    let pk_scalar = if let Some(field) = pk_field {
+                        kalamdb_commons::conversions::parse_string_as_scalar(
+                            &pk_literal.to_string(),
+                            field.data_type(),
+                        )
+                        .ok()
+                        .unwrap_or(pk_literal)
+                    } else {
+                        pk_literal
+                    };
+
+                    let found = self.find_by_pk(user_id, &pk_scalar).await?;
+                    if let Some((row_id, row)) = found {
+                        log::debug!(
+                            "[UserProvider] PK fast-path hit for {}={}, user={}",
+                            pk_name,
+                            pk_scalar,
+                            user_id.as_str()
+                        );
+                        return crate::utils::base::rows_to_arrow_batch(
+                            &schema,
+                            vec![(row_id, row)],
+                            projection,
+                            |_, _| {},
+                        );
+                    }
+
+                    if self.pk_tombstoned_in_hot(user_id, &pk_scalar).await? {
+                        log::debug!(
+                            "[UserProvider] PK fast-path tombstone for {}={}, user={}",
+                            pk_name,
+                            pk_scalar,
+                            user_id.as_str()
+                        );
+                        return crate::utils::base::rows_to_arrow_batch(
+                            &schema,
+                            Vec::<(UserTableRowId, UserTableRow)>::new(),
+                            projection,
+                            |_, _| {},
+                        );
+                    }
+
+                    let cold_found =
+                        base::find_row_by_pk(self, Some(user_id), &pk_scalar.to_string()).await?;
+                    if let Some((row_id, row)) = cold_found {
+                        log::debug!(
+                            "[UserProvider] PK fast-path cold hit for {}={}, user={}",
+                            pk_name,
+                            pk_scalar,
+                            user_id.as_str()
+                        );
+                        return crate::utils::base::rows_to_arrow_batch(
+                            &schema,
+                            vec![(row_id, row)],
+                            projection,
+                            |_, _| {},
+                        );
+                    }
+
+                    return crate::utils::base::rows_to_arrow_batch(
+                        &schema,
+                        Vec::<(UserTableRowId, UserTableRow)>::new(),
+                        projection,
+                        |_, _| {},
+                    );
+                }
+            }
+        }
+
+        if !allow_all_users {
+            if let Some(proj) = projection {
+                if proj.is_empty() && filter.is_none() {
+                    let count = self
+                        .count_resolved_rows_async(user_id, snapshot_commit_seq)
+                        .await?;
+                    return base::build_count_only_batch(count);
+                }
+            }
+        }
+
+        let (since_seq, _until_seq) = if let Some(expr) = filter {
+            base::extract_seq_bounds_from_filter(expr)
+        } else {
+            (None, None)
+        };
+
+        let keep_deleted = filter.map(base::filter_uses_deleted_column).unwrap_or(false);
+        let cold_columns = base::compute_cold_columns(projection, &schema, pk_name);
+
+        let kvs = if allow_all_users {
+            self.scan_all_users_with_version_resolution_async(
+                filter,
+                limit,
+                keep_deleted,
+                snapshot_commit_seq,
+                Some(user_id),
+            )
+            .await?
+        } else {
+            self.scan_with_version_resolution_to_kvs_async(
+                user_id,
+                filter,
+                since_seq,
+                limit,
+                keep_deleted,
+                cold_columns.as_deref(),
+                snapshot_commit_seq,
+            )
+            .await?
+        };
+
+        let table_id = self.core.table_id();
+        log::trace!(
+            "[UserTableProvider] scan_rows resolved {} row(s) for user={} scope={} table={}",
+            kvs.len(),
+            user_id.as_str(),
+            if allow_all_users { "all-users" } else { "subject" },
+            table_id
+        );
+
+        crate::utils::base::rows_to_arrow_batch(&schema, kvs, projection, |_, _| {})
+    }
+}
+
+impl SourceProvider for UserTableProvider {
+    fn filter_capability(&self, filter: &Expr) -> FilterCapability {
+        mvcc_filter_capability(filter, self.primary_key_field_name())
+    }
+
+    fn scan_descriptor(
+        &self,
+        projection: Option<&Vec<usize>>,
+        filters: &[Expr],
+        limit: Option<usize>,
+    ) -> ScanDescriptor {
+        merged_projection_scan_descriptor(self.schema_ref(), projection, filters, limit)
+    }
+}
+
 #[async_trait]
 impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
     fn core(&self) -> &base::TableProviderCore {
@@ -1266,162 +1452,9 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         filter: Option<&Expr>,
         limit: Option<usize>,
     ) -> Result<RecordBatch, KalamDbError> {
-        // Extract user_id and role from SessionState for RLS
-        let (user_id, role) = extract_user_context(state)?;
-        let allow_all_users = can_read_all_users(role);
-        let snapshot_commit_seq =
-            extract_transaction_query_context(state).map(|context| context.snapshot_commit_seq);
-
-        let schema = self.schema_ref();
-        let pk_name = self.primary_key_field_name();
-
-        // ── PK equality fast-path ────────────────────────────────────────────
-        // If the filter is `pk_col = <literal>`, use the PK index for O(1)
-        // lookup instead of full table scan + MVCC resolution.
-        // Only for single-user scope (not admin cross-user queries).
-        if !allow_all_users && snapshot_commit_seq.is_none() {
-            if let Some(expr) = filter {
-                if let Some(pk_literal) = base::extract_pk_equality_literal(expr, pk_name) {
-                    let pk_field = schema.field_with_name(pk_name).ok();
-                    let pk_scalar = if let Some(field) = pk_field {
-                        kalamdb_commons::conversions::parse_string_as_scalar(
-                            &pk_literal.to_string(),
-                            field.data_type(),
-                        )
-                        .ok()
-                        .unwrap_or(pk_literal)
-                    } else {
-                        pk_literal
-                    };
-
-                    // Hot storage PK index (O(1))
-                    let found = self.find_by_pk(user_id, &pk_scalar).await?;
-                    if let Some((row_id, row)) = found {
-                        log::debug!(
-                            "[UserProvider] PK fast-path hit for {}={}, user={}",
-                            pk_name,
-                            pk_scalar,
-                            user_id.as_str()
-                        );
-                        return crate::utils::base::rows_to_arrow_batch(
-                            &schema,
-                            vec![(row_id, row)],
-                            projection,
-                            |_, _| {},
-                        );
-                    }
-
-                    // Check if PK is tombstoned (deleted) in hot storage.
-                    // If so, the row has been deleted — do NOT fall back to cold storage.
-                    // Returning the Parquet version would surface a row whose latest
-                    // version is a tombstone, violating MVCC visibility rules.
-                    if self.pk_tombstoned_in_hot(user_id, &pk_scalar).await? {
-                        log::debug!(
-                            "[UserProvider] PK fast-path tombstone for {}={}, user={}",
-                            pk_name,
-                            pk_scalar,
-                            user_id.as_str()
-                        );
-                        return crate::utils::base::rows_to_arrow_batch(
-                            &schema,
-                            Vec::<(UserTableRowId, UserTableRow)>::new(),
-                            projection,
-                            |_, _| {},
-                        );
-                    }
-
-                    // Cold storage fallback (PK absent from hot storage entirely)
-                    let cold_found =
-                        base::find_row_by_pk(self, Some(user_id), &pk_scalar.to_string()).await?;
-                    if let Some((row_id, row)) = cold_found {
-                        log::debug!(
-                            "[UserProvider] PK fast-path cold hit for {}={}, user={}",
-                            pk_name,
-                            pk_scalar,
-                            user_id.as_str()
-                        );
-                        return crate::utils::base::rows_to_arrow_batch(
-                            &schema,
-                            vec![(row_id, row)],
-                            projection,
-                            |_, _| {},
-                        );
-                    }
-
-                    // PK not found — return empty batch
-                    return crate::utils::base::rows_to_arrow_batch(
-                        &schema,
-                        Vec::<(UserTableRowId, UserTableRow)>::new(),
-                        projection,
-                        |_, _| {},
-                    );
-                }
-            }
-        }
-
-        // ── Count-only fast-path ─────────────────────────────────────────────
-        // When projection is empty (e.g., COUNT(*)), avoid loading full row data.
-        // Only decode metadata (seq, deleted, pk) for version resolution.
-        // Only for single-user scope (admin cross-user COUNT would be complex).
-        if !allow_all_users {
-            if let Some(proj) = projection {
-                if proj.is_empty() && filter.is_none() {
-                    let count =
-                        self.count_resolved_rows_async(user_id, snapshot_commit_seq).await?;
-                    return base::build_count_only_batch(count);
-                }
-            }
-        }
-
-        // ── Full scan path (no PK equality filter or admin cross-user) ──────
-        // Extract sequence bounds from filter to optimize RocksDB scan
-        let (since_seq, _until_seq) = if let Some(expr) = filter {
-            base::extract_seq_bounds_from_filter(expr)
-        } else {
-            (None, None)
-        };
-
-        // Privileged roles can scan across all users for read access; others remain scoped to
-        // their own user_id for RLS.
-        let keep_deleted = filter.map(base::filter_uses_deleted_column).unwrap_or(false);
-
-        // Compute cold-path column projection: when DataFusion provides a projection,
-        // we only need to decode the projected columns + system columns + PK from Parquet.
-        let cold_columns = base::compute_cold_columns(projection, &schema, pk_name);
-
-        let kvs = if allow_all_users {
-            self.scan_all_users_with_version_resolution_async(
-                filter,
-                limit,
-                keep_deleted,
-                snapshot_commit_seq,
-                Some(user_id),
-            )
-            .await?
-        } else {
-            self.scan_with_version_resolution_to_kvs_async(
-                user_id,
-                filter,
-                since_seq,
-                limit,
-                keep_deleted,
-                cold_columns.as_deref(),
-                snapshot_commit_seq,
-            )
-            .await?
-        };
-
-        let table_id = self.core.table_id();
-        log::trace!(
-            "[UserTableProvider] scan_rows resolved {} row(s) for user={} role={:?} table={}",
-            kvs.len(),
-            user_id.as_str(),
-            role,
-            table_id
-        );
-
-        // Convert rows to JSON values aligned with schema
-        crate::utils::base::rows_to_arrow_batch(&schema, kvs, projection, |_, _| {})
+        let scan_context = self.build_scan_context(state)?;
+        self.scan_rows_with_context(&scan_context, projection, filter, limit)
+            .await
     }
 
     async fn scan_with_version_resolution_to_kvs_async(
@@ -2082,35 +2115,20 @@ impl TableProvider for UserTableProvider {
         check_user_table_access(state, self.core.table_id())
             .map_err(session_error_to_datafusion)?;
 
-        let Some(transaction_query_context) = extract_transaction_query_context(state) else {
-            return self.base_scan(state, projection, filters, limit).await;
-        };
-        let Some(table_overlay) =
-            transaction_query_context.overlay_view.overlay_for_table(self.core.table_id())
-        else {
-            return self.base_scan(state, projection, filters, limit).await;
-        };
+        let table_overlay = extract_transaction_query_context(state)
+            .and_then(|context| context.overlay_view.overlay_for_table(self.core.table_id()));
         let (user_id, _role) = extract_user_context(state)
             .map_err(|error| DataFusionError::Execution(error.to_string()))?;
 
-        let overlay_projection = crate::utils::datafusion_dml::prepare_overlay_scan_projection(
-            &self.schema_ref(),
+        self.base_scan_with_overlay(
+            state,
             projection,
-            self.primary_key_field_name(),
-        )?;
-        let base_plan = self
-            .base_scan(state, overlay_projection.effective_projection.as_ref(), filters, limit)
-            .await?;
-
-        Ok(Arc::new(TransactionOverlayExec::try_new(
-            base_plan,
-            self.core.table_id().clone(),
-            self.primary_key_field_name().to_string(),
+            filters,
+            limit,
             table_overlay,
             Some(user_id.clone()),
-            overlay_projection.final_projection,
-            None,
-        )?))
+        )
+        .await
     }
 
     async fn insert_into(

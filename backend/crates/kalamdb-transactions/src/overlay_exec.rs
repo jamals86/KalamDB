@@ -7,18 +7,19 @@ use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::execution::{SendableRecordBatchStream, TaskContext};
 use datafusion::physical_expr::EquivalenceProperties;
-use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion::physical_plan::{
     DisplayAs, DisplayFormatType, ExecutionPlan, ExecutionPlanProperties, PlanProperties,
 };
 use datafusion::scalar::ScalarValue;
 use datafusion::{common::Result as DataFusionResult, error::DataFusionError};
-use futures_util::{stream, TryStreamExt};
+use futures_util::TryStreamExt;
 
 use kalamdb_commons::conversions::arrow_json_conversion::json_rows_to_arrow_batch;
 use kalamdb_commons::models::rows::Row;
 use kalamdb_commons::models::UserId;
 use kalamdb_commons::TableId;
+use kalamdb_datafusion_sources::exec::projected_schema;
+use kalamdb_datafusion_sources::stream::one_shot_batch_stream;
 
 use crate::overlay::TransactionOverlay;
 
@@ -45,7 +46,7 @@ impl TransactionOverlayExec {
         final_projection: Option<Vec<usize>>,
         fetch: Option<usize>,
     ) -> DataFusionResult<Self> {
-        let output_schema = projected_schema(&input.schema(), final_projection.as_ref())?;
+        let output_schema = projected_schema(&input.schema(), final_projection.as_deref())?;
         let cache = Arc::new(PlanProperties::new(
             EquivalenceProperties::new(Arc::clone(&output_schema)),
             input.output_partitioning().clone(),
@@ -130,43 +131,58 @@ impl ExecutionPlan for TransactionOverlayExec {
         let table_id = self.table_id.clone();
         let primary_key_column = Arc::clone(&self.primary_key_column);
         let final_projection = self.final_projection.clone();
-        let input_schema = input.schema();
         let output_schema = self.schema();
         let user_scope = self.user_scope.clone();
         let fetch = self.fetch;
 
-        let stream = stream::once(async move {
+        Ok(one_shot_batch_stream(output_schema, async move {
             let input_stream = input.execute(partition, context)?;
-            let batches = input_stream.try_collect::<Vec<RecordBatch>>().await?;
-            merge_batches_with_overlay(
-                &input_schema,
+            merge_stream_with_overlay(
+                input_stream,
                 &table_id,
                 primary_key_column.as_ref(),
                 &overlay,
                 user_scope.as_ref(),
-                &batches,
                 final_projection.as_ref(),
                 fetch,
             )
-        });
-
-        Ok(Box::pin(RecordBatchStreamAdapter::new(output_schema, stream)))
+            .await
+        }))
     }
 }
 
-fn projected_schema(
-    input_schema: &SchemaRef,
-    projection: Option<&Vec<usize>>,
-) -> DataFusionResult<SchemaRef> {
-    match projection {
-        Some(indices) => input_schema
-            .project(indices)
-            .map(Arc::new)
-            .map_err(|error| DataFusionError::ArrowError(Box::new(error), None)),
-        None => Ok(Arc::clone(input_schema)),
+async fn merge_stream_with_overlay(
+    input_stream: SendableRecordBatchStream,
+    table_id: &TableId,
+    primary_key_column: &str,
+    overlay: &TransactionOverlay,
+    overlay_user_scope: Option<&UserId>,
+    final_projection: Option<&Vec<usize>>,
+    fetch: Option<usize>,
+) -> DataFusionResult<RecordBatch> {
+    let input_schema = input_stream.schema();
+    let mut rows: Vec<Option<Row>> = Vec::new();
+    let mut row_index_by_pk: HashMap<String, usize> = HashMap::new();
+
+    futures_util::pin_mut!(input_stream);
+    while let Some(batch) = input_stream.try_next().await? {
+        merge_batch_into_rows(&mut rows, &mut row_index_by_pk, &batch, primary_key_column)?;
     }
+
+    finalize_overlay_rows(
+        &input_schema,
+        table_id,
+        primary_key_column,
+        overlay,
+        overlay_user_scope,
+        rows,
+        row_index_by_pk,
+        final_projection,
+        fetch,
+    )
 }
 
+#[cfg(test)]
 fn merge_batches_with_overlay(
     input_schema: &SchemaRef,
     table_id: &TableId,
@@ -181,17 +197,52 @@ fn merge_batches_with_overlay(
     let mut row_index_by_pk: HashMap<String, usize> = HashMap::new();
 
     for batch in batches {
-        for row in record_batch_to_rows(batch)? {
-            let primary_key = extract_primary_key(&row, primary_key_column)?;
-            if let Some(existing_index) = row_index_by_pk.get(&primary_key).copied() {
-                rows[existing_index] = Some(row);
-            } else {
-                row_index_by_pk.insert(primary_key, rows.len());
-                rows.push(Some(row));
-            }
+        merge_batch_into_rows(&mut rows, &mut row_index_by_pk, batch, primary_key_column)?;
+    }
+
+    finalize_overlay_rows(
+        input_schema,
+        table_id,
+        primary_key_column,
+        overlay,
+        overlay_user_scope,
+        rows,
+        row_index_by_pk,
+        final_projection,
+        fetch,
+    )
+}
+
+fn merge_batch_into_rows(
+    rows: &mut Vec<Option<Row>>,
+    row_index_by_pk: &mut HashMap<String, usize>,
+    batch: &RecordBatch,
+    primary_key_column: &str,
+) -> DataFusionResult<()> {
+    for row in record_batch_to_rows(batch)? {
+        let primary_key = extract_primary_key(&row, primary_key_column)?;
+        if let Some(existing_index) = row_index_by_pk.get(&primary_key).copied() {
+            rows[existing_index] = Some(row);
+        } else {
+            row_index_by_pk.insert(primary_key, rows.len());
+            rows.push(Some(row));
         }
     }
 
+    Ok(())
+}
+
+fn finalize_overlay_rows(
+    input_schema: &SchemaRef,
+    table_id: &TableId,
+    _primary_key_column: &str,
+    overlay: &TransactionOverlay,
+    overlay_user_scope: Option<&UserId>,
+    mut rows: Vec<Option<Row>>,
+    mut row_index_by_pk: HashMap<String, usize>,
+    final_projection: Option<&Vec<usize>>,
+    fetch: Option<usize>,
+) -> DataFusionResult<RecordBatch> {
     let mut overlay_entries = overlay
         .table_entries(table_id)
         .map(|entries| {

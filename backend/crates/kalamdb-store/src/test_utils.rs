@@ -178,10 +178,6 @@ impl StorageBackend for InMemoryBackend {
         // No-op for in-memory backend (no compaction needed)
         Ok(())
     }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
 }
 
 /// Test database wrapper that automatically cleans up on drop.

@@ -139,8 +139,6 @@ impl RocksDbInit {
         existing
     }
 
-    /// Close database handle (drop Arc)
-    pub fn close(_db: Arc<DB>) {}
 }
 
 pub(crate) fn create_block_options_with_cache(cache: &Cache) -> BlockBasedOptions {

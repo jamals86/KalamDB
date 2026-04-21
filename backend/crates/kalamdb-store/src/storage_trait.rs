@@ -59,7 +59,6 @@
 //! }
 //! ```
 
-use std::any::Any;
 use std::path::Path;
 
 pub use kalamdb_commons::storage::{KvIterator, Operation, Partition, Result, StorageError};
@@ -219,11 +218,6 @@ pub trait StorageBackend: Send + Sync {
         ))
     }
 
-    /// Downcast support to enable integration paths that need concrete backends.
-    ///
-    /// This should be used sparingly; prefer the trait methods above. It exists
-    /// to help legacy components that still require a concrete backend handle.
-    fn as_any(&self) -> &dyn Any;
 }
 
 /// Extension trait providing async versions of StorageBackend methods.

@@ -4,6 +4,8 @@
 //!
 //! This module introduces the new utils/ architecture that eliminates ~1200 lines
 //! of duplicate code across User/Shared/Stream table providers.
+//! Shared planning helpers now live in `kalamdb-datafusion-sources`, while this
+//! module retains table-specific MVCC, Parquet, and DML behavior.
 
 pub mod base;
 pub mod core;

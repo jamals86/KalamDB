@@ -20,6 +20,7 @@ use kalamdb_store::{IndexedEntityStore, StorageBackend};
 use std::sync::{Arc, OnceLock};
 
 /// System.namespaces table provider using EntityStore architecture
+#[derive(Clone)]
 pub struct NamespacesTableProvider {
     store: IndexedEntityStore<NamespaceId, SystemTableRow>,
 }

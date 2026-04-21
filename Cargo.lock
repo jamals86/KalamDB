@@ -4159,6 +4159,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "kalamdb-datafusion-sources"
+version = "0.4.2-rc.3"
+dependencies = [
+ "arrow",
+ "arrow-schema",
+ "async-trait",
+ "datafusion",
+ "datafusion-common",
+ "datafusion-expr",
+ "futures-util",
+ "parquet",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "kalamdb-dba"
 version = "0.4.2-rc.3"
 dependencies = [
@@ -4645,6 +4662,7 @@ dependencies = [
  "datafusion",
  "flexbuffers",
  "kalamdb-commons",
+ "kalamdb-datafusion-sources",
  "kalamdb-macros",
  "kalamdb-session-datafusion",
  "kalamdb-store",
@@ -4670,6 +4688,7 @@ dependencies = [
  "datafusion-datasource",
  "futures-util",
  "kalamdb-commons",
+ "kalamdb-datafusion-sources",
  "kalamdb-filestore",
  "kalamdb-macros",
  "kalamdb-session",
@@ -4681,6 +4700,7 @@ dependencies = [
  "kalamdb-transactions",
  "kalamdb-vector",
  "log",
+ "ntest",
  "once_cell",
  "serde",
  "serde_json",
@@ -4697,6 +4717,7 @@ dependencies = [
  "datafusion",
  "futures-util",
  "kalamdb-commons",
+ "kalamdb-datafusion-sources",
  "serde",
  "serde_json",
 ]
@@ -4711,6 +4732,7 @@ dependencies = [
  "dashmap 6.1.0",
  "datafusion",
  "kalamdb-commons",
+ "kalamdb-datafusion-sources",
  "kalamdb-filestore",
  "kalamdb-session-datafusion",
  "kalamdb-store",
@@ -4718,6 +4740,7 @@ dependencies = [
  "once_cell",
  "serde",
  "serde_json",
+ "tokio",
  "usearch",
 ]
 
@@ -4730,6 +4753,7 @@ dependencies = [
  "datafusion",
  "kalamdb-commons",
  "kalamdb-configs",
+ "kalamdb-datafusion-sources",
  "kalamdb-raft",
  "kalamdb-system",
  "parking_lot",
