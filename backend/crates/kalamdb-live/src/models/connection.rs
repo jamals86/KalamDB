@@ -75,12 +75,12 @@ fn intern_subscription_str(value: &str) -> Arc<str> {
 /// flow control, while a smaller live buffer reduces worst-case memory per
 /// slow connection. At 100k concurrent idle connections this directly
 /// governs the per-connection memory floor.
-pub const NOTIFICATION_CHANNEL_CAPACITY: usize = 256;
+pub const NOTIFICATION_CHANNEL_CAPACITY: usize = 64;
 
 /// Maximum pending control events per connection.
 /// Only a few event kinds exist (auth timeout, heartbeat timeout, shutdown),
 /// so a small queue is sufficient and reduces fixed per-connection footprint.
-pub const EVENT_CHANNEL_CAPACITY: usize = 8;
+pub const EVENT_CHANNEL_CAPACITY: usize = 1;
 
 /// Maximum buffered notifications per subscription while initial snapshot loading is in progress.
 ///

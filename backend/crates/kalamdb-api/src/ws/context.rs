@@ -1,17 +1,15 @@
 use std::sync::Arc;
 
+use kalamdb_auth::AuthRequest;
 use kalamdb_auth::UserRepository;
-use kalamdb_commons::models::UserId;
 use kalamdb_commons::websocket::ProtocolOptions;
-use kalamdb_commons::Role;
 use kalamdb_core::app_context::AppContext;
 use kalamdb_live::{ConnectionsManager, LiveQueryManager};
 
 use crate::limiter::RateLimiter;
 
 pub(super) struct UpgradeAuth {
-    pub(super) user_id: UserId,
-    pub(super) role: Role,
+    pub(super) auth_request: AuthRequest,
     pub(super) protocol: ProtocolOptions,
 }
 

@@ -56,7 +56,42 @@ pub async fn handle_authenticate(
         WsAuthCredentials::Jwt { token } => AuthRequest::Jwt { token },
     };
 
-    authenticate_with_request(
+    authenticate_ws_request(
+        connection_state,
+        client_ip,
+        auth_request,
+        protocol,
+        session,
+        user_repo,
+        compression,
+    )
+    .await
+}
+
+/// Authenticate a request that was supplied during the HTTP upgrade.
+///
+/// This runs after the WebSocket upgrade has completed so the TCP/WebSocket
+/// handshake is not blocked on JWT validation or user lookup.
+pub async fn handle_upgrade_auth(
+    connection_state: &SharedConnectionState,
+    client_ip: &ConnectionInfo,
+    auth_request: AuthRequest,
+    protocol: ProtocolOptions,
+    session: &mut Session,
+    rate_limiter: &Arc<RateLimiter>,
+    user_repo: &Arc<dyn UserRepository>,
+    compression: bool,
+) -> Result<(), String> {
+    if !rate_limiter.check_auth_rate(client_ip) {
+        let _ = send_auth_error(
+            session.clone(),
+            "Too many authentication attempts. Please retry shortly.",
+        )
+        .await;
+        return Err("Auth rate limit exceeded".to_string());
+    }
+
+    authenticate_ws_request(
         connection_state,
         client_ip,
         auth_request,
@@ -71,8 +106,8 @@ pub async fn handle_authenticate(
 /// Complete WebSocket authentication after a user has been validated.
 ///
 /// This is the single source of truth for post-validation auth steps.
-/// Called from both the header-auth fast path (handler.rs) and the
-/// message-auth path (authenticate_with_request). Consolidates:
+/// Called from both the upgrade-header auth path and the explicit
+/// Authenticate message path. Consolidates:
 /// - Marking the connection as authenticated
 /// - Setting the negotiated protocol
 /// - Sending the AuthSuccess response
@@ -129,7 +164,7 @@ pub async fn send_current_auth_success(
 }
 
 /// Internal function that handles authentication for any AuthRequest type
-async fn authenticate_with_request(
+async fn authenticate_ws_request(
     connection_state: &SharedConnectionState,
     connection_info: &ConnectionInfo,
     auth_request: AuthRequest,

@@ -9,7 +9,7 @@ use log::{debug, error, info, warn};
 
 use super::context::{UpgradeAuth, WsHandlerContext};
 use super::events::{
-    auth::complete_ws_auth, cleanup::cleanup_connection, send_error, send_json,
+    auth::handle_upgrade_auth, cleanup::cleanup_connection, send_error, send_json,
     send_wire_notification,
 };
 use super::messages::{handle_binary_message, handle_text_message};
@@ -38,16 +38,36 @@ pub(super) async fn run_websocket(
 
         if let Some(auth) = pre_auth {
             connection_state.mark_auth_started();
-            let _ = complete_ws_auth(
+            if handle_upgrade_auth(
                 &connection_state,
-                auth.user_id,
-                auth.role,
+                &client_ip,
+                auth.auth_request,
                 auth.protocol,
                 &mut session,
+                &handler_context.rate_limiter,
+                &handler_context.user_repo,
                 handler_context.compression_enabled,
             )
-            .await;
-            debug!("WebSocket pre-authenticated from header: {}", connection_id);
+            .await
+            .is_err()
+            {
+                let _ = session
+                    .close(Some(CloseReason {
+                        code: CloseCode::Policy,
+                        description: Some("Authentication failed".into()),
+                    }))
+                    .await;
+                cleanup_connection(
+                    &connection_state,
+                    &handler_context.connection_registry,
+                    &handler_context.rate_limiter,
+                    &handler_context.live_query_manager,
+                )
+                .await;
+                decrement_websocket_sessions();
+                return;
+            }
+            debug!("WebSocket authenticated from upgrade header: {}", connection_id);
         }
 
         loop {

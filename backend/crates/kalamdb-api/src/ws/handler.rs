@@ -19,7 +19,7 @@ use log::{debug, warn};
 use std::sync::Arc;
 
 use super::context::WsHandlerContext;
-use super::protocol::{authenticate_upgrade, compression_enabled_from_query, validate_origin};
+use super::protocol::{compression_enabled_from_query, parse_upgrade_auth, validate_origin};
 use super::runtime::run_websocket;
 use crate::limiter::RateLimiter;
 
@@ -52,10 +52,7 @@ pub async fn websocket_handler(
     }
 
     let compression_enabled = compression_enabled_from_query(&req);
-    let pre_auth = match authenticate_upgrade(&req, user_repo.get_ref()).await {
-        Ok(pre_auth) => pre_auth,
-        Err(response) => return Ok(response),
-    };
+    let pre_auth = parse_upgrade_auth(&req);
 
     let connection_id = ConnectionId::new(uuid::Uuid::new_v4().simple().to_string());
     let client_ip = kalamdb_auth::extract_client_ip_secure(&req);

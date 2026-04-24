@@ -1,8 +1,7 @@
 use actix_web::{HttpRequest, HttpResponse};
 use actix_ws::ProtocolError;
-use kalamdb_auth::{authenticate, AuthRequest, UserRepository};
+use kalamdb_auth::AuthRequest;
 use kalamdb_commons::websocket::{CompressionType, ProtocolOptions, SerializationType};
-use std::sync::Arc;
 
 use super::context::UpgradeAuth;
 
@@ -63,38 +62,25 @@ pub(super) fn validate_origin(
     Ok(())
 }
 
-pub(super) async fn authenticate_upgrade(
-    req: &HttpRequest,
-    user_repo: &Arc<dyn UserRepository>,
-) -> Result<Option<UpgradeAuth>, HttpResponse> {
+pub(super) fn parse_upgrade_auth(req: &HttpRequest) -> Option<UpgradeAuth> {
     let Some(auth_header) = req.headers().get("Authorization") else {
-        return Ok(None);
+        return None;
     };
 
     let Ok(auth_str) = auth_header.to_str() else {
-        return Ok(None);
+        return None;
     };
 
     let Some(token) = auth_str.strip_prefix("Bearer ") else {
-        return Ok(None);
+        return None;
     };
 
-    let client_ip_for_auth = kalamdb_auth::extract_client_ip_secure(req);
-    let auth_request = AuthRequest::Jwt {
-        token: token.to_string(),
-    };
-
-    match authenticate(auth_request, &client_ip_for_auth, user_repo).await {
-        Ok(result) => Ok(Some(UpgradeAuth {
-            user_id: result.user.user_id,
-            role: result.user.role,
-            protocol: parse_protocol_from_query(req.query_string()),
-        })),
-        Err(_) => {
-            log::warn!("WebSocket upgrade rejected: invalid Bearer token");
-            Err(HttpResponse::Unauthorized().body("Invalid token"))
+    Some(UpgradeAuth {
+        auth_request: AuthRequest::Jwt {
+            token: token.to_string(),
         },
-    }
+        protocol: parse_protocol_from_query(req.query_string()),
+    })
 }
 
 pub(super) fn is_expected_ws_disconnect(error: &ProtocolError) -> bool {
