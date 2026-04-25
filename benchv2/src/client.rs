@@ -59,6 +59,15 @@ impl KalamClient {
         Self::login_with_options(urls, user, password, true).await
     }
 
+    /// Create a multi-endpoint client when server setup is already complete.
+    pub async fn login_steady_state(
+        urls: &[String],
+        user: &str,
+        password: &str,
+    ) -> Result<Self, String> {
+        Self::login_with_options(urls, user, password, false).await
+    }
+
     async fn login_with_options(
         urls: &[String],
         user: &str,
@@ -144,7 +153,10 @@ impl KalamClient {
         // Build an unauthenticated client first — needed for setup + login
         let unauthed = KalamLinkClient::builder()
             .base_url(base_url)
+            .http_pool_max_idle_per_host(BENCH_HTTP_POOL_MAX_IDLE_PER_HOST)
+            .max_retries(BENCH_HTTP_MAX_RETRIES)
             .timeout(Duration::from_secs(60))
+            .timeouts(timeouts.clone())
             .build()
             .map_err(|e| format!("failed to build kalam-link client: {}", e))?;
 

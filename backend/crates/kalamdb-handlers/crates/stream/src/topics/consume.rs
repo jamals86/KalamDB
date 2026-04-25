@@ -37,22 +37,39 @@ impl TypedStatementHandler<ConsumeStatement> for ConsumeHandler {
         let topic_publisher = self.app_context.topic_publisher();
         let limit = statement.limit.unwrap_or(100) as usize;
         let partition_id = 0u32;
+        let group_id = statement
+            .group_id
+            .as_ref()
+            .map(|group_name| ConsumerGroupId::new(group_name));
 
-        let start_offset = match (&statement.position, &statement.group_id) {
-            (ConsumePosition::Offset(offset), _) => *offset,
-            (ConsumePosition::Earliest, None) => 0,
-            (ConsumePosition::Latest, _) => topic_publisher
-                .latest_offset(&topic_id, partition_id)
-                .map_err(|e| KalamDbError::InvalidOperation(e.to_string()))?
-                .map(|offset| offset + 1)
-                .unwrap_or(0),
-            (ConsumePosition::Earliest, Some(_)) => 0,
+        let committed_offset = group_id.as_ref().and_then(|group_id| {
+            topic_publisher
+                .get_group_offsets(&topic_id, group_id)
+                .ok()
+                .and_then(|offsets| {
+                    offsets
+                        .iter()
+                        .find(|offset| offset.partition_id == partition_id)
+                        .map(|offset| offset.last_acked_offset + 1)
+                })
+        });
+
+        let start_offset = match committed_offset {
+            Some(committed) => committed,
+            None => match statement.position {
+                ConsumePosition::Offset(offset) => offset,
+                ConsumePosition::Earliest => 0,
+                ConsumePosition::Latest => topic_publisher
+                    .latest_offset(&topic_id, partition_id)
+                    .map_err(|e| KalamDbError::InvalidOperation(e.to_string()))?
+                    .map(|offset| offset + 1)
+                    .unwrap_or(0),
+            },
         };
 
-        let messages = if let Some(group_name) = &statement.group_id {
-            let group_id = ConsumerGroupId::new(group_name);
+        let messages = if let Some(group_id) = group_id.as_ref() {
             topic_publisher
-                .fetch_messages_for_group(&topic_id, &group_id, partition_id, start_offset, limit)
+                .fetch_messages_for_group(&topic_id, group_id, partition_id, start_offset, limit)
                 .map_err(|e| KalamDbError::InvalidOperation(e.to_string()))?
         } else {
             topic_publisher
@@ -109,11 +126,10 @@ impl TypedStatementHandler<ConsumeStatement> for ConsumeHandler {
             KalamDbError::SerializationError(format!("Failed to create RecordBatch: {}", e))
         })?;
 
-        if let Some(group_name) = &statement.group_id {
+        if let Some(group_id) = group_id.as_ref() {
             if let Some(last_msg) = messages.last() {
-                let group_id = ConsumerGroupId::new(group_name);
                 topic_publisher
-                    .ack_offset(&topic_id, &group_id, partition_id, last_msg.offset)
+                    .ack_offset(&topic_id, group_id, partition_id, last_msg.offset)
                     .map_err(|e| {
                         KalamDbError::InvalidOperation(format!("Failed to commit offset: {}", e))
                     })?;

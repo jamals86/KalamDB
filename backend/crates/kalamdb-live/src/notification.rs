@@ -27,8 +27,9 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 
 /// Number of sharded notification workers.
-/// Deterministic routing by table_id hash preserves per-table ordering
-/// while achieving parallelism across different tables.
+/// Deterministic routing by owner scope preserves ordering for a shared table
+/// or for one user's slice of a user-scoped table, while parallelizing
+/// fanout across different tables and different users.
 ///
 /// Scales with available CPUs (up to a hard cap) so multi-core deployments
 /// can fan out across more tables in parallel. Falls back to 4 on the
@@ -310,12 +311,19 @@ impl NotificationService {
         service
     }
 
-    /// Route a table_id to a deterministic worker index.
+    /// Route a notification to a deterministic worker index.
+    ///
+    /// Shared-table notifications stay keyed by table to preserve global order.
+    /// User-scoped notifications include the owner user_id so one hot user table
+    /// does not serialize all subscribers for every user through a single worker.
     #[inline]
-    fn worker_index(&self, table_id: &TableId) -> usize {
+    fn worker_index(&self, user_id: Option<&UserId>, table_id: &TableId) -> usize {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         table_id.namespace_id().as_str().hash(&mut hasher);
         table_id.table_name().as_str().hash(&mut hasher);
+        if let Some(user_id) = user_id {
+            user_id.as_str().hash(&mut hasher);
+        }
         hasher.finish() as usize % self.worker_txs.len()
     }
 
@@ -369,15 +377,24 @@ impl NotificationService {
         table_id: TableId,
         notification: ChangeNotification,
     ) {
-        let worker_idx = self.worker_index(&table_id);
+        let worker_idx = self.worker_index(user_id.as_ref(), &table_id);
         let task = NotificationTask {
             user_id,
             table_id,
             notification,
         };
         if let Err(e) = self.worker_txs[worker_idx].try_send(task) {
-            if matches!(e, mpsc::error::TrySendError::Full(_)) {
-                log::warn!("Notification worker {} queue full, dropping notification", worker_idx);
+            if let mpsc::error::TrySendError::Full(task) = e {
+                let owner_scope = match &task.user_id {
+                    Some(user_id) => format!("user:{}", user_id.as_str()),
+                    None => "shared".to_string(),
+                };
+                log::warn!(
+                    "Notification worker {} queue full for table={} owner_scope={}, dropping notification",
+                    worker_idx,
+                    task.table_id,
+                    owner_scope,
+                );
             }
         }
     }

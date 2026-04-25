@@ -251,7 +251,7 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         user_id: &UserId,
         row_data: Row,
     ) -> Result<StreamTableRowId, KalamDbError> {
-        let table_id = self.core.table_id();
+        let _table_id = self.core.table_id();
 
         // Call SystemColumnsService to generate SeqId
         let sys_cols = self.core.services.system_columns.clone();
@@ -289,7 +289,7 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         let has_topics = self.core.has_topic_routes(&table_id);
         let has_live_subs = manager.has_subscribers(Some(&user_id), &table_id);
         if has_topics || has_live_subs {
-            let table_name = table_id.full_name();
+            let _table_name = table_id.full_name();
 
             // Build complete row including system column (_seq)
             let row = Self::build_notification_row(&entity);
@@ -482,7 +482,7 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         _cold_columns: Option<&[String]>,
         _snapshot_commit_seq: Option<u64>,
     ) -> Result<Vec<(StreamTableRowId, StreamTableRow)>, KalamDbError> {
-        let table_id = self.core.table_id();
+        let _table_id = self.core.table_id();
 
         // since_seq is exclusive, so start at seq + 1
         let start_seq = since_seq.map(|seq| SeqId::from_i64(seq.as_i64().saturating_add(1)));

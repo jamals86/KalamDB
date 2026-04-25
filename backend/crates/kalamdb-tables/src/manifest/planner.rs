@@ -273,9 +273,9 @@ impl ManifestAccessPlanner {
     fn project_batch_to_current_schema(
         &self,
         batch: RecordBatch,
-        old_schema_version: u32,
+        _old_schema_version: u32,
         current_schema: &SchemaRef,
-        table_id: &TableId,
+        _table_id: &TableId,
         _schema_registry: &dyn SchemaRegistryTrait<Error = KalamDbError>,
     ) -> Result<RecordBatch, KalamDbError> {
         let batch_schema = batch.schema();

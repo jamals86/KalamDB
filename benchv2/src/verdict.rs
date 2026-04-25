@@ -137,6 +137,7 @@ fn threshold_for(name: &str, category: &str) -> Threshold {
 
         "sql_1k_concurrent" | "sql_1k_users" => Threshold::new(5000.0, 20000.0),
         "subscriber_scale" => Threshold::new(60000.0, 300000.0),
+        "chat_realtime" => Threshold::new(3_600_000.0, 7_200_000.0),
 
         // Fallback: use category
         _ => threshold_for_category(category),

@@ -184,8 +184,8 @@ where
     ) -> Result<RecordBatch, KalamDbError> {
         let schema = self.schema_ref();
         let pk_name = self.primary_key_field_name();
-        let scope_label = self.scan_scope_label(scan_context);
-        let subject_user = self
+        let _scope_label = self.scan_scope_label(scan_context);
+        let _subject_user = self
             .scan_cold_scope(scan_context)
             .map(UserId::as_str)
             .unwrap_or("-");
