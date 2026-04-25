@@ -3,7 +3,7 @@
 use kalamdb_auth::security::password::{
     hash_password, validate_password_with_policy, PasswordPolicy,
 };
-use kalamdb_commons::UserId;
+use kalamdb_commons::{Role, UserId};
 use kalamdb_core::app_context::AppContext;
 use kalamdb_core::error::KalamDbError;
 use kalamdb_core::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
@@ -74,6 +74,11 @@ impl TypedStatementHandler<AlterUserStatement> for AlterUserHandler {
                 if !context.is_admin() {
                     return Err(KalamDbError::Unauthorized(
                         "Only admins can change roles".to_string(),
+                    ));
+                }
+                if context.user_role() == Role::Dba && new_role == Role::System {
+                    return Err(KalamDbError::Unauthorized(
+                        "DBA cannot grant System role".to_string(),
                     ));
                 }
                 updated.role = new_role;
