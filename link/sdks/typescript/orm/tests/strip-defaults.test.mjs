@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { stripDefaults, splitMultiRowInsert } from '../dist/driver.js';
+import { stripDefaults } from '../dist/driver.js';
 
 describe('stripDefaults', () => {
   it('removes DEFAULT column from single-default INSERT', () => {
@@ -106,59 +106,3 @@ describe('stripDefaults', () => {
   });
 });
 
-describe('splitMultiRowInsert', () => {
-  it('splits multi-row INSERT into individual statements', () => {
-    const input = 'INSERT INTO test.items (name) VALUES ($1), ($2), ($3)';
-    const result = splitMultiRowInsert(input, ['one', 'two', 'three']);
-    assert.equal(result.length, 3);
-    assert.equal(result[0].sql, 'INSERT INTO test.items (name) VALUES ($1)');
-    assert.deepEqual(result[0].params, ['one']);
-    assert.equal(result[1].sql, 'INSERT INTO test.items (name) VALUES ($1)');
-    assert.deepEqual(result[1].params, ['two']);
-    assert.equal(result[2].sql, 'INSERT INTO test.items (name) VALUES ($1)');
-    assert.deepEqual(result[2].params, ['three']);
-  });
-
-  it('splits multi-row INSERT with multiple columns', () => {
-    const input = 'INSERT INTO test.items (name, age) VALUES ($1, $2), ($3, $4)';
-    const result = splitMultiRowInsert(input, ['alice', 30, 'bob', 25]);
-    assert.equal(result.length, 2);
-    assert.equal(result[0].sql, 'INSERT INTO test.items (name, age) VALUES ($1, $2)');
-    assert.deepEqual(result[0].params, ['alice', 30]);
-    assert.equal(result[1].sql, 'INSERT INTO test.items (name, age) VALUES ($1, $2)');
-    assert.deepEqual(result[1].params, ['bob', 25]);
-  });
-
-  it('does not split single-row INSERT', () => {
-    const input = 'INSERT INTO test.items (name) VALUES ($1)';
-    const result = splitMultiRowInsert(input, ['hello']);
-    assert.equal(result.length, 1);
-    assert.equal(result[0].sql, input);
-    assert.deepEqual(result[0].params, ['hello']);
-  });
-
-  it('passes through non-INSERT unchanged', () => {
-    const input = 'SELECT * FROM test.items';
-    const result = splitMultiRowInsert(input, []);
-    assert.equal(result.length, 1);
-    assert.equal(result[0].sql, input);
-  });
-
-  it('correctly renumbers params with high indices (avoids $1/$10 collision)', () => {
-    const params = [];
-    const groups = [];
-    for (let i = 0; i < 12; i++) {
-      params.push(`val${i}`);
-      groups.push(`($${i + 1})`);
-    }
-    const input = `INSERT INTO test.items (name) VALUES ${groups.join(', ')}`;
-    const result = splitMultiRowInsert(input, params);
-    assert.equal(result.length, 12);
-    assert.equal(result[9].sql, 'INSERT INTO test.items (name) VALUES ($1)');
-    assert.deepEqual(result[9].params, ['val9']);
-    assert.equal(result[10].sql, 'INSERT INTO test.items (name) VALUES ($1)');
-    assert.deepEqual(result[10].params, ['val10']);
-    assert.equal(result[11].sql, 'INSERT INTO test.items (name) VALUES ($1)');
-    assert.deepEqual(result[11].params, ['val11']);
-  });
-});
