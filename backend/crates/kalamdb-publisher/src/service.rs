@@ -139,6 +139,29 @@ impl ClaimState {
             self.cursor = next;
         }
     }
+
+    /// Return the next cursor that is not covered by an unacked pending claim.
+    ///
+    /// When an older claim expires before a newer claim, the cursor may move
+    /// back behind still-pending ranges. Skipping those ranges preserves
+    /// same-group single-delivery semantics for claims that have not timed out.
+    fn next_available_from(&self, start_offset: u64) -> u64 {
+        let mut next = self.cursor.max(start_offset);
+
+        loop {
+            let mut advanced = false;
+            for claim in &self.pending {
+                if claim.start <= next && next < claim.end_exclusive {
+                    next = claim.end_exclusive;
+                    advanced = true;
+                }
+            }
+
+            if !advanced {
+                return next;
+            }
+        }
+    }
 }
 
 /// Topic Publisher Service — unified service for all topic operations.
@@ -575,33 +598,59 @@ impl TopicPublisherService {
         start_offset: u64,
         limit: usize,
     ) -> Result<Vec<TopicMessage>> {
-        let cursor_key = GroupPartitionKey::new(topic_id, group_id, partition_id);
-        let mut state = self
-            .group_claim_state
-            .entry(cursor_key)
-            .or_insert_with(|| ClaimState::new(start_offset));
-
-        // Expire stale claims so crashed consumers don't block delivery.
-        state.expire_stale_claims(Instant::now(), self.visibility_timeout);
-
-        let effective_start = state.cursor.max(start_offset);
-
-        let messages = self
-            .message_store
-            .fetch_messages(topic_id, partition_id, effective_start, limit)
-            .map_err(|e| CommonError::Internal(format!("Failed to fetch messages: {}", e)))?;
-
-        if !messages.is_empty() {
-            let end_exclusive = messages.last().unwrap().offset + 1;
-            state.cursor = end_exclusive;
-            state.pending.push(PendingClaim {
-                start: effective_start,
-                end_exclusive,
-                claimed_at: Instant::now(),
-            });
+        if limit == 0 {
+            return Ok(Vec::new());
         }
 
-        Ok(messages)
+        let cursor_key = GroupPartitionKey::new(topic_id, group_id, partition_id);
+
+        loop {
+            let effective_start = {
+                let mut state = self
+                    .group_claim_state
+                    .entry(cursor_key.clone())
+                    .or_insert_with(|| ClaimState::new(start_offset));
+
+                // Expire stale claims so crashed consumers don't block delivery.
+                state.expire_stale_claims(Instant::now(), self.visibility_timeout);
+                state.next_available_from(start_offset)
+            };
+
+            let messages = self
+                .message_store
+                .fetch_messages(topic_id, partition_id, effective_start, limit)
+                .map_err(|e| CommonError::Internal(format!("Failed to fetch messages: {}", e)))?;
+
+            let Some(last_message) = messages.last() else {
+                return Ok(messages);
+            };
+
+            let claim_start = messages
+                .first()
+                .map(|message| message.offset)
+                .unwrap_or(effective_start);
+            let end_exclusive = last_message.offset + 1;
+            let claimed_at = Instant::now();
+            let mut state = self
+                .group_claim_state
+                .entry(cursor_key.clone())
+                .or_insert_with(|| ClaimState::new(start_offset));
+
+            state.expire_stale_claims(claimed_at, self.visibility_timeout);
+            let current_start = state.next_available_from(start_offset);
+            if current_start != effective_start {
+                continue;
+            }
+
+            state.cursor = end_exclusive;
+            state.pending.push(PendingClaim {
+                start: claim_start,
+                end_exclusive,
+                claimed_at,
+            });
+
+            return Ok(messages);
+        }
     }
 
     /// Get the latest offset for a topic partition.
@@ -753,9 +802,16 @@ impl kalamdb_system::TopicPublisher for TopicPublisherService {
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Condvar, Mutex as StdMutex,
+    };
+    use std::time::Duration as StdDuration;
+    use std::{sync::mpsc, thread};
 
     use datafusion::scalar::ScalarValue;
     use kalamdb_commons::models::{NamespaceId, PayloadMode, TableName};
+    use kalamdb_store::storage_trait::{KvIterator, Operation, Partition, StorageBackend};
     use kalamdb_store::test_utils::InMemoryBackend;
     use kalamdb_system::providers::topics::TopicRoute;
 
@@ -817,6 +873,125 @@ mod tests {
             Duration::from_secs(60),
             Some(lookup),
         )
+    }
+
+    struct PausingScanBackend {
+        inner: InMemoryBackend,
+        pause_next_scan: AtomicBool,
+        scan_started: (StdMutex<bool>, Condvar),
+        release_scan: (StdMutex<bool>, Condvar),
+    }
+
+    impl PausingScanBackend {
+        fn new() -> Self {
+            Self {
+                inner: InMemoryBackend::new(),
+                pause_next_scan: AtomicBool::new(false),
+                scan_started: (StdMutex::new(false), Condvar::new()),
+                release_scan: (StdMutex::new(false), Condvar::new()),
+            }
+        }
+
+        fn pause_next_scan(&self) {
+            self.pause_next_scan.store(true, Ordering::SeqCst);
+            *self.scan_started.0.lock().unwrap() = false;
+            *self.release_scan.0.lock().unwrap() = false;
+        }
+
+        fn wait_for_paused_scan(&self) {
+            let (lock, cvar) = &self.scan_started;
+            let started = lock.lock().unwrap();
+            let (started, _) = cvar
+                .wait_timeout_while(started, StdDuration::from_secs(1), |started| !*started)
+                .unwrap();
+            assert!(*started, "first consumer should enter the paused storage scan");
+        }
+
+        fn release_paused_scan(&self) {
+            let (lock, cvar) = &self.release_scan;
+            *lock.lock().unwrap() = true;
+            cvar.notify_all();
+        }
+    }
+
+    impl StorageBackend for PausingScanBackend {
+        fn get(
+            &self,
+            partition: &Partition,
+            key: &[u8],
+        ) -> kalamdb_store::storage_trait::Result<Option<Vec<u8>>> {
+            self.inner.get(partition, key)
+        }
+
+        fn put(
+            &self,
+            partition: &Partition,
+            key: &[u8],
+            value: &[u8],
+        ) -> kalamdb_store::storage_trait::Result<()> {
+            self.inner.put(partition, key, value)
+        }
+
+        fn delete(
+            &self,
+            partition: &Partition,
+            key: &[u8],
+        ) -> kalamdb_store::storage_trait::Result<()> {
+            self.inner.delete(partition, key)
+        }
+
+        fn batch(&self, operations: Vec<Operation>) -> kalamdb_store::storage_trait::Result<()> {
+            self.inner.batch(operations)
+        }
+
+        fn scan(
+            &self,
+            partition: &Partition,
+            prefix: Option<&[u8]>,
+            start_key: Option<&[u8]>,
+            limit: Option<usize>,
+        ) -> kalamdb_store::storage_trait::Result<KvIterator<'_>> {
+            if self.pause_next_scan.swap(false, Ordering::SeqCst) {
+                let (started_lock, started_cvar) = &self.scan_started;
+                *started_lock.lock().unwrap() = true;
+                started_cvar.notify_all();
+
+                let (release_lock, release_cvar) = &self.release_scan;
+                let released = release_lock.lock().unwrap();
+                let (released, _) = release_cvar
+                    .wait_timeout_while(released, StdDuration::from_secs(2), |released| {
+                        !*released
+                    })
+                    .unwrap();
+                assert!(*released, "paused scan should be released by the test");
+            }
+
+            self.inner.scan(partition, prefix, start_key, limit)
+        }
+
+        fn partition_exists(&self, partition: &Partition) -> bool {
+            self.inner.partition_exists(partition)
+        }
+
+        fn create_partition(&self, partition: &Partition) -> kalamdb_store::storage_trait::Result<()> {
+            self.inner.create_partition(partition)
+        }
+
+        fn list_partitions(&self) -> kalamdb_store::storage_trait::Result<Vec<Partition>> {
+            self.inner.list_partitions()
+        }
+
+        fn drop_partition(&self, partition: &Partition) -> kalamdb_store::storage_trait::Result<()> {
+            self.inner.drop_partition(partition)
+        }
+
+        fn compact_partition(&self, partition: &Partition) -> kalamdb_store::storage_trait::Result<()> {
+            self.inner.compact_partition(partition)
+        }
+
+        fn stats(&self) -> kalamdb_store::storage_trait::StorageStats {
+            self.inner.stats()
+        }
     }
 
     #[test]
@@ -1035,6 +1210,78 @@ mod tests {
     }
 
     #[test]
+    fn test_group_fetch_does_not_hold_claim_state_during_storage_scan() {
+        let backend = Arc::new(PausingScanBackend::new());
+        let storage_backend: Arc<dyn StorageBackend> = backend.clone();
+        let service = Arc::new(TopicPublisherService::new(storage_backend));
+
+        let ns = NamespaceId::new("test_ns");
+        let table_id = TableId::new(ns.clone(), TableName::from("events"));
+        let topic_id = TopicId::new("nonblocking_claim_topic");
+        let group_id = ConsumerGroupId::new("nonblocking_claim_group");
+
+        let topic = create_test_topic_with_partitions(
+            topic_id.clone(),
+            table_id.clone(),
+            TopicOp::Insert,
+            1,
+        );
+        service.add_topic(topic);
+
+        for idx in 0..30 {
+            let row = create_test_row(idx, &format!("event_{}", idx));
+            service.publish_message(&table_id, TopicOp::Insert, &row, None).unwrap();
+        }
+
+        backend.pause_next_scan();
+
+        let first_service = service.clone();
+        let first_topic = topic_id.clone();
+        let first_group = group_id.clone();
+        let first_handle = thread::spawn(move || {
+            first_service
+                .fetch_messages_for_group(&first_topic, &first_group, 0, 0, 10)
+                .unwrap()
+        });
+
+        backend.wait_for_paused_scan();
+
+        let (tx, rx) = mpsc::channel();
+        let second_service = service.clone();
+        let second_topic = topic_id.clone();
+        let second_group = group_id.clone();
+        thread::spawn(move || {
+            let batch = second_service
+                .fetch_messages_for_group(&second_topic, &second_group, 0, 0, 10)
+                .unwrap();
+            let _ = tx.send(batch);
+        });
+
+        let second_batch = match rx.recv_timeout(StdDuration::from_millis(100)) {
+            Ok(batch) => batch,
+            Err(_) => {
+                backend.release_paused_scan();
+                let _ = first_handle.join();
+                panic!("second consumer should not wait for the first consumer's storage scan");
+            },
+        };
+
+        backend.release_paused_scan();
+        let first_batch = first_handle.join().unwrap();
+
+        let first_offsets: HashSet<u64> = first_batch.iter().map(|message| message.offset).collect();
+        let second_offsets: HashSet<u64> =
+            second_batch.iter().map(|message| message.offset).collect();
+
+        assert_eq!(first_offsets.len(), 10);
+        assert_eq!(second_offsets.len(), 10);
+        assert!(
+            first_offsets.is_disjoint(&second_offsets),
+            "concurrent same-group fetches must reserve disjoint offsets"
+        );
+    }
+
+    #[test]
     fn test_out_of_order_ack_does_not_regress_offset() {
         let backend = Arc::new(InMemoryBackend::new());
         let service = TopicPublisherService::new(backend);
@@ -1139,6 +1386,52 @@ mod tests {
             let state = service.group_claim_state.get(&cursor_key).unwrap();
             assert_eq!(state.pending.len(), 0, "Pending claim should be removed after ack");
         }
+    }
+
+    #[test]
+    fn test_expired_claim_redelivery_skips_still_pending_ranges() {
+        let backend = Arc::new(InMemoryBackend::new());
+        let service =
+            TopicPublisherService::with_visibility_timeout(backend, StdDuration::from_millis(80));
+
+        let ns = NamespaceId::new("test_ns");
+        let table_id = TableId::new(ns.clone(), TableName::from("events"));
+        let topic_id = TopicId::new("partial_expiry_topic");
+        let group_id = ConsumerGroupId::new("partial_expiry_group");
+
+        let topic = create_test_topic_with_partitions(
+            topic_id.clone(),
+            table_id.clone(),
+            TopicOp::Insert,
+            1,
+        );
+        service.add_topic(topic);
+
+        for idx in 0..30 {
+            let row = create_test_row(idx, &format!("event_{}", idx));
+            service.publish_message(&table_id, TopicOp::Insert, &row, None).unwrap();
+        }
+
+        let first = service.fetch_messages_for_group(&topic_id, &group_id, 0, 0, 10).unwrap();
+        assert_eq!(first.first().map(|message| message.offset), Some(0));
+
+        thread::sleep(StdDuration::from_millis(50));
+
+        let second = service.fetch_messages_for_group(&topic_id, &group_id, 0, 0, 10).unwrap();
+        assert_eq!(second.first().map(|message| message.offset), Some(10));
+
+        thread::sleep(StdDuration::from_millis(50));
+
+        let redelivered =
+            service.fetch_messages_for_group(&topic_id, &group_id, 0, 0, 10).unwrap();
+        assert_eq!(redelivered.first().map(|message| message.offset), Some(0));
+
+        let next = service.fetch_messages_for_group(&topic_id, &group_id, 0, 0, 10).unwrap();
+        assert_eq!(
+            next.first().map(|message| message.offset),
+            Some(20),
+            "fetch should skip the still-pending 10..20 range after redelivering 0..10"
+        );
     }
 
     #[test]

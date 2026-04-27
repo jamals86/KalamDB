@@ -388,6 +388,9 @@ max_queries_per_sec = 10000
 max_messages_per_sec = 1000
 max_subscriptions_per_user = 1000
 
+[topics]
+visibility_timeout_secs = 10
+
 [cluster]
 enabled = true
 cluster_id = "local-cluster"
@@ -739,7 +742,7 @@ ensure_admin_user() {
         curl -fsS \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $access_token" \
-            -d '{"sql":"SELECT username FROM system.users WHERE username = '\''admin'\'' LIMIT 1"}' \
+            -d '{"sql":"SELECT user_id FROM system.users WHERE user_id = '\''admin'\'' LIMIT 1"}' \
             "$base_url/v1/api/sql"
     ) || return 1
 

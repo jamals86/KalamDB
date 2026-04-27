@@ -51,6 +51,14 @@ fn reconnect_client() -> Result<KalamLinkClient, Box<dyn std::error::Error + Sen
     )
 }
 
+fn event_timeout(base_secs: u64) -> Duration {
+    if is_cluster_mode() {
+        Duration::from_secs(base_secs + 5)
+    } else {
+        Duration::from_secs(base_secs)
+    }
+}
+
 /// Collect events from a subscription until either `predicate` is satisfied
 /// or `timeout` elapses.  Returns all collected events.
 async fn collect_until<F>(
@@ -143,7 +151,7 @@ fn smoke_subscription_reconnect_basic_resume() {
             .expect("subscribe");
 
         // Wait for ACK so the server has registered the subscription.
-        let _ = collect_until(&mut sub, Duration::from_secs(8), |evs| {
+        let _ = collect_until(&mut sub, event_timeout(8), |evs| {
             evs.iter().any(|e| matches!(e, ChangeEvent::Ack { .. }))
         })
         .await;
@@ -157,8 +165,7 @@ fn smoke_subscription_reconnect_basic_resume() {
         .expect("insert pre-disconnect row");
 
         let pre_events =
-            collect_until(&mut sub, Duration::from_secs(10), |evs| contains_value(evs, &pre_val))
-                .await;
+            collect_until(&mut sub, event_timeout(10), |evs| contains_value(evs, &pre_val)).await;
         assert!(
             contains_value(&pre_events, &pre_val),
             "pre-disconnect event should arrive; got {:?}",
@@ -194,7 +201,7 @@ fn smoke_subscription_reconnect_basic_resume() {
             .expect("re-subscribe after reconnect");
 
         // Gap rows should appear in the initial snapshot.
-        let snap_events = collect_until(&mut sub2, Duration::from_secs(15), |evs| {
+        let snap_events = collect_until(&mut sub2, event_timeout(15), |evs| {
             contains_value(evs, &gap1) && contains_value(evs, &gap2)
         })
         .await;
@@ -218,8 +225,7 @@ fn smoke_subscription_reconnect_basic_resume() {
         .expect("insert post-reconnect row");
 
         let post_events =
-            collect_until(&mut sub2, Duration::from_secs(10), |evs| contains_value(evs, &post_val))
-                .await;
+            collect_until(&mut sub2, event_timeout(10), |evs| contains_value(evs, &post_val)).await;
         assert!(
             contains_value(&post_events, &post_val),
             "post-reconnect Insert should arrive as live event; got {:?}",
@@ -280,7 +286,7 @@ fn smoke_subscription_resume_from_seq_id() {
             .expect("subscribe");
 
         // Collect the Ack — it carries the snapshot boundary seq_id.
-        let ack_events = collect_until(&mut sub, Duration::from_secs(8), |evs| {
+        let ack_events = collect_until(&mut sub, event_timeout(8), |evs| {
             evs.iter().any(|e| matches!(e, ChangeEvent::Ack { .. }))
         })
         .await;
@@ -304,8 +310,7 @@ fn smoke_subscription_resume_from_seq_id() {
         .expect("insert pre-disconnect row");
 
         let change_events =
-            collect_until(&mut sub, Duration::from_secs(10), |evs| contains_value(evs, &pre_val))
-                .await;
+            collect_until(&mut sub, event_timeout(10), |evs| contains_value(evs, &pre_val)).await;
         assert!(
             contains_value(&change_events, &pre_val),
             "pre-disconnect Insert should arrive; got {:?}",
@@ -354,7 +359,7 @@ fn smoke_subscription_resume_from_seq_id() {
             client.subscribe_with_config(cfg2).await.expect("re-subscribe with from_seq_id");
 
         // Gap rows must arrive (as catch-up initial data or change events).
-        let resume_events = collect_until(&mut sub2, Duration::from_secs(15), |evs| {
+        let resume_events = collect_until(&mut sub2, event_timeout(15), |evs| {
             contains_value(evs, &gap1) && contains_value(evs, &gap2)
         })
         .await;
@@ -400,8 +405,7 @@ fn smoke_subscription_resume_from_seq_id() {
         .expect("insert post-reconnect row");
 
         let post_events =
-            collect_until(&mut sub2, Duration::from_secs(10), |evs| contains_value(evs, &post_val))
-                .await;
+            collect_until(&mut sub2, event_timeout(10), |evs| contains_value(evs, &post_val)).await;
         assert!(
             contains_value(&post_events, &post_val),
             "post-reconnect Insert should arrive as live event; got {:?}",

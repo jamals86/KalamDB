@@ -1140,14 +1140,6 @@ impl DmlExecutor {
             return false;
         }
 
-        let is_leader = match user_id {
-            Some(user_id) => self.app_context.is_leader_for_user(user_id).await,
-            None => self.app_context.is_leader_for_shared().await,
-        };
-        if !is_leader {
-            return false;
-        }
-
         let op = Self::topic_op_for_change(&notification.change_type);
         if let Err(error) = topic_publisher.publish_for_table(
             &notification.table_id,

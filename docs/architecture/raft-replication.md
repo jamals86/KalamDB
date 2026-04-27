@@ -45,6 +45,8 @@ KalamDB uses a multi-Raft topology (OpenRaft 0.9) to replicate metadata, jobs, u
 
 - Service surface: `RaftRpc` (vote, append_entries, install_snapshot) and `ClientProposal` (follower→leader proposal forwarding) defined in [backend/crates/kalamdb-raft/src/network/service.rs](backend/crates/kalamdb-raft/src/network/service.rs).
 - Client side: `RaftNetworkFactory` caches tonic channels and produces `RaftNetwork` clients per group ([backend/crates/kalamdb-raft/src/network/network.rs](backend/crates/kalamdb-raft/src/network/network.rs)).
+- RPC call construction is centralized in the network layer: OpenRaft RPCs use a typed `RaftRpcKind` plus shared encode/send/decode helpers, follower proposal forwarding uses `RaftNetworkFactory::send_client_proposal`, and non-Raft cluster messages use `ClusterClient` shared request/metadata/error handling. This keeps channel reuse, auth metadata, and serde boundaries consistent across inter-node calls.
+- Serialization boundaries are intentionally layered: tonic/prost frames the gRPC messages, MessagePack encodes OpenRaft request/response payloads, FlexBuffers encodes committed Raft commands and apply responses, and follower SQL forwarding returns already-serialized HTTP JSON bytes from the leader so followers do not deserialize and reserialize result bodies.
 - Server startup: `start_rpc_server` binds to the advertised RPC port and serves the Raft gRPC server; invoked by `RaftExecutor::start` before starting groups.
 - Forwarding: followers call `ClientProposal` with the group ID and command bytes; the leader applies and returns the response. If leadership changed, the leader hint is returned so callers can retry.
 

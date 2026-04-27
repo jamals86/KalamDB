@@ -86,7 +86,7 @@ For the same PostgreSQL backend process and the same foreign-server config:
 - the same `RemoteExtensionState` is reused
 - the same session id is reused
 - the same `RemoteKalamClient` is reused
-- each RPC constructs a fresh tonic client over `self.channel.clone()`
+- each RPC goes through the shared client call helper in `RemoteKalamClient`, which clones the reusable tonic channel, applies the correct request metadata boundary, and maps gRPC status errors consistently
 
 The extension test suite explicitly verifies that the same config reuses the same state and only opens one remote session.
 

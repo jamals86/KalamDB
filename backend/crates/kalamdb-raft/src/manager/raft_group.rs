@@ -704,32 +704,10 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
         leader_node_id: NodeId,
         command: Vec<u8>,
     ) -> Result<(Vec<u8>, u64), RaftError> {
-        use crate::network::{ClientProposalRequest, RaftClient};
-        let channel =
-            self.network_factory.get_or_create_channel(leader_node_id).ok_or_else(|| {
-                RaftError::Network(format!(
-                    "No channel available for leader node {}",
-                    leader_node_id
-                ))
-            })?;
-
-        let mut client = RaftClient::new(channel);
-
-        // Send the proposal
-        let mut request = tonic::Request::new(ClientProposalRequest {
-            group_id: self.group_id.to_string(),
-            command,
-        });
-        self.network_factory
-            .add_outgoing_rpc_metadata(&mut request)
-            .map_err(|e| RaftError::Network(format!("Failed to add RPC metadata: {}", e)))?;
-
-        let response = client
-            .client_proposal(request)
-            .await
-            .map_err(|e| RaftError::Network(format!("gRPC error forwarding proposal: {}", e)))?;
-
-        let inner = response.into_inner();
+        let inner = self
+            .network_factory
+            .send_client_proposal(leader_node_id, self.group_id, command)
+            .await?;
 
         if inner.success {
             Ok((inner.payload, inner.log_index))

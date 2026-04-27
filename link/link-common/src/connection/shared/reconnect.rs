@@ -18,9 +18,9 @@ use tokio_tungstenite::tungstenite::{client::IntoClientRequest, protocol::Messag
 use super::{
     registry::{
         advance_entry_progress, cache_entry_seq, clear_startup_deadline, effective_entry_seq,
-        merge_resume_from, next_startup_deadline,
-        register_subscription_entry, remove_subscription_entry, reset_startup_deadline,
-        should_send_subscription_options, snapshot_subscriptions, ConnCmd, SubEntry,
+        merge_resume_from, next_startup_deadline, register_subscription_entry,
+        remove_subscription_entry, reset_startup_deadline, should_send_subscription_options,
+        snapshot_subscriptions, ConnCmd, SubEntry,
     },
     routing::{route_event, send_subscribe, send_unsubscribe},
 };
@@ -202,6 +202,23 @@ async fn resubscribe_all(
                 true,
             ));
         }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn route_event_and_refresh_connection(
+    event: crate::models::ChangeEvent,
+    ws: &mut WebSocketStream,
+    subs: &mut HashMap<String, SubEntry>,
+    seq_id_cache: &mut HashMap<String, crate::seq_id::SeqId>,
+    timeouts: &KalamLinkTimeouts,
+    serialization: SerializationType,
+    connected: &Arc<AtomicBool>,
+    event_handlers: &EventHandlers,
+) {
+    route_event(event, ws, subs, seq_id_cache, timeouts, serialization).await;
+    if all_resumes_ready(subs) {
+        mark_connected(connected, event_handlers);
     }
 }
 
@@ -506,18 +523,17 @@ pub(super) async fn connection_task(
                             event_handlers.emit_receive(&text);
                             match parse_message(&text) {
                                 Ok(Some(event)) => {
-                                    route_event(
+                                    route_event_and_refresh_connection(
                                         event,
                                         ws,
                                         &mut subs,
                                         &mut seq_id_cache,
                                         &timeouts,
                                         negotiated_ser,
+                                        &connected,
+                                        &event_handlers,
                                     )
                                     .await;
-                                    if all_resumes_ready(&subs) {
-                                        mark_connected(&connected, &event_handlers);
-                                    }
                                 },
                                 Ok(None) => {},
                                 Err(error) => log::warn!("Failed to parse WS message: {}", error),
@@ -542,18 +558,17 @@ pub(super) async fn connection_task(
                                     };
                                     match parse_message_msgpack(&raw) {
                                         Ok(Some(event)) => {
-                                            route_event(
+                                            route_event_and_refresh_connection(
                                                 event,
                                                 ws,
                                                 &mut subs,
                                                 &mut seq_id_cache,
                                                 &timeouts,
                                                 negotiated_ser,
+                                                &connected,
+                                                &event_handlers,
                                             )
                                             .await;
-                                            if all_resumes_ready(&subs) {
-                                                mark_connected(&connected, &event_handlers);
-                                            }
                                         },
                                         Ok(None) => {},
                                         Err(error) => log::warn!("Failed to parse msgpack message: {}", error),
@@ -565,13 +580,15 @@ pub(super) async fn connection_task(
                                             event_handlers.emit_receive(&text);
                                             match parse_message(&text) {
                                                 Ok(Some(event)) => {
-                                                    route_event(
+                                                    route_event_and_refresh_connection(
                                                         event,
                                                         ws,
                                                         &mut subs,
                                                         &mut seq_id_cache,
                                                         &timeouts,
                                                         negotiated_ser,
+                                                        &connected,
+                                                        &event_handlers,
                                                     )
                                                     .await;
                                                 },
@@ -655,12 +672,7 @@ pub(super) async fn connection_task(
                         advance_resume,
                     }) => {
                         if let Some(entry) = subs.get_mut(&id) {
-                            advance_entry_progress(
-                                entry,
-                                generation,
-                                seq_id,
-                                advance_resume,
-                            );
+                            advance_entry_progress(entry, generation, seq_id, advance_resume);
                         }
                     },
                     Some(ConnCmd::ListSubscriptions { result_tx }) => {

@@ -77,7 +77,7 @@ static SERVER_URL: OnceLock<String> = OnceLock::new();
 static ROOT_PASSWORD: OnceLock<String> = OnceLock::new();
 static ADMIN_PASSWORD: OnceLock<String> = OnceLock::new();
 static TEST_CONTEXT: OnceLock<TestContext> = OnceLock::new();
-static LAST_LEADER_URL: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+static LAST_LEADER_URL: OnceLock<Mutex<Option<CachedLeaderUrl>>> = OnceLock::new();
 static AUTO_TEST_SERVER: OnceLock<Mutex<Option<AutoTestServer>>> = OnceLock::new();
 static AUTO_TEST_SERVER_STATE_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
 static AUTO_TEST_RUNTIME: OnceLock<&'static Runtime> = OnceLock::new();
@@ -88,6 +88,14 @@ static LOGIN_MUTEX: OnceLock<TokioMutex<()>> = OnceLock::new();
 static TOKEN_FILE_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
 static TEST_CLI_HOME_DIR: OnceLock<PathBuf> = OnceLock::new();
 static TEST_CLI_CREDENTIALS_PATH: OnceLock<PathBuf> = OnceLock::new();
+
+const LEADER_CACHE_TTL: Duration = Duration::from_secs(5);
+
+#[derive(Clone, Debug)]
+struct CachedLeaderUrl {
+    url: String,
+    confirmed_at: Instant,
+}
 static AUTO_TEST_SERVER_EXIT_CLEANUP_REGISTERED: OnceLock<()> = OnceLock::new();
 
 struct TestAuthManager {
@@ -1006,6 +1014,21 @@ fn wait_for_url_reachable(url: &str, timeout: Duration) -> bool {
     url_reachable(url)
 }
 
+fn reachable_cluster_urls(urls: &[String]) -> Vec<String> {
+    urls.iter().filter(|url| url_reachable(url)).cloned().collect()
+}
+
+fn wait_for_reachable_cluster_urls(urls: &[String], timeout: Duration) -> Vec<String> {
+    let start = Instant::now();
+    loop {
+        let reachable = reachable_cluster_urls(urls);
+        if !reachable.is_empty() || start.elapsed() >= timeout {
+            return reachable;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
 fn ensure_auto_test_server() -> Option<(String, PathBuf)> {
     let server_mutex = AUTO_TEST_SERVER.get_or_init(|| Mutex::new(None));
     {
@@ -1253,32 +1276,79 @@ fn parse_test_urls() -> Option<Vec<String>> {
     }
 }
 
+fn configured_cluster_urls_from_env() -> Vec<String> {
+    load_env_file();
+
+    parse_test_urls()
+        .or_else(|| {
+            std::env::var("KALAMDB_CLUSTER_URLS").ok().map(|raw| {
+                raw.split(',')
+                    .map(|url| url.trim().to_string())
+                    .filter(|url| !url.is_empty())
+                    .collect()
+            })
+        })
+        .filter(|urls: &Vec<String>| !urls.is_empty())
+        .unwrap_or_else(|| {
+            vec![
+                "http://127.0.0.1:8081".to_string(),
+                "http://127.0.0.1:8082".to_string(),
+                "http://127.0.0.1:8083".to_string(),
+            ]
+        })
+}
+
 fn ensure_server_ready_sync(base_url: &str) {
     let server_type = server_type_from_env();
-
-    if !url_reachable(base_url) {
-        // If explicitly configured to use a running/cluster server, fail loudly
-        if matches!(server_type, Some(ServerType::Running) | Some(ServerType::Cluster)) {
+    let ready_url = if matches!(server_type, Some(ServerType::Cluster)) {
+        let cluster_urls = configured_cluster_urls_from_env();
+        let reachable = wait_for_reachable_cluster_urls(&cluster_urls, Duration::from_secs(5));
+        if reachable.is_empty() {
             panic!(
                 "\n\n\
                 ╔══════════════════════════════════════════════════════════════════╗\n\
-                ║              SERVER NOT REACHABLE                                ║\n\
+                ║                 CLUSTER NODES NOT REACHABLE                      ║\n\
                 ╠══════════════════════════════════════════════════════════════════╣\n\
-                ║  KALAMDB_SERVER_TYPE={:?} but server is NOT reachable             ║\n\
-                ║  at: {}\n\
+                ║  KALAMDB_SERVER_TYPE=Cluster but no configured node is          ║\n\
+                ║  reachable within 5s.                                           ║\n\
                 ║                                                                  ║\n\
-                ║  Start the server:  cd backend && cargo run --release            ║\n\
-                ║  Or set KALAMDB_SERVER_TYPE=fresh to auto-start a test server    ║\n\
+                ║  Configured cluster URLs:                                        ║\n\
+                ║    {:?}                                                          ║\n\
+                ║                                                                  ║\n\
+                ║  Start/check the cluster: ./scripts/cluster.sh status           ║\n\
                 ╚══════════════════════════════════════════════════════════════════╝\n",
-                server_type.unwrap(),
-                base_url
+                cluster_urls
             );
         }
-        return;
-    }
+
+        reachable[0].clone()
+    } else {
+        if !wait_for_url_reachable(base_url, Duration::from_secs(2)) {
+            // If explicitly configured to use a running server, fail loudly.
+            if matches!(server_type, Some(ServerType::Running)) {
+                panic!(
+                    "\n\n\
+                    ╔══════════════════════════════════════════════════════════════════╗\n\
+                    ║              SERVER NOT REACHABLE                                ║\n\
+                    ╠══════════════════════════════════════════════════════════════════╣\n\
+                    ║  KALAMDB_SERVER_TYPE={:?} but server is NOT reachable             ║\n\
+                    ║  at: {}\n\
+                    ║                                                                  ║\n\
+                    ║  Start the server:  cd backend && cargo run --release            ║\n\
+                    ║  Or set KALAMDB_SERVER_TYPE=fresh to auto-start a test server    ║\n\
+                    ╚══════════════════════════════════════════════════════════════════╝\n",
+                    server_type.unwrap(),
+                    base_url
+                );
+            }
+            return;
+        }
+
+        base_url.to_string()
+    };
 
     if tokio::runtime::Handle::try_current().is_ok() {
-        let base_url_owned = base_url.to_string();
+        let base_url_owned = ready_url.clone();
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let runtime = match Runtime::new() {
@@ -1288,9 +1358,12 @@ fn ensure_server_ready_sync(base_url: &str) {
                     return;
                 },
             };
-            let result = runtime
-                .block_on(test_auth_manager().ensure_ready(&base_url_owned))
-                .map_err(|err| err.to_string());
+            let result = runtime.block_on(async {
+                test_auth_manager()
+                    .ensure_ready(&base_url_owned)
+                    .await
+                    .map_err(|err| err.to_string())
+            });
             let _ = tx.send(result);
         });
         match rx.recv_timeout(Duration::from_secs(30)) {
@@ -1337,18 +1410,33 @@ fn sql_body_is_self_leader(body: &serde_json::Value) -> Option<bool> {
     Some(json_value_is_true(&extracted))
 }
 
-fn leader_cache() -> &'static Mutex<Option<String>> {
+fn leader_cache() -> &'static Mutex<Option<CachedLeaderUrl>> {
     LAST_LEADER_URL.get_or_init(|| Mutex::new(None))
 }
 
 fn cache_leader_url(url: &str) {
     if let Ok(mut guard) = leader_cache().lock() {
-        *guard = Some(url.to_string());
+        *guard = Some(CachedLeaderUrl {
+            url: url.to_string(),
+            confirmed_at: Instant::now(),
+        });
     }
 }
 
-fn cached_leader_url() -> Option<String> {
+fn clear_cached_leader_url() {
+    if let Ok(mut guard) = leader_cache().lock() {
+        *guard = None;
+    }
+}
+
+fn cached_leader_url() -> Option<CachedLeaderUrl> {
     leader_cache().lock().ok().and_then(|guard| guard.clone())
+}
+
+fn trace_leader_cache(message: impl AsRef<str>) {
+    if std::env::var_os("KALAMDB_TEST_CLIENT_TRACE").is_some() {
+        eprintln!("[TEST_LEADER] {}", message.as_ref());
+    }
 }
 
 fn extract_leader_url(message: &str) -> Option<String> {
@@ -1624,12 +1712,12 @@ pub fn test_context() -> &'static TestContext {
             })
         });
 
-        let (is_cluster, mut cluster_urls) = match server_type {
+        let (is_cluster, mut cluster_urls, cluster_urls_raw) = match server_type {
             Some(ServerType::Cluster) => {
                 // Cluster mode: probe cluster URLs to find healthy nodes
                 let cluster_default =
                     "http://127.0.0.1:8081,http://127.0.0.1:8082,http://127.0.0.1:8083";
-                let cluster_urls: Vec<String> =
+                let configured_cluster_urls: Vec<String> =
                     explicit_cluster_urls.clone().unwrap_or_else(|| {
                         cluster_default
                             .split(',')
@@ -1637,68 +1725,47 @@ pub fn test_context() -> &'static TestContext {
                             .filter(|url| !url.is_empty())
                             .collect()
                     });
-                let healthy: Vec<String> = cluster_urls
-                    .iter()
-                    .filter(|url| {
-                        let host_port = url
-                            .trim_start_matches("http://")
-                            .trim_start_matches("https://")
-                            .split('/')
-                            .next()
-                            .unwrap_or("127.0.0.1:8081");
-                        host_port_reachable(host_port)
-                    })
-                    .cloned()
-                    .collect();
-                if let Some(explicit_urls) = explicit_cluster_urls {
-                    if healthy.is_empty() {
-                        if let Some((auto_url, storage_dir)) = ensure_auto_test_server() {
-                            std::env::set_var("KALAMDB_SERVER_URL", &auto_url);
-                            if std::env::var("KALAMDB_ROOT_PASSWORD").is_err() {
-                                std::env::set_var(
-                                    "KALAMDB_ROOT_PASSWORD",
-                                    root_password_from_env(),
-                                );
-                            }
-                            std::env::set_var(
-                                "KALAMDB_STORAGE_DIR",
-                                storage_dir.to_string_lossy().to_string(),
-                            );
-                            server_url = auto_url.clone();
-                            eprintln!(
-                                "[TEST] Cluster URLs configured but unreachable; falling back to \
-                                 fresh auto-started server at {}",
-                                server_url
-                            );
-                            (false, vec![auto_url])
-                        } else {
-                            eprintln!(
-                                "[TEST] Cluster URLs configured but unreachable; falling back to \
-                                 single-node URL {}",
-                                server_url
-                            );
-                            (false, vec![server_url.clone()])
-                        }
-                    } else {
-                        (explicit_urls.len() > 1, explicit_urls)
-                    }
-                } else if !healthy.is_empty() {
-                    (true, healthy)
-                } else {
-                    (false, vec![server_url.clone()])
+                let reachable_cluster_urls = wait_for_reachable_cluster_urls(
+                    &configured_cluster_urls,
+                    Duration::from_secs(15),
+                );
+
+                if reachable_cluster_urls.is_empty() {
+                    panic!(
+                        "\n\n\
+                        ╔══════════════════════════════════════════════════════════════════╗\n\
+                        ║                 CLUSTER NODES NOT REACHABLE                      ║\n\
+                        ╠══════════════════════════════════════════════════════════════════╣\n\
+                        ║  Cluster mode was requested, but no configured cluster node      ║\n\
+                        ║  became reachable within 15s.                                    ║\n\
+                        ║                                                                  ║\n\
+                        ║  Configured cluster URLs:                                        ║\n\
+                        ║    {:?}                                                          ║\n\
+                        ║                                                                  ║\n\
+                        ║  Start the cluster first: ./scripts/cluster.sh start             ║\n\
+                        ╚══════════════════════════════════════════════════════════════════╝\n\n",
+                        configured_cluster_urls
+                    );
                 }
+
+                (true, reachable_cluster_urls, configured_cluster_urls)
             },
             Some(ServerType::Fresh) | Some(ServerType::Running) | None => {
                 // Single-node: no cluster probing, instant startup
                 if let Some(explicit_urls) = explicit_cluster_urls {
-                    (explicit_urls.len() > 1, explicit_urls)
+                    let reachable_urls = reachable_cluster_urls(&explicit_urls);
+                    let effective_urls = if explicit_urls.len() > 1 && !reachable_urls.is_empty() {
+                        reachable_urls
+                    } else {
+                        explicit_urls.clone()
+                    };
+                    (explicit_urls.len() > 1, effective_urls, explicit_urls)
                 } else {
-                    (false, vec![server_url.clone()])
+                    (false, vec![server_url.clone()], vec![server_url.clone()])
                 }
             },
         };
 
-        let cluster_urls_raw = cluster_urls.clone();
         if is_cluster {
             cluster_urls = reorder_cluster_urls_by_leader(cluster_urls, &username, &password);
         }
@@ -1763,20 +1830,46 @@ pub fn leader_url() -> Option<String> {
         return Some(ctx.server_url.clone());
     }
 
-    // Check cached leader first
+    // Check cached leader first. Reachability alone is not enough here: after a
+    // leader change the old leader is still healthy, but writes and some plans
+    // must route to the new leader.
     if let Some(cached) = cached_leader_url() {
-        eprintln!("DEBUG leader_url: Returning cached URL: {}", cached);
-        return Some(cached);
+        if ctx.cluster_urls.iter().any(|url| url == &cached.url) && url_reachable(&cached.url) {
+            if cached.confirmed_at.elapsed() <= LEADER_CACHE_TTL {
+                trace_leader_cache(format!("using cached leader {}", cached.url));
+                return Some(cached.url);
+            }
+
+            if detect_leader_url(std::slice::from_ref(&cached.url), &ctx.username, &ctx.password)
+                .as_deref()
+                == Some(cached.url.as_str())
+            {
+                trace_leader_cache(format!("revalidated cached leader {}", cached.url));
+                cache_leader_url(&cached.url);
+                return Some(cached.url);
+            }
+        }
+        clear_cached_leader_url();
     }
 
-    if let Some(leader) = detect_leader_url(&ctx.cluster_urls_raw, &ctx.username, &ctx.password) {
-        eprintln!("DEBUG leader_url: Detected leader URL: {}", leader);
+    let leader_probe_urls = if ctx.cluster_urls.is_empty() {
+        &ctx.cluster_urls_raw
+    } else {
+        &ctx.cluster_urls
+    };
+
+    if let Some(leader) = detect_leader_url(leader_probe_urls, &ctx.username, &ctx.password) {
+        trace_leader_cache(format!("detected leader {}", leader));
         cache_leader_url(&leader);
         return Some(leader);
     }
 
-    let fallback = ctx.cluster_urls.first().cloned();
-    eprintln!("DEBUG leader_url: Using fallback URL: {:?}", fallback);
+    let fallback = ctx
+        .cluster_urls
+        .first()
+        .cloned()
+        .or_else(|| ctx.cluster_urls_raw.first().cloned());
+    trace_leader_cache(format!("using fallback leader {:?}", fallback));
     fallback
 }
 
@@ -2134,10 +2227,11 @@ pub fn is_leader_error(message: &str) -> bool {
 
     if is_leader {
         if let Some(url) = extract_leader_url(message) {
-            eprintln!("DEBUG is_leader_error: Extracted and caching leader URL: {}", url);
+            trace_leader_cache(format!("leader error reported {}", url));
             cache_leader_url(&url);
         } else {
-            eprintln!("DEBUG is_leader_error: No URL extracted from message");
+            trace_leader_cache("leader error without URL; clearing cached leader");
+            clear_cached_leader_url();
         }
     }
 
@@ -2162,7 +2256,11 @@ fn is_network_error(message: &str) -> bool {
         || lower.contains("broken pipe")
         || lower.contains("connection error")
         || lower.contains("timed out")
-        || lower.contains("timeout")
+        || lower.contains("request timeout")
+        || lower.contains("connection timeout")
+        || lower.contains("read timeout")
+        || lower.contains("write timeout")
+        || lower.contains("deadline has elapsed")
 }
 
 fn is_transient_missing_relation(sql: &str, message: &str) -> bool {
@@ -2216,7 +2314,36 @@ fn cli_output_error(stdout: &str) -> Option<String> {
 /// Returns false only when no explicit server type is set and server is down.
 pub fn is_server_running() -> bool {
     // test_context() has already validated server reachability based on KALAMDB_SERVER_TYPE
-    let _ctx = test_context();
+    let ctx = test_context();
+
+    if ctx.is_cluster {
+        let urls = if ctx.cluster_urls.is_empty() {
+            ctx.cluster_urls_raw.clone()
+        } else {
+            ctx.cluster_urls.clone()
+        };
+        let reachable = wait_for_reachable_cluster_urls(&urls, Duration::from_secs(5));
+        if !reachable.is_empty() {
+            return true;
+        }
+
+        panic!(
+            "\n\n\
+            ╔══════════════════════════════════════════════════════════════════╗\n\
+            ║                 CLUSTER NODES NOT REACHABLE                      ║\n\
+            ╠══════════════════════════════════════════════════════════════════╣\n\
+            ║  Tests require at least one configured cluster node to be        ║\n\
+            ║  reachable, but none responded within 5s.                       ║\n\
+            ║                                                                  ║\n\
+            ║  Configured cluster URLs:                                        ║\n\
+            ║    {:?}                                                          ║\n\
+            ║                                                                  ║\n\
+            ║  Check the cluster: ./scripts/cluster.sh status                 ║\n\
+            ╚══════════════════════════════════════════════════════════════════╝\n\n",
+            urls
+        );
+    }
+
     let url = server_url();
 
     if is_server_reachable() {
@@ -2389,7 +2516,11 @@ fn server_requires_auth_for_url(url: &str) -> Option<bool> {
 pub fn get_available_server_urls() -> Vec<String> {
     let ctx = test_context();
     if ctx.is_cluster {
-        let mut urls = ctx.cluster_urls_raw.clone();
+        let mut urls = if ctx.cluster_urls.is_empty() {
+            ctx.cluster_urls_raw.clone()
+        } else {
+            ctx.cluster_urls.clone()
+        };
         if let Some(leader) = leader_url() {
             urls.retain(|url| url != &leader);
             urls.insert(0, leader);
@@ -2470,7 +2601,7 @@ fn wait_for_namespace_on_all_nodes(namespace: &str, timeout: Duration) -> bool {
     if !is_cluster_mode() {
         return true;
     }
-    let urls = test_context().cluster_urls_raw.clone();
+    let urls = get_available_server_urls();
     let sql = format!(
         "SELECT namespace_id FROM system.namespaces WHERE namespace_id = '{}'",
         namespace
@@ -2483,6 +2614,7 @@ fn wait_for_namespace_on_all_nodes(namespace: &str, timeout: Duration) -> bool {
         if all_visible {
             return true;
         }
+        std::thread::sleep(Duration::from_millis(50));
     }
     false
 }
@@ -2491,7 +2623,7 @@ fn wait_for_table_on_all_nodes(namespace: &str, table: &str, timeout: Duration) 
     if !is_cluster_mode() {
         return true;
     }
-    let urls = test_context().cluster_urls_raw.clone();
+    let urls = get_available_server_urls();
     let sql = format!(
         "SELECT table_name FROM system.schemas WHERE namespace_id = '{}' AND table_name = '{}'",
         namespace, table
@@ -2504,12 +2636,24 @@ fn wait_for_table_on_all_nodes(namespace: &str, table: &str, timeout: Duration) 
         if all_visible {
             return true;
         }
+        std::thread::sleep(Duration::from_millis(50));
     }
     false
 }
 
 fn wait_for_cluster_after_sql(sql: &str) {
     if !is_cluster_mode() {
+        return;
+    }
+
+    let strict_visibility = std::env::var("KALAMDB_TEST_STRICT_CLUSTER_VISIBILITY")
+        .map(|value| {
+            let value = value.trim();
+            value == "1" || value.eq_ignore_ascii_case("true")
+        })
+        .unwrap_or(false);
+
+    if !strict_visibility {
         return;
     }
 
@@ -2575,6 +2719,71 @@ pub fn websocket_url() -> String {
         base_url.replacen("http://", "ws://", 1)
     };
     format!("{}/v1/ws", base)
+}
+
+fn retryable_embedded_cluster_error(
+    sql: &str,
+    response: &kalam_client::QueryResponse,
+) -> Option<String> {
+    for result in &response.results {
+        if let Some(message) = &result.message {
+            if is_retryable_cluster_error_for_sql(sql, message) {
+                return Some(message.clone());
+            }
+        }
+
+        let is_explain = sql.trim_start().to_ascii_uppercase().starts_with("EXPLAIN");
+        if let Some(rows) = &result.rows {
+            for row in rows {
+                for value in row {
+                    if let Some(message) = retryable_embedded_value(sql, value.inner(), is_explain)
+                    {
+                        return Some(message);
+                    }
+                }
+            }
+        }
+
+        if let Some(named_rows) = &result.named_rows {
+            for row in named_rows {
+                for value in row.values() {
+                    if let Some(message) = retryable_embedded_value(sql, value.inner(), is_explain)
+                    {
+                        return Some(message);
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
+fn retryable_embedded_value(
+    sql: &str,
+    value: &serde_json::Value,
+    is_explain: bool,
+) -> Option<String> {
+    match value {
+        serde_json::Value::String(message) => {
+            let lower = message.to_ascii_lowercase();
+            let looks_like_plan_error = lower.contains("physical_plan_error");
+            if (is_explain || looks_like_plan_error)
+                && is_retryable_cluster_error_for_sql(sql, message)
+            {
+                Some(message.clone())
+            } else {
+                None
+            }
+        },
+        serde_json::Value::Array(values) => {
+            values.iter().find_map(|value| retryable_embedded_value(sql, value, is_explain))
+        },
+        serde_json::Value::Object(values) => values
+            .values()
+            .find_map(|value| retryable_embedded_value(sql, value, is_explain)),
+        _ => None,
+    }
 }
 
 pub fn storage_base_dir() -> std::path::PathBuf {
@@ -2718,35 +2927,19 @@ pub fn execute_sql_via_cli_as_with_timing(
     use std::time::Instant;
 
     let start = Instant::now();
-    let output = Command::new(env!("CARGO_BIN_EXE_kalam"))
-        .arg("-u")
-        .arg(server_url())
-        .arg("--user")
-        .arg(username)
-        .arg("--password")
-        .arg(password)
-        .arg("--command")
-        .arg(sql)
-        .output()?;
+    let output = execute_sql_via_cli_as(username, password, sql)?;
     let total_time_ms = start.elapsed().as_millis();
 
-    if output.status.success() {
-        let output_str = String::from_utf8_lossy(&output.stdout).to_string();
+    let server_time_ms = output
+        .lines()
+        .find(|l| l.starts_with("Took:"))
+        .and_then(|line| line.split_whitespace().nth(1).and_then(|s| s.parse::<f64>().ok()));
 
-        // Extract server time from output (looks for "Took: XXX.XXX ms")
-        let server_time_ms = output_str.lines().find(|l| l.starts_with("Took:")).and_then(|line| {
-            // Parse "Took: 123.456 ms"
-            line.split_whitespace().nth(1).and_then(|s| s.parse::<f64>().ok())
-        });
-
-        Ok(CliTiming {
-            output: output_str,
-            total_time_ms,
-            server_time_ms,
-        })
-    } else {
-        Err(format!("CLI command failed: {}", String::from_utf8_lossy(&output.stderr)).into())
-    }
+    Ok(CliTiming {
+        output,
+        total_time_ms,
+        server_time_ms,
+    })
 }
 
 /// Helper to execute SQL via CLI with authentication
@@ -3074,6 +3267,137 @@ pub fn execute_sql_as_root_via_cli_json(sql: &str) -> Result<String, Box<dyn std
     execute_sql_via_cli_as_with_args(admin_username(), admin_password(), sql, &["--json"])
 }
 
+pub fn execute_sql_file_as_root_via_cli(
+    file_path: &std::path::Path,
+) -> Result<String, Box<dyn std::error::Error>> {
+    static SETUP_DONE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    SETUP_DONE.get_or_init(|| {
+        ensure_cli_server_setup().expect("Failed to prepare CLI server setup");
+    });
+
+    let file_arg = file_path
+        .to_str()
+        .ok_or_else(|| format!("Non-UTF8 SQL file path: {:?}", file_path))?
+        .to_string();
+
+    let max_attempts = if is_cluster_mode() { 6 } else { 3 };
+    let mut last_err: Option<String> = None;
+
+    for attempt in 0..max_attempts {
+        let urls = if is_cluster_mode() {
+            get_available_server_urls()
+        } else {
+            vec![server_url().to_string()]
+        };
+        let mut retry_after_attempt = false;
+
+        for (idx, url) in urls.iter().enumerate() {
+            let creds_dir = TempDir::new().map_err(|err| err.to_string())?;
+            let creds_path = creds_dir.path().join("credentials.toml");
+            let token = get_access_token_for_url_sync(url, admin_username(), admin_password());
+
+            let mut child = Command::new(env!("CARGO_BIN_EXE_kalam"));
+            child.arg("-u").arg(url);
+
+            if let Some(token) = token {
+                child.arg("--token").arg(token);
+            } else {
+                child
+                    .arg("--user")
+                    .arg(admin_username())
+                    .arg("--password")
+                    .arg(admin_password());
+            }
+
+            child
+                .env("KALAMDB_CREDENTIALS_PATH", &creds_path)
+                .env("NO_PROXY", "127.0.0.1,localhost,::1")
+                .env("no_proxy", "127.0.0.1,localhost,::1")
+                .env_remove("HTTP_PROXY")
+                .env_remove("http_proxy")
+                .env_remove("HTTPS_PROXY")
+                .env_remove("https_proxy")
+                .env_remove("ALL_PROXY")
+                .env_remove("all_proxy")
+                .arg("--no-spinner")
+                .arg("--file")
+                .arg(&file_arg)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped());
+
+            let mut child = child.spawn()?;
+            use wait_timeout::ChildExt;
+
+            match child.wait_timeout(Duration::from_secs(60))? {
+                Some(status) => {
+                    let mut stdout = String::new();
+                    let mut stderr = String::new();
+                    if let Some(ref mut out) = child.stdout {
+                        use std::io::Read;
+                        out.read_to_string(&mut stdout)?;
+                    }
+                    if let Some(ref mut err) = child.stderr {
+                        use std::io::Read;
+                        err.read_to_string(&mut stderr)?;
+                    }
+
+                    if status.success() {
+                        if let Some(output_err) = cli_output_error(&stdout) {
+                            let err_msg = format!("CLI file output error: {}", output_err);
+                            if is_leader_error(&err_msg) || is_network_error(&err_msg) {
+                                last_err = Some(err_msg);
+                                if idx + 1 < urls.len() {
+                                    continue;
+                                }
+                                retry_after_attempt = true;
+                                break;
+                            }
+                            return Err(err_msg.into());
+                        }
+                        return Ok(stdout);
+                    }
+
+                    let err_msg = format!("CLI file command failed: {}", stderr);
+                    if is_refreshable_token_error(&err_msg) {
+                        invalidate_auth_caches_for_credentials(
+                            url,
+                            admin_username(),
+                            admin_password(),
+                        );
+                        last_err = Some(err_msg);
+                        retry_after_attempt = true;
+                        break;
+                    }
+                    if is_leader_error(&err_msg) || is_network_error(&err_msg) {
+                        last_err = Some(err_msg);
+                        if idx + 1 < urls.len() {
+                            continue;
+                        }
+                        retry_after_attempt = true;
+                        break;
+                    }
+                    return Err(err_msg.into());
+                },
+                None => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    last_err = Some("CLI file command timed out after 60s".to_string());
+                    retry_after_attempt = true;
+                },
+            }
+        }
+
+        if retry_after_attempt {
+            let delay_ms = 100 + attempt * 100;
+            std::thread::sleep(Duration::from_millis(delay_ms as u64));
+        }
+    }
+
+    Err(last_err
+        .unwrap_or_else(|| "CLI file command failed on all cluster nodes".to_string())
+        .into())
+}
+
 /// Wait for a SQL query to return output containing an expected substring.
 ///
 /// Useful for eventual consistency scenarios where data may not be immediately visible.
@@ -3368,6 +3692,16 @@ fn execute_sql_via_client_internal(
                                             break;
                                         }
                                         return Err(err_msg.into());
+                                    }
+                                    if let Some(err_msg) =
+                                        retryable_embedded_cluster_error(&sql, &response)
+                                    {
+                                        last_err = Some(err_msg.into());
+                                        if idx + 1 < urls.len() {
+                                            continue;
+                                        }
+                                        retry_after_attempt = true;
+                                        break;
                                     }
                                     return Ok(response);
                                 },

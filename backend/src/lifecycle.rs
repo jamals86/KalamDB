@@ -233,6 +233,14 @@ pub async fn bootstrap(
     if is_cluster_mode {
         // Multi-node cluster mode
         let cluster_config = config.cluster.as_ref().unwrap();
+        info!(
+            "Starting cluster node {} in cluster '{}' (rpc={}, api={}, peers={})",
+            cluster_config.node_id,
+            cluster_config.cluster_id,
+            cluster_config.rpc_addr,
+            cluster_config.api_addr,
+            cluster_config.peers.len()
+        );
         debug!("╔═══════════════════════════════════════════════════════════════════╗");
         debug!("║                     Multi-Node Cluster Mode                       ║");
         debug!("╚═══════════════════════════════════════════════════════════════════╝");
@@ -267,7 +275,11 @@ pub async fn bootstrap(
 
         if should_bootstrap {
             if !cluster_config.peers.is_empty() {
-                info!("Node {} is bootstrap node - initializing cluster", cluster_config.node_id);
+                info!(
+                    "Node {} is the bootstrap node; initializing cluster membership and admitting \
+                     configured peers",
+                    cluster_config.node_id
+                );
             }
             app_context
                 .executor()
@@ -275,10 +287,17 @@ pub async fn bootstrap(
                 .await
                 .map_err(|e| anyhow::anyhow!("Failed to initialize cluster: {}", e))?;
         } else {
-            info!("Node {} waiting for bootstrap node (node_id=1)", cluster_config.node_id);
+            info!(
+                "Node {} is ready and waiting for bootstrap node 1 to admit it to the cluster",
+                cluster_config.node_id
+            );
         }
 
-        info!("✓ Raft cluster started ({:.2}ms)", phase_start.elapsed().as_secs_f64() * 1000.0);
+        info!(
+            "Cluster node {} started Raft services in {:.2}ms",
+            cluster_config.node_id,
+            phase_start.elapsed().as_secs_f64() * 1000.0
+        );
     } else {
         // Single-node mode (lightweight Raft)
         debug!("Single-node mode - initializing lightweight Raft");

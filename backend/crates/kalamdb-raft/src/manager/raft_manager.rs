@@ -156,6 +156,17 @@ async fn promote_learner<SM: KalamStateMachine + Send + Sync + 'static>(
 }
 
 impl RaftManager {
+    fn configured_peers_summary(&self) -> String {
+        self.config
+            .peers
+            .iter()
+            .map(|peer| {
+                format!("node {} (rpc={}, api={})", peer.node_id, peer.rpc_addr, peer.api_addr)
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
     /// Create a new Raft manager with in-memory storage (for testing or standalone mode)
     pub fn new(config: RaftManagerConfig) -> Self {
         let user_shards_count = config.user_shards;
@@ -343,21 +354,19 @@ impl RaftManager {
             return Ok(());
         }
 
-        log::debug!(
-            "Starting Raft Cluster: node={} rpc={} api={}",
+        log::info!(
+            "[CLUSTER] Node {} starting Raft services (rpc={}, api={})",
             self.node_id,
             self.config.rpc_addr,
             self.config.api_addr
         );
-        // log::info!("Groups: {} (1 meta + {}u + {}s) │ Peers: {}",
-        //     self.group_count(), self.user_shards_count, self.shared_shards_count,
-        //     self.config.peers.len());
-        for peer in &self.config.peers {
+        if self.config.peers.is_empty() {
+            log::info!("[CLUSTER] No other configured cluster nodes");
+        } else {
             log::info!(
-                "[CLUSTER] Peer node_id={}: rpc={}, api={}",
-                peer.node_id,
-                peer.rpc_addr,
-                peer.api_addr
+                "[CLUSTER] Other configured cluster nodes ({}): {}",
+                self.config.peers.len(),
+                self.configured_peers_summary()
             );
         }
 
@@ -444,8 +453,10 @@ impl RaftManager {
         if already_initialized {
             let meta_last_applied = self.meta.get_last_applied().map(|id| id.index).unwrap_or(0);
             log::info!(
-                "Cluster already initialized (meta last_applied={}); skipping group initialization",
-                meta_last_applied
+                "[CLUSTER] Membership already initialized on node {} (meta last_applied={}); \
+                 skipping bootstrap",
+                self.node_id,
+                meta_last_applied,
             );
         } else {
             // Initialize unified meta group
@@ -544,15 +555,22 @@ impl RaftManager {
                     return;
                 }
 
-                log::info!("Waiting for {} peer nodes to come online...", peers.len());
+                log::info!(
+                    "[CLUSTER] Bootstrap node {} is connecting {} configured peer(s) to the \
+                     cluster",
+                    node_id,
+                    peers.len()
+                );
 
                 // Peer wait configuration from RaftManagerConfig
 
                 for peer in &peers {
                     log::info!(
-                        "  Waiting for peer node_id={} (rpc={}) to be online...",
+                        "[CLUSTER] Waiting for configured peer {} to come online (rpc={}, \
+                         api={})",
                         peer.node_id,
-                        peer.rpc_addr
+                        peer.rpc_addr,
+                        peer.api_addr,
                     );
 
                     // Wait for the peer's RPC endpoint to respond
@@ -569,7 +587,8 @@ impl RaftManager {
                     {
                         Ok(_) => {
                             log::info!(
-                                "    ✓ Peer {} is online, adding to cluster...",
+                                "[CLUSTER] Configured peer {} is online; starting join \
+                                 sequence",
                                 peer.node_id
                             );
 
@@ -585,15 +604,11 @@ impl RaftManager {
                             )
                             .await
                             {
-                                Ok(_) => {
-                                    log::info!(
-                                        "    ✓ Peer {} joined cluster successfully",
-                                        peer.node_id
-                                    );
-                                },
+                                Ok(_) => {},
                                 Err(e) => {
                                     log::error!(
-                                        "    ✗ Failed to add peer {} to cluster: {}",
+                                        "[CLUSTER] Failed to add configured peer {} to the \
+                                         cluster: {}",
                                         peer.node_id,
                                         e
                                     );
@@ -601,11 +616,15 @@ impl RaftManager {
                             }
                         },
                         Err(e) => {
-                            log::error!("    ✗ Peer {} did not come online: {}", peer.node_id, e);
+                            log::error!(
+                                "[CLUSTER] Configured peer {} did not come online: {}",
+                                peer.node_id,
+                                e
+                            );
                         },
                     }
                 }
-                log::info!("Cluster formation complete");
+                log::info!("[CLUSTER] Cluster formation complete");
             });
 
             let mut guard = self.cluster_init_handle.write();
@@ -774,7 +793,7 @@ impl RaftManager {
         replication_timeout: Duration,
     ) -> Result<(), RaftError> {
         log::info!(
-            "[CLUSTER] Node {} joining cluster (rpc={}, api={})",
+            "[CLUSTER] Starting join sequence for node {} (rpc={}, api={})",
             node_id,
             rpc_addr,
             api_addr
@@ -888,7 +907,8 @@ impl RaftManager {
         self.register_peer(node_id, rpc_addr.clone(), api_addr.clone());
 
         log::info!(
-            "[CLUSTER] ✓ Node {} joined cluster successfully (added to {} groups)",
+            "[CLUSTER] Node {} joined cluster successfully and now participates in {} Raft \
+             groups",
             node_id,
             self.group_count()
         );

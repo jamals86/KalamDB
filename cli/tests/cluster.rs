@@ -619,15 +619,28 @@ mod cluster_common {
 
     /// Require cluster to be running (skip test if not available)
     pub fn require_cluster_running() -> bool {
+        let cluster_requested = std::env::var("KALAMDB_SERVER_TYPE")
+            .map(|value| value.trim().eq_ignore_ascii_case("cluster"))
+            .unwrap_or(false);
+
         if !crate::common::is_cluster_mode() {
+            if cluster_requested {
+                panic!(
+                    "Cluster tests were requested, but the harness resolved single-node mode. \
+                     Check KALAMDB_CLUSTER_URLS and cluster reachability."
+                );
+            }
             println!(
                 "\n  Skipping: single-node server detected (cluster tests require multi-node)\n"
             );
             return false;
         }
 
-        let urls = cluster_urls();
+        let urls = cluster_urls_config_order();
         if urls.is_empty() {
+            if cluster_requested {
+                panic!("Cluster tests were requested, but no cluster URLs are configured.");
+            }
             println!("\n  Skipping: no cluster URLs configured (set KALAMDB_CLUSTER_URLS)\n");
             return false;
         }
@@ -635,6 +648,13 @@ mod cluster_common {
         // Check if at least one node is reachable
         let any_healthy = urls.iter().any(|url| is_node_healthy(url));
         if !any_healthy {
+            if cluster_requested {
+                panic!(
+                    "Cluster tests were requested, but no configured cluster node is reachable: \
+                     {:?}",
+                    urls
+                );
+            }
             println!(
                 "\n  Skipping: no cluster nodes are reachable. Expected nodes at: {:?}\n",
                 urls
@@ -665,6 +685,7 @@ mod cluster_common {
             if all_visible {
                 return true;
             }
+            std::thread::sleep(Duration::from_millis(50));
         }
 
         false
@@ -689,6 +710,7 @@ mod cluster_common {
             if all_visible {
                 return true;
             }
+            std::thread::sleep(Duration::from_millis(50));
         }
 
         false
@@ -715,6 +737,7 @@ mod cluster_common {
             if all_match {
                 return true;
             }
+            std::thread::sleep(Duration::from_millis(50));
         }
 
         false
@@ -748,6 +771,7 @@ mod cluster_common {
                         }
                     }
                 }
+                std::thread::sleep(Duration::from_millis(100));
             }
         }
 
@@ -783,6 +807,7 @@ mod cluster_common {
                     }
                 }
             }
+            std::thread::sleep(Duration::from_millis(100));
         }
 
         false

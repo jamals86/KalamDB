@@ -27,6 +27,11 @@ pub struct CreateNamespaceHandler {
     app_context: Arc<AppContext>,
 }
 
+fn is_namespace_already_exists_error(error: &impl std::fmt::Display) -> bool {
+    let message = error.to_string().to_ascii_lowercase();
+    message.contains("namespace") && message.contains("already exists")
+}
+
 impl CreateNamespaceHandler {
     pub fn new(app_context: Arc<AppContext>) -> Self {
         Self { app_context }
@@ -95,6 +100,7 @@ impl TypedStatementHandler<CreateNamespaceStatement> for CreateNamespaceHandler 
 
         if existing.is_some() {
             if statement.if_not_exists {
+                self.register_namespace_schema(&namespace_id)?;
                 let message = format!("Namespace '{}' already exists", name);
                 return Ok(ExecutionResult::Success { message });
             }
@@ -108,14 +114,30 @@ impl TypedStatementHandler<CreateNamespaceStatement> for CreateNamespaceHandler 
         // In standalone mode, the executor calls the provider directly
         let executor = self.app_context.executor();
         let created_by = Some(UserId::new(context.user_id().as_str()));
-        let cmd = kalamdb_raft::MetaCommand::CreateNamespace {
-            namespace_id: namespace_id.clone(),
-            created_by,
+        let cmd = if statement.if_not_exists {
+            kalamdb_raft::MetaCommand::CreateNamespaceIfNotExists {
+                namespace_id: namespace_id.clone(),
+                created_by,
+            }
+        } else {
+            kalamdb_raft::MetaCommand::CreateNamespace {
+                namespace_id: namespace_id.clone(),
+                created_by,
+            }
         };
 
-        executor.execute_meta(cmd).await.map_err(|e| {
-            KalamDbError::ExecutionError(format!("Failed to create namespace via executor: {}", e))
-        })?;
+        if let Err(error) = executor.execute_meta(cmd).await {
+            if statement.if_not_exists && is_namespace_already_exists_error(&error) {
+                self.register_namespace_schema(&namespace_id)?;
+                let message = format!("Namespace '{}' already exists", name);
+                return Ok(ExecutionResult::Success { message });
+            }
+
+            return Err(KalamDbError::ExecutionError(format!(
+                "Failed to create namespace via executor: {}",
+                error
+            )));
+        }
 
         // Register namespace as DataFusion schema for SQL queries
         self.register_namespace_schema(&namespace_id)?;
@@ -154,6 +176,15 @@ mod tests {
 
     fn test_context() -> ExecutionContext {
         ExecutionContext::new(UserId::from("test_user"), Role::Dba, create_test_session_simple())
+    }
+
+    #[test]
+    fn test_namespace_already_exists_error_recognizer() {
+        assert!(is_namespace_already_exists_error(&"Namespace 'app' already exists"));
+        assert!(is_namespace_already_exists_error(
+            &"Already exists: Namespace 'app' already exists"
+        ));
+        assert!(!is_namespace_already_exists_error(&"Table 'app.t' already exists"));
     }
 
     #[ignore = "Requires Raft for CREATE NAMESPACE"]

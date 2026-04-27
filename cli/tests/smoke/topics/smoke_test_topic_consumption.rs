@@ -109,6 +109,9 @@ async fn create_topic_with_sources(topic: &str, table: &str, operations: &[&str]
         execute_sql(&format!("ALTER TOPIC {} ADD SOURCE {} ON {}", topic, table, op)).await;
     }
     wait_for_topic_ready(topic, operations.len()).await;
+    if common::is_cluster_mode() {
+        tokio::time::sleep(Duration::from_millis(750)).await;
+    }
 }
 
 fn response_is_success(response: &serde_json::Value) -> bool {
@@ -251,6 +254,41 @@ async fn poll_topic_messages_http_until(
     panic!(
         "Timed out waiting for at least {} topic messages on {} (last_count={})",
         min_messages, topic, last_count
+    );
+}
+
+async fn poll_sql_consume_until(
+    sql: &str,
+    min_rows: usize,
+    timeout: Duration,
+) -> serde_json::Value {
+    let deadline = std::time::Instant::now() + timeout;
+    let mut last_response = serde_json::Value::Null;
+    let mut last_count = 0usize;
+
+    while std::time::Instant::now() < deadline {
+        let response = common::execute_sql_via_http_as_root(sql)
+            .await
+            .expect("SQL CONSUME should return a response");
+
+        assert!(
+            response_is_success(&response),
+            "SQL CONSUME should succeed while polling: {}",
+            response
+        );
+
+        last_count = common::get_rows_as_hashmaps(&response).map(|rows| rows.len()).unwrap_or(0);
+        if last_count >= min_rows {
+            return response;
+        }
+
+        last_response = response;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    panic!(
+        "Timed out waiting for SQL CONSUME to return at least {} rows (last_count={}, last_response={})",
+        min_rows, last_count, last_response
     );
 }
 
@@ -1308,6 +1346,10 @@ async fn test_topic_sql_consume_docs_getting_started_flow() {
         topic, full_table
     ))
     .await;
+    wait_for_topic_ready(&topic, 1).await;
+    if common::is_cluster_mode() {
+        tokio::time::sleep(Duration::from_millis(750)).await;
+    }
 
     execute_sql(&format!(
         "INSERT INTO {} (author, msg) VALUES ('user', 'Write a short summary of this support \
@@ -1316,12 +1358,8 @@ async fn test_topic_sql_consume_docs_getting_started_flow() {
     ))
     .await;
 
-    let consume_response = common::execute_sql_via_http_as_root(&format!(
-        "CONSUME FROM {} FROM EARLIEST LIMIT 1",
-        topic
-    ))
-    .await
-    .expect("SQL CONSUME should return a response");
+    let consume_sql = format!("CONSUME FROM {} FROM EARLIEST LIMIT 1", topic);
+    let consume_response = poll_sql_consume_until(&consume_sql, 1, Duration::from_secs(20)).await;
 
     assert!(
         response_is_success(&consume_response),

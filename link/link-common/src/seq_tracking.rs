@@ -195,5 +195,4 @@ mod tests {
         assert!(!track_rows(&mut current, &rows));
         assert_eq!(current, Some(SeqId::from_i64(100)));
     }
-
 }

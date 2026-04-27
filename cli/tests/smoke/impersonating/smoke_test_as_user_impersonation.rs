@@ -63,6 +63,34 @@ fn get_user_id(user_id: &str) -> Option<String> {
     None
 }
 
+fn wait_for_query_success_with<F>(
+    sql: &str,
+    timeout: Duration,
+    execute: F,
+) -> Result<String, Box<dyn std::error::Error>>
+where
+    F: Fn(&str) -> Result<String, Box<dyn std::error::Error>>,
+{
+    let start = std::time::Instant::now();
+    let mut last_error = None;
+
+    while start.elapsed() < timeout {
+        match execute(sql) {
+            Ok(output) => return Ok(output),
+            Err(err) => {
+                last_error = Some(err.to_string());
+                std::thread::sleep(Duration::from_millis(120));
+            },
+        }
+    }
+
+    Err(format!(
+        "Timed out waiting for query to succeed. Last error: {}",
+        last_error.unwrap_or_else(|| "<none>".to_string())
+    )
+    .into())
+}
+
 /// Smoke Test: Regular user CANNOT use AS USER (authorization check)
 #[ntest::timeout(120000)]
 #[test]
@@ -691,6 +719,7 @@ fn smoke_as_user_stream_table_isolation() {
         full_table
     ))
     .expect("Failed to create stream table");
+    wait_for_table_ready(&full_table, Duration::from_secs(10)).expect("stream table not ready");
 
     create_user_with_retry(&service_user, password, "service");
     create_user_with_retry(&user1, password, "user");
@@ -709,9 +738,12 @@ fn smoke_as_user_stream_table_isolation() {
     )
     .expect("Failed to insert stream row for user1");
 
-    let user2_direct =
-        execute_sql_via_client_as(&user2, password, &format!("SELECT * FROM {}", full_table))
-            .expect("User2 stream select failed");
+    let user2_direct = wait_for_query_success_with(
+        &format!("SELECT * FROM {}", full_table),
+        Duration::from_secs(30),
+        |sql| execute_sql_via_client_as(&user2, password, sql),
+    )
+    .expect("User2 stream select failed");
     assert!(!user2_direct.contains("stream-u1"));
 
     let user1_select_sql = format!("EXECUTE AS USER '{}' (SELECT * FROM {})", user1_id, full_table);
@@ -724,10 +756,10 @@ fn smoke_as_user_stream_table_isolation() {
     .expect("Service SELECT AS USER user1 on stream failed");
     assert!(service_as_user1.contains("stream-u1"));
 
-    let service_as_user2 = execute_sql_via_client_as(
-        &service_user,
-        password,
+    let service_as_user2 = wait_for_query_success_with(
         &format!("EXECUTE AS USER '{}' (SELECT * FROM {})", user2_id, full_table),
+        Duration::from_secs(30),
+        |sql| execute_sql_via_client_as(&service_user, password, sql),
     )
     .expect("Service SELECT AS USER user2 on stream failed");
     assert!(!service_as_user2.contains("stream-u1"));

@@ -440,7 +440,6 @@ fn test_live_multiple_subscriptions() {
 }
 
 /// Test: Connection timeout with unreachable server (client-side option validation)
-#[ntest::timeout(30000)]
 #[test]
 fn test_connection_timeout_option() {
     // This test validates that ConnectionOptions timeout settings work

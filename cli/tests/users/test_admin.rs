@@ -9,7 +9,7 @@
 //! - Administrative SQL operations
 //! - Namespace and table management
 
-use std::time::Duration;
+use std::{path::Path, time::Duration};
 
 use crate::common::*;
 
@@ -25,7 +25,11 @@ fn test_cli_list_tables() {
     }
 
     let table_name = generate_unique_table("messages_list_tables");
-    let namespace = "test_cli";
+    let namespace = generate_unique_namespace("test_cli");
+    let full_table_name = format!("{}.{}", namespace, table_name);
+
+    let _ =
+        execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
 
     // Create test table
     let create_sql = format!(
@@ -42,23 +46,23 @@ fn test_cli_list_tables() {
         eprintln!("⚠️  Failed to create test table, skipping test");
         return;
     }
+    wait_for_table_ready(&full_table_name, Duration::from_secs(15)).unwrap();
 
     // Query system tables
-    let query_sql = "SELECT table_name FROM system.schemas WHERE namespace_id = 'test_cli'";
-    let result = execute_sql_as_root_via_cli(query_sql);
+    let query_sql = format!(
+        "SELECT table_name FROM system.schemas WHERE namespace_id = '{}' AND table_name = '{}'",
+        namespace, table_name
+    );
+    let result = wait_for_sql_output_contains(&query_sql, &table_name, Duration::from_secs(15));
 
     // Should list tables
     assert!(result.is_ok(), "Should list tables: {:?}", result.err());
     let output = result.unwrap();
-    assert!(
-        output.contains("messages") || output.contains("row"),
-        "Should contain table info: {}",
-        output
-    );
+    assert!(output.contains(&table_name), "Should contain table info: {}", output);
 
     // Cleanup
-    let drop_sql = format!("DROP TABLE IF EXISTS {}.{}", namespace, table_name);
-    let _ = execute_sql_as_root_via_cli(&drop_sql);
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 }
 
 /// T042: Test describe table command (\d table)
@@ -70,7 +74,11 @@ fn test_cli_describe_table() {
     }
 
     let table_name = generate_unique_table("messages_describe");
-    let namespace = "test_cli";
+    let namespace = generate_unique_namespace("test_cli");
+    let full_table_name = format!("{}.{}", namespace, table_name);
+
+    let _ =
+        execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
 
     // Create test table
     let create_sql = format!(
@@ -87,20 +95,22 @@ fn test_cli_describe_table() {
         eprintln!("⚠️  Failed to create test table, skipping test");
         return;
     }
+    wait_for_table_ready(&full_table_name, Duration::from_secs(15)).unwrap();
 
-    // Query table info
-    let table_full_name = format!("{}.{}", namespace, table_name);
-    let query_sql = format!("SELECT '{}' as table_info", table_full_name);
-    let result = execute_sql_as_root_via_cli(&query_sql);
+    let query_sql = format!(
+        "SELECT table_name FROM system.schemas WHERE namespace_id = '{}' AND table_name = '{}'",
+        namespace, table_name
+    );
+    let result = wait_for_sql_output_contains(&query_sql, &table_name, Duration::from_secs(15));
 
     // Should execute successfully and show table info
     assert!(result.is_ok(), "Should describe table: {:?}", result.err());
     let output = result.unwrap();
-    assert!(output.contains("messages"), "Should contain table name: {}", output);
+    assert!(output.contains(&table_name), "Should contain table name: {}", output);
 
     // Cleanup
-    let drop_sql = format!("DROP TABLE IF EXISTS {}.{}", namespace, table_name);
-    let _ = execute_sql_as_root_via_cli(&drop_sql);
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 }
 
 /// T055: Test batch file execution
@@ -139,51 +149,14 @@ SELECT * FROM {};"#,
     )
     .unwrap();
 
-    // Execute batch file
-    let target_url = leader_url().unwrap_or_else(|| server_url().to_string());
-    let mut cmd = create_cli_command();
-    cmd.arg("-u")
-        .arg(target_url)
-        .arg("--user")
-        .arg(default_username())
-        .arg("--password")
-        .arg(root_password())
-        .arg("--file")
-        .arg(sql_file.to_str().unwrap())
-        .timeout(TEST_TIMEOUT);
-
-    let mut output = cmd.output().unwrap();
-    let mut stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let mut stderr = String::from_utf8_lossy(&output.stderr).to_string();
-
-    if !output.status.success() && is_leader_error(&stderr) {
-        if let Some(leader) = leader_url() {
-            let mut retry_cmd = create_cli_command();
-            retry_cmd
-                .arg("-u")
-                .arg(leader)
-                .arg("--user")
-                .arg(default_username())
-                .arg("--password")
-                .arg(root_password())
-                .arg("--file")
-                .arg(sql_file.to_str().unwrap())
-                .timeout(TEST_TIMEOUT);
-
-            output = retry_cmd.output().unwrap();
-            stdout = String::from_utf8_lossy(&output.stdout).to_string();
-            stderr = String::from_utf8_lossy(&output.stderr).to_string();
-        }
-    }
+    let stdout = execute_batch_file(&sql_file)
+        .unwrap_or_else(|err| panic!("Batch execution should succeed. Error: {}", err));
 
     // Verify execution - should show Query OK messages and final result
     assert!(
-        (stdout.contains("Item One") || stdout.contains("Query OK")) && output.status.success(),
-        "Batch execution should succeed with proper messages.\nstdout: {}\nstderr: {}\nstatus: \
-         {:?}",
-        stdout,
-        stderr,
-        output.status
+        stdout.contains("Item One") || stdout.contains("Query OK"),
+        "Batch execution should succeed with proper messages.\nstdout: {}",
+        stdout
     );
 
     // Cleanup
@@ -247,7 +220,11 @@ fn test_cli_health_check() {
     }
 
     // Test server health via SQL query
-    let result = execute_sql_as_root_via_cli("SELECT 1 as health_check");
+    let result = wait_for_sql_output_contains(
+        "SELECT 1 as health_check",
+        "health_check",
+        Duration::from_secs(15),
+    );
 
     assert!(result.is_ok(), "Server should respond to SQL queries: {:?}", result.err());
 
@@ -257,4 +234,8 @@ fn test_cli_health_check() {
         "Response should contain query result: {}",
         output
     );
+}
+
+fn execute_batch_file(sql_file: &Path) -> Result<String, Box<dyn std::error::Error>> {
+    execute_sql_file_as_root_via_cli(sql_file)
 }

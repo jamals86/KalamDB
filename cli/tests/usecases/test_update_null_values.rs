@@ -40,6 +40,7 @@ fn test_update_row_with_null_columns_hot() {
         "Table creation failed: {}",
         output
     );
+    wait_for_table_ready(&full_table_name, Duration::from_secs(15)).unwrap();
 
     // Insert row with NULL client_id
     let insert_sql = format!(
@@ -57,7 +58,8 @@ fn test_update_row_with_null_columns_hot() {
 
     // Verify row exists with NULL client_id
     let select_sql = format!("SELECT * FROM {} WHERE id = 12345", full_table_name);
-    let output = execute_sql_as_root_via_cli(&select_sql).unwrap();
+    let output =
+        wait_for_sql_output_contains(&select_sql, "12345", Duration::from_secs(15)).unwrap();
     assert!(output.contains("12345"), "Row not found after insert: {}", output);
     assert!(
         output.contains("(1 row)") || output.contains("1 row"),
@@ -82,8 +84,15 @@ fn test_update_row_with_null_columns_hot() {
 
     // Verify update took effect by checking the updated column value
     let verify_sql = format!("SELECT id, sender FROM {} WHERE id = 12345", full_table_name);
-    let output = execute_sql_as_root_via_cli(&verify_sql).unwrap();
+    let output =
+        wait_for_sql_output_contains(&verify_sql, "Updated Assistant", Duration::from_secs(15))
+            .unwrap();
     assert!(output.contains("12345"), "Row disappeared after UPDATE: {}", output);
+    assert!(
+        output.contains("Updated Assistant"),
+        "Updated sender value not visible after UPDATE: {}",
+        output
+    );
     // Verify we still get 1 row (row exists)
     assert!(
         output.contains("(1 row)") || output.contains("1 row"),

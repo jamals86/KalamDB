@@ -27,6 +27,11 @@ use crate::{
     GroupId, RaftError,
 };
 
+fn is_namespace_already_exists_error(error: &RaftError) -> bool {
+    let message = error.to_string().to_ascii_lowercase();
+    message.contains("namespace") && message.contains("already exists")
+}
+
 // =============================================================================
 // Snapshot Structure
 // =============================================================================
@@ -164,6 +169,35 @@ impl MetaStateMachine {
 
                 let message = if let Some(ref a) = applier {
                     a.create_namespace(&namespace_id, created_by.as_ref()).await?
+                } else {
+                    String::new()
+                };
+
+                self.approximate_size.fetch_add(100, Ordering::Relaxed);
+                Ok(MetaResponse::NamespaceCreated {
+                    namespace_id,
+                    message,
+                })
+            },
+
+            MetaCommand::CreateNamespaceIfNotExists {
+                namespace_id,
+                created_by,
+            } => {
+                log::debug!(
+                    "MetaStateMachine: CreateNamespaceIfNotExists {:?} by {:?}",
+                    namespace_id,
+                    created_by
+                );
+
+                let message = if let Some(ref applier) = applier {
+                    match applier.create_namespace(&namespace_id, created_by.as_ref()).await {
+                        Ok(message) => message,
+                        Err(error) if is_namespace_already_exists_error(&error) => {
+                            format!("Namespace '{}' already exists", namespace_id)
+                        },
+                        Err(error) => return Err(error),
+                    }
                 } else {
                     String::new()
                 };

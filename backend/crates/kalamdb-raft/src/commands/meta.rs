@@ -177,13 +177,27 @@ pub enum MetaCommand {
         reason: String,
         cancelled_at: DateTime<Utc>,
     },
+
+    // =========================================================================
+    // Compatibility-Appended Operations
+    // =========================================================================
+    /// Create a new namespace, succeeding if it already exists.
+    ///
+    /// Keep this variant at the end so existing bincode-encoded Raft log
+    /// discriminants remain stable for older variants.
+    CreateNamespaceIfNotExists {
+        namespace_id: NamespaceId,
+        created_by: Option<UserId>,
+    },
 }
 
 impl MetaCommand {
     /// Returns the category of this command for logging/metrics
     pub fn category(&self) -> &'static str {
         match self {
-            Self::CreateNamespace { .. } | Self::DeleteNamespace { .. } => "namespace",
+            Self::CreateNamespace { .. }
+            | Self::CreateNamespaceIfNotExists { .. }
+            | Self::DeleteNamespace { .. } => "namespace",
             Self::CreateTable { .. } | Self::AlterTable { .. } | Self::DropTable { .. } => "table",
             Self::RegisterStorage { .. } | Self::UnregisterStorage { .. } => "storage",
             Self::CreateUser { .. }

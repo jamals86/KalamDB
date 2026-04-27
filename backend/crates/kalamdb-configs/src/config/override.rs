@@ -47,6 +47,8 @@ impl ServerConfig {
     /// - KALAMDB_SECURITY_TRUSTED_PROXY_RANGES: Override security.trusted_proxy_ranges
     /// - KALAMDB_RATE_LIMIT_AUTH_REQUESTS_PER_IP_PER_SEC: Override
     ///   rate_limit.max_auth_requests_per_ip_per_sec
+    /// - KALAMDB_TOPIC_VISIBILITY_TIMEOUT_SECS: Override topics.visibility_timeout_secs
+    ///   (alias: KALAMDB_VISIBILITY_TIMEOUT_SECS)
     /// - KALAMDB_WEBSOCKET_CLIENT_TIMEOUT_SECS: Override websocket.client_timeout_secs
     /// - KALAMDB_WEBSOCKET_AUTH_TIMEOUT_SECS: Override websocket.auth_timeout_secs
     /// - KALAMDB_WEBSOCKET_HEARTBEAT_INTERVAL_SECS: Override websocket.heartbeat_interval_secs
@@ -85,6 +87,14 @@ impl ServerConfig {
         // Log level
         if let Ok(level) = env::var("KALAMDB_LOG_LEVEL") {
             self.logging.level = level;
+        }
+
+        let topic_visibility_timeout = env::var("KALAMDB_TOPIC_VISIBILITY_TIMEOUT_SECS")
+            .or_else(|_| env::var("KALAMDB_VISIBILITY_TIMEOUT_SECS"));
+        if let Ok(val) = topic_visibility_timeout {
+            self.topics.visibility_timeout_secs = val.parse().map_err(|_| {
+                anyhow::anyhow!("Invalid KALAMDB_TOPIC_VISIBILITY_TIMEOUT_SECS value: {}", val)
+            })?;
         }
 
         // Logs directory path
@@ -413,6 +423,34 @@ mod tests {
         assert_eq!(config.security.cors.allowed_origins, vec!["*".to_string()]);
 
         env::remove_var("KALAMDB_SECURITY_CORS_ALLOWED_ORIGINS");
+    }
+
+    #[test]
+    fn test_env_override_topic_visibility_timeout_secs() {
+        let _guard = acquire_env_lock();
+        env::remove_var("KALAMDB_VISIBILITY_TIMEOUT_SECS");
+        env::set_var("KALAMDB_TOPIC_VISIBILITY_TIMEOUT_SECS", "7");
+
+        let mut config = ServerConfig::default();
+        config.apply_env_overrides().unwrap();
+
+        assert_eq!(config.topics.visibility_timeout_secs, 7);
+
+        env::remove_var("KALAMDB_TOPIC_VISIBILITY_TIMEOUT_SECS");
+    }
+
+    #[test]
+    fn test_env_override_topic_visibility_timeout_secs_legacy_alias() {
+        let _guard = acquire_env_lock();
+        env::remove_var("KALAMDB_TOPIC_VISIBILITY_TIMEOUT_SECS");
+        env::set_var("KALAMDB_VISIBILITY_TIMEOUT_SECS", "5");
+
+        let mut config = ServerConfig::default();
+        config.apply_env_overrides().unwrap();
+
+        assert_eq!(config.topics.visibility_timeout_secs, 5);
+
+        env::remove_var("KALAMDB_VISIBILITY_TIMEOUT_SECS");
     }
 
     #[test]

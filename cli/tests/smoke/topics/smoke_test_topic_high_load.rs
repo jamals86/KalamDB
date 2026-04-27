@@ -12,6 +12,7 @@
 
 use std::{
     collections::{HashMap, HashSet},
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -93,28 +94,55 @@ fn using_fresh_test_server() -> bool {
         && std::env::var_os("KALAMDB_CLUSTER_URLS").is_none()
 }
 
-fn configured_topic_visibility_timeout_secs() -> u64 {
-    if let Some(value) = std::env::var("KALAMDB_VISIBILITY_TIMEOUT_SECS")
-        .ok()
-        .and_then(|raw| raw.parse().ok())
-    {
-        return value;
-    }
-
-    if !using_fresh_test_server() {
-        return default_topic_visibility_timeout_secs();
-    }
-
-    let mut config_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    config_path.pop();
-    config_path.push("backend");
-    config_path.push("server.toml");
-
+fn read_topic_visibility_timeout_secs(config_path: &Path) -> Option<u64> {
     std::fs::read_to_string(config_path)
         .ok()
         .and_then(|raw| toml::from_str::<toml::Value>(&raw).ok())
         .and_then(|config| config.get("topics")?.get("visibility_timeout_secs")?.as_integer())
         .and_then(|value| (value >= 0).then_some(value as u64))
+}
+
+fn repo_root() -> PathBuf {
+    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    path.pop();
+    path
+}
+
+fn backend_server_config_path() -> PathBuf {
+    repo_root().join("backend").join("server.toml")
+}
+
+fn local_cluster_node_config_path() -> PathBuf {
+    repo_root().join(".cluster-local").join("node1").join("server.toml")
+}
+
+fn configured_topic_visibility_timeout_secs() -> u64 {
+    for env_key in ["KALAMDB_TOPIC_VISIBILITY_TIMEOUT_SECS", "KALAMDB_VISIBILITY_TIMEOUT_SECS"] {
+        if let Some(value) = std::env::var(env_key).ok().and_then(|raw| raw.parse().ok()) {
+            return value;
+        }
+    }
+
+    if !using_fresh_test_server() {
+        if std::env::var("KALAMDB_SERVER_TYPE")
+            .map(|value| value.trim().eq_ignore_ascii_case("cluster"))
+            .unwrap_or(false)
+        {
+            if let Some(value) =
+                read_topic_visibility_timeout_secs(&local_cluster_node_config_path())
+            {
+                return value;
+            }
+        }
+
+        if let Some(value) = read_topic_visibility_timeout_secs(&backend_server_config_path()) {
+            return value;
+        }
+
+        return default_topic_visibility_timeout_secs();
+    }
+
+    read_topic_visibility_timeout_secs(&backend_server_config_path())
         .unwrap_or_else(default_topic_visibility_timeout_secs)
 }
 

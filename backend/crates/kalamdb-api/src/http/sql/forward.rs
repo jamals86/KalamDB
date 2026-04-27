@@ -4,16 +4,17 @@ use std::{sync::Arc, time::Instant};
 
 use actix_web::{HttpRequest, HttpResponse};
 use kalamdb_commons::{
-    models::{NamespaceId, NodeId, UserId},
+    models::{NodeId, UserId},
     schemas::TableType,
-    Role,
 };
 use kalamdb_core::{app_context::AppContext, error::KalamDbError};
 use kalamdb_raft::{ClusterClient, ForwardSqlRequest, GroupId, RaftExecutor, ShardRouter};
+use kalamdb_sql::classifier::SqlStatementKind;
 
 use super::{
     helpers::parse_forward_params,
     models::{ErrorCode, QueryRequest, SqlResponse},
+    statements::PreparedApiExecutionStatement,
 };
 
 fn header_to_string(req: &HttpRequest, name: &str) -> Option<String> {
@@ -57,14 +58,11 @@ enum ForwardTarget {
     Node(NodeId),
 }
 
-fn data_group_for_table(
+fn data_group_for_table_type(
     app_context: &AppContext,
-    table_id: &kalamdb_commons::TableId,
+    table_type: TableType,
     user_id: &UserId,
 ) -> Option<GroupId> {
-    let cached_table = app_context.schema_registry().get(table_id)?;
-    let table_type: TableType = cached_table.table.table_type.into();
-
     let executor = app_context.executor();
     let raft_executor = executor.as_any().downcast_ref::<RaftExecutor>()?;
     let config = raft_executor.manager().config();
@@ -79,44 +77,38 @@ fn data_group_for_table(
     }
 }
 
-fn write_statement_target_group(
-    sql: &str,
+fn prepared_statement_table_type(
+    statement: &PreparedApiExecutionStatement,
     app_context: &AppContext,
-    default_namespace: &NamespaceId,
+) -> Option<TableType> {
+    statement.prepared_statement.table_type.or_else(|| {
+        statement
+            .prepared_statement
+            .table_id
+            .as_ref()
+            .and_then(|table_id| app_context.schema_registry().get(table_id))
+            .map(|cached| cached.table_entry().table_type)
+    })
+}
+
+fn prepared_statement_target_group(
+    statement: &PreparedApiExecutionStatement,
+    app_context: &AppContext,
     user_id: &UserId,
 ) -> Option<GroupId> {
-    let classify_sql =
-        kalamdb_sql::execute_as::extract_inner_sql(sql).unwrap_or_else(|| sql.to_string());
-    let stmt = match kalamdb_sql::classifier::SqlStatement::classify_and_parse(
-        &classify_sql,
-        default_namespace,
-        Role::System,
-    ) {
-        Ok(stmt) => stmt,
-        Err(_) => return Some(GroupId::Meta),
+    let Some(classified) = statement.prepared_statement.classified_statement.as_ref() else {
+        return None;
     };
 
-    if !stmt.is_write_operation() {
+    if !classified.is_write_operation() {
         return None;
     }
 
-    match stmt.kind() {
-        kalamdb_sql::classifier::SqlStatementKind::Insert(_)
-        | kalamdb_sql::classifier::SqlStatementKind::Update(_)
-        | kalamdb_sql::classifier::SqlStatementKind::Delete(_) => {
-            let Some(table_id) = kalamdb_sql::parser::utils::extract_dml_table_id_fast(
-                &classify_sql,
-                default_namespace.as_str(),
-            )
-            .or_else(|| {
-                kalamdb_sql::parser::utils::extract_dml_table_id(
-                    &classify_sql,
-                    default_namespace.as_str(),
-                )
-            }) else {
-                return Some(GroupId::Meta);
-            };
-            Some(data_group_for_table(app_context, &table_id, user_id).unwrap_or(GroupId::Meta))
+    match classified.kind() {
+        SqlStatementKind::Insert(_) | SqlStatementKind::Update(_) | SqlStatementKind::Delete(_) => {
+            prepared_statement_table_type(statement, app_context)
+                .and_then(|table_type| data_group_for_table_type(app_context, table_type, user_id))
+                .or(Some(GroupId::Meta))
         },
         _ => Some(GroupId::Meta),
     }
@@ -193,32 +185,17 @@ pub async fn forward_sql_if_follower(
     http_req: &HttpRequest,
     req: &QueryRequest,
     app_context: &Arc<AppContext>,
-    default_namespace: &NamespaceId,
+    prepared_statements: &[PreparedApiExecutionStatement],
     user_id: &UserId,
     request_id: Option<&str>,
 ) -> Option<HttpResponse> {
     let start_time = Instant::now();
     let executor = app_context.executor();
 
-    let statements = match kalamdb_sql::split_statements(&req.sql) {
-        Ok(stmts) => stmts,
-        Err(_) => {
-            return forward_sql_grpc(
-                ForwardTarget::Leader,
-                http_req,
-                req,
-                app_context.as_ref(),
-                request_id,
-                start_time,
-            )
-            .await
-        },
-    };
-
-    let write_targets: Vec<GroupId> = statements
+    let write_targets: Vec<GroupId> = prepared_statements
         .iter()
-        .filter_map(|sql| {
-            write_statement_target_group(sql, app_context.as_ref(), default_namespace, user_id)
+        .filter_map(|statement| {
+            prepared_statement_target_group(statement, app_context.as_ref(), user_id)
         })
         .collect();
 

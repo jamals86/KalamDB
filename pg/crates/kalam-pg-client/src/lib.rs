@@ -1,4 +1,4 @@
-use std::{io::Cursor, time::Duration};
+use std::{future::Future, io::Cursor, time::Duration};
 
 use arrow::record_batch::RecordBatch;
 use arrow_ipc::reader::StreamReader;
@@ -14,7 +14,7 @@ use kalamdb_pg::{
 use tonic::transport::{Certificate, ClientTlsConfig, Identity};
 use tonic::{
     transport::{Channel, Endpoint},
-    Request,
+    Request, Response, Status,
 };
 
 /// Load PEM material from either an inline PEM string or a file path.
@@ -311,14 +311,57 @@ impl RemoteKalamClient {
         req
     }
 
-    pub async fn ping(&self) -> Result<(), KalamPgError> {
-        // Ping uses auth metadata directly (pre-session health check).
-        let request = self.authenticated_request(PingRequest {});
-        let mut client = PgServiceClient::new(self.channel.clone());
-        client
-            .ping(request)
+    fn grpc_client(&self) -> PgServiceClient<Channel> {
+        PgServiceClient::new(self.channel.clone())
+    }
+
+    async fn call_with_request<T, R, F, Fut>(
+        &self,
+        request: Request<T>,
+        call: F,
+    ) -> Result<R, Status>
+    where
+        F: FnOnce(PgServiceClient<Channel>, Request<T>) -> Fut,
+        Fut: Future<Output = Result<Response<R>, Status>>,
+    {
+        let client = self.grpc_client();
+        let response = call(client, request).await?;
+        Ok(response.into_inner())
+    }
+
+    async fn call_plain_status<T, R, F, Fut>(&self, payload: T, call: F) -> Result<R, Status>
+    where
+        F: FnOnce(PgServiceClient<Channel>, Request<T>) -> Fut,
+        Fut: Future<Output = Result<Response<R>, Status>>,
+    {
+        self.call_with_request(Self::plain_request(payload), call).await
+    }
+
+    async fn call_plain<T, R, F, Fut>(&self, payload: T, call: F) -> Result<R, KalamPgError>
+    where
+        F: FnOnce(PgServiceClient<Channel>, Request<T>) -> Fut,
+        Fut: Future<Output = Result<Response<R>, Status>>,
+    {
+        self.call_plain_status(payload, call)
             .await
-            .map_err(|status| Self::grpc_err(status, &self.server_addr))?;
+            .map_err(|status| Self::grpc_err(status, &self.server_addr))
+    }
+
+    async fn call_authenticated<T, R, F, Fut>(&self, payload: T, call: F) -> Result<R, KalamPgError>
+    where
+        F: FnOnce(PgServiceClient<Channel>, Request<T>) -> Fut,
+        Fut: Future<Output = Result<Response<R>, Status>>,
+    {
+        self.call_with_request(self.authenticated_request(payload), call)
+            .await
+            .map_err(|status| Self::grpc_err(status, &self.server_addr))
+    }
+
+    pub async fn ping(&self) -> Result<(), KalamPgError> {
+        self.call_authenticated(PingRequest {}, |mut client, request| async move {
+            client.ping(request).await
+        })
+        .await?;
         Ok(())
     }
 
@@ -329,23 +372,22 @@ impl RemoteKalamClient {
         session_id: Option<&str>,
         current_schema: Option<&str>,
     ) -> Result<RemoteSessionHandle, KalamPgError> {
-        let request = self.authenticated_request(OpenSessionRequest {
-            session_id: session_id
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .unwrap_or("")
-                .to_string(),
-            current_schema: current_schema
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToOwned::to_owned),
-        });
-        let mut client = PgServiceClient::new(self.channel.clone());
-        let response = client
-            .open_session(request)
-            .await
-            .map_err(|status| Self::grpc_err(status, &self.server_addr))?
-            .into_inner();
+        let response = self
+            .call_authenticated(
+                OpenSessionRequest {
+                    session_id: session_id
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .unwrap_or("")
+                        .to_string(),
+                    current_schema: current_schema
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(ToOwned::to_owned),
+                },
+                |mut client, request| async move { client.open_session(request).await },
+            )
+            .await?;
 
         Ok(RemoteSessionHandle {
             session_id: response.session_id,
@@ -370,12 +412,13 @@ impl RemoteKalamClient {
     }
 
     async fn close_session_attempt(&self, session_id: &str) -> Result<(), tonic::Status> {
-        let mut client = PgServiceClient::new(self.channel.clone());
-        client
-            .close_session(Self::plain_request(CloseSessionRequest {
+        self.call_plain_status(
+            CloseSessionRequest {
                 session_id: session_id.trim().to_string(),
-            }))
-            .await?;
+            },
+            |mut client, request| async move { client.close_session(request).await },
+        )
+        .await?;
         Ok(())
     }
 
@@ -398,21 +441,21 @@ impl RemoteKalamClient {
                 value,
             })
             .collect();
-        let mut client = PgServiceClient::new(self.channel.clone());
-        let response = client
-            .scan(Self::plain_request(ScanRpcRequest {
-                namespace: namespace.to_string(),
-                table_name: table_name.to_string(),
-                table_type: table_type.to_string(),
-                session_id: session_id.to_string(),
-                user_id: user_id.map(str::to_string),
-                columns,
-                limit,
-                filters: grpc_filters,
-            }))
-            .await
-            .map_err(|status| Self::grpc_err(status, &self.server_addr))?
-            .into_inner();
+        let response = self
+            .call_plain(
+                ScanRpcRequest {
+                    namespace: namespace.to_string(),
+                    table_name: table_name.to_string(),
+                    table_type: table_type.to_string(),
+                    session_id: session_id.to_string(),
+                    user_id: user_id.map(str::to_string),
+                    columns,
+                    limit,
+                    filters: grpc_filters,
+                },
+                |mut client, request| async move { client.scan(request).await },
+            )
+            .await?;
 
         let batches = Self::decode_ipc_batches(&response.ipc_batches)?;
         Ok(ScanResponse::new(batches))
@@ -427,19 +470,19 @@ impl RemoteKalamClient {
         user_id: Option<&str>,
         rows_json: Vec<String>,
     ) -> Result<MutationResponse, KalamPgError> {
-        let mut client = PgServiceClient::new(self.channel.clone());
-        let response = client
-            .insert(Self::plain_request(InsertRpcRequest {
-                namespace: namespace.to_string(),
-                table_name: table_name.to_string(),
-                table_type: table_type.to_string(),
-                session_id: session_id.to_string(),
-                user_id: user_id.map(str::to_string),
-                rows_json,
-            }))
-            .await
-            .map_err(|status| Self::grpc_err(status, &self.server_addr))?
-            .into_inner();
+        let response = self
+            .call_plain(
+                InsertRpcRequest {
+                    namespace: namespace.to_string(),
+                    table_name: table_name.to_string(),
+                    table_type: table_type.to_string(),
+                    session_id: session_id.to_string(),
+                    user_id: user_id.map(str::to_string),
+                    rows_json,
+                },
+                |mut client, request| async move { client.insert(request).await },
+            )
+            .await?;
 
         Ok(MutationResponse {
             affected_rows: response.affected_rows,
@@ -456,20 +499,20 @@ impl RemoteKalamClient {
         pk_value: &str,
         updates_json: &str,
     ) -> Result<MutationResponse, KalamPgError> {
-        let mut client = PgServiceClient::new(self.channel.clone());
-        let response = client
-            .update(Self::plain_request(UpdateRpcRequest {
-                namespace: namespace.to_string(),
-                table_name: table_name.to_string(),
-                table_type: table_type.to_string(),
-                session_id: session_id.to_string(),
-                user_id: user_id.map(str::to_string),
-                pk_value: pk_value.to_string(),
-                updates_json: updates_json.to_string(),
-            }))
-            .await
-            .map_err(|status| Self::grpc_err(status, &self.server_addr))?
-            .into_inner();
+        let response = self
+            .call_plain(
+                UpdateRpcRequest {
+                    namespace: namespace.to_string(),
+                    table_name: table_name.to_string(),
+                    table_type: table_type.to_string(),
+                    session_id: session_id.to_string(),
+                    user_id: user_id.map(str::to_string),
+                    pk_value: pk_value.to_string(),
+                    updates_json: updates_json.to_string(),
+                },
+                |mut client, request| async move { client.update(request).await },
+            )
+            .await?;
 
         Ok(MutationResponse {
             affected_rows: response.affected_rows,
@@ -485,19 +528,19 @@ impl RemoteKalamClient {
         user_id: Option<&str>,
         pk_value: &str,
     ) -> Result<MutationResponse, KalamPgError> {
-        let mut client = PgServiceClient::new(self.channel.clone());
-        let response = client
-            .delete(Self::plain_request(DeleteRpcRequest {
-                namespace: namespace.to_string(),
-                table_name: table_name.to_string(),
-                table_type: table_type.to_string(),
-                session_id: session_id.to_string(),
-                user_id: user_id.map(str::to_string),
-                pk_value: pk_value.to_string(),
-            }))
-            .await
-            .map_err(|status| Self::grpc_err(status, &self.server_addr))?
-            .into_inner();
+        let response = self
+            .call_plain(
+                DeleteRpcRequest {
+                    namespace: namespace.to_string(),
+                    table_name: table_name.to_string(),
+                    table_type: table_type.to_string(),
+                    session_id: session_id.to_string(),
+                    user_id: user_id.map(str::to_string),
+                    pk_value: pk_value.to_string(),
+                },
+                |mut client, request| async move { client.delete(request).await },
+            )
+            .await?;
 
         Ok(MutationResponse {
             affected_rows: response.affected_rows,
@@ -506,14 +549,14 @@ impl RemoteKalamClient {
 
     /// Begin a new transaction within the given session.
     pub async fn begin_transaction(&self, session_id: &str) -> Result<String, KalamPgError> {
-        let mut client = PgServiceClient::new(self.channel.clone());
-        let response = client
-            .begin_transaction(Self::plain_request(BeginTransactionRequest {
-                session_id: session_id.to_string(),
-            }))
-            .await
-            .map_err(|status| Self::grpc_err(status, &self.server_addr))?
-            .into_inner();
+        let response = self
+            .call_plain(
+                BeginTransactionRequest {
+                    session_id: session_id.to_string(),
+                },
+                |mut client, request| async move { client.begin_transaction(request).await },
+            )
+            .await?;
         Ok(response.transaction_id)
     }
 
@@ -523,15 +566,15 @@ impl RemoteKalamClient {
         session_id: &str,
         transaction_id: &str,
     ) -> Result<String, KalamPgError> {
-        let mut client = PgServiceClient::new(self.channel.clone());
-        let response = client
-            .commit_transaction(Self::plain_request(CommitTransactionRequest {
-                session_id: session_id.to_string(),
-                transaction_id: transaction_id.to_string(),
-            }))
-            .await
-            .map_err(|status| Self::grpc_err(status, &self.server_addr))?
-            .into_inner();
+        let response = self
+            .call_plain(
+                CommitTransactionRequest {
+                    session_id: session_id.to_string(),
+                    transaction_id: transaction_id.to_string(),
+                },
+                |mut client, request| async move { client.commit_transaction(request).await },
+            )
+            .await?;
         Ok(response.transaction_id)
     }
 
@@ -559,28 +602,29 @@ impl RemoteKalamClient {
         session_id: &str,
         transaction_id: &str,
     ) -> Result<String, tonic::Status> {
-        let mut client = PgServiceClient::new(self.channel.clone());
-        let response = client
-            .rollback_transaction(Self::plain_request(RollbackTransactionRequest {
-                session_id: session_id.to_string(),
-                transaction_id: transaction_id.to_string(),
-            }))
-            .await?
-            .into_inner();
+        let response = self
+            .call_plain_status(
+                RollbackTransactionRequest {
+                    session_id: session_id.to_string(),
+                    transaction_id: transaction_id.to_string(),
+                },
+                |mut client, request| async move { client.rollback_transaction(request).await },
+            )
+            .await?;
         Ok(response.transaction_id)
     }
 
     /// Execute a DDL SQL statement on the KalamDB backend.
     pub async fn execute_sql(&self, sql: &str, session_id: &str) -> Result<String, KalamPgError> {
-        let mut client = PgServiceClient::new(self.channel.clone());
-        let response = client
-            .execute_sql(Self::plain_request(ExecuteSqlRpcRequest {
-                sql: sql.to_string(),
-                session_id: session_id.to_string(),
-            }))
-            .await
-            .map_err(|status| Self::grpc_err(status, &self.server_addr))?
-            .into_inner();
+        let response = self
+            .call_plain(
+                ExecuteSqlRpcRequest {
+                    sql: sql.to_string(),
+                    session_id: session_id.to_string(),
+                },
+                |mut client, request| async move { client.execute_sql(request).await },
+            )
+            .await?;
         Ok(response.message)
     }
 
@@ -590,15 +634,15 @@ impl RemoteKalamClient {
         sql: &str,
         session_id: &str,
     ) -> Result<(String, Vec<String>), KalamPgError> {
-        let mut client = PgServiceClient::new(self.channel.clone());
-        let response = client
-            .execute_query(Self::plain_request(ExecuteQueryRpcRequest {
-                sql: sql.to_string(),
-                session_id: session_id.to_string(),
-            }))
-            .await
-            .map_err(|status| Self::grpc_err(status, &self.server_addr))?
-            .into_inner();
+        let response = self
+            .call_plain(
+                ExecuteQueryRpcRequest {
+                    sql: sql.to_string(),
+                    session_id: session_id.to_string(),
+                },
+                |mut client, request| async move { client.execute_query(request).await },
+            )
+            .await?;
         let batches = Self::decode_ipc_batches(&response.ipc_batches)?;
         let json_rows = Self::batches_to_json_rows(&batches);
         Ok((response.message, json_rows))

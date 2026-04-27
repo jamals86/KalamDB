@@ -150,7 +150,20 @@ pub async fn execute_sql_v1(
         ));
     }
 
-    // 6. Forward to leader if this node is a follower (non-file path).
+    // 6. Split, parse, and classify SQL statements once. Follower forwarding reuses
+    // this metadata so read-only follower requests do not pay a second parse pass.
+    let prepared_statements =
+        match split_and_prepare_statements(&sql, &exec_ctx, sql_executor.get_ref(), start_time) {
+            Ok(stmts) => stmts,
+            Err(resp) => return resp,
+        };
+
+    if exec_ctx.request_id().is_none() && batch_requires_request_id(&prepared_statements) {
+        exec_ctx = exec_ctx.with_request_id(Uuid::now_v7().to_string());
+    }
+
+    // 7. Forward write operations to their group leader if this node is a follower
+    // for the target group (non-file path).
     if !files_present && !is_meta_leader {
         if exec_ctx.request_id().is_none() {
             exec_ctx = exec_ctx.with_request_id(Uuid::now_v7().to_string());
@@ -165,7 +178,7 @@ pub async fn execute_sql_v1(
             &http_req,
             &req_for_forward,
             app_context.get_ref(),
-            &default_namespace,
+            &prepared_statements,
             exec_ctx.user_id(),
             exec_ctx.request_id(),
         )
@@ -175,7 +188,7 @@ pub async fn execute_sql_v1(
         }
     }
 
-    // 7. Parse query parameters
+    // 8. Parse query parameters
     let params = match parse_scalar_params(&params_json) {
         Ok(p) => p,
         Err(err) => {
@@ -186,17 +199,6 @@ pub async fn execute_sql_v1(
             ));
         },
     };
-
-    // 8. Split, parse, and classify SQL statements
-    let prepared_statements =
-        match split_and_prepare_statements(&sql, &exec_ctx, sql_executor.get_ref(), start_time) {
-            Ok(stmts) => stmts,
-            Err(resp) => return resp,
-        };
-
-    if exec_ctx.request_id().is_none() && batch_requires_request_id(&prepared_statements) {
-        exec_ctx = exec_ctx.with_request_id(Uuid::now_v7().to_string());
-    }
 
     let auth_username = authorized_username(&exec_ctx);
     let impersonation_service = SqlImpersonationService::new(Arc::clone(app_context.get_ref()));

@@ -328,7 +328,6 @@ pub struct SubscriptionOptions {
     /// Typically set automatically during reconnection to resume from last received event
     #[serde(skip_serializing_if = "Option::is_none", alias = "from_seq_id")]
     pub from: Option<SeqId>,
-
 }
 
 /// Batch control metadata for paginated initial data loading
