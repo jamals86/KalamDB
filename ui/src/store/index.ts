@@ -4,6 +4,7 @@ import setupReducer from "./setupSlice";
 import { apiSlice } from "./apiSlice";
 import sqlStudioUiReducer from "@/features/sql-studio/state/sqlStudioUiSlice";
 import sqlStudioWorkspaceReducer from "@/features/sql-studio/state/sqlStudioWorkspaceSlice";
+import editorTabReducer from "@/features/sql-studio/state/editorTabSlice";
 
 export const store = configureStore({
   reducer: {
@@ -11,6 +12,7 @@ export const store = configureStore({
     setup: setupReducer,
     sqlStudioUi: sqlStudioUiReducer,
     sqlStudioWorkspace: sqlStudioWorkspaceReducer,
+    editorTab: editorTabReducer,
     [apiSlice.reducerPath]: apiSlice.reducer,
   },
   middleware: (getDefaultMiddleware) =>

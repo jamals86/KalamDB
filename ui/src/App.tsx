@@ -4,6 +4,7 @@ import { Loader2 } from "lucide-react";
 import { AuthProvider } from "./lib/auth";
 import { BackendStatusProvider } from "./lib/backend-status";
 import { SqlPreviewProvider } from "./components/sql-preview";
+import { Toaster } from "./components/ui/toaster-provider";
 import ProtectedRoute from "./components/auth/ProtectedRoute";
 import SetupGuard from "./components/auth/SetupGuard";
 import Layout from "./components/layout/Layout";
@@ -36,6 +37,7 @@ function App() {
       <AuthProvider>
         <BackendStatusProvider>
           <SqlPreviewProvider>
+           <Toaster>
             <div className="flex h-[100dvh] min-h-0 flex-col overflow-hidden bg-background">
               <div className="min-h-0 flex-1 overflow-hidden">
                 <SetupGuard>
@@ -72,6 +74,7 @@ function App() {
                 </SetupGuard>
               </div>
             </div>
+           </Toaster>
           </SqlPreviewProvider>
         </BackendStatusProvider>
       </AuthProvider>
