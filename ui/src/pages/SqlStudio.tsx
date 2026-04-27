@@ -2,6 +2,17 @@ import { startTransition, useCallback, useEffect, useMemo, useRef, useState } fr
 import { useLocation, useNavigate } from "react-router-dom";
 import { PanelRightClose, PanelRightOpen } from "lucide-react";
 import { StudioExplorerPanel } from "@/components/sql-studio-v2/browser-tree/StudioExplorerPanel";
+import { StudioTabsHeader } from "@/components/sql-studio-v2/studio-tabs/StudioTabsHeader";
+import { EditorSidebar } from "@/components/sql-studio-v2/table-editor/EditorSidebar";
+import { EditTableForm } from "@/components/sql-studio-v2/table-editor/EditTableForm";
+import { DestructiveConfirmDialog } from "@/components/sql-studio-v2/table-editor/DestructiveConfirmDialog";
+import { isReadOnlyNamespace, tableToDraft } from "@/components/sql-studio-v2/table-editor/types";
+import { generateCreateTableSql, generateDropTableSql } from "@/components/sql-studio-v2/table-editor/ddl-generator";
+import { runSql } from "@/components/sql-studio-v2/table-editor/run-sql";
+import { startEditTable } from "@/features/sql-studio/state/editorTabSlice";
+import { setActiveStudioTab } from "@/features/sql-studio/state/sqlStudioUiSlice";
+import { useToast } from "@/components/ui/toaster-provider";
+
 import { QueryTabStrip } from "@/components/sql-studio-v2/input-form/QueryTabStrip";
 import { StudioEditorPanel } from "@/components/sql-studio-v2/input-form/StudioEditorPanel";
 import { StudioInspectorPanel } from "@/components/sql-studio-v2/inspector/StudioInspectorPanel";
@@ -76,6 +87,7 @@ import {
   selectWorkspaceSavedQueries,
   selectWorkspaceTabResults,
   selectWorkspaceTabs,
+  selectActiveStudioTab,
 } from "@/features/sql-studio/state/selectors";
 import { useGetSqlStudioSchemaTreeQuery } from "@/store/apiSlice";
 import {
@@ -215,11 +227,14 @@ export default function SqlStudio() {
   const isInspectorCollapsed = useAppSelector(selectIsInspectorCollapsed);
   const horizontalLayout = useAppSelector(selectHorizontalLayout);
   const verticalLayout = useAppSelector(selectVerticalLayout);
+  const activeStudioTab = useAppSelector(selectActiveStudioTab);
   const [explorerContextMenu, setExplorerContextMenu] = useState<{
     x: number;
     y: number;
     table: StudioTable;
   } | null>(null);
+  const [explorerDropTarget, setExplorerDropTarget] = useState<StudioTable | null>(null);
+  const { notify } = useToast();
   const [isUiHydrated, setIsUiHydrated] = useState(false);
   const [isRemoteWorkspaceHydrated, setIsRemoteWorkspaceHydrated] = useState(false);
   const liveUnsubscribeRef = useRef<Record<string, Unsubscribe>>({});
@@ -1062,55 +1077,76 @@ export default function SqlStudio() {
               dispatch(setHorizontalLayout([safeSize, 100 - safeSize]));
             }}
           >
-            <StudioExplorerPanel
-              schema={schema}
-              filter={schemaFilter}
-              savedQueries={savedQueries}
-              favoritesExpanded={favoritesExpanded}
-              namespaceSectionExpanded={namespaceSectionExpanded}
-              expandedNamespaces={expandedNamespaces}
-              expandedTables={expandedTables}
-              selectedTableKey={selectedTableKey}
-              isRefreshing={isSchemaRefreshing}
-              onFilterChange={(value) => dispatch(setSchemaFilter(value))}
-              onRefresh={() => void refreshExplorerSchema()}
-              onToggleFavorites={() => dispatch(toggleFavoritesExpanded())}
-              onToggleNamespaceSection={() => dispatch(toggleNamespaceSectionExpanded())}
-              onToggleNamespace={(namespaceName) => dispatch(toggleNamespaceExpanded(namespaceName))}
-              onToggleTable={(tableKey) => dispatch(toggleTableExpanded(tableKey))}
-              onOpenSavedQuery={openSavedQuery}
-              onSelectTable={(table) => dispatch(setSelectedTableKey(`${table.namespace}.${table.name}`))}
-              onTableContextMenu={(table, position) => {
-                setExplorerContextMenu({
-                  x: position.x,
-                  y: position.y,
-                  table,
-                });
-              }}
-            />
+            <div className="flex h-full min-h-0 flex-col">
+              <StudioTabsHeader />
+              <div className="min-h-0 flex-1 overflow-hidden">
+                {activeStudioTab === "explorer" && (
+                  <StudioExplorerPanel
+                    schema={schema}
+                    filter={schemaFilter}
+                    savedQueries={savedQueries}
+                    favoritesExpanded={favoritesExpanded}
+                    namespaceSectionExpanded={namespaceSectionExpanded}
+                    expandedNamespaces={expandedNamespaces}
+                    expandedTables={expandedTables}
+                    selectedTableKey={selectedTableKey}
+                    isRefreshing={isSchemaRefreshing}
+                    onFilterChange={(value) => dispatch(setSchemaFilter(value))}
+                    onRefresh={() => void refreshExplorerSchema()}
+                    onToggleFavorites={() => dispatch(toggleFavoritesExpanded())}
+                    onToggleNamespaceSection={() => dispatch(toggleNamespaceSectionExpanded())}
+                    onToggleNamespace={(namespaceName) => dispatch(toggleNamespaceExpanded(namespaceName))}
+                    onToggleTable={(tableKey) => dispatch(toggleTableExpanded(tableKey))}
+                    onOpenSavedQuery={openSavedQuery}
+                    onSelectTable={(table) => dispatch(setSelectedTableKey(`${table.namespace}.${table.name}`))}
+                    onTableContextMenu={(table, position) => {
+                      setExplorerContextMenu({
+                        x: position.x,
+                        y: position.y,
+                        table,
+                      });
+                    }}
+                  />
+                )}
+                {activeStudioTab === "editor" && (
+                  <EditorSidebar
+                    schema={schema}
+                    onSchemaRefresh={() => void refreshExplorerSchema()}
+                  />
+                )}
+              </div>
+            </div>
           </ResizablePanel>
 
           <ResizableHandle withHandle />
 
           <ResizablePanel defaultSize={horizontalLayout[1]} minSize="40%" className="min-h-0 overflow-hidden">
             <div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-background">
-              <div className="absolute right-2 top-1.5 z-20">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 text-muted-foreground hover:text-foreground"
-                  onClick={toggleInspector}
-                  title={isInspectorCollapsed ? "Expand details panel" : "Collapse details panel"}
-                >
-                  {isInspectorCollapsed ? (
-                    <PanelRightOpen className="h-4 w-4" />
-                  ) : (
-                    <PanelRightClose className="h-4 w-4" />
-                  )}
-                </Button>
-              </div>
+              {activeStudioTab === "editor" ? (
+                <EditTableForm
+                  schema={schema}
+                  isSchemaRefreshing={isSchemaRefreshing}
+                  onAfterSave={refreshExplorerSchema}
+                />
+              ) : (
+                <>
+                  <div className="absolute right-2 top-1.5 z-20">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                      onClick={toggleInspector}
+                      title={isInspectorCollapsed ? "Expand details panel" : "Collapse details panel"}
+                    >
+                      {isInspectorCollapsed ? (
+                        <PanelRightOpen className="h-4 w-4" />
+                      ) : (
+                        <PanelRightClose className="h-4 w-4" />
+                      )}
+                    </Button>
+                  </div>
 
-              <QueryTabStrip
+                  <QueryTabStrip
                 tabs={tabs}
                 activeTabId={activeTab.id}
                 onTabSelect={(tabId) => dispatch(setWorkspaceActiveTabId(tabId))}
@@ -1176,6 +1212,8 @@ export default function SqlStudio() {
                   />
                 </ResizablePanel>
               </ResizablePanelGroup>
+                </>
+              )}
             </div>
           </ResizablePanel>
         </ResizablePanelGroup>
@@ -1220,6 +1258,91 @@ export default function SqlStudio() {
             .catch(console.error);
           setExplorerContextMenu(null);
         }}
+        onEditSchema={(table) => {
+          if (isReadOnlyNamespace(table.namespace)) {
+            notify({
+              title: "Read-only namespace",
+              description: `${table.namespace} is managed by KalamDB and can't be edited.`,
+              variant: "destructive",
+            });
+            setExplorerContextMenu(null);
+            return;
+          }
+          dispatch(
+            startEditTable({
+              tableKey: `${table.namespace}.${table.name}`,
+              draft: tableToDraft(table),
+            }),
+          );
+          dispatch(setActiveStudioTab("editor"));
+          setExplorerContextMenu(null);
+        }}
+        onDropTable={(table) => {
+          if (isReadOnlyNamespace(table.namespace)) {
+            notify({
+              title: "Read-only namespace",
+              description: `${table.namespace} is managed by KalamDB and can't be dropped from here.`,
+              variant: "destructive",
+            });
+            setExplorerContextMenu(null);
+            return;
+          }
+          setExplorerDropTarget(table);
+          setExplorerContextMenu(null);
+        }}
+        onCopyCreateSql={(table) => {
+          const sql = generateCreateTableSql(tableToDraft(table));
+          navigator.clipboard
+            .writeText(sql)
+            .then(() => notify({ title: "CREATE TABLE SQL copied", variant: "success" }))
+            .catch(() =>
+              notify({
+                title: "Couldn't copy to clipboard",
+                variant: "destructive",
+              }),
+            );
+          setExplorerContextMenu(null);
+        }}
+      />
+
+      <DestructiveConfirmDialog
+        open={!!explorerDropTarget}
+        title={explorerDropTarget ? `Drop table "${explorerDropTarget.name}"` : ""}
+        description={
+          explorerDropTarget ? (
+            <>
+              This will permanently delete the table{" "}
+              <strong className="text-foreground">
+                {explorerDropTarget.namespace}.{explorerDropTarget.name}
+              </strong>{" "}
+              and all of its data. This cannot be undone.
+            </>
+          ) : null
+        }
+        expected={explorerDropTarget?.name ?? ""}
+        confirmLabel="Drop table"
+        onConfirm={() => {
+          if (!explorerDropTarget) return;
+          const sql = generateDropTableSql(
+            explorerDropTarget.namespace,
+            explorerDropTarget.name,
+          );
+          const target = explorerDropTarget;
+          setExplorerDropTarget(null);
+          const fqn = `${target.namespace}.${target.name}`;
+          void runSql(sql, {
+            successTitle: `Dropped ${fqn}`,
+            errorTitle: "Drop failed",
+            notify,
+          }).then((ok) => {
+            if (!ok) return;
+            if (selectedTableKey === fqn) {
+              dispatch(setSelectedTableKey(null));
+            }
+            void refreshExplorerSchema();
+          });
+        }}
+        onClose={() => setExplorerDropTarget(null)}
       />
     </div>
   );

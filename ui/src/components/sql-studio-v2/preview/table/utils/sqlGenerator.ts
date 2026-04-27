@@ -72,6 +72,17 @@ export function generateSqlStatements(
   };
 }
 
+export function generateInsertSql(
+  namespace: string,
+  tableName: string,
+  values: Record<string, unknown>,
+): string {
+  const cols = Object.keys(values);
+  const colList = cols.join(", ");
+  const valList = cols.map((c) => toSqlLiteral(values[c])).join(", ");
+  return `INSERT INTO ${namespace}.${tableName} (${colList}) VALUES (${valList});`;
+}
+
 export function generateAlterTableSql(
   namespace: string,
   tableName: string,

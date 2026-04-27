@@ -1,3 +1,4 @@
+import { Pencil, Trash2, Code2 } from "lucide-react";
 import type { StudioTable } from "@/components/sql-studio-v2/shared/types";
 
 interface ExplorerTableContextMenuProps {
@@ -8,6 +9,9 @@ interface ExplorerTableContextMenuProps {
   onInsertSelectQuery: (table: StudioTable) => void;
   onViewProperties: (table: StudioTable) => void;
   onCopyQualifiedName: (table: StudioTable) => void;
+  onEditSchema: (table: StudioTable) => void;
+  onDropTable: (table: StudioTable) => void;
+  onCopyCreateSql: (table: StudioTable) => void;
 }
 
 export function ExplorerTableContextMenu({
@@ -18,6 +22,9 @@ export function ExplorerTableContextMenu({
   onInsertSelectQuery,
   onViewProperties,
   onCopyQualifiedName,
+  onEditSchema,
+  onDropTable,
+  onCopyCreateSql,
 }: ExplorerTableContextMenuProps) {
   if (!contextMenu) {
     return null;
@@ -71,6 +78,31 @@ export function ExplorerTableContextMenu({
           onClick={() => onCopyQualifiedName(table)}
         >
           Copy Qualified Table Name
+        </button>
+        <button
+          type="button"
+          className={`${itemClassName} flex items-center gap-2`}
+          onClick={() => onCopyCreateSql(table)}
+        >
+          <Code2 className="h-3.5 w-3.5" />
+          Copy CREATE TABLE SQL
+        </button>
+        <div className="my-1 border-t border-border" />
+        <button
+          type="button"
+          className={`${itemClassName} flex items-center gap-2`}
+          onClick={() => onEditSchema(table)}
+        >
+          <Pencil className="h-3.5 w-3.5" />
+          Edit Table
+        </button>
+        <button
+          type="button"
+          className={`${itemClassName} flex items-center gap-2 text-destructive hover:bg-destructive/10 hover:text-destructive`}
+          onClick={() => onDropTable(table)}
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+          Drop Table
         </button>
       </div>
     </>

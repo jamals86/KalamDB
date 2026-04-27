@@ -1,6 +1,8 @@
 import { createSlice, type PayloadAction } from "@reduxjs/toolkit";
 import type { SqlStudioPanelLayout } from "@/components/sql-studio-v2/shared/types";
 
+export type StudioTab = "explorer" | "editor";
+
 interface SqlStudioUiState {
   schemaFilter: string;
   favoritesExpanded: boolean;
@@ -11,6 +13,7 @@ interface SqlStudioUiState {
   isInspectorCollapsed: boolean;
   horizontalLayout: SqlStudioPanelLayout;
   verticalLayout: SqlStudioPanelLayout;
+  activeStudioTab: StudioTab;
 }
 
 const initialState: SqlStudioUiState = {
@@ -23,6 +26,7 @@ const initialState: SqlStudioUiState = {
   isInspectorCollapsed: true,
   horizontalLayout: [21, 79],
   verticalLayout: [42, 58],
+  activeStudioTab: "explorer",
 };
 
 const sqlStudioUiSlice = createSlice({
@@ -57,6 +61,12 @@ const sqlStudioUiSlice = createSlice({
       }
       if (Array.isArray(payload.verticalLayout) && payload.verticalLayout.length === 2) {
         state.verticalLayout = payload.verticalLayout;
+      }
+      if (
+        payload.activeStudioTab === "explorer" ||
+        payload.activeStudioTab === "editor"
+      ) {
+        state.activeStudioTab = payload.activeStudioTab;
       }
     },
     setSchemaFilter(state, action: PayloadAction<string>) {
@@ -100,6 +110,9 @@ const sqlStudioUiSlice = createSlice({
     setVerticalLayout(state, action: PayloadAction<SqlStudioPanelLayout>) {
       state.verticalLayout = action.payload;
     },
+    setActiveStudioTab(state, action: PayloadAction<StudioTab>) {
+      state.activeStudioTab = action.payload;
+    },
   },
 });
 
@@ -116,6 +129,7 @@ export const {
   setInspectorCollapsed,
   setHorizontalLayout,
   setVerticalLayout,
+  setActiveStudioTab,
 } = sqlStudioUiSlice.actions;
 
 export default sqlStudioUiSlice.reducer;

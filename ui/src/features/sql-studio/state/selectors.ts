@@ -10,6 +10,13 @@ export const selectSelectedTableKey = (state: RootState) => state.sqlStudioUi.se
 export const selectIsInspectorCollapsed = (state: RootState) => state.sqlStudioUi.isInspectorCollapsed;
 export const selectHorizontalLayout = (state: RootState) => state.sqlStudioUi.horizontalLayout;
 export const selectVerticalLayout = (state: RootState) => state.sqlStudioUi.verticalLayout;
+export const selectActiveStudioTab = (state: RootState) => state.sqlStudioUi.activeStudioTab;
+
+export const selectEditorTab = (state: RootState) => state.editorTab;
+export const selectEditorMode = (state: RootState) => state.editorTab.mode;
+export const selectEditorDraft = (state: RootState) => state.editorTab.draft;
+export const selectEditorOriginal = (state: RootState) => state.editorTab.original;
+export const selectEditorSelectedTableKey = (state: RootState) => state.editorTab.selectedTableKey;
 
 export const selectSqlStudioWorkspace = (state: RootState) => state.sqlStudioWorkspace;
 export const selectWorkspaceTabs = (state: RootState) => state.sqlStudioWorkspace.tabs;
