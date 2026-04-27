@@ -79,52 +79,11 @@ export function stripDefaults(sql: string, params: unknown[]): { sql: string; pa
   };
 }
 
-export function splitMultiRowInsert(sql: string, params: unknown[]): { sql: string; params: unknown[] }[] {
-  const match = sql.match(/^(INSERT\s+INTO\s+\S+\s*\([^)]+\)\s*VALUES\s*)/i);
-  if (!match) return [{ sql, params }];
-
-  const prefix = match[1];
-  const valuesSql = sql.slice(match[0].length);
-  const groups: { values: string; paramIndices: number[] }[] = [];
-  const groupRegex = /\(([^)]+)\)/g;
-  let groupMatch;
-  while ((groupMatch = groupRegex.exec(valuesSql)) !== null) {
-    const values = groupMatch[1];
-    const indices: number[] = [];
-    const paramRegex = /\$(\d+)/g;
-    let paramMatch;
-    while ((paramMatch = paramRegex.exec(values)) !== null) {
-      indices.push(parseInt(paramMatch[1]) - 1);
-    }
-    groups.push({ values, paramIndices: indices });
-  }
-
-  if (groups.length <= 1) return [{ sql, params }];
-
-  return groups.map((group) => {
-    const newParams = group.paramIndices.map((i) => params[i]);
-    const newValues = group.values.replace(/\$(\d+)/g, (_, num) => {
-      const oldIndex = parseInt(num) - 1;
-      const newIndex = group.paramIndices.indexOf(oldIndex);
-      return `$${newIndex + 1}`;
-    });
-    return { sql: `${prefix}(${newValues})`, params: newParams };
-  });
-}
-
 export function kalamDriver(client: KalamDBClient): RemoteCallback {
   return async (sql, params, method) => {
     let cleanSql = sql.replace(/"/g, '');
     const stripped = stripDefaults(cleanSql, params);
     cleanSql = stripped.sql;
-
-    const statements = splitMultiRowInsert(cleanSql, stripped.params);
-    if (statements.length > 1) {
-      for (const stmt of statements) {
-        await client.query(stmt.sql, stmt.params);
-      }
-      return { rows: [] };
-    }
 
     const response = await client.query(cleanSql, stripped.params);
     if (method === 'execute') return { rows: [] };
