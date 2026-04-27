@@ -5,13 +5,13 @@ import { StudioExplorerPanel } from "@/components/sql-studio-v2/browser-tree/Stu
 import { StudioTabsHeader } from "@/components/sql-studio-v2/studio-tabs/StudioTabsHeader";
 import { EditorSidebar } from "@/components/sql-studio-v2/table-editor/EditorSidebar";
 import { EditTableForm } from "@/components/sql-studio-v2/table-editor/EditTableForm";
-import { DestructiveConfirmDialog } from "@/components/sql-studio-v2/table-editor/DestructiveConfirmDialog";
 import { isReadOnlyNamespace, tableToDraft } from "@/components/sql-studio-v2/table-editor/types";
 import { generateCreateTableSql, generateDropTableSql } from "@/components/sql-studio-v2/table-editor/ddl-generator";
-import { runSql } from "@/components/sql-studio-v2/table-editor/run-sql";
+import { executeSqlPreviewStatement } from "@/components/sql-studio-v2/table-editor/run-sql";
 import { startEditTable } from "@/features/sql-studio/state/editorTabSlice";
 import { setActiveStudioTab } from "@/features/sql-studio/state/sqlStudioUiSlice";
 import { useToast } from "@/components/ui/toaster-provider";
+import { useSqlPreview } from "@/components/sql-preview";
 
 import { QueryTabStrip } from "@/components/sql-studio-v2/input-form/QueryTabStrip";
 import { StudioEditorPanel } from "@/components/sql-studio-v2/input-form/StudioEditorPanel";
@@ -233,8 +233,8 @@ export default function SqlStudio() {
     y: number;
     table: StudioTable;
   } | null>(null);
-  const [explorerDropTarget, setExplorerDropTarget] = useState<StudioTable | null>(null);
   const { notify } = useToast();
+  const { openSqlPreview } = useSqlPreview();
   const [isUiHydrated, setIsUiHydrated] = useState(false);
   const [isRemoteWorkspaceHydrated, setIsRemoteWorkspaceHydrated] = useState(false);
   const liveUnsubscribeRef = useRef<Record<string, Unsubscribe>>({});
@@ -1287,8 +1287,22 @@ export default function SqlStudio() {
             setExplorerContextMenu(null);
             return;
           }
-          setExplorerDropTarget(table);
           setExplorerContextMenu(null);
+          const sql = generateDropTableSql(table.namespace, table.name);
+          const fqn = `${table.namespace}.${table.name}`;
+          openSqlPreview({
+            sql,
+            title: `Drop ${fqn}`,
+            description: "This will permanently delete the table and all of its data.",
+            onExecute: executeSqlPreviewStatement,
+            onComplete: () => {
+              notify({ title: `Dropped ${fqn}`, variant: "success" });
+              if (selectedTableKey === fqn) {
+                dispatch(setSelectedTableKey(null));
+              }
+              void refreshExplorerSchema();
+            },
+          });
         }}
         onCopyCreateSql={(table) => {
           const sql = generateCreateTableSql(tableToDraft(table));
@@ -1305,45 +1319,6 @@ export default function SqlStudio() {
         }}
       />
 
-      <DestructiveConfirmDialog
-        open={!!explorerDropTarget}
-        title={explorerDropTarget ? `Drop table "${explorerDropTarget.name}"` : ""}
-        description={
-          explorerDropTarget ? (
-            <>
-              This will permanently delete the table{" "}
-              <strong className="text-foreground">
-                {explorerDropTarget.namespace}.{explorerDropTarget.name}
-              </strong>{" "}
-              and all of its data. This cannot be undone.
-            </>
-          ) : null
-        }
-        expected={explorerDropTarget?.name ?? ""}
-        confirmLabel="Drop table"
-        onConfirm={() => {
-          if (!explorerDropTarget) return;
-          const sql = generateDropTableSql(
-            explorerDropTarget.namespace,
-            explorerDropTarget.name,
-          );
-          const target = explorerDropTarget;
-          setExplorerDropTarget(null);
-          const fqn = `${target.namespace}.${target.name}`;
-          void runSql(sql, {
-            successTitle: `Dropped ${fqn}`,
-            errorTitle: "Drop failed",
-            notify,
-          }).then((ok) => {
-            if (!ok) return;
-            if (selectedTableKey === fqn) {
-              dispatch(setSelectedTableKey(null));
-            }
-            void refreshExplorerSchema();
-          });
-        }}
-        onClose={() => setExplorerDropTarget(null)}
-      />
     </div>
   );
 }

@@ -29,12 +29,12 @@ import { startCreateTable, startEditTable } from "@/features/sql-studio/state/ed
 import { emptyDraft, isReadOnlyNamespace, tableToDraft } from "./types";
 import { CreateNamespaceDialog } from "./CreateNamespaceDialog";
 import { DropNamespaceDialog } from "./DropNamespaceDialog";
-import { DestructiveConfirmDialog } from "./DestructiveConfirmDialog";
 import { ConfirmDialog } from "./ConfirmDialog";
-import { runSql } from "./run-sql";
+import { executeSqlPreviewStatement } from "./run-sql";
 import equal from "fast-deep-equal";
 import { generateDropTableSql } from "./ddl-generator";
 import { discardEdit } from "@/features/sql-studio/state/editorTabSlice";
+import { useSqlPreview } from "@/components/sql-preview";
 import type { StudioNamespace, StudioTable } from "@/components/sql-studio-v2/shared/types";
 
 interface EditorSidebarProps {
@@ -52,9 +52,9 @@ export function EditorSidebar({ schema, defaultNamespace = "default", onSchemaRe
   const [filter, setFilter] = useState("");
   const [showCreateNamespace, setShowCreateNamespace] = useState(false);
   const [showDropNamespace, setShowDropNamespace] = useState(false);
-  const [dropTableTarget, setDropTableTarget] = useState<StudioTable | null>(null);
   const [pendingDiscardAction, setPendingDiscardAction] = useState<(() => void) | null>(null);
   const { notify } = useToast();
+  const { openSqlPreview } = useSqlPreview();
 
   const isDirty = (() => {
     if (mode === "idle" || !draft || !original) return false;
@@ -116,32 +116,55 @@ export function EditorSidebar({ schema, defaultNamespace = "default", onSchemaRe
     setShowDropNamespace(true);
   };
 
-  const handleDropNamespaceConfirm = async (cascade: boolean) => {
+  const handleDropNamespaceConfirm = (cascade: boolean) => {
     setShowDropNamespace(false);
-    const sql = `DROP NAMESPACE ${activeNamespace}${cascade ? " CASCADE" : ""};`;
     const droppedName = activeNamespace;
-    const ok = await runSql(sql, {
-      successTitle: `Dropped namespace "${droppedName}"`,
-      errorTitle: "Drop namespace failed",
-      notify,
+    const sql = `DROP NAMESPACE ${droppedName}${cascade ? " CASCADE" : ""};`;
+    openSqlPreview({
+      sql,
+      title: `Drop namespace "${droppedName}"`,
+      description: cascade
+        ? "CASCADE will drop the namespace and all of its tables."
+        : "This will drop the namespace.",
+      onExecute: executeSqlPreviewStatement,
+      onComplete: () => {
+        notify({ title: `Dropped namespace "${droppedName}"`, variant: "success" });
+        const remaining = namespaces.filter((n) => n !== droppedName);
+        const next = remaining.includes("default") ? "default" : remaining[0] ?? "default";
+        setActiveNamespace(next);
+        onSchemaRefresh?.();
+      },
     });
-    if (!ok) return;
-    const remaining = namespaces.filter((n) => n !== droppedName);
-    const next = remaining.includes("default") ? "default" : remaining[0] ?? "default";
-    setActiveNamespace(next);
-    onSchemaRefresh?.();
   };
 
-  const handleCreateNamespaceSubmit = async (raw: string) => {
+  const handleCreateNamespaceSubmit = (raw: string) => {
     setShowCreateNamespace(false);
-    const ok = await runSql(`CREATE NAMESPACE ${raw};`, {
-      successTitle: `Created namespace "${raw}"`,
-      errorTitle: "Create namespace failed",
-      notify,
+    openSqlPreview({
+      sql: `CREATE NAMESPACE ${raw};`,
+      title: `Create namespace "${raw}"`,
+      onExecute: executeSqlPreviewStatement,
+      onComplete: () => {
+        notify({ title: `Created namespace "${raw}"`, variant: "success" });
+        setActiveNamespace(raw);
+        onSchemaRefresh?.();
+      },
     });
-    if (!ok) return;
-    setActiveNamespace(raw);
-    onSchemaRefresh?.();
+  };
+
+  const handleDropTable = (table: StudioTable) => {
+    const sql = generateDropTableSql(table.namespace, table.name);
+    const fqn = `${table.namespace}.${table.name}`;
+    openSqlPreview({
+      sql,
+      title: `Drop ${fqn}`,
+      description: "This will permanently delete the table and all of its data.",
+      onExecute: executeSqlPreviewStatement,
+      onComplete: () => {
+        notify({ title: `Dropped ${fqn}`, variant: "success" });
+        if (selectedKey === fqn) dispatch(discardEdit());
+        onSchemaRefresh?.();
+      },
+    });
   };
 
   const handleSelectTable = (table: StudioTable) => {
@@ -315,7 +338,7 @@ export function EditorSidebar({ schema, defaultNamespace = "default", onSchemaRe
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
-                          setDropTableTarget(table);
+                          handleDropTable(table);
                         }}
                         className={cn(
                           "absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground/60 transition-colors",
@@ -363,42 +386,6 @@ export function EditorSidebar({ schema, defaultNamespace = "default", onSchemaRe
         onClose={() => setPendingDiscardAction(null)}
       />
 
-      <DestructiveConfirmDialog
-        open={!!dropTableTarget}
-        title={dropTableTarget ? `Drop table "${dropTableTarget.name}"` : ""}
-        description={
-          dropTableTarget ? (
-            <>
-              This will permanently delete the table{" "}
-              <strong className="text-foreground">
-                {dropTableTarget.namespace}.{dropTableTarget.name}
-              </strong>{" "}
-              and all of its data. This cannot be undone.
-            </>
-          ) : null
-        }
-        expected={dropTableTarget?.name ?? ""}
-        confirmLabel="Drop table"
-        onConfirm={() => {
-          if (!dropTableTarget) return;
-          const target = dropTableTarget;
-          setDropTableTarget(null);
-          const sql = generateDropTableSql(target.namespace, target.name);
-          const fqn = `${target.namespace}.${target.name}`;
-          void runSql(sql, {
-            successTitle: `Dropped ${fqn}`,
-            errorTitle: "Drop failed",
-            notify,
-          }).then((ok) => {
-            if (!ok) return;
-            if (selectedKey === fqn) {
-              dispatch(discardEdit());
-            }
-            onSchemaRefresh?.();
-          });
-        }}
-        onClose={() => setDropTableTarget(null)}
-      />
     </div>
     </TooltipProvider>
   );

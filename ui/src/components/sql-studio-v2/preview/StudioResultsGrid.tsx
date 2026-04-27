@@ -32,7 +32,7 @@ import { useSqlPreview } from "@/components/sql-preview";
 import { CellDisplay } from "@/components/datatype-display";
 import { KalamCellValue } from "@kalamdb/client";
 import { executeSql } from "@/lib/kalam-client";
-import { runSql } from "@/components/sql-studio-v2/table-editor/run-sql";
+import { executeSqlPreviewStatement } from "@/components/sql-studio-v2/table-editor/run-sql";
 import { useToast } from "@/components/ui/toaster-provider";
 import { classifyFieldKind, coerceFieldValue } from "@/components/sql-studio-v2/shared/value-validation";
 import { LIVE_META, LIVE_HIGHLIGHT_DURATION_MS } from "@/features/sql-studio/state/sqlStudioWorkspaceSlice";
@@ -1144,13 +1144,17 @@ export function StudioResultsGrid({
           table={selectedTable}
           onSubmit={(values) => {
             setShowInsertRow(false);
+            const fqn = `${selectedTable.namespace}.${selectedTable.name}`;
             const sql = generateInsertSql(selectedTable.namespace, selectedTable.name, values);
-            void runSql(sql, {
-              successTitle: `Inserted row into ${selectedTable.namespace}.${selectedTable.name}`,
-              errorTitle: "Insert failed",
-              notify,
-            }).then((ok) => {
-              if (ok) onRefreshAfterCommit();
+            openSqlPreview({
+              sql,
+              title: `Insert row into ${fqn}`,
+              description: "Review the INSERT statement before committing.",
+              onExecute: executeSqlPreviewStatement,
+              onComplete: () => {
+                notify({ title: `Inserted row into ${fqn}`, variant: "success" });
+                onRefreshAfterCommit();
+              },
             });
           }}
           onClose={() => setShowInsertRow(false)}

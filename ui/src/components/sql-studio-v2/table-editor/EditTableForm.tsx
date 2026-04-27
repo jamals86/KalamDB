@@ -1,5 +1,5 @@
 import { useMemo, useState, useEffect } from "react";
-import { Plus, AlertCircle, Trash2, Loader2, Pencil } from "lucide-react";
+import { Plus, AlertCircle, Trash2, Pencil } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,8 +21,8 @@ import {
   generateDropTableSql,
   validateDraft,
 } from "./ddl-generator";
-import { DestructiveConfirmDialog } from "./DestructiveConfirmDialog";
-import { runSql } from "./run-sql";
+import { executeSqlPreviewStatement } from "./run-sql";
+import { useSqlPreview } from "@/components/sql-preview";
 import {
   Tooltip,
   TooltipContent,
@@ -123,13 +123,11 @@ export function EditTableForm({ schema, onAfterSave, isSchemaRefreshing }: EditT
     return !equal(draft, original);
   }, [draft, original, mode]);
   const [showErrors, setShowErrors] = useState(false);
-  const [showDropConfirm, setShowDropConfirm] = useState(false);
-  const [showDropColsConfirm, setShowDropColsConfirm] = useState(false);
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
   const [focusColumnId, setFocusColumnId] = useState<string | null>(null);
   const [reloadKeyAfterRefresh, setReloadKeyAfterRefresh] = useState<string | null>(null);
   const { notify } = useToast();
+  const { openSqlPreview } = useSqlPreview();
   useEffect(() => {
     setShowErrors(false);
   }, [draft?.namespace, draft?.name, mode]);
@@ -203,52 +201,45 @@ export function EditTableForm({ schema, onAfterSave, isSchemaRefreshing }: EditT
     }
   };
 
-  const droppingColumns = draft.columns.filter((c) => c.isDeleted && !c.isNew);
-
-  const handleSave = async () => {
+  const handleSave = () => {
     if (validation?.hasAny) {
       setShowErrors(true);
       return;
     }
-    if (isEditing && droppingColumns.length > 0) {
-      setShowDropColsConfirm(true);
-      return;
-    }
-    await doSave();
-  };
-
-  const doSave = async () => {
     let sql: string;
     if (isCreating) {
       sql = generateCreateTableSql(draft);
     } else if (isEditing && original) {
       sql = generateAlterTableSql(original, draft);
-      if (!sql.trim()) {
-        return;
-      }
+      if (!sql.trim()) return;
     } else {
       return;
     }
 
-    setIsSaving(true);
-    try {
-      const ok = await runSql(sql, {
-        successTitle: isCreating
-          ? `Created ${draft.namespace}.${draft.name}`
-          : `Updated ${draft.namespace}.${draft.name}`,
-        errorTitle: isCreating ? "Couldn't create table" : "Couldn't save changes",
-        notify,
-      });
-      if (ok) {
-        const targetKey = isCreating
-          ? `${draft.namespace}.${draft.name}`
-          : (selectedTableKey ?? `${draft.namespace}.${draft.name}`);
+    const targetKey = isCreating
+      ? `${draft.namespace}.${draft.name}`
+      : (selectedTableKey ?? `${draft.namespace}.${draft.name}`);
+
+    openSqlPreview({
+      sql,
+      title: isCreating
+        ? `Create ${draft.namespace}.${draft.name}`
+        : `Alter ${draft.namespace}.${draft.name}`,
+      description: isCreating
+        ? "Review the CREATE TABLE statement before committing."
+        : "Review the changes before committing.",
+      onExecute: executeSqlPreviewStatement,
+      onComplete: async () => {
+        notify({
+          title: isCreating
+            ? `Created ${draft.namespace}.${draft.name}`
+            : `Updated ${draft.namespace}.${draft.name}`,
+          variant: "success",
+        });
+        await onAfterSave?.();
         setReloadKeyAfterRefresh(targetKey);
-        onAfterSave?.();
-      }
-    } finally {
-      setIsSaving(false);
-    }
+      },
+    });
   };
 
   const handleDiscard = () => {
@@ -256,6 +247,22 @@ export function EditTableForm({ schema, onAfterSave, isSchemaRefreshing }: EditT
       setShowDiscardConfirm(true);
       return;
     }
+  };
+
+  const handleDropTable = () => {
+    const sql = generateDropTableSql(draft.namespace, draft.name);
+    const fqn = `${draft.namespace}.${draft.name}`;
+    openSqlPreview({
+      sql,
+      title: `Drop ${fqn}`,
+      description: "This will permanently delete the table and all of its data.",
+      onExecute: executeSqlPreviewStatement,
+      onComplete: async () => {
+        notify({ title: `Dropped ${fqn}`, variant: "success" });
+        dispatch(discardEdit());
+        await onAfterSave?.();
+      },
+    });
   };
 
   const liveColumns = draft.columns.filter((c) => !c.isDeleted || !c.isNew);
@@ -283,7 +290,7 @@ export function EditTableForm({ schema, onAfterSave, isSchemaRefreshing }: EditT
                     variant="ghost"
                     size="icon"
                     className="h-8 w-8 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                    onClick={() => setShowDropConfirm(true)}
+                    onClick={handleDropTable}
                     aria-label="Drop table"
                   >
                     <Trash2 className="h-4 w-4" />
@@ -307,8 +314,8 @@ export function EditTableForm({ schema, onAfterSave, isSchemaRefreshing }: EditT
                 <Button
                   type="button"
                   size="sm"
-                  onClick={() => void handleSave()}
-                  disabled={!isDirty || isSaving}
+                  onClick={handleSave}
+                  disabled={!isDirty}
                   title={
                     !isDirty
                       ? "No changes to save"
@@ -317,16 +324,7 @@ export function EditTableForm({ schema, onAfterSave, isSchemaRefreshing }: EditT
                         : undefined
                   }
                 >
-                  {isSaving ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : null}
-                  {isSaving
-                    ? isCreating
-                      ? "Creating…"
-                      : "Saving…"
-                    : isCreating
-                      ? "Create Table"
-                      : "Save Changes"}
+                  {isCreating ? "Review & Create" : "Review & Save"}
                 </Button>
               </>
             )}
@@ -491,31 +489,6 @@ export function EditTableForm({ schema, onAfterSave, isSchemaRefreshing }: EditT
       </div>
 
       <ConfirmDialog
-        open={showDropColsConfirm}
-        title={`Drop ${droppingColumns.length} column${droppingColumns.length === 1 ? "" : "s"}?`}
-        description={
-          <>
-            <p>
-              This save will permanently delete the following column{droppingColumns.length === 1 ? "" : "s"}:
-            </p>
-            <ul className="mt-2 list-disc pl-5 font-mono text-xs">
-              {droppingColumns.map((c) => (
-                <li key={c.id}>{c.name}</li>
-              ))}
-            </ul>
-            <p className="mt-2">All data in {droppingColumns.length === 1 ? "it" : "them"} will be lost. This cannot be undone.</p>
-          </>
-        }
-        confirmLabel="Save changes"
-        variant="destructive"
-        onConfirm={() => {
-          setShowDropColsConfirm(false);
-          void doSave();
-        }}
-        onClose={() => setShowDropColsConfirm(false)}
-      />
-
-      <ConfirmDialog
         open={showDiscardConfirm}
         title="Discard changes?"
         description="You have unsaved edits. They will be lost."
@@ -537,37 +510,6 @@ export function EditTableForm({ schema, onAfterSave, isSchemaRefreshing }: EditT
         onClose={() => setShowDiscardConfirm(false)}
       />
 
-      <DestructiveConfirmDialog
-        open={showDropConfirm}
-        title={`Drop table "${draft.name}"`}
-        description={
-          <>
-            This will permanently delete the table{" "}
-            <strong className="text-foreground">
-              {draft.namespace}.{draft.name}
-            </strong>{" "}
-            and all of its data. This cannot be undone.
-          </>
-        }
-        expected={draft.name}
-        confirmLabel="Drop table"
-        onConfirm={() => {
-          setShowDropConfirm(false);
-          const sql = generateDropTableSql(draft.namespace, draft.name);
-          const tableName = `${draft.namespace}.${draft.name}`;
-          void runSql(sql, {
-            successTitle: `Dropped ${tableName}`,
-            errorTitle: "Drop failed",
-            notify,
-          }).then((ok) => {
-            if (ok) {
-              dispatch(discardEdit());
-              onAfterSave?.();
-            }
-          });
-        }}
-        onClose={() => setShowDropConfirm(false)}
-      />
     </div>
   );
 }

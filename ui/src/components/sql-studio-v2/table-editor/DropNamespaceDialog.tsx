@@ -9,7 +9,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 
 interface DropNamespaceDialogProps {
   open: boolean;
@@ -27,19 +26,13 @@ export function DropNamespaceDialog({
   onClose,
 }: DropNamespaceDialogProps) {
   const [cascade, setCascade] = useState(false);
-  const [typed, setTyped] = useState("");
 
   useEffect(() => {
-    if (open) {
-      setCascade(false);
-      setTyped("");
-    }
+    if (open) setCascade(false);
   }, [open]);
 
   const isEmpty = tableCount === 0;
-  const cascadeOk = isEmpty || cascade;
-  const typeMatches = typed === namespace;
-  const canDrop = cascadeOk && typeMatches;
+  const canDrop = isEmpty || cascade;
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
@@ -51,7 +44,7 @@ export function DropNamespaceDialog({
           </DialogTitle>
           <DialogDescription>
             {isEmpty ? (
-              <>This namespace is empty. Deleting it cannot be undone.</>
+              <>This namespace is empty.</>
             ) : (
               <>
                 This namespace contains <strong>{tableCount}</strong>{" "}
@@ -74,25 +67,11 @@ export function DropNamespaceDialog({
                 CASCADE — also delete all {tableCount} {tableCount === 1 ? "table" : "tables"} in this namespace
               </span>
               <span className="block text-muted-foreground">
-                All data in those tables will be permanently lost. This cannot be undone.
+                All data in those tables will be permanently lost.
               </span>
             </span>
           </label>
         )}
-
-        <label className="flex flex-col gap-1.5 text-xs">
-          <span className="text-muted-foreground">
-            Type <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs text-foreground">{namespace}</code> to confirm:
-          </span>
-          <Input
-            value={typed}
-            onChange={(e) => setTyped(e.target.value)}
-            placeholder={namespace}
-            disabled={!cascadeOk}
-            autoFocus
-            className="font-mono"
-          />
-        </label>
 
         <DialogFooter className="gap-2 sm:gap-2">
           <Button type="button" variant="outline" onClick={onClose}>
@@ -104,7 +83,7 @@ export function DropNamespaceDialog({
             disabled={!canDrop}
             onClick={() => onSubmit(cascade)}
           >
-            Drop {!isEmpty && cascade ? "with CASCADE" : "namespace"}
+            Continue
           </Button>
         </DialogFooter>
       </DialogContent>
