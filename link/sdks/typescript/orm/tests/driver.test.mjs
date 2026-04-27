@@ -180,7 +180,7 @@ describe('kalamDriver', () => {
     `);
 
     const table = pgTable('test_orm_insert.multi_row', {
-      id: bigint('id', { mode: 'number' }),
+      id: text('id'),
       name: text('name'),
     });
 
