@@ -4,7 +4,8 @@
 #
 # Prerequisites:
 #   1. pgrx PG installed: cargo pgrx init --pg<major> download
-#   2. KalamDB server running locally with cluster mode (gRPC on :9188, HTTP on :8080)
+#   2. KalamDB server running locally with the gRPC endpoint exported via
+#      KALAMDB_GRPC_HOST/KALAMDB_GRPC_PORT (defaults: 127.0.0.1:9188)
 #
 # Usage:
 #   ./pg/scripts/pgrx-test-setup.sh          # Full setup (start PG + install extension + create DB + server)
@@ -59,9 +60,9 @@ PG_PORT="${PG_PORT:-288${PG_MAJOR}}"
 PG_USER="$USER"
 TEST_DB="kalamdb_test"
 
-# KalamDB gRPC (local server)
-KALAMDB_GRPC_HOST="127.0.0.1"
-KALAMDB_GRPC_PORT="9188"
+# KalamDB gRPC target consumed by the foreign server.
+KALAMDB_GRPC_HOST="${KALAMDB_GRPC_HOST:-127.0.0.1}"
+KALAMDB_GRPC_PORT="${KALAMDB_GRPC_PORT:-9188}"
 KALAMDB_LOGIN_USER="${KALAMDB_USER:-root}"
 KALAMDB_LOGIN_PASSWORD="${KALAMDB_PASSWORD:-${KALAMDB_ROOT_PASSWORD:-kalamdb123}}"
 

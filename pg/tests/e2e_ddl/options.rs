@@ -292,7 +292,7 @@ async fn e2e_ddl_kalam_exec_passthrough_statements() {
 
     let drop = pg_kalam_exec(&pg, &format!("DROP SHARED TABLE IF EXISTS {ns}.{table}")).await;
     assert!(
-        contains_status(&drop, &["dropped", "ok"]),
+        contains_status(&drop, &["dropped", "ok", "skipped"]),
         "unexpected DROP TABLE response: {drop}"
     );
     env.wait_for_kalamdb_table_absent(&ns, &table).await;

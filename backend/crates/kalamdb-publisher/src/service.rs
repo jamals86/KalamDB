@@ -625,10 +625,8 @@ impl TopicPublisherService {
                 return Ok(messages);
             };
 
-            let claim_start = messages
-                .first()
-                .map(|message| message.offset)
-                .unwrap_or(effective_start);
+            let claim_start =
+                messages.first().map(|message| message.offset).unwrap_or(effective_start);
             let end_exclusive = last_message.offset + 1;
             let claimed_at = Instant::now();
             let mut state = self
@@ -959,9 +957,7 @@ mod tests {
                 let (release_lock, release_cvar) = &self.release_scan;
                 let released = release_lock.lock().unwrap();
                 let (released, _) = release_cvar
-                    .wait_timeout_while(released, StdDuration::from_secs(2), |released| {
-                        !*released
-                    })
+                    .wait_timeout_while(released, StdDuration::from_secs(2), |released| !*released)
                     .unwrap();
                 assert!(*released, "paused scan should be released by the test");
             }
@@ -973,7 +969,10 @@ mod tests {
             self.inner.partition_exists(partition)
         }
 
-        fn create_partition(&self, partition: &Partition) -> kalamdb_store::storage_trait::Result<()> {
+        fn create_partition(
+            &self,
+            partition: &Partition,
+        ) -> kalamdb_store::storage_trait::Result<()> {
             self.inner.create_partition(partition)
         }
 
@@ -981,11 +980,17 @@ mod tests {
             self.inner.list_partitions()
         }
 
-        fn drop_partition(&self, partition: &Partition) -> kalamdb_store::storage_trait::Result<()> {
+        fn drop_partition(
+            &self,
+            partition: &Partition,
+        ) -> kalamdb_store::storage_trait::Result<()> {
             self.inner.drop_partition(partition)
         }
 
-        fn compact_partition(&self, partition: &Partition) -> kalamdb_store::storage_trait::Result<()> {
+        fn compact_partition(
+            &self,
+            partition: &Partition,
+        ) -> kalamdb_store::storage_trait::Result<()> {
             self.inner.compact_partition(partition)
         }
 
@@ -1269,7 +1274,8 @@ mod tests {
         backend.release_paused_scan();
         let first_batch = first_handle.join().unwrap();
 
-        let first_offsets: HashSet<u64> = first_batch.iter().map(|message| message.offset).collect();
+        let first_offsets: HashSet<u64> =
+            first_batch.iter().map(|message| message.offset).collect();
         let second_offsets: HashSet<u64> =
             second_batch.iter().map(|message| message.offset).collect();
 
@@ -1422,8 +1428,7 @@ mod tests {
 
         thread::sleep(StdDuration::from_millis(50));
 
-        let redelivered =
-            service.fetch_messages_for_group(&topic_id, &group_id, 0, 0, 10).unwrap();
+        let redelivered = service.fetch_messages_for_group(&topic_id, &group_id, 0, 0, 10).unwrap();
         assert_eq!(redelivered.first().map(|message| message.offset), Some(0));
 
         let next = service.fetch_messages_for_group(&topic_id, &group_id, 0, 0, 10).unwrap();

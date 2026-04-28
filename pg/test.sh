@@ -24,6 +24,8 @@
 #
 # Environment variables (all optional):
 #   KALAMDB_SERVER_URL    KalamDB HTTP base URL  (default: http://127.0.0.1:8080)
+#   KALAMDB_GRPC_HOST     KalamDB gRPC host       (default: inferred from server URL)
+#   KALAMDB_GRPC_PORT     KalamDB gRPC port       (default: inferred from server URL)
 #   KALAMDB_PG_HOST       Postgres host           (default: 127.0.0.1)
 #   KALAMDB_PG_PORT       Postgres port           (default: 28816)
 #   KALAMDB_PG_USER       Postgres user           (default: $USER)
@@ -60,14 +62,52 @@ step() { echo ""; echo "==> $*"; }
 ok()   { echo "    OK: $*"; }
 die()  { echo ""; echo "ERROR: $*" >&2; exit 1; }
 
+infer_kalamdb_grpc_target() {
+    local server_url="$1"
+    local authority="${server_url#*://}"
+    local host=""
+    local http_port=""
+    local grpc_port="9188"
+
+    authority="${authority%%/*}"
+    authority="${authority##*@}"
+
+    if [[ "$authority" =~ ^\[([^]]+)\](:(.+))?$ ]]; then
+        host="${BASH_REMATCH[1]}"
+        http_port="${BASH_REMATCH[3]:-}"
+    elif [[ "$authority" =~ ^([^:]+)(:([0-9]+))?$ ]]; then
+        host="${BASH_REMATCH[1]}"
+        http_port="${BASH_REMATCH[3]:-}"
+    fi
+
+    if [[ -z "$host" ]]; then
+        host="127.0.0.1"
+    fi
+
+    case "$http_port" in
+        8080) grpc_port="9188" ;;
+        8081) grpc_port="9081" ;;
+        8082) grpc_port="9082" ;;
+        8083) grpc_port="9083" ;;
+    esac
+
+    printf '%s %s\n' "$host" "$grpc_port"
+}
+
 KALAMDB_SERVER_URL="${KALAMDB_SERVER_URL:-http://127.0.0.1:8080}"
+read -r DEFAULT_KALAMDB_GRPC_HOST DEFAULT_KALAMDB_GRPC_PORT < <(infer_kalamdb_grpc_target "$KALAMDB_SERVER_URL")
+KALAMDB_GRPC_HOST="${KALAMDB_GRPC_HOST:-$DEFAULT_KALAMDB_GRPC_HOST}"
+KALAMDB_GRPC_PORT="${KALAMDB_GRPC_PORT:-$DEFAULT_KALAMDB_GRPC_PORT}"
 export KALAMDB_SERVER_URL
+export KALAMDB_GRPC_HOST
+export KALAMDB_GRPC_PORT
 
 # ── Print config ──────────────────────────────────────────────────────────
 echo "========================================================"
 echo " pg_kalam End-to-End Tests (local dev)"
 echo "========================================================"
 echo " KalamDB server:   ${KALAMDB_SERVER_URL}"
+echo " KalamDB gRPC:     ${KALAMDB_GRPC_HOST}:${KALAMDB_GRPC_PORT}"
 echo " Postgres:         ${KALAMDB_PG_HOST:-127.0.0.1}:${KALAMDB_PG_PORT:-28816} (pgrx)"
 echo " Nextest filter:   $NEXTEST_FILTER"
 echo "========================================================"

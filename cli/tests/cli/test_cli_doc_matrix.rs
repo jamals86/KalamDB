@@ -438,6 +438,10 @@ fn test_docs_matrix_has_execution_tests_for_documented_flags_and_commands() {
             tests: &["test_cli_meta_commands_doc_smoke_non_interactive"],
         },
         Coverage {
+            item: "\\cluster rebalance",
+            tests: &["test_cli_meta_commands_doc_smoke_non_interactive"],
+        },
+        Coverage {
             item: "\\cluster stepdown",
             tests: &["test_cli_meta_commands_doc_smoke_non_interactive"],
         },
@@ -462,15 +466,7 @@ fn test_docs_matrix_has_execution_tests_for_documented_flags_and_commands() {
             tests: &["test_cli_meta_commands_doc_smoke_non_interactive"],
         },
         Coverage {
-            item: "\\cluster status",
-            tests: &["test_cli_meta_commands_doc_smoke_non_interactive"],
-        },
-        Coverage {
             item: "\\cluster join",
-            tests: &["test_cli_meta_commands_doc_smoke_non_interactive"],
-        },
-        Coverage {
-            item: "\\cluster leave",
             tests: &["test_cli_meta_commands_doc_smoke_non_interactive"],
         },
     ];

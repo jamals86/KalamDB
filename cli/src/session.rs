@@ -112,6 +112,7 @@ use crate::{
     parser::{Command, CommandParser},
 };
 
+mod cluster;
 mod commands;
 mod info;
 
@@ -456,9 +457,16 @@ impl CLISession {
     /// **Implements T092**: Execute SQL via kalam-client
     /// **Implements T114a**: Show loading indicator for queries > threshold
     /// **Enhanced**: Colored output and styled timing
-    pub async fn execute(&mut self, sql: &str) -> Result<()> {
-        let start = Instant::now();
+    pub async fn execute_input(&mut self, input: &str) -> Result<()> {
+        let command = self.parser.parse(input)?;
+        self.execute_command(command).await
+    }
 
+    /// Execute a SQL query and return the raw response.
+    pub(super) async fn execute_query_response(
+        &mut self,
+        sql: &str,
+    ) -> Result<kalam_client::QueryResponse> {
         let (sql_to_send, mut upload_parts) = Self::extract_file_uploads(sql)?;
 
         // Increment query counter
@@ -539,7 +547,14 @@ impl CLISession {
             pb.finish_and_clear();
         }
 
+        result.map_err(Into::into)
+    }
+
+    pub async fn execute(&mut self, sql: &str) -> Result<()> {
+        let start = Instant::now();
         let elapsed = start.elapsed();
+
+        let result = self.execute_query_response(sql).await;
 
         match result {
             Ok(response) => {

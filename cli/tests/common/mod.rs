@@ -1062,11 +1062,8 @@ fn wait_for_sql_ready_cluster_urls(urls: &[String], timeout: Duration) -> Vec<St
     let start = Instant::now();
 
     loop {
-        let ready: Vec<String> = urls
-            .iter()
-            .filter(|url| cluster_node_ready_for_sql(url))
-            .cloned()
-            .collect();
+        let ready: Vec<String> =
+            urls.iter().filter(|url| cluster_node_ready_for_sql(url)).cloned().collect();
 
         if !ready.is_empty() || start.elapsed() >= timeout {
             return ready;

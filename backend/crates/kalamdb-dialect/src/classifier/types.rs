@@ -113,8 +113,6 @@ pub enum SqlStatementKind {
     ClusterStepdown,
     /// CLUSTER CLEAR - Clear old snapshots
     ClusterClear,
-    /// CLUSTER LIST - List cluster nodes
-    ClusterList,
 
     // ===== Job Management =====
     /// KILL JOB <job_id>
@@ -304,9 +302,6 @@ impl SqlStatement {
             | SqlStatementKind::ClusterRebalance
             | SqlStatementKind::ClusterStepdown
             | SqlStatementKind::ClusterClear => true,
-
-            // Read-only cluster inspection can run on any node
-            SqlStatementKind::ClusterList => false,
         }
     }
 
@@ -343,7 +338,6 @@ impl SqlStatement {
             SqlStatementKind::ClusterRebalance => "CLUSTER REBALANCE",
             SqlStatementKind::ClusterStepdown => "CLUSTER STEPDOWN",
             SqlStatementKind::ClusterClear => "CLUSTER CLEAR",
-            SqlStatementKind::ClusterList => "CLUSTER LIST",
             SqlStatementKind::KillJob(_) => "KILL JOB",
             SqlStatementKind::KillLiveQuery(_) => "KILL LIVE QUERY",
             SqlStatementKind::BeginTransaction => "BEGIN",

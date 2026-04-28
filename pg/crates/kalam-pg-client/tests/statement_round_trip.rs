@@ -14,11 +14,12 @@ use arrow::{
 use async_trait::async_trait;
 use kalam_pg_client::RemoteKalamClient;
 use kalam_pg_common::RemoteServerConfig;
+use kalamdb_commons::models::TransactionId;
 use kalamdb_pg::{
     DeleteRequest, InsertRequest, KalamPgService, MutationResult, OperationExecutor,
     PgServiceServer, ScanRequest, ScanResult, UpdateRequest,
 };
-use tonic::Status;
+use tonic::{Code, Status};
 
 // ---------------------------------------------------------------------------
 // Mock executor
@@ -70,14 +71,82 @@ impl OperationExecutor for MockExecutor {
     }
 }
 
+struct NotLeaderExecutor {
+    leader_api_addr: String,
+    code: Code,
+}
+
+impl NotLeaderExecutor {
+    fn status(&self) -> Status {
+        Status::new(
+            self.code,
+            format!(
+                "External error: Not leader for shard. Leader: Some(\"{}\")",
+                self.leader_api_addr
+            ),
+        )
+    }
+}
+
+#[async_trait]
+impl OperationExecutor for NotLeaderExecutor {
+    async fn execute_scan(&self, _request: ScanRequest) -> Result<ScanResult, Status> {
+        Err(self.status())
+    }
+
+    async fn begin_transaction(&self, _session_id: &str) -> Result<Option<TransactionId>, Status> {
+        Err(self.status())
+    }
+
+    async fn commit_transaction(
+        &self,
+        _session_id: &str,
+        _transaction_id: &TransactionId,
+    ) -> Result<Option<TransactionId>, Status> {
+        Err(self.status())
+    }
+
+    async fn rollback_transaction(
+        &self,
+        _session_id: &str,
+        _transaction_id: &TransactionId,
+    ) -> Result<Option<TransactionId>, Status> {
+        Err(self.status())
+    }
+
+    async fn execute_insert(&self, _request: InsertRequest) -> Result<MutationResult, Status> {
+        Err(self.status())
+    }
+
+    async fn execute_update(&self, _request: UpdateRequest) -> Result<MutationResult, Status> {
+        Err(self.status())
+    }
+
+    async fn execute_delete(&self, _request: DeleteRequest) -> Result<MutationResult, Status> {
+        Err(self.status())
+    }
+
+    async fn execute_sql(&self, _sql: &str) -> Result<String, Status> {
+        Err(self.status())
+    }
+
+    async fn execute_query(&self, _sql: &str) -> Result<(String, Vec<bytes::Bytes>), Status> {
+        Err(self.status())
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 /// Spin up a KalamPgService with the mock executor on the given port.
 async fn start_server(port: u16) {
-    let bind_addr: SocketAddr = format!("127.0.0.1:{port}").parse().expect("bind addr");
-    let service = KalamPgService::new(false, None).with_operation_executor(Arc::new(MockExecutor));
+    start_server_with_executor("127.0.0.1", port, Arc::new(MockExecutor)).await;
+}
+
+async fn start_server_with_executor(host: &str, port: u16, executor: Arc<dyn OperationExecutor>) {
+    let bind_addr: SocketAddr = format!("{host}:{port}").parse().expect("bind addr");
+    let service = KalamPgService::new(false, None).with_operation_executor(executor);
 
     tokio::spawn(async move {
         tonic::transport::Server::builder()
@@ -91,8 +160,12 @@ async fn start_server(port: u16) {
 }
 
 async fn connect(port: u16) -> RemoteKalamClient {
+    connect_to("127.0.0.1", port).await
+}
+
+async fn connect_to(host: &str, port: u16) -> RemoteKalamClient {
     RemoteKalamClient::connect(RemoteServerConfig {
-        host: "127.0.0.1".to_string(),
+        host: host.to_string(),
         port,
         ..Default::default()
     })
@@ -158,6 +231,251 @@ async fn scan_with_projection_and_limit() {
     // The mock always returns the same data regardless of projection/limit,
     // but this verifies the round-trip doesn't fail with these parameters.
     assert!(!response.batches.is_empty());
+}
+
+#[tokio::test]
+#[ntest::timeout(10000)]
+async fn scan_follows_leader_redirect_hint() {
+    let host = "127.0.0.1";
+    let follower_rpc_port = 39081;
+    let leader_rpc_port = 39083;
+    let leader_api_port = 38083;
+
+    start_server_with_executor(
+        host,
+        follower_rpc_port,
+        Arc::new(NotLeaderExecutor {
+            leader_api_addr: format!("http://{host}:{leader_api_port}"),
+            code: Code::Internal,
+        }),
+    )
+    .await;
+    start_server_with_executor(host, leader_rpc_port, Arc::new(MockExecutor)).await;
+
+    let client = connect_to(host, follower_rpc_port).await;
+    let session = client.open_session(None, Some("app")).await.expect("open session");
+
+    let response = client
+        .scan("app", "messages", "shared", &session.session_id, None, vec![], None, vec![])
+        .await
+        .expect("scan should follow leader redirect");
+
+    assert_eq!(response.batches.len(), 1);
+    assert_eq!(response.batches[0].num_rows(), 3);
+}
+
+#[tokio::test]
+#[ntest::timeout(10000)]
+async fn execute_sql_follows_leader_redirect_hint() {
+    let host = "127.0.0.1";
+    let follower_rpc_port = 39181;
+    let leader_rpc_port = 39183;
+    let leader_api_port = 38183;
+
+    start_server_with_executor(
+        host,
+        follower_rpc_port,
+        Arc::new(NotLeaderExecutor {
+            leader_api_addr: format!("http://{host}:{leader_api_port}"),
+            code: Code::Internal,
+        }),
+    )
+    .await;
+    start_server_with_executor(host, leader_rpc_port, Arc::new(MockExecutor)).await;
+
+    let client = connect_to(host, follower_rpc_port).await;
+    let session = client.open_session(None, Some("app")).await.expect("open session");
+
+    let response = client
+        .execute_sql("ALTER TABLE app.messages ADD COLUMN name TEXT", &session.session_id)
+        .await
+        .expect("execute_sql should follow leader redirect");
+
+    assert_eq!(response, "executed: ALTER TABLE app.messages ADD COLUMN name TEXT");
+}
+
+#[tokio::test]
+#[ntest::timeout(10000)]
+async fn execute_query_follows_leader_redirect_hint() {
+    let host = "127.0.0.1";
+    let follower_rpc_port = 39281;
+    let leader_rpc_port = 39283;
+    let leader_api_port = 38283;
+
+    start_server_with_executor(
+        host,
+        follower_rpc_port,
+        Arc::new(NotLeaderExecutor {
+            leader_api_addr: format!("http://{host}:{leader_api_port}"),
+            code: Code::Internal,
+        }),
+    )
+    .await;
+    start_server_with_executor(host, leader_rpc_port, Arc::new(MockExecutor)).await;
+
+    let client = connect_to(host, follower_rpc_port).await;
+    let session = client.open_session(None, Some("app")).await.expect("open session");
+
+    let (message, rows) = client
+        .execute_query("SELECT 1", &session.session_id)
+        .await
+        .expect("execute_query should follow leader redirect");
+
+    assert_eq!(message, "executed: SELECT 1");
+    assert!(rows.is_empty());
+}
+
+#[tokio::test]
+#[ntest::timeout(10000)]
+async fn insert_follows_leader_redirect_hint_from_failed_precondition() {
+    let host = "127.0.0.1";
+    let follower_rpc_port = 39381;
+    let leader_rpc_port = 39383;
+    let leader_api_port = 38383;
+
+    start_server_with_executor(
+        host,
+        follower_rpc_port,
+        Arc::new(NotLeaderExecutor {
+            leader_api_addr: format!("http://{host}:{leader_api_port}"),
+            code: Code::FailedPrecondition,
+        }),
+    )
+    .await;
+    start_server_with_executor(host, leader_rpc_port, Arc::new(MockExecutor)).await;
+
+    let client = connect_to(host, follower_rpc_port).await;
+    let session = client.open_session(None, Some("app")).await.expect("open session");
+
+    let response = client
+        .insert(
+            "app",
+            "messages",
+            "shared",
+            &session.session_id,
+            None,
+            vec![r#"{"id":"msg-1"}"#.to_string()],
+        )
+        .await
+        .expect("insert should follow leader redirect");
+
+    assert_eq!(response.affected_rows, 1);
+}
+
+#[tokio::test]
+#[ntest::timeout(10000)]
+async fn begin_transaction_follows_leader_redirect_hint() {
+    let host = "127.0.0.1";
+    let follower_rpc_port = 39481;
+    let leader_rpc_port = 39483;
+    let leader_api_port = 38483;
+
+    start_server_with_executor(
+        host,
+        follower_rpc_port,
+        Arc::new(NotLeaderExecutor {
+            leader_api_addr: format!("http://{host}:{leader_api_port}"),
+            code: Code::FailedPrecondition,
+        }),
+    )
+    .await;
+    start_server_with_executor(host, leader_rpc_port, Arc::new(MockExecutor)).await;
+
+    let client = connect_to(host, follower_rpc_port).await;
+    let session = client.open_session(None, Some("app")).await.expect("open session");
+
+    let transaction_id = client
+        .begin_transaction(&session.session_id)
+        .await
+        .expect("begin_transaction should follow leader redirect");
+
+    assert!(!transaction_id.is_empty());
+}
+
+#[tokio::test]
+#[ntest::timeout(10000)]
+async fn commit_transaction_follows_leader_redirect_hint() {
+    let host = "127.0.0.1";
+    let follower_rpc_port = 39581;
+    let leader_rpc_port = 39583;
+    let leader_api_port = 38583;
+
+    start_server_with_executor(
+        host,
+        follower_rpc_port,
+        Arc::new(NotLeaderExecutor {
+            leader_api_addr: format!("http://{host}:{leader_api_port}"),
+            code: Code::FailedPrecondition,
+        }),
+    )
+    .await;
+    start_server_with_executor(host, leader_rpc_port, Arc::new(MockExecutor)).await;
+
+    let follower_client = connect_to(host, follower_rpc_port).await;
+    let session = follower_client
+        .open_session(None, Some("app"))
+        .await
+        .expect("open follower session");
+
+    let leader_client = connect_to(host, leader_rpc_port).await;
+    leader_client
+        .open_session(Some(&session.session_id), Some("app"))
+        .await
+        .expect("mirror session on leader");
+    let transaction_id = leader_client
+        .begin_transaction(&session.session_id)
+        .await
+        .expect("begin leader transaction");
+
+    let committed_id = follower_client
+        .commit_transaction(&session.session_id, &transaction_id)
+        .await
+        .expect("commit_transaction should follow leader redirect");
+
+    assert_eq!(committed_id, transaction_id);
+}
+
+#[tokio::test]
+#[ntest::timeout(10000)]
+async fn rollback_transaction_follows_leader_redirect_hint() {
+    let host = "127.0.0.1";
+    let follower_rpc_port = 39681;
+    let leader_rpc_port = 39683;
+    let leader_api_port = 38683;
+
+    start_server_with_executor(
+        host,
+        follower_rpc_port,
+        Arc::new(NotLeaderExecutor {
+            leader_api_addr: format!("http://{host}:{leader_api_port}"),
+            code: Code::FailedPrecondition,
+        }),
+    )
+    .await;
+    start_server_with_executor(host, leader_rpc_port, Arc::new(MockExecutor)).await;
+
+    let follower_client = connect_to(host, follower_rpc_port).await;
+    let session = follower_client
+        .open_session(None, Some("app"))
+        .await
+        .expect("open follower session");
+
+    let leader_client = connect_to(host, leader_rpc_port).await;
+    leader_client
+        .open_session(Some(&session.session_id), Some("app"))
+        .await
+        .expect("mirror session on leader");
+    let transaction_id = leader_client
+        .begin_transaction(&session.session_id)
+        .await
+        .expect("begin leader transaction");
+
+    let rolled_back_id = follower_client
+        .rollback_transaction(&session.session_id, &transaction_id)
+        .await
+        .expect("rollback_transaction should follow leader redirect");
+
+    assert_eq!(rolled_back_id, transaction_id);
 }
 
 #[tokio::test]

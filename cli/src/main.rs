@@ -122,7 +122,7 @@ async fn run() -> Result<()> {
 
         // Execute single command
         (None, Some(command), false) => {
-            session.execute(&command).await?;
+            session.execute_input(&command).await?;
         },
 
         // Interactive mode

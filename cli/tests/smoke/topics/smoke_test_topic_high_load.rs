@@ -117,7 +117,10 @@ fn local_cluster_node_config_path() -> PathBuf {
 }
 
 fn configured_topic_visibility_timeout_secs() -> u64 {
-    for env_key in ["KALAMDB_TOPIC_VISIBILITY_TIMEOUT_SECS", "KALAMDB_VISIBILITY_TIMEOUT_SECS"] {
+    for env_key in [
+        "KALAMDB_TOPIC_VISIBILITY_TIMEOUT_SECS",
+        "KALAMDB_VISIBILITY_TIMEOUT_SECS",
+    ] {
         if let Some(value) = std::env::var(env_key).ok().and_then(|raw| raw.parse().ok()) {
             return value;
         }

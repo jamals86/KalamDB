@@ -4,8 +4,9 @@ use serde_json::Value;
 
 use super::common::{
     await_user_shard_leader, count_rows, create_shared_kalam_table, create_user_kalam_table,
-    pg_backend_pid, postgres_error_text, retry_transient_user_leader_error, same_user_shard_pair,
-    set_user_id, unique_name, TestEnv,
+    pg_backend_pid, postgres_error_text, rebind_user_table_to_user_leader,
+    retry_transient_user_leader_error, same_user_shard_pair, set_user_id,
+    shared_leader_grpc_target, unique_name, TestEnv,
 };
 
 fn sql_rows(result: &Value) -> Vec<Vec<Value>> {
@@ -35,39 +36,71 @@ fn i64_cell(row: &[Value], index: usize) -> Option<i64> {
 }
 
 async fn fetch_session_rows(env: &TestEnv, backend_pid: u32) -> Vec<Vec<Value>> {
+    fetch_session_rows_at(env, &kalamdb_shared_leader_base_url().await, backend_pid).await
+}
+
+async fn fetch_session_rows_at(env: &TestEnv, base_url: &str, backend_pid: u32) -> Vec<Vec<Value>> {
     sql_rows(
-        &env.kalamdb_sql(&format!(
-            "SELECT session_id, state, transaction_id, transaction_state FROM system.sessions \
+        &env.kalamdb_sql_at(
+            base_url,
+            &format!(
+                "SELECT session_id, state, transaction_id, transaction_state FROM system.sessions \
              WHERE backend_pid = {backend_pid} ORDER BY last_seen_at DESC"
-        ))
+            ),
+        )
         .await,
     )
 }
 
 async fn fetch_transaction_rows(env: &TestEnv, transaction_id: &str) -> Vec<Vec<Value>> {
+    fetch_transaction_rows_at(env, &kalamdb_shared_leader_base_url().await, transaction_id).await
+}
+
+async fn fetch_transaction_rows_at(
+    env: &TestEnv,
+    base_url: &str,
+    transaction_id: &str,
+) -> Vec<Vec<Value>> {
     sql_rows(
-        &env.kalamdb_sql(&format!(
+        &env.kalamdb_sql_at(
+            base_url,
+            &format!(
             "SELECT transaction_id, owner_id, origin, state, write_count FROM system.transactions \
              WHERE transaction_id = '{transaction_id}'"
-        ))
+        ),
+        )
         .await,
     )
 }
 
+fn grpc_http_base_url(host: &str, grpc_port: u16) -> String {
+    let http_port = match grpc_port {
+        9188 => 8080,
+        _ => grpc_port.saturating_sub(1000),
+    };
+    format!("http://{host}:{http_port}")
+}
+
+async fn kalamdb_shared_leader_base_url() -> String {
+    let (host, grpc_port) = shared_leader_grpc_target().await;
+    grpc_http_base_url(&host, grpc_port)
+}
+
 async fn wait_for_active_pg_transaction(
     env: &TestEnv,
+    base_url: &str,
     backend_pid: u32,
     timeout: Duration,
 ) -> (String, Vec<Value>) {
     let deadline = Instant::now() + timeout;
 
     loop {
-        let session_rows = fetch_session_rows(env, backend_pid).await;
+        let session_rows = fetch_session_rows_at(env, base_url, backend_pid).await;
         if let Some(transaction_id) = session_rows
             .iter()
             .find_map(|row| string_cell(row, 2).filter(|value| !value.is_empty()))
         {
-            let transaction_rows = fetch_transaction_rows(env, &transaction_id).await;
+            let transaction_rows = fetch_transaction_rows_at(env, base_url, &transaction_id).await;
             if let Some(transaction_row) = transaction_rows.first() {
                 return (transaction_id, transaction_row.clone());
             }
@@ -83,11 +116,16 @@ async fn wait_for_active_pg_transaction(
     }
 }
 
-async fn wait_for_transaction_cleanup(env: &TestEnv, transaction_id: &str, timeout: Duration) {
+async fn wait_for_transaction_cleanup(
+    env: &TestEnv,
+    base_url: &str,
+    transaction_id: &str,
+    timeout: Duration,
+) {
     let deadline = Instant::now() + timeout;
 
     loop {
-        if fetch_transaction_rows(env, transaction_id).await.is_empty() {
+        if fetch_transaction_rows_at(env, base_url, transaction_id).await.is_empty() {
             return;
         }
 
@@ -108,10 +146,12 @@ async fn e2e_transaction_begin_commit_persists_rows() {
     let mut pg = env.pg_connect().await;
     let table = unique_name("profiles_tx_commit");
     let qualified_table = format!("e2e.{table}");
+    let columns = "id TEXT, name TEXT, age INTEGER";
 
-    create_user_kalam_table(&pg, &table, "id TEXT, name TEXT, age INTEGER").await;
+    create_user_kalam_table(&pg, &table, columns).await;
     set_user_id(&pg, "txn-commit-user").await;
     await_user_shard_leader("txn-commit-user").await;
+    rebind_user_table_to_user_leader(&pg, "e2e", &table, columns, "txn-commit-user").await;
 
     let tx = pg.transaction().await.expect("begin");
     tx.execute(
@@ -139,10 +179,12 @@ async fn e2e_transaction_begin_rollback_discards_rows() {
     let mut pg = env.pg_connect().await;
     let table = unique_name("profiles_tx_rollback");
     let qualified_table = format!("e2e.{table}");
+    let columns = "id TEXT, name TEXT, age INTEGER";
 
-    create_user_kalam_table(&pg, &table, "id TEXT, name TEXT, age INTEGER").await;
+    create_user_kalam_table(&pg, &table, columns).await;
     set_user_id(&pg, "txn-rollback-user").await;
     await_user_shard_leader("txn-rollback-user").await;
+    rebind_user_table_to_user_leader(&pg, "e2e", &table, columns, "txn-rollback-user").await;
 
     let tx = pg.transaction().await.expect("begin");
     tx.execute(
@@ -164,10 +206,12 @@ async fn e2e_transaction_duplicate_primary_key_commit_fails() {
     let mut pg = env.pg_connect().await;
     let table = unique_name("profiles_tx_duplicate");
     let qualified_table = format!("e2e.{table}");
+    let columns = "id TEXT, name TEXT, age INTEGER";
 
-    create_user_kalam_table(&pg, &table, "id TEXT, name TEXT, age INTEGER").await;
+    create_user_kalam_table(&pg, &table, columns).await;
     set_user_id(&pg, "txn-duplicate-user").await;
     await_user_shard_leader("txn-duplicate-user").await;
+    rebind_user_table_to_user_leader(&pg, "e2e", &table, columns, "txn-duplicate-user").await;
 
     let tx = pg.transaction().await.expect("begin");
     tx.execute(
@@ -224,7 +268,8 @@ async fn e2e_transaction_mixed_native_and_kalamdb_rows_share_one_remote_transact
 
     let mut pg = env.pg_connect().await;
     let backend_pid = pg_backend_pid(&pg).await;
-    let pre_foreign_rows = fetch_session_rows(env, backend_pid).await;
+    let shared_leader_base_url = kalamdb_shared_leader_base_url().await;
+    let pre_foreign_rows = fetch_session_rows_at(env, &shared_leader_base_url, backend_pid).await;
     assert!(
         pre_foreign_rows.iter().all(|row| string_cell(row, 2).is_none()),
         "remote transaction should not exist before the first foreign statement: \
@@ -246,7 +291,8 @@ async fn e2e_transaction_mixed_native_and_kalamdb_rows_share_one_remote_transact
     .await
     .expect("insert first native row");
 
-    let still_no_remote_rows = fetch_session_rows(env, backend_pid).await;
+    let still_no_remote_rows =
+        fetch_session_rows_at(env, &shared_leader_base_url, backend_pid).await;
     assert!(
         still_no_remote_rows.iter().all(|row| string_cell(row, 2).is_none()),
         "native PostgreSQL work alone should not open a KalamDB transaction: \
@@ -260,8 +306,13 @@ async fn e2e_transaction_mixed_native_and_kalamdb_rows_share_one_remote_transact
     .await
     .expect("insert first foreign row");
 
-    let (transaction_id, transaction_row) =
-        wait_for_active_pg_transaction(env, backend_pid, Duration::from_secs(3)).await;
+    let (transaction_id, transaction_row) = wait_for_active_pg_transaction(
+        env,
+        &shared_leader_base_url,
+        backend_pid,
+        Duration::from_secs(3),
+    )
+    .await;
     assert_eq!(string_cell(&transaction_row, 2).as_deref(), Some("PgRpc"));
     assert_eq!(string_cell(&transaction_row, 3).as_deref(), Some("open_write"));
     assert_eq!(i64_cell(&transaction_row, 4), Some(1));
@@ -280,10 +331,11 @@ async fn e2e_transaction_mixed_native_and_kalamdb_rows_share_one_remote_transact
     .await
     .expect("insert second foreign row");
 
-    let session_rows = fetch_session_rows(env, backend_pid).await;
+    let session_rows = fetch_session_rows_at(env, &shared_leader_base_url, backend_pid).await;
     assert_eq!(string_cell(&session_rows[0], 2).as_deref(), Some(transaction_id.as_str()));
 
-    let repeated_transaction_rows = fetch_transaction_rows(env, &transaction_id).await;
+    let repeated_transaction_rows =
+        fetch_transaction_rows_at(env, &shared_leader_base_url, &transaction_id).await;
     assert_eq!(repeated_transaction_rows.len(), 1);
     assert_eq!(
         string_cell(&repeated_transaction_rows[0], 0).as_deref(),
@@ -295,7 +347,13 @@ async fn e2e_transaction_mixed_native_and_kalamdb_rows_share_one_remote_transact
 
     tx.commit().await.expect("commit mixed native + foreign transaction");
 
-    wait_for_transaction_cleanup(env, &transaction_id, Duration::from_secs(5)).await;
+    wait_for_transaction_cleanup(
+        env,
+        &shared_leader_base_url,
+        &transaction_id,
+        Duration::from_secs(5),
+    )
+    .await;
 
     let pg_reader = env.pg_connect().await;
     let native_rows = pg_reader
@@ -345,6 +403,7 @@ async fn e2e_transaction_kalamdb_commit_failure_rolls_back_native_postgres_rows(
 
     let mut pg = env.pg_connect().await;
     let backend_pid = pg_backend_pid(&pg).await;
+    let shared_leader_base_url = kalamdb_shared_leader_base_url().await;
 
     let tx = pg.transaction().await.expect("begin mixed failure transaction");
     tx.execute(
@@ -372,8 +431,13 @@ async fn e2e_transaction_kalamdb_commit_failure_rolls_back_native_postgres_rows(
     .await
     .expect("insert second native row");
 
-    let (transaction_id, transaction_row) =
-        wait_for_active_pg_transaction(env, backend_pid, Duration::from_secs(3)).await;
+    let (transaction_id, transaction_row) = wait_for_active_pg_transaction(
+        env,
+        &shared_leader_base_url,
+        backend_pid,
+        Duration::from_secs(3),
+    )
+    .await;
     assert_eq!(string_cell(&transaction_row, 2).as_deref(), Some("PgRpc"));
     assert_eq!(string_cell(&transaction_row, 3).as_deref(), Some("open_write"));
     assert_eq!(i64_cell(&transaction_row, 4), Some(2));
@@ -391,7 +455,13 @@ async fn e2e_transaction_kalamdb_commit_failure_rolls_back_native_postgres_rows(
         "unexpected duplicate key error: {message}"
     );
 
-    wait_for_transaction_cleanup(env, &transaction_id, Duration::from_secs(5)).await;
+    wait_for_transaction_cleanup(
+        env,
+        &shared_leader_base_url,
+        &transaction_id,
+        Duration::from_secs(5),
+    )
+    .await;
 
     let pg_reader = env.pg_connect().await;
     let native_count = count_rows(&pg_reader, &qualified_native_table, None).await;
@@ -418,24 +488,30 @@ async fn e2e_transaction_switching_user_id_keeps_rows_in_separate_user_scopes() 
     let env = TestEnv::global().await;
     let table = unique_name("profiles_tx_user_scope");
     let qualified_table = format!("e2e.{table}");
+    let columns = "id TEXT, name TEXT, age INTEGER";
     let (first_user_id, second_user_id) =
         same_user_shard_pair("txn-scope-user-a", "txn-scope-user-b").await;
     let pg = env.pg_connect().await;
 
-    create_user_kalam_table(&pg, &table, "id TEXT, name TEXT, age INTEGER").await;
+    create_user_kalam_table(&pg, &table, columns).await;
 
     await_user_shard_leader(&first_user_id).await;
     await_user_shard_leader(&second_user_id).await;
+    pg.disconnect().await;
 
     let (visible_a_in_tx, visible_b_in_tx) =
         retry_transient_user_leader_error("multi-user transaction inflight visibility", || {
             let env = &env;
+            let table = table.clone();
             let qualified_table = qualified_table.clone();
+            let columns = columns;
             let first_user_id = first_user_id.clone();
             let second_user_id = second_user_id.clone();
 
             async move {
                 let mut pg = env.pg_connect().await;
+                set_user_id(&pg, &first_user_id).await;
+                rebind_user_table_to_user_leader(&pg, "e2e", &table, columns, &first_user_id).await;
                 let tx = pg.transaction().await?;
 
                 tx.batch_execute(&format!("SET LOCAL kalam.user_id = '{first_user_id}'"))

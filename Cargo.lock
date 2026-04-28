@@ -3924,6 +3924,7 @@ dependencies = [
  "bytes",
  "kalam-pg-api",
  "kalam-pg-common",
+ "kalamdb-commons",
  "kalamdb-pg",
  "ntest",
  "serde_json",

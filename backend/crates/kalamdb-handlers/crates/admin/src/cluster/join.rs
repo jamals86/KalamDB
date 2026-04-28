@@ -5,6 +5,7 @@
 
 use std::sync::Arc;
 
+use super::result_rows::cluster_join_rows;
 use kalamdb_commons::models::NodeId;
 use kalamdb_core::{
     app_context::AppContext,
@@ -64,11 +65,6 @@ impl StatementHandler for ClusterJoinHandler {
             .await
             .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to join node: {}", e)))?;
 
-        Ok(ExecutionResult::Success {
-            message: format!(
-                "Cluster join completed for node {} (rpc={}, api={}). Data leader rebalance was requested after promotion.",
-                node_id, rpc_addr, api_addr
-            ),
-        })
+        cluster_join_rows(*node_id, rpc_addr, api_addr, true)
     }
 }

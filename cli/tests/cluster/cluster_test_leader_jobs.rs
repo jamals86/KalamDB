@@ -81,8 +81,7 @@ fn cluster_test_leader_only_flush_jobs() {
         .and_then(|resp| resp.results.first())
         .and_then(|r| r.message.as_deref())
         .and_then(|msg| {
-            msg.find("Job ID: ")
-                .map(|pos| msg[pos + "Job ID: ".len()..].trim().to_string())
+            msg.find("Job ID: ").map(|pos| msg[pos + "Job ID: ".len()..].trim().to_string())
         })
         .filter(|id| !id.is_empty());
 

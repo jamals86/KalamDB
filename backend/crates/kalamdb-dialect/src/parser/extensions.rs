@@ -107,8 +107,6 @@ pub enum ExtensionStatement {
     ClusterStepdown,
     /// CLUSTER CLEAR command
     ClusterClear,
-    /// CLUSTER LIST command
-    ClusterList,
 }
 
 impl ExtensionStatement {
@@ -428,14 +426,19 @@ impl ExtensionStatement {
                     "REBALANCE" => return Ok(ExtensionStatement::ClusterRebalance),
                     "STEPDOWN" | "STEP-DOWN" => return Ok(ExtensionStatement::ClusterStepdown),
                     "CLEAR" => return Ok(ExtensionStatement::ClusterClear),
-                    "LIST" | "LS" | "STATUS" => return Ok(ExtensionStatement::ClusterList),
+                    "LIST" | "LS" | "STATUS" => {
+                        return Err(
+                            "CLUSTER LIST is a CLI-only command. Use \\cluster list in kalam, or query system.cluster and system.cluster_groups directly."
+                                .to_string(),
+                        );
+                    },
                     "LEAVE" => {
                         return Err("CLUSTER LEAVE is not supported yet".to_string());
                     },
                     _ => {
                         return Err("Unknown CLUSTER subcommand. Supported: SNAPSHOT, PURGE, \
                                     TRIGGER ELECTION, TRANSFER-LEADER, JOIN, REBALANCE, STEPDOWN, \
-                                    CLEAR, LIST"
+                                    CLEAR"
                             .to_string())
                     },
                 }

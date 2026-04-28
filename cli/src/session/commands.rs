@@ -33,73 +33,40 @@ impl CLISession {
                 }
             },
             Command::ClusterSnapshot => {
-                println!("Triggering cluster snapshots...");
-                match self.execute("CLUSTER SNAPSHOT").await {
-                    Ok(_) => println!("Snapshot triggered"),
-                    Err(e) => eprintln!("Snapshot failed: {}", e),
-                }
+                self.show_cluster_group_action("CLUSTER SNAPSHOT").await?;
             },
             Command::ClusterPurge { upto } => {
-                println!("Purging cluster logs up to {}...", upto);
-                match self.execute(&format!("CLUSTER PURGE --UPTO {}", upto)).await {
-                    Ok(_) => {},
-                    Err(e) => eprintln!("Cluster purge failed: {}", e),
-                }
+                self.show_cluster_group_action(&format!("CLUSTER PURGE --UPTO {}", upto))
+                    .await?;
             },
             Command::ClusterTriggerElection => {
-                println!("Triggering cluster election...");
-                match self.execute("CLUSTER TRIGGER ELECTION").await {
-                    Ok(_) => {},
-                    Err(e) => eprintln!("Cluster trigger-election failed: {}", e),
-                }
+                self.show_cluster_group_action("CLUSTER TRIGGER ELECTION").await?;
             },
             Command::ClusterTransferLeader { node_id } => {
-                println!("Transferring cluster leadership to node {}...", node_id);
-                match self.execute(&format!("CLUSTER TRANSFER-LEADER {}", node_id)).await {
-                    Ok(_) => {},
-                    Err(e) => eprintln!("Cluster transfer-leader failed: {}", e),
-                }
+                self.show_cluster_group_action(&format!("CLUSTER TRANSFER-LEADER {}", node_id))
+                    .await?;
+            },
+            Command::ClusterRebalance => {
+                self.show_cluster_group_action("CLUSTER REBALANCE").await?;
             },
             Command::ClusterStepdown => {
-                println!("Requesting cluster leader stepdown...");
-                match self.execute("CLUSTER STEPDOWN").await {
-                    Ok(_) => {},
-                    Err(e) => eprintln!("Cluster stepdown failed: {}", e),
-                }
+                self.show_cluster_group_action("CLUSTER STEPDOWN").await?;
             },
             Command::ClusterClear => {
-                println!("Clearing old cluster snapshots...");
-                match self.execute("CLUSTER CLEAR").await {
-                    Ok(_) => {},
-                    Err(e) => eprintln!("Cluster clear failed: {}", e),
-                }
+                self.show_cluster_clear().await?;
             },
-            Command::ClusterList => match self.execute("SELECT * FROM system.cluster").await {
-                Ok(_) => {},
-                Err(e) => eprintln!("Cluster list failed: {}", e),
+            Command::ClusterList => {
+                self.show_cluster_list().await?;
             },
             Command::ClusterListGroups => {
-                match self.execute("SELECT * FROM system.cluster_groups").await {
-                    Ok(_) => {},
-                    Err(e) => eprintln!("Cluster list groups failed: {}", e),
-                }
+                self.show_cluster_list_groups().await?;
             },
-            Command::ClusterStatus => match self.execute("SELECT * FROM system.cluster").await {
-                Ok(_) => {},
-                Err(e) => eprintln!("Cluster status failed: {}", e),
-            },
-            Command::ClusterJoin(addr) => {
-                println!("{}  CLUSTER JOIN is not implemented yet", "⚠️".yellow());
-                println!("Would join node at: {}", addr);
-                println!(
-                    "\nTo add a node to the cluster, configure it in server.toml and restart."
-                );
-            },
-            Command::ClusterLeave => {
-                println!("{}  CLUSTER LEAVE is not implemented yet", "⚠️".yellow());
-                println!(
-                    "\nTo remove this node from the cluster, gracefully shut down the server."
-                );
+            Command::ClusterJoin {
+                node_id,
+                rpc_addr,
+                api_addr,
+            } => {
+                self.show_cluster_join(node_id, &rpc_addr, &api_addr).await?;
             },
             Command::Health => match self.health_check().await {
                 Ok(_) => {},
@@ -309,20 +276,14 @@ impl CLISession {
             "║    {:<48} Transfer cluster leadership",
             "\\cluster transfer-leader <node_id>".cyan()
         );
+        println!("║    {:<48} Rebalance data leaders", "\\cluster rebalance".cyan());
         println!("║    {:<48} Leader stepdown", "\\cluster stepdown".cyan());
         println!("║    {:<48} Clear old snapshots", "\\cluster clear".cyan());
         println!("║    {:<48} List cluster nodes", "\\cluster list".cyan());
         println!("║    {:<48} List all raft groups", "\\cluster list groups".cyan());
-        println!("║    {:<48} Cluster status", "\\cluster status".cyan());
         println!(
-            "║    {:<48} Join node {}",
-            "\\cluster join <addr>".cyan(),
-            "(not implemented)".yellow()
-        );
-        println!(
-            "║    {:<48} Leave cluster {}",
-            "\\cluster leave".cyan(),
-            "(not implemented)".yellow()
+            "║    {:<48} Join node at runtime",
+            "\\cluster join <node_id> <rpc_addr> <api_addr>".cyan()
         );
         println!(
             "║    {:<48} Live per-node stats",
@@ -376,7 +337,7 @@ impl CLISession {
         println!("{}", "║  Examples".bright_blue().bold());
         println!("║    {}", "SELECT * FROM system.tables LIMIT 5;".green());
         println!("║    {}", "SELECT name FROM system.namespaces;".green());
-        println!("║    {}", "\\cluster status".green());
+        println!("║    {}", "\\cluster list".green());
 
         println!(
             "{}",

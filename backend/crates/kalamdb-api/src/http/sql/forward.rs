@@ -93,7 +93,7 @@ fn prepared_statement_table_type(
     })
 }
 
-fn prepared_statement_target_group(
+pub(crate) fn prepared_statement_target_group(
     statement: &PreparedApiExecutionStatement,
     app_context: &AppContext,
     user_id: &UserId,

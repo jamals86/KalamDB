@@ -323,7 +323,7 @@ impl SqlStatement {
                 })
             },
 
-            // Cluster operations - require admin (except CLUSTER LIST which is read-only)
+            // Cluster operations - require admin
             ["CLUSTER", "SNAPSHOT", ..] => {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
@@ -502,14 +502,12 @@ impl SqlStatement {
                 }
                 Ok(Self::new(sql.to_string(), SqlStatementKind::ClusterClear))
             },
-            ["CLUSTER", "LIST", ..] => {
-                // Read-only, allowed for all users
-                Ok(Self::new(sql.to_string(), SqlStatementKind::ClusterList))
-            },
-            ["CLUSTER", "STATUS", ..] | ["CLUSTER", "LS", ..] => {
-                // Read-only, allowed for all users
-                Ok(Self::new(sql.to_string(), SqlStatementKind::ClusterList))
-            },
+            ["CLUSTER", "LIST", ..]
+            | ["CLUSTER", "STATUS", ..]
+            | ["CLUSTER", "LS", ..] => Err(StatementClassificationError::InvalidSql {
+                sql: sql.to_string(),
+                message: "CLUSTER LIST is a CLI-only command. Use \\cluster list in kalam, or query system.cluster and system.cluster_groups directly.".to_string(),
+            }),
             ["CLUSTER", "LEAVE", ..] => Err(StatementClassificationError::InvalidSql {
                 sql: sql.to_string(),
                 message: "CLUSTER LEAVE is not supported yet".to_string(),
@@ -771,8 +769,7 @@ impl SqlStatement {
             | SqlStatementKind::ClusterJoin { .. }
             | SqlStatementKind::ClusterRebalance
             | SqlStatementKind::ClusterStepdown
-            | SqlStatementKind::ClusterClear
-            | SqlStatementKind::ClusterList => Err("Admin privileges (DBA or System role) \
+            | SqlStatementKind::ClusterClear => Err("Admin privileges (DBA or System role) \
                                                     required for storage and cluster operations"
                 .to_string()),
 

@@ -4,6 +4,7 @@
 
 use std::sync::Arc;
 
+use super::result_rows::cluster_clear_rows;
 use kalamdb_core::{
     app_context::AppContext,
     error::KalamDbError,
@@ -42,12 +43,15 @@ impl StatementHandler for ClusterClearHandler {
         let snapshots_dir = config.storage.resolved_snapshots_dir();
 
         if !snapshots_dir.exists() {
-            return Ok(ExecutionResult::Success {
-                message: format!(
-                    "No snapshots directory found at: {}\nNothing to clear.",
-                    snapshots_dir.display()
-                ),
-            });
+            return cluster_clear_rows(
+                snapshots_dir.display().to_string(),
+                false,
+                0,
+                0,
+                0,
+                0,
+                Vec::new(),
+            );
         }
 
         // Count files before clearing
@@ -115,33 +119,20 @@ impl StatementHandler for ClusterClearHandler {
             }
         }
 
-        // Build response message
-        let mut message = format!(
-            "Cluster clear completed\nSnapshots directory: {}\nTotal snapshots found: {} ({:.2} \
-             MB)\nSnapshots cleared: {} ({:.2} MB freed)",
-            snapshots_dir.display(),
-            total_files,
-            total_size as f64 / 1024.0 / 1024.0,
-            cleared_files,
-            cleared_size as f64 / 1024.0 / 1024.0
-        );
-
-        if !errors.is_empty() {
-            message.push_str(&format!("\n\nErrors ({}):", errors.len()));
-            for error in errors.iter().take(5) {
-                message.push_str(&format!("\n  - {}", error));
-            }
-            if errors.len() > 5 {
-                message.push_str(&format!("\n  ... and {} more errors", errors.len() - 5));
-            }
-        }
-
         log::info!(
             "CLUSTER CLEAR completed: {} files cleared, {:.2} MB freed",
             cleared_files,
             cleared_size as f64 / 1024.0 / 1024.0
         );
 
-        Ok(ExecutionResult::Success { message })
+        cluster_clear_rows(
+            snapshots_dir.display().to_string(),
+            true,
+            total_files as u64,
+            total_size,
+            cleared_files as u64,
+            cleared_size,
+            errors,
+        )
     }
 }

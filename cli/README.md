@@ -219,17 +219,7 @@ Special commands starting with backslash (`\`):
 | `\show-credentials` / `\credentials` | Show stored credentials |
 | `\update-credentials <u> <p>` | Update stored credentials |
 | `\delete-credentials` | Delete stored credentials |
-| `\cluster snapshot` | Trigger cluster snapshot |
-| `\cluster purge --upto <index>` | Purge cluster logs up to index |
-| `\cluster trigger-election` | Trigger cluster election |
-| `\cluster transfer-leader <node_id>` | Transfer cluster leadership |
-| `\cluster stepdown` | Request leader stepdown |
-| `\cluster clear` | Clear old snapshots |
-| `\cluster list` / `\cluster ls` | List cluster nodes |
-| `\cluster list groups` | List cluster groups |
-| `\cluster status` | Cluster status |
-| `\cluster join <addr>` | Join a node (not yet implemented) |
-| `\cluster leave` | Leave cluster (not yet implemented) |
+| `\cluster ...` | Cluster inspection and admin commands. See [docs/getting-started/cli.md](../docs/getting-started/cli.md#cluster-meta-commands). |
 
 ### Using the CLI (Interactive Mode)
 

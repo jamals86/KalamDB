@@ -28,9 +28,12 @@ pub enum Command {
     ClusterClear,
     ClusterList,
     ClusterListGroups,
-    ClusterStatus,
-    ClusterJoin(String), // node address to join
-    ClusterLeave,
+    ClusterJoin {
+        node_id: u64,
+        rpc_addr: String,
+        api_addr: String,
+    },
+    ClusterRebalance,
     Health,
     Pause,
     Continue,
@@ -109,7 +112,7 @@ impl CommandParser {
                 if args.is_empty() {
                     Err(CLIError::ParseError(
                         "\\cluster requires: snapshot, purge, trigger-election, transfer-leader, \
-                         stepdown, clear, list, status, join, or leave"
+                         rebalance, stepdown, clear, list, or join"
                             .into(),
                     ))
                 } else {
@@ -174,6 +177,7 @@ impl CommandParser {
                                 ))
                             }
                         },
+                        "rebalance" => Ok(Command::ClusterRebalance),
                         "stepdown" | "step-down" => Ok(Command::ClusterStepdown),
                         "clear" => Ok(Command::ClusterClear),
                         "list" | "ls" => {
@@ -183,17 +187,25 @@ impl CommandParser {
                                 Ok(Command::ClusterList)
                             }
                         },
-                        "status" => Ok(Command::ClusterStatus),
                         "join" => {
-                            if args.len() < 2 {
+                            if args.len() < 4 {
                                 Err(CLIError::ParseError(
-                                    "\\cluster join requires a node address".into(),
+                                    "\\cluster join requires <node_id> <rpc_addr> <api_addr>"
+                                        .into(),
                                 ))
                             } else {
-                                Ok(Command::ClusterJoin(args[1].to_string()))
+                                let node_id = args[1].parse::<u64>().map_err(|_| {
+                                    CLIError::ParseError(
+                                        "\\cluster join requires a numeric node id".into(),
+                                    )
+                                })?;
+                                Ok(Command::ClusterJoin {
+                                    node_id,
+                                    rpc_addr: args[2].to_string(),
+                                    api_addr: args[3].to_string(),
+                                })
                             }
                         },
-                        "leave" => Ok(Command::ClusterLeave),
                         _ => Err(CLIError::ParseError(format!(
                             "Unknown cluster subcommand: {}",
                             args[0]
@@ -401,5 +413,31 @@ mod tests {
         let parser = CommandParser::new();
         assert!(parser.parse("").is_err());
         assert!(parser.parse("   ").is_err());
+    }
+
+    #[test]
+    fn test_parse_cluster_join() {
+        let parser = CommandParser::new();
+        let cmd = parser.parse("\\cluster join 2 10.0.0.2:9188 http://10.0.0.2:8080").unwrap();
+        assert_eq!(
+            cmd,
+            Command::ClusterJoin {
+                node_id: 2,
+                rpc_addr: "10.0.0.2:9188".to_string(),
+                api_addr: "http://10.0.0.2:8080".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_cluster_rebalance() {
+        let parser = CommandParser::new();
+        assert_eq!(parser.parse("\\cluster rebalance").unwrap(), Command::ClusterRebalance);
+    }
+
+    #[test]
+    fn test_parse_cluster_leave_is_rejected() {
+        let parser = CommandParser::new();
+        assert!(parser.parse("\\cluster leave").is_err());
     }
 }

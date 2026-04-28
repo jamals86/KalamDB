@@ -87,7 +87,11 @@ mod cluster_common {
         .expect("Failed to build cluster client")
     }
 
-    fn build_cluster_client_with_auth(base_url: &str, username: &str, password: &str) -> KalamLinkClient {
+    fn build_cluster_client_with_auth(
+        base_url: &str,
+        username: &str,
+        password: &str,
+    ) -> KalamLinkClient {
         client_for_user_on_url_with_timeouts(
             base_url,
             username,

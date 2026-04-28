@@ -34,13 +34,14 @@ use kalamdb_core::{
     sql::{context::ExecutionContext, executor::SqlExecutor, SqlImpersonationService},
 };
 use kalamdb_jobs::health_monitor::record_activity_now;
+use kalamdb_raft::GroupId;
 use kalamdb_session::AuthSession;
 use uuid::Uuid;
 
 use super::{
     execution_paths::{execute_batch_path, execute_file_upload_path},
     file_utils::extract_file_placeholders,
-    forward::forward_sql_if_follower,
+    forward::{forward_sql_if_follower, prepared_statement_target_group},
     helpers::parse_scalar_params,
     models::{ErrorCode, QueryRequest, SqlResponse},
     request::{parse_incoming_payload, took_ms, validate_sql_length},
@@ -139,19 +140,7 @@ pub async fn execute_sql_v1(
     let mut exec_ctx = ExecutionContext::from_session(session, Arc::clone(&base_session))
         .with_namespace_id(default_namespace.clone());
 
-    // 5. File uploads must go to the leader
-    if files_present {
-        let is_meta_leader = app_context.executor().is_leader(kalamdb_raft::GroupId::Meta).await;
-        if !is_meta_leader {
-            return HttpResponse::ServiceUnavailable().json(SqlResponse::error(
-                ErrorCode::NotLeader,
-                "File uploads must be sent to the current leader",
-                took_ms(start_time),
-            ));
-        }
-    }
-
-    // 6. Split, parse, and classify SQL statements once. Follower forwarding reuses
+    // 5. Split, parse, and classify SQL statements once. Follower forwarding reuses
     // this metadata so read-only follower requests do not pay a second parse pass.
     let prepared_statements =
         match split_and_prepare_statements(&sql, &exec_ctx, sql_executor.get_ref(), start_time) {
@@ -161,6 +150,34 @@ pub async fn execute_sql_v1(
 
     if exec_ctx.request_id().is_none() && batch_requires_request_id(&prepared_statements) {
         exec_ctx = exec_ctx.with_request_id(Uuid::now_v7().to_string());
+    }
+
+    // 6. Multipart uploads cannot use the normal gRPC SQL forwarder because the
+    // file payload is local to this HTTP request. Instead, reject early with a
+    // standard leader hint before any file staging happens so the client can retry.
+    if files_present {
+        if let Some(target_group) = prepared_statements.iter().find_map(|statement| {
+            prepared_statement_target_group(statement, app_context.get_ref(), exec_ctx.user_id())
+        }) {
+            if !app_context.executor().is_leader(target_group).await {
+                let leader_addr = match target_group {
+                    GroupId::DataSharedShard(_) => app_context.leader_addr_for_shared().await,
+                    GroupId::DataUserShard(_) => {
+                        app_context.leader_addr_for_user(exec_ctx.user_id()).await
+                    },
+                    _ => None,
+                };
+                let message = match leader_addr {
+                    Some(addr) => format!("Not leader for shard. Leader: {}", addr),
+                    None => "Not leader for shard. Leader unknown".to_string(),
+                };
+                return HttpResponse::ServiceUnavailable().json(SqlResponse::error(
+                    ErrorCode::NotLeader,
+                    &message,
+                    took_ms(start_time),
+                ));
+            }
+        }
     }
 
     // 7. Forward leader-routed operations to their actual group leader if this

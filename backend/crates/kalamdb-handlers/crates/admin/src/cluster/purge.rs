@@ -4,6 +4,7 @@
 
 use std::sync::Arc;
 
+use super::result_rows::cluster_group_action_rows;
 use kalamdb_core::{
     app_context::AppContext,
     error::KalamDbError,
@@ -51,24 +52,14 @@ impl StatementHandler for ClusterPurgeHandler {
             .await
             .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to purge logs: {}", e)))?;
 
-        let success_count = results.iter().filter(|r| r.success).count();
-        let total_count = results.len();
-        let failed_count = total_count - success_count;
-
-        let mut message = format!(
-            "Cluster purge completed: {}/{} groups purged successfully (upto={})",
-            success_count, total_count, upto
-        );
-
-        if failed_count > 0 {
-            message.push_str("\n\nFailed groups:");
-            for result in results.iter().filter(|r| !r.success) {
-                if let Some(ref err) = result.error {
-                    message.push_str(&format!("\n  - {:?}: {}", result.group_id, err));
-                }
-            }
-        }
-
-        Ok(ExecutionResult::Success { message })
+        cluster_group_action_rows(
+            "purge",
+            None,
+            Some(*upto),
+            None,
+            results
+                .into_iter()
+                .map(|result| (result.group_id.to_string(), result.success, result.error, None)),
+        )
     }
 }

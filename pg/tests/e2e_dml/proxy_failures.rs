@@ -8,8 +8,8 @@ use serde_json::Value;
 use tokio_postgres::{Config, NoTls};
 
 use super::common::{
-    kalamdb_account_login_server_options, kalamdb_grpc_target, pg_backend_pid, postgres_error_text,
-    unique_name, TestEnv,
+    kalamdb_account_login_server_options, pg_backend_pid, postgres_error_text,
+    shared_leader_grpc_target, unique_name, TestEnv,
 };
 use crate::e2e_common::tcp_proxy::TcpDisconnectProxy;
 
@@ -72,6 +72,11 @@ impl DerefMut for OwnedPgClient {
 enum TerminalAction {
     Commit,
     Rollback,
+}
+
+struct ProvisionedProxy {
+    proxy: TcpDisconnectProxy,
+    leader_base_url: String,
 }
 
 impl TerminalAction {
@@ -166,6 +171,112 @@ async fn create_proxy_shared_foreign_table(
     TestEnv::global().await.wait_for_kalamdb_table_exists("e2e", table).await;
 }
 
+async fn update_proxy_foreign_server(
+    client: &tokio_postgres::Client,
+    server_name: &str,
+    host: &str,
+    port: u16,
+) {
+    client
+        .batch_execute(&format!(
+            "ALTER SERVER {server_name} OPTIONS (SET host '{}', SET port '{}');",
+            sql_escape_literal(host),
+            port
+        ))
+        .await
+        .expect("retarget proxy foreign server");
+}
+
+fn leader_grpc_target_from_message(message: &str) -> Option<(String, u16)> {
+    let marker = "Leader:";
+    let leader_hint = message.split_once(marker)?.1.trim();
+    let leader_hint = leader_hint
+        .strip_prefix("Some(")
+        .and_then(|value| value.strip_suffix(')'))
+        .unwrap_or(leader_hint)
+        .trim()
+        .trim_matches('"');
+
+    if leader_hint.is_empty() || leader_hint.contains("Leader unknown") {
+        return None;
+    }
+
+    let authority = leader_hint
+        .trim_start_matches("http://")
+        .trim_start_matches("https://")
+        .split('/')
+        .next()
+        .unwrap_or(leader_hint);
+
+    let (host, http_port) = authority.rsplit_once(':')?;
+    let http_port = http_port.parse::<u16>().ok()?;
+    let grpc_port = match http_port {
+        8080 => 9188,
+        _ => http_port.checked_add(1000)?,
+    };
+
+    Some((host.to_string(), grpc_port))
+}
+
+fn grpc_http_base_url(host: &str, grpc_port: u16) -> String {
+    let http_port = match grpc_port {
+        9188 => 8080,
+        _ => grpc_port.saturating_sub(1000),
+    };
+    format!("http://{host}:{http_port}")
+}
+
+async fn probe_proxy_transaction_insert(
+    client: &tokio_postgres::Client,
+    qualified_table: &str,
+    probe_id: &str,
+) -> Result<(), String> {
+    client
+        .batch_execute("BEGIN")
+        .await
+        .expect("begin proxy leader probe transaction");
+
+    let insert_result = client
+        .execute(
+            &format!("INSERT INTO {qualified_table} (id, title, value) VALUES ($1, $2, $3)"),
+            &[&probe_id, &"proxy leader probe", &0_i32],
+        )
+        .await;
+
+    let _ = client.batch_execute("ROLLBACK").await;
+
+    match insert_result {
+        Ok(_) => Ok(()),
+        Err(error) => Err(postgres_error_text(&error)),
+    }
+}
+
+async fn provision_proxy_shared_foreign_table(
+    client: &tokio_postgres::Client,
+    server_name: &str,
+    table: &str,
+    extra_server_options: Option<&str>,
+) -> ProvisionedProxy {
+    let (target_host, target_port) = shared_leader_grpc_target().await;
+
+    let proxy = TcpDisconnectProxy::start(&format!("http://{target_host}:{target_port}")).await;
+    let (proxy_host, proxy_port) = proxy_host_port(proxy.base_url());
+    create_proxy_shared_foreign_table(
+        client,
+        server_name,
+        table,
+        &proxy_host,
+        proxy_port,
+        extra_server_options,
+    )
+    .await;
+
+    ProvisionedProxy {
+        proxy,
+        leader_base_url: grpc_http_base_url(&target_host, target_port),
+    }
+}
+
 async fn cleanup_proxy_table(env: &TestEnv, table: &str, server_name: &str) {
     let cleanup = env.pg_connect().await;
     cleanup
@@ -226,36 +337,59 @@ async fn wait_for_row_count(
     }
 }
 
-async fn fetch_session_rows(env: &TestEnv, client_addr: &str) -> Vec<Vec<Value>> {
-    let client_addr = sql_escape_literal(client_addr);
+async fn fetch_active_transaction_session_rows(env: &TestEnv, base_url: &str) -> Vec<Vec<Value>> {
     sql_rows(
-        &env.kalamdb_sql(&format!(
+        &env.kalamdb_sql_at(
+            base_url,
             "SELECT session_id, state, transaction_id, transaction_state FROM system.sessions \
-             WHERE client_addr = '{client_addr}' ORDER BY last_seen_at DESC"
-        ))
+             WHERE transaction_id IS NOT NULL AND transaction_state = 'active' ORDER BY \
+             last_seen_at DESC",
+        )
         .await,
     )
 }
 
-async fn fetch_transaction_rows(env: &TestEnv, transaction_id: &str) -> Vec<Vec<Value>> {
+async fn fetch_session_rows(env: &TestEnv, base_url: &str, session_id: &str) -> Vec<Vec<Value>> {
+    let session_id = sql_escape_literal(session_id);
     sql_rows(
-        &env.kalamdb_sql(&format!(
+        &env.kalamdb_sql_at(
+            base_url,
+            &format!(
+                "SELECT session_id, state, transaction_id, transaction_state FROM system.sessions \
+             WHERE session_id = '{session_id}' ORDER BY last_seen_at DESC"
+            ),
+        )
+        .await,
+    )
+}
+
+async fn fetch_transaction_rows(
+    env: &TestEnv,
+    base_url: &str,
+    transaction_id: &str,
+) -> Vec<Vec<Value>> {
+    sql_rows(
+        &env.kalamdb_sql_at(
+            base_url,
+            &format!(
             "SELECT transaction_id, owner_id, origin, state, write_count FROM system.transactions \
              WHERE transaction_id = '{transaction_id}'"
-        ))
+        ),
+        )
         .await,
     )
 }
 
 async fn wait_for_transaction_row(
     env: &TestEnv,
+    base_url: &str,
     transaction_id: &str,
     timeout: Duration,
 ) -> Vec<Value> {
     let deadline = Instant::now() + timeout;
 
     loop {
-        let rows = fetch_transaction_rows(env, transaction_id).await;
+        let rows = fetch_transaction_rows(env, base_url, transaction_id).await;
         if let Some(row) = rows.first() {
             return row.clone();
         }
@@ -266,44 +400,54 @@ async fn wait_for_transaction_row(
     }
 }
 
-async fn wait_for_session_rows(
+async fn wait_for_active_transaction_session_row(
     env: &TestEnv,
-    client_addr: &str,
+    base_url: &str,
     timeout: Duration,
-) -> Vec<Vec<Value>> {
+) -> Vec<Value> {
     let deadline = Instant::now() + timeout;
 
     loop {
-        let rows = fetch_session_rows(env, client_addr).await;
-        if !rows.is_empty() {
-            return rows;
+        let rows = fetch_active_transaction_session_rows(env, base_url).await;
+        if let Some(row) = rows.first() {
+            return row.clone();
         }
         if Instant::now() >= deadline {
-            panic!("client_addr {client_addr} did not appear in system.sessions within timeout");
+            panic!("active PgRpc session did not appear in system.sessions within timeout");
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }
 
-async fn wait_for_session_cleanup(env: &TestEnv, client_addr: &str, timeout: Duration) {
+async fn wait_for_session_cleanup(
+    env: &TestEnv,
+    base_url: &str,
+    session_id: &str,
+    timeout: Duration,
+) {
     let deadline = Instant::now() + timeout;
 
     loop {
-        if fetch_session_rows(env, client_addr).await.is_empty() {
+        if fetch_session_rows(env, base_url, session_id).await.is_empty() {
             return;
         }
         if Instant::now() >= deadline {
-            panic!("client_addr {client_addr} remained in system.sessions past cleanup timeout");
+            panic!("session {session_id} remained in system.sessions past cleanup timeout");
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }
 
-async fn wait_for_transaction_cleanup(env: &TestEnv, transaction_id: &str, timeout: Duration) {
+async fn wait_for_transaction_cleanup(
+    env: &TestEnv,
+    base_url: &str,
+    transaction_id: &str,
+    timeout: Duration,
+) {
     let deadline = Instant::now() + timeout;
 
     loop {
-        if fetch_transaction_rows(env, transaction_id).await.is_empty() {
+        if fetch_transaction_rows(env, base_url, transaction_id).await.is_empty() {
             return;
         }
         if Instant::now() >= deadline {
@@ -326,15 +470,13 @@ fn proxy_host_port(base_url: &str) -> (String, u16) {
 async fn run_terminal_proxy_cleanup_scenario(action: TerminalAction) {
     let env = TestEnv::global().await;
     let mut pg = OwnedPgClient::connect().await;
-    let (grpc_host, grpc_port) = kalamdb_grpc_target();
-    let proxy = TcpDisconnectProxy::start(&format!("http://{grpc_host}:{grpc_port}")).await;
     let server_name = unique_name(&format!("proxy_server_{}", action.label()));
     let table = unique_name(&format!("proxy_{}", action.label()));
     let qualified_table = format!("e2e.{table}");
-    let (proxy_host, proxy_port) = proxy_host_port(proxy.base_url());
-
-    create_proxy_shared_foreign_table(&pg, &server_name, &table, &proxy_host, proxy_port, None)
-        .await;
+    let ProvisionedProxy {
+        proxy,
+        leader_base_url,
+    } = provision_proxy_shared_foreign_table(&pg, &server_name, &table, None).await;
 
     let tx = pg.transaction().await.expect("begin transaction through proxy");
     tx.execute(
@@ -353,20 +495,21 @@ async fn run_terminal_proxy_cleanup_scenario(action: TerminalAction) {
         "proxy should observe the gRPC connection before transport failure"
     );
 
-    let session_client_addr = proxy
+    let _session_client_addr = proxy
         .wait_for_backend_client_addr(Duration::from_secs(3))
         .await
         .expect("proxy should expose the backend-facing client address");
 
-    let session_rows =
-        wait_for_session_rows(env, &session_client_addr, Duration::from_secs(3)).await;
-    assert_eq!(session_rows.len(), 1);
-    assert_eq!(string_cell(&session_rows[0], 1).as_deref(), Some("idle in transaction"));
-    assert_eq!(string_cell(&session_rows[0], 3).as_deref(), Some("active"));
-    let transaction_id =
-        string_cell(&session_rows[0], 2).expect("transaction id in system.sessions");
+    let session_row =
+        wait_for_active_transaction_session_row(env, &leader_base_url, Duration::from_secs(3))
+            .await;
+    let session_id = string_cell(&session_row, 0).expect("session id in system.sessions");
+    assert_eq!(string_cell(&session_row, 1).as_deref(), Some("idle in transaction"));
+    assert_eq!(string_cell(&session_row, 3).as_deref(), Some("active"));
+    let transaction_id = string_cell(&session_row, 2).expect("transaction id in system.sessions");
     let transaction_row =
-        wait_for_transaction_row(env, &transaction_id, Duration::from_secs(3)).await;
+        wait_for_transaction_row(env, &leader_base_url, &transaction_id, Duration::from_secs(3))
+            .await;
     assert_eq!(string_cell(&transaction_row, 2).as_deref(), Some("PgRpc"));
     assert!(matches!(
         string_cell(&transaction_row, 3).as_deref(),
@@ -382,11 +525,11 @@ async fn run_terminal_proxy_cleanup_scenario(action: TerminalAction) {
             let message = postgres_error_text(&terminal_error);
             assert_transport_or_timeout_error(&message, action.label());
 
-            let stuck_session_rows =
-                wait_for_session_rows(env, &session_client_addr, Duration::from_secs(2)).await;
+            let stuck_session_rows = fetch_session_rows(env, &leader_base_url, &session_id).await;
             assert_eq!(stuck_session_rows.len(), 1);
             assert_eq!(string_cell(&stuck_session_rows[0], 2), Some(transaction_id.clone()));
-            let stuck_transaction_rows = fetch_transaction_rows(env, &transaction_id).await;
+            let stuck_transaction_rows =
+                fetch_transaction_rows(env, &leader_base_url, &transaction_id).await;
             assert_eq!(stuck_transaction_rows.len(), 1);
         },
         TerminalAction::Rollback => {
@@ -400,8 +543,9 @@ async fn run_terminal_proxy_cleanup_scenario(action: TerminalAction) {
     proxy.simulate_server_up();
     pg.disconnect().await;
 
-    wait_for_session_cleanup(env, &session_client_addr, Duration::from_secs(5)).await;
-    wait_for_transaction_cleanup(env, &transaction_id, Duration::from_secs(5)).await;
+    wait_for_session_cleanup(env, &leader_base_url, &session_id, Duration::from_secs(5)).await;
+    wait_for_transaction_cleanup(env, &leader_base_url, &transaction_id, Duration::from_secs(5))
+        .await;
 
     let final_rows = env
         .kalamdb_sql(&format!("SELECT id FROM {qualified_table} WHERE id = '{}-1'", action.label()))
@@ -446,15 +590,11 @@ async fn owned_pg_client_disconnect_terminates_backend() {
 async fn e2e_proxy_autocommit_query_recovers_after_disconnect() {
     let env = TestEnv::global().await;
     let pg = OwnedPgClient::connect().await;
-    let (grpc_host, grpc_port) = kalamdb_grpc_target();
-    let proxy = TcpDisconnectProxy::start(&format!("http://{grpc_host}:{grpc_port}")).await;
     let server_name = unique_name("proxy_recover_server");
     let table = unique_name("proxy_recover_items");
     let qualified_table = format!("e2e.{table}");
-    let (proxy_host, proxy_port) = proxy_host_port(proxy.base_url());
-
-    create_proxy_shared_foreign_table(&pg, &server_name, &table, &proxy_host, proxy_port, None)
-        .await;
+    let ProvisionedProxy { proxy, .. } =
+        provision_proxy_shared_foreign_table(&pg, &server_name, &table, None).await;
 
     pg.execute(
         &format!("INSERT INTO {qualified_table} (id, title, value) VALUES ($1, $2, $3)"),
@@ -493,16 +633,13 @@ async fn e2e_proxy_autocommit_query_recovers_after_disconnect() {
 async fn e2e_proxy_slow_link_keeps_connection_usable() {
     let env = TestEnv::global().await;
     let pg = OwnedPgClient::connect().await;
-    let (grpc_host, grpc_port) = kalamdb_grpc_target();
-    let proxy = TcpDisconnectProxy::start(&format!("http://{grpc_host}:{grpc_port}")).await;
     let server_name = unique_name("proxy_slow_server");
     let table = unique_name("proxy_slow_items");
     let qualified_table = format!("e2e.{table}");
-    let (proxy_host, proxy_port) = proxy_host_port(proxy.base_url());
+    let ProvisionedProxy { proxy, .. } =
+        provision_proxy_shared_foreign_table(&pg, &server_name, &table, None).await;
 
     proxy.set_chunk_delay(Duration::from_millis(200));
-    create_proxy_shared_foreign_table(&pg, &server_name, &table, &proxy_host, proxy_port, None)
-        .await;
 
     pg.execute(
         &format!("INSERT INTO {qualified_table} (id, title, value) VALUES ($1, $2, $3)"),
@@ -540,15 +677,11 @@ async fn e2e_proxy_slow_link_keeps_connection_usable() {
 async fn e2e_proxy_blackhole_timeout_recovers_after_traffic_is_restored() {
     let env = TestEnv::global().await;
     let pg = OwnedPgClient::connect().await;
-    let (grpc_host, grpc_port) = kalamdb_grpc_target();
-    let proxy = TcpDisconnectProxy::start(&format!("http://{grpc_host}:{grpc_port}")).await;
     let server_name = unique_name("proxy_blackhole_server");
     let table = unique_name("proxy_blackhole_items");
     let qualified_table = format!("e2e.{table}");
-    let (proxy_host, proxy_port) = proxy_host_port(proxy.base_url());
-
-    create_proxy_shared_foreign_table(&pg, &server_name, &table, &proxy_host, proxy_port, None)
-        .await;
+    let ProvisionedProxy { proxy, .. } =
+        provision_proxy_shared_foreign_table(&pg, &server_name, &table, None).await;
 
     pg.execute(
         &format!("INSERT INTO {qualified_table} (id, title, value) VALUES ($1, $2, $3)"),

@@ -110,11 +110,6 @@ pub fn register_admin_handlers(registry: &HandlerRegistry, app_context: Arc<AppC
         SqlStatementKind::ClusterClear,
         cluster::ClusterClearHandler::new(app_context.clone()),
     );
-    register_dynamic_handler!(
-        registry,
-        SqlStatementKind::ClusterList,
-        cluster::ClusterListHandler::new(app_context.clone()),
-    );
 
     register_typed_handler!(
         registry,

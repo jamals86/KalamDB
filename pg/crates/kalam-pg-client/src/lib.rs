@@ -6,9 +6,10 @@ use kalam_pg_api::{MutationResponse, ScanResponse};
 use kalam_pg_common::{KalamPgError, RemoteAuthMode, RemoteServerConfig};
 use kalamdb_pg::{
     BeginTransactionRequest, CloseSessionRequest, CommitTransactionRequest, DeleteRpcRequest,
-    ExecuteQueryRpcRequest, ExecuteSqlRpcRequest, InsertRpcRequest, OpenSessionRequest,
-    PgServiceClient, PingRequest, RollbackTransactionRequest, ScanFilterExpression, ScanRpcRequest,
-    UpdateRpcRequest,
+    DeleteRpcResponse, ExecuteQueryRpcRequest, ExecuteSqlRpcRequest, InsertRpcRequest,
+    InsertRpcResponse, OpenSessionRequest, PgServiceClient, PingRequest,
+    RollbackTransactionRequest, ScanFilterExpression, ScanRpcRequest, ScanRpcResponse,
+    UpdateRpcRequest, UpdateRpcResponse,
 };
 #[cfg(feature = "tls")]
 use tonic::transport::{Certificate, ClientTlsConfig, Identity};
@@ -272,6 +273,123 @@ impl RemoteKalamClient {
         }
     }
 
+    fn leader_redirect_hint(status: &tonic::Status) -> Option<&str> {
+        if !matches!(status.code(), tonic::Code::Internal | tonic::Code::FailedPrecondition) {
+            return None;
+        }
+
+        let marker = "Leader: ";
+        let message = status.message();
+        let index = message.find(marker)?;
+        let leader = message[index + marker.len()..].trim();
+
+        if leader.is_empty() || leader.eq_ignore_ascii_case("unknown") {
+            None
+        } else {
+            Some(leader)
+        }
+    }
+
+    fn parse_leader_authority(leader_hint: &str) -> Option<(String, Option<u16>)> {
+        let mut leader_hint = leader_hint.trim();
+
+        while let Some(stripped) =
+            leader_hint.strip_prefix("Some(").and_then(|value| value.strip_suffix(')'))
+        {
+            leader_hint = stripped.trim();
+        }
+
+        leader_hint = leader_hint.trim_matches(|ch| ch == '"' || ch == '\'');
+
+        let authority = leader_hint
+            .split_once("://")
+            .map(|(_, value)| value)
+            .unwrap_or(leader_hint)
+            .split('/')
+            .next()
+            .unwrap_or(leader_hint)
+            .rsplit('@')
+            .next()
+            .unwrap_or(leader_hint)
+            .trim_matches(|ch| ch == '"' || ch == '\'')
+            .trim();
+
+        if authority.is_empty() {
+            return None;
+        }
+
+        if let Some(rest) = authority.strip_prefix('[') {
+            let end = rest.find(']')?;
+            let host = rest[..end].trim();
+            if host.is_empty() {
+                return None;
+            }
+            let port = rest[end + 1..]
+                .strip_prefix(':')
+                .map(|value| value.trim_matches(|ch| ch == '"' || ch == '\''))
+                .and_then(|value| value.parse::<u16>().ok());
+            return Some((host.to_string(), port));
+        }
+
+        if let Some((host, port)) = authority.rsplit_once(':') {
+            if !host.contains(':') {
+                return Some((
+                    host.trim().to_string(),
+                    port.trim_matches(|ch| ch == '"' || ch == '\'').parse::<u16>().ok(),
+                ));
+            }
+        }
+
+        Some((authority.to_string(), None))
+    }
+
+    fn leader_rpc_candidate_ports(leader_api_port: Option<u16>, current_rpc_port: u16) -> Vec<u16> {
+        let mut ports = Vec::with_capacity(2);
+
+        if let Some(api_port) = leader_api_port {
+            let mapped_port = match api_port {
+                8080 => Some(9188),
+                _ => api_port.checked_add(1000),
+            };
+
+            if let Some(port) = mapped_port {
+                ports.push(port);
+            }
+        }
+
+        if !ports.contains(&current_rpc_port) {
+            ports.push(current_rpc_port);
+        }
+
+        ports
+    }
+
+    async fn reconnect_to_leader(&self, status: &tonic::Status, session_id: &str) -> Option<Self> {
+        let leader_hint = Self::leader_redirect_hint(status)?;
+        let (host, leader_api_port) = Self::parse_leader_authority(leader_hint)?;
+
+        for port in Self::leader_rpc_candidate_ports(leader_api_port, self.config.port) {
+            if host == self.config.host && port == self.config.port {
+                continue;
+            }
+
+            let mut config = self.config.clone();
+            config.host = host.clone();
+            config.port = port;
+
+            let client = match Self::connect(config).await {
+                Ok(client) => client,
+                Err(_) => continue,
+            };
+
+            if client.open_session(Some(session_id), None).await.is_ok() {
+                return Some(client);
+            }
+        }
+
+        None
+    }
+
     /// Build a TLS configuration from the remote server config.
     /// Supports both inline PEM strings and file paths.
     #[cfg(feature = "tls")]
@@ -335,16 +453,6 @@ impl RemoteKalamClient {
         Fut: Future<Output = Result<Response<R>, Status>>,
     {
         self.call_with_request(Self::plain_request(payload), call).await
-    }
-
-    async fn call_plain<T, R, F, Fut>(&self, payload: T, call: F) -> Result<R, KalamPgError>
-    where
-        F: FnOnce(PgServiceClient<Channel>, Request<T>) -> Fut,
-        Fut: Future<Output = Result<Response<R>, Status>>,
-    {
-        self.call_plain_status(payload, call)
-            .await
-            .map_err(|status| Self::grpc_err(status, &self.server_addr))
     }
 
     async fn call_authenticated<T, R, F, Fut>(&self, payload: T, call: F) -> Result<R, KalamPgError>
@@ -422,6 +530,67 @@ impl RemoteKalamClient {
         Ok(())
     }
 
+    async fn scan_attempt(
+        &self,
+        payload: ScanRpcRequest,
+    ) -> Result<ScanRpcResponse, tonic::Status> {
+        self.call_plain_status(
+            payload,
+            |mut client, request| async move { client.scan(request).await },
+        )
+        .await
+    }
+
+    async fn insert_attempt(
+        &self,
+        payload: InsertRpcRequest,
+    ) -> Result<InsertRpcResponse, tonic::Status> {
+        self.call_plain_status(payload, |mut client, request| async move {
+            client.insert(request).await
+        })
+        .await
+    }
+
+    async fn update_attempt(
+        &self,
+        payload: UpdateRpcRequest,
+    ) -> Result<UpdateRpcResponse, tonic::Status> {
+        self.call_plain_status(payload, |mut client, request| async move {
+            client.update(request).await
+        })
+        .await
+    }
+
+    async fn delete_attempt(
+        &self,
+        payload: DeleteRpcRequest,
+    ) -> Result<DeleteRpcResponse, tonic::Status> {
+        self.call_plain_status(payload, |mut client, request| async move {
+            client.delete(request).await
+        })
+        .await
+    }
+
+    async fn execute_sql_attempt(
+        &self,
+        payload: ExecuteSqlRpcRequest,
+    ) -> Result<kalamdb_pg::ExecuteSqlRpcResponse, tonic::Status> {
+        self.call_plain_status(payload, |mut client, request| async move {
+            client.execute_sql(request).await
+        })
+        .await
+    }
+
+    async fn execute_query_attempt(
+        &self,
+        payload: ExecuteQueryRpcRequest,
+    ) -> Result<kalamdb_pg::ExecuteQueryRpcResponse, tonic::Status> {
+        self.call_plain_status(payload, |mut client, request| async move {
+            client.execute_query(request).await
+        })
+        .await
+    }
+
     pub async fn scan(
         &self,
         namespace: &str,
@@ -441,21 +610,29 @@ impl RemoteKalamClient {
                 value,
             })
             .collect();
-        let response = self
-            .call_plain(
-                ScanRpcRequest {
-                    namespace: namespace.to_string(),
-                    table_name: table_name.to_string(),
-                    table_type: table_type.to_string(),
-                    session_id: session_id.to_string(),
-                    user_id: user_id.map(str::to_string),
-                    columns,
-                    limit,
-                    filters: grpc_filters,
-                },
-                |mut client, request| async move { client.scan(request).await },
-            )
-            .await?;
+        let request = ScanRpcRequest {
+            namespace: namespace.to_string(),
+            table_name: table_name.to_string(),
+            table_type: table_type.to_string(),
+            session_id: session_id.to_string(),
+            user_id: user_id.map(str::to_string),
+            columns,
+            limit,
+            filters: grpc_filters,
+        };
+        let response = match self.scan_attempt(request.clone()).await {
+            Ok(response) => response,
+            Err(status) => {
+                if let Some(leader_client) = self.reconnect_to_leader(&status, session_id).await {
+                    leader_client
+                        .scan_attempt(request)
+                        .await
+                        .map_err(|status| Self::grpc_err(status, &leader_client.server_addr))?
+                } else {
+                    return Err(Self::grpc_err(status, &self.server_addr));
+                }
+            },
+        };
 
         let batches = Self::decode_ipc_batches(&response.ipc_batches)?;
         Ok(ScanResponse::new(batches))
@@ -470,19 +647,27 @@ impl RemoteKalamClient {
         user_id: Option<&str>,
         rows_json: Vec<String>,
     ) -> Result<MutationResponse, KalamPgError> {
-        let response = self
-            .call_plain(
-                InsertRpcRequest {
-                    namespace: namespace.to_string(),
-                    table_name: table_name.to_string(),
-                    table_type: table_type.to_string(),
-                    session_id: session_id.to_string(),
-                    user_id: user_id.map(str::to_string),
-                    rows_json,
-                },
-                |mut client, request| async move { client.insert(request).await },
-            )
-            .await?;
+        let request = InsertRpcRequest {
+            namespace: namespace.to_string(),
+            table_name: table_name.to_string(),
+            table_type: table_type.to_string(),
+            session_id: session_id.to_string(),
+            user_id: user_id.map(str::to_string),
+            rows_json,
+        };
+        let response = match self.insert_attempt(request.clone()).await {
+            Ok(response) => response,
+            Err(status) => {
+                if let Some(leader_client) = self.reconnect_to_leader(&status, session_id).await {
+                    leader_client
+                        .insert_attempt(request)
+                        .await
+                        .map_err(|status| Self::grpc_err(status, &leader_client.server_addr))?
+                } else {
+                    return Err(Self::grpc_err(status, &self.server_addr));
+                }
+            },
+        };
 
         Ok(MutationResponse {
             affected_rows: response.affected_rows,
@@ -499,20 +684,28 @@ impl RemoteKalamClient {
         pk_value: &str,
         updates_json: &str,
     ) -> Result<MutationResponse, KalamPgError> {
-        let response = self
-            .call_plain(
-                UpdateRpcRequest {
-                    namespace: namespace.to_string(),
-                    table_name: table_name.to_string(),
-                    table_type: table_type.to_string(),
-                    session_id: session_id.to_string(),
-                    user_id: user_id.map(str::to_string),
-                    pk_value: pk_value.to_string(),
-                    updates_json: updates_json.to_string(),
-                },
-                |mut client, request| async move { client.update(request).await },
-            )
-            .await?;
+        let request = UpdateRpcRequest {
+            namespace: namespace.to_string(),
+            table_name: table_name.to_string(),
+            table_type: table_type.to_string(),
+            session_id: session_id.to_string(),
+            user_id: user_id.map(str::to_string),
+            pk_value: pk_value.to_string(),
+            updates_json: updates_json.to_string(),
+        };
+        let response = match self.update_attempt(request.clone()).await {
+            Ok(response) => response,
+            Err(status) => {
+                if let Some(leader_client) = self.reconnect_to_leader(&status, session_id).await {
+                    leader_client
+                        .update_attempt(request)
+                        .await
+                        .map_err(|status| Self::grpc_err(status, &leader_client.server_addr))?
+                } else {
+                    return Err(Self::grpc_err(status, &self.server_addr));
+                }
+            },
+        };
 
         Ok(MutationResponse {
             affected_rows: response.affected_rows,
@@ -528,19 +721,27 @@ impl RemoteKalamClient {
         user_id: Option<&str>,
         pk_value: &str,
     ) -> Result<MutationResponse, KalamPgError> {
-        let response = self
-            .call_plain(
-                DeleteRpcRequest {
-                    namespace: namespace.to_string(),
-                    table_name: table_name.to_string(),
-                    table_type: table_type.to_string(),
-                    session_id: session_id.to_string(),
-                    user_id: user_id.map(str::to_string),
-                    pk_value: pk_value.to_string(),
-                },
-                |mut client, request| async move { client.delete(request).await },
-            )
-            .await?;
+        let request = DeleteRpcRequest {
+            namespace: namespace.to_string(),
+            table_name: table_name.to_string(),
+            table_type: table_type.to_string(),
+            session_id: session_id.to_string(),
+            user_id: user_id.map(str::to_string),
+            pk_value: pk_value.to_string(),
+        };
+        let response = match self.delete_attempt(request.clone()).await {
+            Ok(response) => response,
+            Err(status) => {
+                if let Some(leader_client) = self.reconnect_to_leader(&status, session_id).await {
+                    leader_client
+                        .delete_attempt(request)
+                        .await
+                        .map_err(|status| Self::grpc_err(status, &leader_client.server_addr))?
+                } else {
+                    return Err(Self::grpc_err(status, &self.server_addr));
+                }
+            },
+        };
 
         Ok(MutationResponse {
             affected_rows: response.affected_rows,
@@ -549,8 +750,24 @@ impl RemoteKalamClient {
 
     /// Begin a new transaction within the given session.
     pub async fn begin_transaction(&self, session_id: &str) -> Result<String, KalamPgError> {
+        match self.begin_transaction_attempt(session_id).await {
+            Ok(response) => Ok(response),
+            Err(status) => {
+                if let Some(leader_client) = self.reconnect_to_leader(&status, session_id).await {
+                    leader_client
+                        .begin_transaction_attempt(session_id)
+                        .await
+                        .map_err(|status| Self::grpc_err(status, &leader_client.server_addr))
+                } else {
+                    Err(Self::grpc_err(status, &self.server_addr))
+                }
+            },
+        }
+    }
+
+    async fn begin_transaction_attempt(&self, session_id: &str) -> Result<String, tonic::Status> {
         let response = self
-            .call_plain(
+            .call_plain_status(
                 BeginTransactionRequest {
                     session_id: session_id.to_string(),
                 },
@@ -566,8 +783,28 @@ impl RemoteKalamClient {
         session_id: &str,
         transaction_id: &str,
     ) -> Result<String, KalamPgError> {
+        match self.commit_transaction_attempt(session_id, transaction_id).await {
+            Ok(response) => Ok(response),
+            Err(status) => {
+                if let Some(leader_client) = self.reconnect_to_leader(&status, session_id).await {
+                    leader_client
+                        .commit_transaction_attempt(session_id, transaction_id)
+                        .await
+                        .map_err(|status| Self::grpc_err(status, &leader_client.server_addr))
+                } else {
+                    Err(Self::grpc_err(status, &self.server_addr))
+                }
+            },
+        }
+    }
+
+    async fn commit_transaction_attempt(
+        &self,
+        session_id: &str,
+        transaction_id: &str,
+    ) -> Result<String, tonic::Status> {
         let response = self
-            .call_plain(
+            .call_plain_status(
                 CommitTransactionRequest {
                     session_id: session_id.to_string(),
                     transaction_id: transaction_id.to_string(),
@@ -586,6 +823,16 @@ impl RemoteKalamClient {
     ) -> Result<String, KalamPgError> {
         match self.rollback_transaction_attempt(session_id, transaction_id).await {
             Ok(response) => Ok(response),
+            Err(status) if Self::leader_redirect_hint(&status).is_some() => {
+                if let Some(leader_client) = self.reconnect_to_leader(&status, session_id).await {
+                    leader_client
+                        .rollback_transaction_attempt(session_id, transaction_id)
+                        .await
+                        .map_err(|status| Self::grpc_err(status, &leader_client.server_addr))
+                } else {
+                    Err(Self::grpc_err(status, &self.server_addr))
+                }
+            },
             Err(status) if Self::should_retry_cleanup_status(&status) => {
                 let fresh_client = self.reconnect().await?;
                 fresh_client
@@ -616,15 +863,23 @@ impl RemoteKalamClient {
 
     /// Execute a DDL SQL statement on the KalamDB backend.
     pub async fn execute_sql(&self, sql: &str, session_id: &str) -> Result<String, KalamPgError> {
-        let response = self
-            .call_plain(
-                ExecuteSqlRpcRequest {
-                    sql: sql.to_string(),
-                    session_id: session_id.to_string(),
-                },
-                |mut client, request| async move { client.execute_sql(request).await },
-            )
-            .await?;
+        let request = ExecuteSqlRpcRequest {
+            sql: sql.to_string(),
+            session_id: session_id.to_string(),
+        };
+        let response = match self.execute_sql_attempt(request.clone()).await {
+            Ok(response) => response,
+            Err(status) => {
+                if let Some(leader_client) = self.reconnect_to_leader(&status, session_id).await {
+                    leader_client
+                        .execute_sql_attempt(request)
+                        .await
+                        .map_err(|status| Self::grpc_err(status, &leader_client.server_addr))?
+                } else {
+                    return Err(Self::grpc_err(status, &self.server_addr));
+                }
+            },
+        };
         Ok(response.message)
     }
 
@@ -634,15 +889,23 @@ impl RemoteKalamClient {
         sql: &str,
         session_id: &str,
     ) -> Result<(String, Vec<String>), KalamPgError> {
-        let response = self
-            .call_plain(
-                ExecuteQueryRpcRequest {
-                    sql: sql.to_string(),
-                    session_id: session_id.to_string(),
-                },
-                |mut client, request| async move { client.execute_query(request).await },
-            )
-            .await?;
+        let request = ExecuteQueryRpcRequest {
+            sql: sql.to_string(),
+            session_id: session_id.to_string(),
+        };
+        let response = match self.execute_query_attempt(request.clone()).await {
+            Ok(response) => response,
+            Err(status) => {
+                if let Some(leader_client) = self.reconnect_to_leader(&status, session_id).await {
+                    leader_client
+                        .execute_query_attempt(request)
+                        .await
+                        .map_err(|status| Self::grpc_err(status, &leader_client.server_addr))?
+                } else {
+                    return Err(Self::grpc_err(status, &self.server_addr));
+                }
+            },
+        };
         let batches = Self::decode_ipc_batches(&response.ipc_batches)?;
         let json_rows = Self::batches_to_json_rows(&batches);
         Ok((response.message, json_rows))
