@@ -354,7 +354,7 @@ api_addr = \"http://127.0.0.1:$NODE3_HTTP\"
 [server]
 host = "127.0.0.1"
 port = $http_port
-workers = 0
+workers = 2
 api_version = "v1"
 
 [storage]
@@ -368,6 +368,12 @@ max_message_size = 1048576
 max_query_limit = 1000
 default_query_limit = 50
 
+[datafusion]
+memory_limit = 33554432
+query_parallelism = 2
+max_partitions = 2
+batch_size = 1024
+
 [logging]
 level = "info"
 logs_path = "$data_dir/logs"
@@ -378,7 +384,7 @@ request_timeout = 30
 keepalive_timeout = 75
 max_connections = 25000
 backlog = 2048
-worker_max_blocking_threads = 512
+worker_max_blocking_threads = 64
 client_request_timeout = 5
 client_disconnect_timeout = 2
 max_header_size = 16384
@@ -512,7 +518,13 @@ stop_node() {
 
 check_node_health() {
     local http_port=$1
-    curl -sf "http://127.0.0.1:$http_port/v1/api/healthcheck" >/dev/null 2>&1
+    for _attempt in 1 2 3; do
+        if curl -sf --max-time 1 "http://127.0.0.1:$http_port/v1/api/healthcheck" >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 0.1
+    done
+    return 1
 }
 
 check_cluster_ready() {

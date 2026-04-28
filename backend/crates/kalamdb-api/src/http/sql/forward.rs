@@ -4,12 +4,14 @@ use std::{sync::Arc, time::Instant};
 
 use actix_web::{HttpRequest, HttpResponse};
 use kalamdb_commons::{
-    models::{NodeId, UserId},
+    models::{NamespaceId, NodeId, UserId},
     schemas::TableType,
 };
 use kalamdb_core::{app_context::AppContext, error::KalamDbError};
 use kalamdb_raft::{ClusterClient, ForwardSqlRequest, GroupId, RaftExecutor, ShardRouter};
 use kalamdb_sql::classifier::SqlStatementKind;
+use serde_json::Value as JsonValue;
+use uuid::Uuid;
 
 use super::{
     helpers::parse_forward_params,
@@ -100,6 +102,17 @@ fn prepared_statement_target_group(
         return None;
     };
 
+    if matches!(classified.kind(), SqlStatementKind::Select) {
+        return prepared_statement_table_type(statement, app_context).and_then(|table_type| {
+            match table_type {
+                TableType::User | TableType::Shared | TableType::Stream => {
+                    data_group_for_table_type(app_context, table_type, user_id)
+                },
+                TableType::System => None,
+            }
+        });
+    }
+
     if !classified.is_write_operation() {
         return None;
     }
@@ -180,10 +193,12 @@ async fn forward_sql_grpc(
     Some(HttpResponse::build(status).content_type("application/json").body(response.body))
 }
 
-/// Forwards write operations to the leader node in cluster mode.
+/// Forwards leader-routed operations to the appropriate leader node in cluster mode.
 pub async fn forward_sql_if_follower(
     http_req: &HttpRequest,
-    req: &QueryRequest,
+    sql: &str,
+    params_json: &Option<Vec<JsonValue>>,
+    namespace_id: &Option<NamespaceId>,
     app_context: &Arc<AppContext>,
     prepared_statements: &[PreparedApiExecutionStatement],
     user_id: &UserId,
@@ -210,10 +225,25 @@ pub async fn forward_sql_if_follower(
             return None;
         }
 
+        let generated_request_id;
+        let request_id = match request_id {
+            Some(request_id) => Some(request_id),
+            None => {
+                generated_request_id = Uuid::now_v7().to_string();
+                Some(generated_request_id.as_str())
+            },
+        };
+
+        let req = QueryRequest {
+            sql: sql.to_string(),
+            params: params_json.clone(),
+            namespace_id: namespace_id.clone(),
+        };
+
         return forward_sql_grpc(
             ForwardTarget::GroupLeader(target_group),
             http_req,
-            req,
+            &req,
             app_context.as_ref(),
             request_id,
             start_time,

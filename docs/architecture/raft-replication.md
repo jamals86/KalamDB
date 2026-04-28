@@ -44,7 +44,7 @@ KalamDB uses a multi-Raft topology (OpenRaft 0.9) to replicate metadata, jobs, u
 ## Network Layer
 
 - Service surface: `RaftRpc` (vote, append_entries, install_snapshot) and `ClientProposal` (follower→leader proposal forwarding) defined in [backend/crates/kalamdb-raft/src/network/service.rs](backend/crates/kalamdb-raft/src/network/service.rs).
-- Client side: `RaftNetworkFactory` caches tonic channels and produces `RaftNetwork` clients per group ([backend/crates/kalamdb-raft/src/network/network.rs](backend/crates/kalamdb-raft/src/network/network.rs)).
+- Client side: each `RaftNetworkFactory` produces `RaftNetwork` clients per group, but all groups in a `RaftManager` share one node-level tonic channel pool keyed by peer `NodeId` ([backend/crates/kalamdb-raft/src/network/network.rs](backend/crates/kalamdb-raft/src/network/network.rs)). This keeps the multi-Raft topology from opening one persistent HTTP/2 transport per `(group, peer)` pair.
 - RPC call construction is centralized in the network layer: OpenRaft RPCs use a typed `RaftRpcKind` plus shared encode/send/decode helpers, follower proposal forwarding uses `RaftNetworkFactory::send_client_proposal`, and non-Raft cluster messages use `ClusterClient` shared request/metadata/error handling. This keeps channel reuse, auth metadata, and serde boundaries consistent across inter-node calls.
 - Serialization boundaries are intentionally layered: tonic/prost frames the gRPC messages, MessagePack encodes OpenRaft request/response payloads, FlexBuffers encodes committed Raft commands and apply responses, and follower SQL forwarding returns already-serialized HTTP JSON bytes from the leader so followers do not deserialize and reserialize result bodies.
 - Server startup: `start_rpc_server` binds to the advertised RPC port and serves the Raft gRPC server; invoked by `RaftExecutor::start` before starting groups.
@@ -54,7 +54,7 @@ KalamDB uses a multi-Raft topology (OpenRaft 0.9) to replicate metadata, jobs, u
 
 Implemented in [backend/crates/kalamdb-raft/src/manager/raft_manager.rs](backend/crates/kalamdb-raft/src/manager/raft_manager.rs).
 
-- **Construction**: Creates 1 meta group + N user shards + M shared shards (defaults 32/1). Each group is a `RaftGroup` wrapping its own storage and network factory.
+- **Construction**: Creates 1 meta group + N user shards + M shared shards (defaults 32/1). Each group is a `RaftGroup` wrapping its own storage and network factory; the manager injects a shared channel pool into every factory so peer transports are reused across groups.
 - **Start**: Registers configured peers with every group, starts the RPC server, then starts all Raft groups with OpenRaft configs (heartbeat/election timeouts from `RaftManagerConfig`).
 - **Bootstrap (first node)**: `initialize_cluster` seeds every group with this node as the sole voter, then optionally adds peers as learners and promotes them.
 - **Adding nodes**: `add_node` registers a learner in every group, waits for catch-up per group, then promotes to voter.

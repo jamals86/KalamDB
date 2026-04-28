@@ -21,7 +21,10 @@ use tonic::transport::{Certificate, ClientTlsConfig, Identity};
 
 use crate::{
     manager::{config::RaftManagerConfig, RaftGroup},
-    network::cluster_service::{cluster_client::ClusterServiceClient, PingRequest},
+    network::{
+        cluster_service::{cluster_client::ClusterServiceClient, PingRequest},
+        RaftNetworkFactory,
+    },
     state_machine::{
         KalamStateMachine, MetaStateMachine, SharedDataStateMachine, UserDataStateMachine,
     },
@@ -171,16 +174,22 @@ impl RaftManager {
     pub fn new(config: RaftManagerConfig) -> Self {
         let user_shards_count = config.user_shards;
         let shared_shards_count = config.shared_shards;
+        let channel_pool = RaftNetworkFactory::new_channel_pool();
 
         // Create unified meta group
-        let meta = Arc::new(RaftGroup::new(GroupId::Meta, MetaStateMachine::new()));
+        let meta = Arc::new(RaftGroup::new_with_channel_pool(
+            GroupId::Meta,
+            MetaStateMachine::new(),
+            Arc::clone(&channel_pool),
+        ));
 
         // Create user data shards (configurable)
         let user_data_shards: Vec<_> = (0..user_shards_count)
             .map(|shard_id| {
-                Arc::new(RaftGroup::new(
+                Arc::new(RaftGroup::new_with_channel_pool(
                     GroupId::DataUserShard(shard_id),
                     UserDataStateMachine::new(shard_id),
+                    Arc::clone(&channel_pool),
                 ))
             })
             .collect();
@@ -188,9 +197,10 @@ impl RaftManager {
         // Create shared data shards (configurable)
         let shared_data_shards: Vec<_> = (0..shared_shards_count)
             .map(|shard_id| {
-                Arc::new(RaftGroup::new(
+                Arc::new(RaftGroup::new_with_channel_pool(
                     GroupId::DataSharedShard(shard_id),
                     SharedDataStateMachine::new(shard_id),
+                    Arc::clone(&channel_pool),
                 ))
             })
             .collect();
@@ -222,6 +232,7 @@ impl RaftManager {
     ) -> Result<Self, RaftError> {
         let user_shards_count = config.user_shards;
         let shared_shards_count = config.shared_shards;
+        let channel_pool = RaftNetworkFactory::new_channel_pool();
 
         // Ensure the raft_data partition exists
         let partition = Partition::new(RAFT_PARTITION_NAME);
@@ -240,21 +251,23 @@ impl RaftManager {
         })?;
 
         // Create unified meta group with persistent storage
-        let meta = Arc::new(RaftGroup::new_persistent(
+        let meta = Arc::new(RaftGroup::new_persistent_with_channel_pool(
             GroupId::Meta,
             MetaStateMachine::new(),
             backend.clone(),
             snapshots_dir.clone(),
+            Arc::clone(&channel_pool),
         )?);
 
         // Create user data shards with persistent storage
         let user_data_shards: Vec<_> = (0..user_shards_count)
             .map(|shard_id| {
-                RaftGroup::new_persistent(
+                RaftGroup::new_persistent_with_channel_pool(
                     GroupId::DataUserShard(shard_id),
                     UserDataStateMachine::new(shard_id),
                     backend.clone(),
                     snapshots_dir.clone(),
+                    Arc::clone(&channel_pool),
                 )
                 .map(Arc::new)
             })
@@ -263,11 +276,12 @@ impl RaftManager {
         // Create shared data shards with persistent storage
         let shared_data_shards: Vec<_> = (0..shared_shards_count)
             .map(|shard_id| {
-                RaftGroup::new_persistent(
+                RaftGroup::new_persistent_with_channel_pool(
                     GroupId::DataSharedShard(shard_id),
                     SharedDataStateMachine::new(shard_id),
                     backend.clone(),
                     snapshots_dir.clone(),
+                    Arc::clone(&channel_pool),
                 )
                 .map(Arc::new)
             })

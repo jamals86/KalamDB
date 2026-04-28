@@ -34,7 +34,6 @@ use kalamdb_core::{
     sql::{context::ExecutionContext, executor::SqlExecutor, SqlImpersonationService},
 };
 use kalamdb_jobs::health_monitor::record_activity_now;
-use kalamdb_raft::GroupId;
 use kalamdb_session::AuthSession;
 use uuid::Uuid;
 
@@ -139,15 +138,17 @@ pub async fn execute_sql_v1(
     let base_session = app_context.base_session_context();
     let mut exec_ctx = ExecutionContext::from_session(session, Arc::clone(&base_session))
         .with_namespace_id(default_namespace.clone());
-    let is_meta_leader = app_context.executor().is_leader(GroupId::Meta).await;
 
     // 5. File uploads must go to the leader
-    if files_present && !is_meta_leader {
-        return HttpResponse::ServiceUnavailable().json(SqlResponse::error(
-            ErrorCode::NotLeader,
-            "File uploads must be sent to the current leader",
-            took_ms(start_time),
-        ));
+    if files_present {
+        let is_meta_leader = app_context.executor().is_leader(kalamdb_raft::GroupId::Meta).await;
+        if !is_meta_leader {
+            return HttpResponse::ServiceUnavailable().json(SqlResponse::error(
+                ErrorCode::NotLeader,
+                "File uploads must be sent to the current leader",
+                took_ms(start_time),
+            ));
+        }
     }
 
     // 6. Split, parse, and classify SQL statements once. Follower forwarding reuses
@@ -162,21 +163,16 @@ pub async fn execute_sql_v1(
         exec_ctx = exec_ctx.with_request_id(Uuid::now_v7().to_string());
     }
 
-    // 7. Forward write operations to their group leader if this node is a follower
-    // for the target group (non-file path).
-    if !files_present && !is_meta_leader {
-        if exec_ctx.request_id().is_none() {
-            exec_ctx = exec_ctx.with_request_id(Uuid::now_v7().to_string());
-        }
-
-        let req_for_forward = QueryRequest {
-            sql: sql.clone(),
-            params: params_json.clone(),
-            namespace_id: namespace_id.clone(),
-        };
+    // 7. Forward leader-routed operations to their actual group leader if this
+    // node is a follower for the target group (non-file path). A node may be
+    // Meta leader while another node leads the relevant data shard, so this
+    // check must not be gated by Meta leadership.
+    if !files_present {
         if let Some(response) = forward_sql_if_follower(
             &http_req,
-            &req_for_forward,
+            &sql,
+            &params_json,
+            &namespace_id,
             app_context.get_ref(),
             &prepared_statements,
             exec_ctx.user_id(),

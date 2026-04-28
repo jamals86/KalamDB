@@ -13,7 +13,7 @@ use openraft::{storage::Adaptor, Config, Raft, RaftMetrics};
 use parking_lot::RwLock;
 
 use crate::{
-    network::RaftNetworkFactory,
+    network::{RaftChannelPool, RaftNetworkFactory},
     state_machine::KalamStateMachine,
     storage::{KalamNode, KalamRaftStorage, KalamTypeConfig},
     GroupId, RaftError,
@@ -47,11 +47,20 @@ pub struct RaftGroup<SM: KalamStateMachine + Send + Sync + 'static> {
 impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
     /// Create a new Raft group with in-memory storage (not yet started)
     pub fn new(group_id: GroupId, state_machine: SM) -> Self {
+        Self::new_with_channel_pool(group_id, state_machine, RaftNetworkFactory::new_channel_pool())
+    }
+
+    /// Create a new Raft group with in-memory storage and a shared channel pool.
+    pub fn new_with_channel_pool(
+        group_id: GroupId,
+        state_machine: SM,
+        channel_pool: RaftChannelPool,
+    ) -> Self {
         Self {
             group_id,
             raft: RwLock::new(None),
             storage: Arc::new(KalamRaftStorage::new(group_id, state_machine)),
-            network_factory: RaftNetworkFactory::new(group_id),
+            network_factory: RaftNetworkFactory::new_with_channel_pool(group_id, channel_pool),
         }
     }
 
@@ -65,6 +74,23 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
         backend: Arc<dyn StorageBackend>,
         snapshots_dir: std::path::PathBuf,
     ) -> Result<Self, RaftError> {
+        Self::new_persistent_with_channel_pool(
+            group_id,
+            state_machine,
+            backend,
+            snapshots_dir,
+            RaftNetworkFactory::new_channel_pool(),
+        )
+    }
+
+    /// Create a new persistent Raft group backed by a shared channel pool.
+    pub fn new_persistent_with_channel_pool(
+        group_id: GroupId,
+        state_machine: SM,
+        backend: Arc<dyn StorageBackend>,
+        snapshots_dir: std::path::PathBuf,
+        channel_pool: RaftChannelPool,
+    ) -> Result<Self, RaftError> {
         let storage =
             KalamRaftStorage::new_persistent(group_id, state_machine, backend, snapshots_dir)
                 .map_err(|e| {
@@ -75,7 +101,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
             group_id,
             raft: RwLock::new(None),
             storage: Arc::new(storage),
-            network_factory: RaftNetworkFactory::new(group_id),
+            network_factory: RaftNetworkFactory::new_with_channel_pool(group_id, channel_pool),
         })
     }
 

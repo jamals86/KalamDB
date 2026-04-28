@@ -17,7 +17,6 @@ use kalam_client::{
     consumer::{AutoOffsetReset, ConsumerRecord, TopicOp},
     KalamLinkTimeouts,
 };
-use reqwest::Client;
 use serde::Deserialize;
 
 use crate::common;
@@ -217,7 +216,7 @@ async fn poll_topic_messages_http_until(
     )
     .await
     .expect("Failed to get root token for topic consume");
-    let client = Client::new();
+    let client = common::shared_http_client();
     let deadline = std::time::Instant::now() + timeout;
     let mut last_count = 0usize;
 

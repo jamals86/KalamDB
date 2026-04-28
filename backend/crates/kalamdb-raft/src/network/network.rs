@@ -32,6 +32,8 @@ use crate::{
     GroupId,
 };
 
+pub type RaftChannelPool = Arc<dashmap::DashMap<NodeId, Channel>>;
+
 /// Simple connection error wrapper for openraft compatibility
 #[derive(Debug)]
 struct ConnectionError(String);
@@ -359,7 +361,7 @@ pub struct RaftNetworkFactory {
     /// Known nodes in the cluster
     nodes: Arc<RwLock<HashMap<NodeId, KalamNode>>>,
     /// Cached gRPC channels (node_id -> channel)
-    channels: Arc<dashmap::DashMap<NodeId, Channel>>,
+    channels: RaftChannelPool,
     /// Connection retry tracker
     connection_tracker: ConnectionTracker,
     /// Outgoing RPC auth identity (set during group start)
@@ -369,12 +371,22 @@ pub struct RaftNetworkFactory {
 }
 
 impl RaftNetworkFactory {
+    /// Create a shared channel pool for all Raft groups on a node.
+    pub fn new_channel_pool() -> RaftChannelPool {
+        Arc::new(dashmap::DashMap::new())
+    }
+
     /// Create a new network factory
     pub fn new(group_id: GroupId) -> Self {
+        Self::new_with_channel_pool(group_id, Self::new_channel_pool())
+    }
+
+    /// Create a new network factory backed by a shared channel pool.
+    pub fn new_with_channel_pool(group_id: GroupId, channels: RaftChannelPool) -> Self {
         Self {
             group_id,
             nodes: Arc::new(RwLock::new(HashMap::new())),
-            channels: Arc::new(dashmap::DashMap::new()),
+            channels,
             connection_tracker: ConnectionTracker::new(group_id, Duration::from_secs(3)),
             auth_identity: Arc::new(RwLock::new(None)),
             tls_material: Arc::new(RwLock::new(None)),
@@ -427,8 +439,10 @@ impl RaftNetworkFactory {
     ) -> Result<(), crate::RaftError> {
         if !tls.enabled {
             let mut guard = self.tls_material.write();
-            *guard = None;
-            self.channels.clear();
+            if guard.is_some() {
+                *guard = None;
+                self.channels.clear();
+            }
             return Ok(());
         }
 

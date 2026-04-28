@@ -88,8 +88,22 @@ static LOGIN_MUTEX: OnceLock<TokioMutex<()>> = OnceLock::new();
 static TOKEN_FILE_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
 static TEST_CLI_HOME_DIR: OnceLock<PathBuf> = OnceLock::new();
 static TEST_CLI_CREDENTIALS_PATH: OnceLock<PathBuf> = OnceLock::new();
+static SHARED_HTTP_CLIENT: OnceLock<Client> = OnceLock::new();
 
 const LEADER_CACHE_TTL: Duration = Duration::from_secs(5);
+
+pub fn shared_http_client() -> Client {
+    SHARED_HTTP_CLIENT
+        .get_or_init(|| {
+            Client::builder()
+                .pool_max_idle_per_host(512)
+                .pool_idle_timeout(Duration::from_secs(90))
+                .tcp_nodelay(true)
+                .build()
+                .expect("failed to build shared test HTTP client")
+        })
+        .clone()
+}
 
 #[derive(Clone, Debug)]
 struct CachedLeaderUrl {
@@ -190,7 +204,7 @@ impl TestAuthManager {
         &self,
         base_url: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let client = Client::new();
+        let client = shared_http_client();
         let status_response = client.get(format!("{}/v1/api/auth/status", base_url)).send().await;
 
         let Ok(status_response) = status_response else {
@@ -234,7 +248,7 @@ impl TestAuthManager {
         username: &str,
         password: &str,
     ) -> Result<String, Box<dyn std::error::Error>> {
-        let client = Client::new();
+        let client = shared_http_client();
         let mut attempt: u32 = 0;
         let max_attempts: u32 = 40;
         let retry_delay = Duration::from_millis(250);
@@ -328,7 +342,7 @@ impl TestAuthManager {
         invalidate_cached_token_for_credentials(base_url, admin_username(), admin_password());
 
         let root_token = self.token_for_url_cached(base_url, "root", root_password).await?;
-        let client = Client::new();
+        let client = shared_http_client();
         let exists_response = client
             .post(format!("{}/v1/api/sql", base_url))
             .bearer_auth(&root_token)
@@ -564,6 +578,7 @@ impl TestAuthManager {
             return KalamLinkClient::builder()
                 .base_url(base_url)
                 .auth(AuthProvider::none())
+                .http_pool_max_idle_per_host(256)
                 .timeouts(
                     KalamLinkTimeouts::builder()
                         .connection_timeout_secs(5)
@@ -582,6 +597,7 @@ impl TestAuthManager {
         KalamLinkClient::builder()
             .base_url(base_url)
             .auth(auth)
+            .http_pool_max_idle_per_host(256)
             .timeouts(
                 KalamLinkTimeouts::builder()
                     .connection_timeout_secs(5)
@@ -1029,6 +1045,37 @@ fn wait_for_reachable_cluster_urls(urls: &[String], timeout: Duration) -> Vec<St
     }
 }
 
+fn cluster_node_ready_for_sql(url: &str) -> bool {
+    if !url_reachable(url) {
+        return false;
+    }
+
+    let auth_ready = server_requires_auth_for_url(url).is_some();
+    if !auth_ready {
+        return false;
+    }
+
+    get_access_token_for_url_sync(url, default_username(), default_password()).is_some()
+}
+
+fn wait_for_sql_ready_cluster_urls(urls: &[String], timeout: Duration) -> Vec<String> {
+    let start = Instant::now();
+
+    loop {
+        let ready: Vec<String> = urls
+            .iter()
+            .filter(|url| cluster_node_ready_for_sql(url))
+            .cloned()
+            .collect();
+
+        if !ready.is_empty() || start.elapsed() >= timeout {
+            return ready;
+        }
+
+        std::thread::sleep(Duration::from_millis(150));
+    }
+}
+
 fn ensure_auto_test_server() -> Option<(String, PathBuf)> {
     let server_mutex = AUTO_TEST_SERVER.get_or_init(|| Mutex::new(None));
     {
@@ -1473,7 +1520,7 @@ fn detect_leader_url(urls: &[String], username: &str, password: &str) -> Option<
         };
 
         let leader = runtime.block_on(async move {
-            let client = Client::new();
+            let client = shared_http_client();
             let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
 
             for _ in 0..15 {
@@ -1748,7 +1795,30 @@ pub fn test_context() -> &'static TestContext {
                     );
                 }
 
-                (true, reachable_cluster_urls, configured_cluster_urls)
+                let sql_ready_cluster_urls = wait_for_sql_ready_cluster_urls(
+                    &reachable_cluster_urls,
+                    Duration::from_secs(20),
+                );
+
+                if sql_ready_cluster_urls.is_empty() {
+                    panic!(
+                        "\n\n\
+                        ╔══════════════════════════════════════════════════════════════════╗\n\
+                        ║            CLUSTER NODES NOT READY FOR SQL/AUTH                 ║\n\
+                        ╠══════════════════════════════════════════════════════════════════╣\n\
+                        ║  Cluster nodes responded on TCP/HTTP, but none completed        ║\n\
+                        ║  SQL/auth readiness within 20s.                                 ║\n\
+                        ║                                                                  ║\n\
+                        ║  Reachable cluster URLs:                                         ║\n\
+                        ║    {:?}                                                          ║\n\
+                        ║                                                                  ║\n\
+                        ║  Check node logs: ./scripts/cluster.sh logs 1                    ║\n\
+                        ╚══════════════════════════════════════════════════════════════════╝\n\n",
+                        reachable_cluster_urls
+                    );
+                }
+
+                (true, sql_ready_cluster_urls, configured_cluster_urls)
             },
             Some(ServerType::Fresh) | Some(ServerType::Running) | None => {
                 // Single-node: no cluster probing, instant startup
@@ -1833,8 +1903,16 @@ pub fn leader_url() -> Option<String> {
     // Check cached leader first. Reachability alone is not enough here: after a
     // leader change the old leader is still healthy, but writes and some plans
     // must route to the new leader.
+    //
+    // Performance: do NOT issue a synchronous TCP probe per SQL call on the
+    // hot path. The cache TTL already bounds staleness; an unreachable leader
+    // will surface as a request error and clear the cache via
+    // `report_leader_error`. Adding a fresh `TcpStream::connect()` here was
+    // creating a short-lived ephemeral socket per SQL call in cluster mode,
+    // which dominated runtime in high-concurrency tests and contributed to
+    // localhost port exhaustion on macOS.
     if let Some(cached) = cached_leader_url() {
-        if ctx.cluster_urls.iter().any(|url| url == &cached.url) && url_reachable(&cached.url) {
+        if ctx.cluster_urls.iter().any(|url| url == &cached.url) {
             if cached.confirmed_at.elapsed() <= LEADER_CACHE_TTL {
                 trace_leader_cache(format!("using cached leader {}", cached.url));
                 return Some(cached.url);
@@ -2006,7 +2084,7 @@ pub async fn execute_sql_via_http_as(
     // Get access token first
     let token = get_access_token(username, password).await?;
 
-    let client = Client::new();
+    let client = shared_http_client();
     let mut last_parsed: Option<serde_json::Value> = None;
 
     for attempt in 0..5 {
@@ -2451,7 +2529,7 @@ fn server_requires_auth_for_url(url: &str) -> Option<bool> {
     for _attempt in 0..3 {
         let request_url = url.clone();
         let request = async move {
-            Client::new()
+            shared_http_client()
                 .post(format!("{}/v1/api/sql", request_url))
                 .json(&json!({ "sql": "SELECT 1" }))
                 .timeout(Duration::from_millis(2000))
@@ -2516,11 +2594,15 @@ fn server_requires_auth_for_url(url: &str) -> Option<bool> {
 pub fn get_available_server_urls() -> Vec<String> {
     let ctx = test_context();
     if ctx.is_cluster {
-        let mut urls = if ctx.cluster_urls.is_empty() {
+        let seed_urls = if ctx.cluster_urls.is_empty() {
             ctx.cluster_urls_raw.clone()
         } else {
             ctx.cluster_urls.clone()
         };
+        let mut urls = wait_for_sql_ready_cluster_urls(&seed_urls, Duration::from_secs(2));
+        if urls.is_empty() {
+            urls = seed_urls;
+        }
         if let Some(leader) = leader_url() {
             urls.retain(|url| url != &leader);
             urls.insert(0, leader);
@@ -3493,6 +3575,7 @@ fn build_client_for_url_with_timeouts(
     KalamLinkClient::builder()
         .base_url(base_url)
         .auth(auth)
+        .http_pool_max_idle_per_host(256)
         .timeouts(timeouts)
         .build()
         .map_err(|err| Box::new(err) as Box<dyn std::error::Error + Send + Sync>)
@@ -3514,6 +3597,7 @@ pub fn client_for_url_no_auth(
     KalamLinkClient::builder()
         .base_url(base_url)
         .auth(AuthProvider::none())
+        .http_pool_max_idle_per_host(256)
         .timeouts(timeouts)
         .build()
         .map_err(|err| Box::new(err) as Box<dyn std::error::Error + Send + Sync>)

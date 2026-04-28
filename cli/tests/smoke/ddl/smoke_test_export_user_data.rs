@@ -66,7 +66,7 @@ fn http_get_with_token(
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
 
     let result = rt.block_on(async move {
-        let response = reqwest::Client::new().get(&url).bearer_auth(&token).send().await?;
+        let response = shared_http_client().get(&url).bearer_auth(&token).send().await?;
 
         let status = response.status().as_u16();
         let ct = response

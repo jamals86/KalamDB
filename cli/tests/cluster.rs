@@ -17,7 +17,11 @@ mod common;
 
 /// Cluster-specific common utilities
 mod cluster_common {
-    use std::{sync::OnceLock, time::Duration};
+    use std::{
+        collections::HashMap,
+        sync::{Mutex, OnceLock},
+        time::Duration,
+    };
 
     use kalam_client::{KalamCellValue, KalamLinkTimeouts, QueryResponse};
     use serde_json::Value;
@@ -46,8 +50,27 @@ mod cluster_common {
         })
     }
 
-    /// Create a client connected to a specific cluster node
-    pub fn create_cluster_client(base_url: &str) -> KalamLinkClient {
+    /// Per-URL client cache for cluster helpers.
+    ///
+    /// Reusing a `KalamLinkClient` per URL avoids spawning a fresh reqwest connection pool
+    /// on every `execute_on_node` call. Each `KalamLinkClient` owns an `Arc<reqwest::Client>`;
+    /// cloning is cheap and all clones share the same pool.
+    fn cached_cluster_client(base_url: &str) -> KalamLinkClient {
+        static CLIENT_CACHE: OnceLock<Mutex<HashMap<String, KalamLinkClient>>> = OnceLock::new();
+        let cache = CLIENT_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+        if let Ok(mut guard) = cache.lock() {
+            if let Some(client) = guard.get(base_url) {
+                return client.clone();
+            }
+            let client = build_cluster_client(base_url);
+            guard.insert(base_url.to_string(), client.clone());
+            return client;
+        }
+        // Fallback if lock poisoned
+        build_cluster_client(base_url)
+    }
+
+    fn build_cluster_client(base_url: &str) -> KalamLinkClient {
         client_for_user_on_url_with_timeouts(
             base_url,
             default_username(),
@@ -64,12 +87,7 @@ mod cluster_common {
         .expect("Failed to build cluster client")
     }
 
-    /// Create a client connected to a specific cluster node with custom credentials
-    pub fn create_cluster_client_with_auth(
-        base_url: &str,
-        username: &str,
-        password: &str,
-    ) -> KalamLinkClient {
+    fn build_cluster_client_with_auth(base_url: &str, username: &str, password: &str) -> KalamLinkClient {
         client_for_user_on_url_with_timeouts(
             base_url,
             username,
@@ -84,6 +102,21 @@ mod cluster_common {
                 .build(),
         )
         .expect("Failed to build cluster client")
+    }
+
+    /// Create a client connected to a specific cluster node
+    pub fn create_cluster_client(base_url: &str) -> KalamLinkClient {
+        cached_cluster_client(base_url)
+    }
+
+    /// Create a client connected to a specific cluster node with custom credentials
+    pub fn create_cluster_client_with_auth(
+        base_url: &str,
+        username: &str,
+        password: &str,
+    ) -> KalamLinkClient {
+        // Custom-auth clients are not pooled (credentials may differ per call).
+        build_cluster_client_with_auth(base_url, username, password)
     }
 
     /// Execute a query on a specific cluster node and return the count

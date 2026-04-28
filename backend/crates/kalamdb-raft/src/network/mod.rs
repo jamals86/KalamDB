@@ -36,7 +36,7 @@ pub use models::{
     forward_sql_param, ForwardSqlParam, ForwardSqlRequest, ForwardSqlResponse,
     ForwardSqlResponsePayload, GetNodeInfoRequest, GetNodeInfoResponse, PingRequest, PingResponse,
 };
-pub use network::{RaftNetwork, RaftNetworkFactory};
+pub use network::{RaftChannelPool, RaftNetwork, RaftNetworkFactory};
 pub use service::{
     raft_client::RaftClient, start_rpc_server, ClientProposalRequest, ClientProposalResponse,
     RaftService,
