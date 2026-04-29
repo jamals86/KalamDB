@@ -19,15 +19,15 @@
 //! ```
 
 use async_trait::async_trait;
-use kalamdb_commons::{constants::ColumnFamilyNames, schemas::TableType, TableId};
+use kalamdb_commons::{schemas::TableType, TableId};
 use kalamdb_core::error::KalamDbError;
-use kalamdb_store::storage_trait::{Partition, StorageBackendAsync};
+use kalamdb_store::storage_trait::StorageBackendAsync;
 use kalamdb_system::JobType;
 use serde::{Deserialize, Serialize};
 
 use crate::executors::{
-    shared_table_cleanup::cleanup_empty_shared_scope_if_needed, JobContext, JobDecision,
-    JobExecutor, JobParams,
+    shared_table_cleanup::cleanup_empty_shared_scope_if_needed,
+    table_partition::hot_table_partition, JobContext, JobDecision, JobExecutor, JobParams,
 };
 
 /// Typed parameters for compaction operations
@@ -83,26 +83,21 @@ impl JobExecutor for CompactExecutor {
         let table_id = params.table_id.clone();
         let table_type = params.table_type;
 
-        let partition_name = match table_type {
-            TableType::User => format!("{}{}", ColumnFamilyNames::USER_TABLE_PREFIX, table_id),
-            TableType::Shared => {
-                format!("{}{}", ColumnFamilyNames::SHARED_TABLE_PREFIX, table_id)
-            },
-            TableType::Stream => {
-                return Ok(JobDecision::Failed {
-                    message: "STORAGE COMPACT TABLE is not supported for STREAM tables".to_string(),
-                    exception_trace: None,
-                })
-            },
-            TableType::System => {
-                return Ok(JobDecision::Failed {
-                    message: "STORAGE COMPACT TABLE is not supported for SYSTEM tables".to_string(),
-                    exception_trace: None,
-                })
-            },
-        };
+        let Some(partition) = hot_table_partition(table_type, &table_id) else {
+            let table_kind = match table_type {
+                TableType::Stream => "STREAM",
+                TableType::System => "SYSTEM",
+                TableType::User | TableType::Shared => unreachable!(),
+            };
 
-        let partition = Partition::new(partition_name);
+            return Ok(JobDecision::Failed {
+                message: format!(
+                    "STORAGE COMPACT TABLE is not supported for {} tables",
+                    table_kind
+                ),
+                exception_trace: None,
+            });
+        };
         ctx.log_debug(&format!("Running RocksDB compaction for partition {}", partition.name()));
 
         let backend = ctx.app_ctx.storage_backend();

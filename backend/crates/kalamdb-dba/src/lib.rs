@@ -10,4 +10,6 @@ pub use error::{DbaError, Result};
 pub use repository::{
     DbaRegistry, NotificationsRepository, SharedTableRepository, StatsRepository,
 };
-pub use stats_recorder::{record_stats_snapshot, start_stats_recorder};
+pub use stats_recorder::{
+    record_stats_snapshot, start_startup_stats_snapshot, start_stats_recorder,
+};

@@ -14,7 +14,10 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use kalamdb_configs::ServerConfig;
-use kalamdb_server::lifecycle::{bootstrap, run};
+use kalamdb_server::{
+    lifecycle::{bootstrap, run},
+    startup::configure_auth_runtime,
+};
 use log::info;
 
 fn resolve_bind_addrs(addr: &str, label: &str) -> Result<HashSet<SocketAddr>> {
@@ -245,8 +248,7 @@ async fn async_main(config: ServerConfig) -> Result<()> {
     // JWT CONFIG INITIALIZATION
     // ========================================================================
     // Initialize auth JWT config from server.toml (after env overrides are applied).
-    kalamdb_auth::services::unified::init_auth_config(&config.auth, &config.oauth);
-    kalamdb_auth::init_trusted_proxy_ranges(&config.security.trusted_proxy_ranges)?;
+    configure_auth_runtime(&config)?;
 
     // ========================================================================
     // Security: Validate critical configuration at startup

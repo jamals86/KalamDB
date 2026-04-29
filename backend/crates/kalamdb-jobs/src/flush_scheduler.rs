@@ -1,10 +1,57 @@
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
-use kalamdb_commons::TableType;
-use kalamdb_core::{app_context::AppContext, error::KalamDbError};
+use kalamdb_commons::{TableId, TableType};
+use kalamdb_core::{app_context::AppContext, error::KalamDbError, manifest::ManifestService};
 use kalamdb_system::JobType;
 
-use crate::{executors::flush::FlushParams, JobsManager};
+use crate::{
+    executors::flush::FlushParams,
+    scheduler_common::{
+        classify_schedule_error, hourly_date_key, hourly_table_idempotency_key, ScheduleErrorKind,
+    },
+    JobsManager,
+};
+
+#[derive(Debug, Default)]
+struct PendingFlushScan {
+    table_ids: Vec<TableId>,
+    pending_entries: usize,
+    duplicate_entries: usize,
+    read_errors: usize,
+}
+
+fn collect_pending_flush_tables(
+    manifest_service: &ManifestService,
+) -> Result<PendingFlushScan, KalamDbError> {
+    let pending_iter = manifest_service
+        .pending_manifest_ids_iter()
+        .map_err(|err| KalamDbError::Other(format!("Pending manifest scan failed: {}", err)))?;
+
+    let mut scan = PendingFlushScan::default();
+    let mut seen_tables = HashSet::new();
+
+    for manifest_id_result in pending_iter {
+        let manifest_id = match manifest_id_result {
+            Ok(id) => id,
+            Err(err) => {
+                scan.read_errors += 1;
+                log::warn!("FlushScheduler: failed to read pending manifest entry: {}", err);
+                continue;
+            },
+        };
+
+        scan.pending_entries += 1;
+
+        let table_id = manifest_id.table_id().clone();
+        if seen_tables.insert(table_id.clone()) {
+            scan.table_ids.push(table_id);
+        } else {
+            scan.duplicate_entries += 1;
+        }
+    }
+
+    Ok(scan)
+}
 
 /// Periodic scheduler that checks for tables with pending (unflushed) writes
 /// and creates flush jobs for them.
@@ -27,30 +74,18 @@ impl FlushScheduler {
     ) -> Result<(), KalamDbError> {
         let manifest_service = app_context.manifest_service();
         let default_row_limit = app_context.config().flush.default_row_limit as u64;
-
-        let pending_iter = manifest_service
-            .pending_manifest_ids_iter()
-            .map_err(|e| KalamDbError::Other(format!("Pending manifest scan failed: {}", e)))?;
+        let pending_scan = collect_pending_flush_tables(&manifest_service)?;
 
         let schema_registry = app_context.schema_registry();
 
         let mut tables_checked: u32 = 0;
         let mut jobs_created: u32 = 0;
+        let date_key = hourly_date_key();
 
-        for manifest_id_result in pending_iter {
-            let manifest_id = match manifest_id_result {
-                Ok(id) => id,
-                Err(e) => {
-                    log::warn!("FlushScheduler: failed to read pending manifest entry: {}", e);
-                    continue;
-                },
-            };
-
-            let table_id = manifest_id.table_id().clone();
-
+        for table_id in &pending_scan.table_ids {
             // Look up the table definition to determine its type
             // Use async variant to avoid blocking tokio worker on RocksDB cache miss
-            let table_def = match schema_registry.get_table_if_exists_async(&table_id).await {
+            let table_def = match schema_registry.get_table_if_exists_async(table_id).await {
                 Ok(Some(def)) => def,
                 Ok(None) => {
                     // Table dropped after pending write was recorded — skip
@@ -84,15 +119,13 @@ impl FlushScheduler {
                 .unwrap_or(default_row_limit);
 
             let params = FlushParams {
-                table_id: table_id.clone(),
+                table_id: (*table_id).clone(),
                 table_type: table_def.table_type,
                 flush_threshold: Some(flush_threshold),
             };
 
             // Hourly idempotency key prevents duplicate flush jobs
-            let now = chrono::Utc::now();
-            let date_key = now.format("%Y-%m-%d-%H").to_string();
-            let idempotency_key = format!("FL:{}:{}", table_id, date_key);
+            let idempotency_key = hourly_table_idempotency_key(JobType::Flush, table_id, &date_key);
 
             match jobs_manager
                 .create_job_typed(JobType::Flush, params, Some(idempotency_key), None)
@@ -106,37 +139,46 @@ impl FlushScheduler {
                         table_id
                     );
                 },
-                Err(e) => {
-                    let err_msg = e.to_string();
-                    if err_msg.contains("already running") || err_msg.contains("already exists") {
+                Err(err) => match classify_schedule_error(&err) {
+                    ScheduleErrorKind::AlreadyActive => {
                         log::trace!(
                             "FlushScheduler: flush job for {} already exists (idempotent)",
                             table_id
                         );
-                    } else if err_msg.contains("pre-validation returned false") {
+                    },
+                    ScheduleErrorKind::PreValidationSkipped => {
                         log::trace!(
                             "FlushScheduler: flush job for {} skipped (no data to flush)",
                             table_id
                         );
-                    } else {
+                    },
+                    ScheduleErrorKind::Other => {
                         log::warn!(
                             "FlushScheduler: failed to create flush job for {}: {}",
                             table_id,
-                            e
+                            err
                         );
-                    }
+                    },
                 },
             }
         }
 
         if tables_checked > 0 {
             log::trace!(
-                "FlushScheduler: checked {} table(s), created {} flush job(s)",
+                "FlushScheduler: scanned {} pending manifest entries, checked {} table(s), \
+                 skipped {} duplicate pending entries, created {} flush job(s)",
+                pending_scan.pending_entries,
                 tables_checked,
+                pending_scan.duplicate_entries,
                 jobs_created
             );
         } else {
-            log::trace!("FlushScheduler: no tables with pending writes found");
+            log::trace!(
+                "FlushScheduler: no tables with pending writes found (pending_entries={}, \
+                 read_errors={})",
+                pending_scan.pending_entries,
+                pending_scan.read_errors
+            );
         }
 
         Ok(())

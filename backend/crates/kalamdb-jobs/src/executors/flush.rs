@@ -27,24 +27,34 @@
 //! }
 //! ```
 
-use std::sync::Arc;
+use std::{future::Future, sync::Arc};
 
 use async_trait::async_trait;
+use datafusion::arrow::datatypes::SchemaRef;
 use kalamdb_commons::{schemas::TableType, TableId};
 use kalamdb_core::{
     app_context::AppContext,
     error::KalamDbError,
     error_extensions::KalamDbResultExt,
-    manifest::flush::{SharedTableFlushJob, TableFlush, UserTableFlushJob},
+    manifest::{
+        flush::{FlushJobResult, SharedTableFlushJob, TableFlush, UserTableFlushJob},
+        ManifestService,
+    },
+    providers::{SharedTableProvider, UserTableProvider},
+    schema_registry::SchemaRegistry,
 };
 use kalamdb_store::EntityStore;
 use kalamdb_system::JobType;
+use kalamdb_tables::{SharedTableIndexedStore, UserTableIndexedStore};
 use serde::{Deserialize, Serialize};
+use tokio::sync::Semaphore;
 
 use crate::executors::{
-    shared_table_cleanup::cleanup_empty_shared_scope_if_needed, JobContext, JobDecision,
-    JobExecutor, JobParams,
+    shared_table_cleanup::cleanup_empty_shared_scope_if_needed,
+    table_partition::hot_table_partition, JobContext, JobDecision, JobExecutor, JobParams,
 };
+
+const MAX_POST_FLUSH_TASKS: usize = 2;
 
 /// Typed parameters for flush operations (T189)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -65,6 +75,85 @@ impl JobParams for FlushParams {
     }
 }
 
+enum FlushTarget {
+    User(Arc<UserTableIndexedStore>),
+    Shared(Arc<SharedTableIndexedStore>),
+}
+
+impl FlushTarget {
+    fn resolve(
+        schema_registry: &SchemaRegistry,
+        table_id: &TableId,
+        table_type: TableType,
+    ) -> Result<Option<Self>, KalamDbError> {
+        let provider_arc = match table_type {
+            TableType::User | TableType::Shared => {
+                schema_registry.get_provider(table_id).ok_or_else(|| {
+                    KalamDbError::NotFound(format!(
+                        "Table provider not registered for {} (id={})",
+                        table_id, table_id
+                    ))
+                })?
+            },
+            TableType::Stream | TableType::System => return Ok(None),
+        };
+
+        match table_type {
+            TableType::User => {
+                let provider =
+                    provider_arc.as_any().downcast_ref::<UserTableProvider>().ok_or_else(|| {
+                        KalamDbError::InvalidOperation(
+                            "Cached provider type mismatch for user table".into(),
+                        )
+                    })?;
+
+                Ok(Some(Self::User(provider.store())))
+            },
+            TableType::Shared => {
+                let provider = provider_arc
+                    .as_any()
+                    .downcast_ref::<SharedTableProvider>()
+                    .ok_or_else(|| {
+                        KalamDbError::InvalidOperation(
+                            "Cached provider type mismatch for shared table".into(),
+                        )
+                    })?;
+
+                Ok(Some(Self::Shared(provider.store())))
+            },
+            TableType::Stream | TableType::System => Ok(None),
+        }
+    }
+
+    fn log_message(&self) -> &'static str {
+        match self {
+            FlushTarget::User(_) => "Executing UserTableFlushJob (non-blocking)",
+            FlushTarget::Shared(_) => "Executing SharedTableFlushJob (non-blocking)",
+        }
+    }
+
+    fn has_min_rows(self, min_rows: usize) -> bool {
+        match self {
+            FlushTarget::User(store) => {
+                let partition = store.partition();
+                store
+                    .backend()
+                    .scan(&partition, None, None, Some(min_rows))
+                    .map(|iter| iter.count() >= min_rows)
+                    .unwrap_or(true)
+            },
+            FlushTarget::Shared(store) => {
+                let partition = store.partition();
+                store
+                    .backend()
+                    .scan(&partition, None, None, Some(min_rows))
+                    .map(|iter| iter.count() >= min_rows)
+                    .unwrap_or(true)
+            },
+        }
+    }
+}
+
 /// Flush Job Executor
 ///
 /// Executes flush operations for buffered table data.
@@ -77,19 +166,96 @@ impl JobParams for FlushParams {
 /// **Phase 2 - Leader Actions (leader only)**:
 /// Full flush: read from RocksDB, write Parquet files to storage, update manifest,
 /// delete flushed rows from RocksDB.
-pub struct FlushExecutor;
+pub struct FlushExecutor {
+    post_flush_permits: Arc<Semaphore>,
+}
 
 impl FlushExecutor {
     /// Create a new FlushExecutor
     pub fn new() -> Self {
-        Self
+        Self {
+            post_flush_permits: Arc::new(Semaphore::new(MAX_POST_FLUSH_TASKS)),
+        }
+    }
+
+    async fn run_blocking_flush<F>(
+        task: F,
+        error_context: &'static str,
+    ) -> Result<FlushJobResult, KalamDbError>
+    where
+        F: FnOnce() -> Result<FlushJobResult, KalamDbError> + Send + 'static,
+    {
+        tokio::task::spawn_blocking(task)
+            .await
+            .map_err(|err| KalamDbError::InvalidOperation(format!("Flush task panicked: {}", err)))?
+            .into_kalamdb_error(error_context)
+    }
+
+    async fn execute_target_flush(
+        target: FlushTarget,
+        app_ctx: Arc<AppContext>,
+        table_id: Arc<TableId>,
+        schema: SchemaRef,
+        schema_registry: Arc<SchemaRegistry>,
+        manifest_service: Arc<ManifestService>,
+    ) -> Result<FlushJobResult, KalamDbError> {
+        match target {
+            FlushTarget::User(store) => {
+                let flush_job = UserTableFlushJob::new(
+                    app_ctx,
+                    table_id,
+                    store,
+                    schema,
+                    schema_registry,
+                    manifest_service,
+                );
+
+                Self::run_blocking_flush(move || flush_job.execute(), "User table flush failed")
+                    .await
+            },
+            FlushTarget::Shared(store) => {
+                let flush_job = SharedTableFlushJob::new(
+                    app_ctx,
+                    table_id,
+                    store,
+                    schema,
+                    schema_registry,
+                    manifest_service,
+                );
+
+                Self::run_blocking_flush(move || flush_job.execute(), "Shared table flush failed")
+                    .await
+            },
+        }
+    }
+
+    fn try_spawn_post_flush_task<F>(&self, task_name: &'static str, table_id: &TableId, future: F)
+    where
+        F: Future<Output = ()> + Send + 'static,
+    {
+        let permit = match Arc::clone(&self.post_flush_permits).try_acquire_owned() {
+            Ok(permit) => permit,
+            Err(_) => {
+                log::trace!(
+                    "Skipping {} for {}; post-flush maintenance is saturated",
+                    task_name,
+                    table_id
+                );
+                return;
+            },
+        };
+
+        tokio::task::spawn(async move {
+            let _permit = permit;
+            future.await;
+        });
     }
 
     /// Internal flush implementation used by both execute() and execute_leader()
     async fn do_flush(&self, ctx: &JobContext<FlushParams>) -> Result<JobDecision, KalamDbError> {
         // Parameters already validated in JobContext - type-safe access
         let params = ctx.params();
-        let table_id = Arc::new(params.table_id.clone());
+        let table_id = params.table_id.clone();
         let table_type = params.table_type;
 
         log::trace!("[{}] Flushing {} (type: {:?})", ctx.job_id, table_id, table_type);
@@ -124,120 +290,44 @@ impl FlushExecutor {
             });
         }
 
+        let target = match FlushTarget::resolve(&schema_registry, &table_id, table_type)? {
+            Some(target) => target,
+            None => match table_type {
+                TableType::Stream => {
+                    ctx.log_trace("Stream table flush not yet implemented");
+                    return Ok(JobDecision::Completed {
+                        message: Some(format!(
+                            "Stream flush skipped (not implemented) for {}",
+                            table_id
+                        )),
+                    });
+                },
+                TableType::System => {
+                    return Err(KalamDbError::InvalidOperation(
+                        "Cannot flush SYSTEM tables".to_string(),
+                    ));
+                },
+                TableType::User | TableType::Shared => unreachable!(),
+            },
+        };
+
         // Get current Arrow schema from the registry (already includes system columns)
         let schema = schema_registry
             .get_arrow_schema(&table_id)
             .into_kalamdb_error(&format!("Arrow schema not found for {}", table_id))?;
 
-        // Get current schema version for manifest recording
-        // Phase 16: Will be used when writing SegmentMetadata.schema_version
-        // let _current_schema_version = table_def.schema_version;
+        ctx.log_trace(target.log_message());
 
-        // Execute flush based on table type
-        // Use spawn_blocking to avoid blocking the async runtime during RocksDB I/O
-        let result = match table_type {
-            TableType::User => {
-                ctx.log_trace("Executing UserTableFlushJob (non-blocking)");
-
-                // IMPORTANT: Use the per-table UserTableStore (created at table registration)
-                // instead of the generic prefix-only user_table_store() created in AppContext.
-                // The generic store points to partition "user_" (no namespace/table suffix) and
-                // cannot see actual row data stored under per-table partitions like
-                // "user_<namespace>:<table>". Using it caused runtime errors:
-                //   Not found: user_
-                // Retrieve the UserTableProvider instance to access the correct store.
-                let provider_arc = schema_registry.get_provider(&table_id).ok_or_else(|| {
-                    KalamDbError::NotFound(format!(
-                        "User table provider not registered for {} (id={})",
-                        table_id, table_id
-                    ))
-                })?;
-
-                // Downcast to UserTableProvider to access store
-                let provider = provider_arc
-                    .as_any()
-                    .downcast_ref::<kalamdb_core::providers::UserTableProvider>()
-                    .ok_or_else(|| {
-                        KalamDbError::InvalidOperation(
-                            "Cached provider type mismatch for user table".into(),
-                        )
-                    })?;
-
-                let store = provider.store();
-
-                let flush_job = UserTableFlushJob::new(
-                    app_ctx.clone(),
-                    table_id.clone(),
-                    store,
-                    schema.clone(),
-                    schema_registry.clone(),
-                    app_ctx.manifest_service(),
-                );
-
-                // Execute in blocking thread pool to avoid starving async runtime
-                tokio::task::spawn_blocking(move || flush_job.execute())
-                    .await
-                    .map_err(|e| {
-                        KalamDbError::InvalidOperation(format!("Flush task panicked: {}", e))
-                    })?
-                    .into_kalamdb_error("User table flush failed")?
-            },
-            TableType::Shared => {
-                ctx.log_trace("Executing SharedTableFlushJob (non-blocking)");
-
-                // Get the SharedTableProvider from the schema registry to reuse the cached store
-                let provider_arc = schema_registry.get_provider(&table_id).ok_or_else(|| {
-                    KalamDbError::NotFound(format!(
-                        "Shared table provider not registered for {} (id={})",
-                        table_id, table_id
-                    ))
-                })?;
-
-                // Downcast to SharedTableProvider to access store
-                let provider = provider_arc
-                    .as_any()
-                    .downcast_ref::<kalamdb_core::providers::SharedTableProvider>()
-                    .ok_or_else(|| {
-                        KalamDbError::InvalidOperation(
-                            "Cached provider type mismatch for shared table".into(),
-                        )
-                    })?;
-
-                let store = provider.store();
-
-                let flush_job = SharedTableFlushJob::new(
-                    app_ctx.clone(),
-                    table_id.clone(),
-                    store,
-                    schema.clone(),
-                    schema_registry.clone(),
-                    app_ctx.manifest_service(),
-                );
-
-                // Execute in blocking thread pool to avoid starving async runtime
-                tokio::task::spawn_blocking(move || flush_job.execute())
-                    .await
-                    .map_err(|e| {
-                        KalamDbError::InvalidOperation(format!("Flush task panicked: {}", e))
-                    })?
-                    .into_kalamdb_error("Shared table flush failed")?
-            },
-            TableType::Stream => {
-                ctx.log_trace("Stream table flush not yet implemented");
-                // Streams: return Completed (no-op) for idempotency and clarity
-                return Ok(JobDecision::Completed {
-                    message: Some(format!(
-                        "Stream flush skipped (not implemented) for {}",
-                        table_id
-                    )),
-                });
-            },
-            TableType::System => {
-                return Err(KalamDbError::InvalidOperation(
-                    "Cannot flush SYSTEM tables".to_string(),
-                ));
-            },
-        };
+        let table_id_arc = Arc::new(table_id.clone());
+        let result = Self::execute_target_flush(
+            target,
+            app_ctx.clone(),
+            table_id_arc,
+            schema,
+            schema_registry.clone(),
+            app_ctx.manifest_service(),
+        )
+        .await?;
 
         log::debug!(
             "[{}] Flush operation completed: {} rows flushed, {} files created",
@@ -246,55 +336,13 @@ impl FlushExecutor {
             result.parquet_files.len()
         );
 
-        // Fire-and-forget: compact RocksDB partition after flush to reclaim
-        // space from tombstones.  Compaction is an optimisation, not a
-        // correctness requirement, so we must not block the job from being
-        // marked "completed".  With max_background_jobs=2, synchronous
-        // compaction under concurrent flush load was the root cause of
-        // 90-120 s stalls observed in smoke tests.
-        let compact_table_type = table_type;
-        let compact_table_id = table_id.clone();
-        let compact_backend = app_ctx.storage_backend();
-        if matches!(compact_table_type, TableType::User | TableType::Shared) {
-            tokio::task::spawn(async move {
-                let partition_name = match compact_table_type {
-                    TableType::User => {
-                        use kalamdb_commons::constants::ColumnFamilyNames;
-                        format!("{}{}", ColumnFamilyNames::USER_TABLE_PREFIX, compact_table_id)
-                    },
-                    TableType::Shared => {
-                        use kalamdb_commons::constants::ColumnFamilyNames;
-                        format!("{}{}", ColumnFamilyNames::SHARED_TABLE_PREFIX, compact_table_id)
-                    },
-                    _ => return,
-                };
-                use kalamdb_store::storage_trait::Partition;
-                let partition = Partition::new(partition_name);
-                match tokio::task::spawn_blocking(move || {
-                    compact_backend.compact_partition(&partition)
-                })
-                .await
-                {
-                    Ok(Ok(())) => {
-                        log::trace!("Post-flush compaction completed for {}", compact_table_id);
-                    },
-                    Ok(Err(e)) => {
-                        log::warn!("Post-flush compaction failed (non-critical): {}", e);
-                    },
-                    Err(e) => {
-                        log::warn!("Post-flush compaction task panicked: {}", e);
-                    },
-                }
-            });
-        }
-
         // Fire-and-forget: check if the shared table scope is empty and clean
         // up cold segments if so.  Also non-blocking to avoid stalling.
         if matches!(table_type, TableType::Shared) {
             let cleanup_app_ctx = app_ctx.clone();
-            let cleanup_table_id = (*table_id).clone();
+            let cleanup_table_id = table_id.clone();
             let cleanup_job_id = ctx.job_id.clone();
-            tokio::task::spawn(async move {
+            self.try_spawn_post_flush_task("post-flush shared cleanup", &table_id, async move {
                 // Build a minimal JobContext just for the helper
                 let params = FlushParams {
                     table_id: cleanup_table_id.clone(),
@@ -306,6 +354,34 @@ impl FlushExecutor {
                 if let Err(e) = cleanup_empty_shared_scope_if_needed(&ctx, &cleanup_table_id).await
                 {
                     log::warn!("Post-flush shared scope cleanup failed (non-critical): {}", e);
+                }
+            });
+        }
+
+        // Fire-and-forget: compact RocksDB partition after flush to reclaim
+        // space from tombstones.  Compaction is an optimisation, not a
+        // correctness requirement, so we must not block the job from being
+        // marked "completed".  With max_background_jobs=2, synchronous
+        // compaction under concurrent flush load was the root cause of
+        // 90-120 s stalls observed in smoke tests.
+        if let Some(partition) = hot_table_partition(table_type, &table_id) {
+            let compact_table_id = table_id.clone();
+            let compact_backend = app_ctx.storage_backend();
+            self.try_spawn_post_flush_task("post-flush compaction", &table_id, async move {
+                match tokio::task::spawn_blocking(move || {
+                    compact_backend.compact_partition(&partition)
+                })
+                .await
+                {
+                    Ok(Ok(())) => {
+                        log::trace!("Post-flush compaction completed for {}", compact_table_id);
+                    },
+                    Ok(Err(err)) => {
+                        log::warn!("Post-flush compaction failed (non-critical): {}", err);
+                    },
+                    Err(err) => {
+                        log::warn!("Post-flush compaction task panicked: {}", err);
+                    },
                 }
             });
         }
@@ -352,49 +428,35 @@ impl JobExecutor for FlushExecutor {
             None => return Ok(false),
         };
 
-        // Minimum rows needed: flush_threshold or 1 (just check for any data)
-        let min_rows = params.flush_threshold.unwrap_or(1) as usize;
-
-        // Only check for User and Shared tables
-        match table_def.table_type {
-            TableType::User => {
-                if let Some(provider_arc) = schema_registry.get_provider(&params.table_id) {
-                    if let Some(provider) = provider_arc
-                        .as_any()
-                        .downcast_ref::<kalamdb_core::providers::UserTableProvider>(
-                    ) {
-                        let store = provider.store();
-                        let partition = store.partition();
-                        let has_enough = store
-                            .backend()
-                            .scan(&partition, None, None, Some(min_rows))
-                            .map(|iter| iter.count() >= min_rows)
-                            .unwrap_or(true); // on error, assume data exists
-                        return Ok(has_enough);
-                    }
-                }
-                Ok(false)
-            },
-            TableType::Shared => {
-                if let Some(provider_arc) = schema_registry.get_provider(&params.table_id) {
-                    if let Some(provider) = provider_arc
-                        .as_any()
-                        .downcast_ref::<kalamdb_core::providers::SharedTableProvider>(
-                    ) {
-                        let store = provider.store();
-                        let partition = store.partition();
-                        let has_enough = store
-                            .backend()
-                            .scan(&partition, None, None, Some(min_rows))
-                            .map(|iter| iter.count() >= min_rows)
-                            .unwrap_or(true);
-                        return Ok(has_enough);
-                    }
-                }
-                Ok(false)
-            },
-            _ => Ok(true),
+        if table_def.table_type != params.table_type {
+            return Ok(false);
         }
+
+        // Minimum rows needed: flush_threshold or 1 (just check for any data)
+        let min_rows = params.flush_threshold.unwrap_or(1).max(1) as usize;
+
+        let target =
+            match FlushTarget::resolve(&schema_registry, &params.table_id, table_def.table_type) {
+                Ok(Some(target)) => target,
+                Ok(None) => return Ok(true),
+                Err(err) => {
+                    log::trace!(
+                        "Flush pre-validation skipped {} because target resolution failed: {}",
+                        params.table_id,
+                        err
+                    );
+                    return Ok(false);
+                },
+            };
+
+        tokio::task::spawn_blocking(move || target.has_min_rows(min_rows))
+            .await
+            .map_err(|err| {
+                KalamDbError::InvalidOperation(format!(
+                    "Flush pre-validation task panicked: {}",
+                    err
+                ))
+            })
     }
 
     /// Legacy single-phase execute - delegates to do_flush for backward compatibility

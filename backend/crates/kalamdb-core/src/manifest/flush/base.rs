@@ -188,6 +188,9 @@ pub trait TableFlush: Send + Sync {
 pub mod config {
     /// Number of rows to process per batch during scan
     pub const BATCH_SIZE: usize = 10000;
+
+    /// Number of hot-storage keys to remove in one indexed-store delete batch.
+    pub const DELETE_BATCH_SIZE: usize = 4096;
 }
 
 /// Common helper functions for flush operations

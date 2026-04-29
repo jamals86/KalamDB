@@ -9,7 +9,7 @@ use std::{
     sync::Arc,
 };
 
-use actix_web::{web, App, HttpServer};
+use actix_web::{App, HttpServer};
 use anyhow::Result;
 use kalamdb_api::limiter::RateLimiter;
 use kalamdb_auth::CachedUsersRepo;
@@ -19,7 +19,9 @@ use kalamdb_core::sql::{
     datafusion_session::DataFusionSessionFactory,
     executor::{handler_registry::HandlerRegistry, SqlExecutor},
 };
-use kalamdb_dba::{initialize_dba_namespace, start_stats_recorder};
+use kalamdb_dba::{
+    initialize_dba_namespace, start_startup_stats_snapshot, start_stats_recorder,
+};
 use kalamdb_jobs::AppContextJobsExt;
 use kalamdb_live::{ConnectionsManager, LiveQueryManager};
 use kalamdb_store::open_storage_backend;
@@ -27,7 +29,10 @@ use kalamdb_system::providers::storages::models::StorageMode;
 use log::{debug, info, warn};
 use tracing_actix_web::{RootSpanBuilder, TracingLogger};
 
-use crate::{middleware, routes};
+use crate::{
+    http_runtime::{AuthRuntimeMode, HttpRuntimeState},
+    middleware, routes, startup,
+};
 
 /// Resolve the effective number of actix-web worker threads.
 ///
@@ -163,11 +168,14 @@ pub async fn prepare_components(
     )
     .await?;
     if config.retention.enable_dba_stats {
-        if let Err(error) = start_stats_recorder(app_context.clone()).await {
+        if let Err(error) = start_stats_recorder(app_context.clone()) {
             log::error!("Failed to start DBA stats recorder: {}", error);
         }
     } else {
-        log::info!("DBA stats recorder disabled via config (retention.enable_dba_stats = false)");
+        start_startup_stats_snapshot(app_context.clone());
+        log::info!(
+            "DBA periodic stats recorder disabled via config (retention.enable_dba_stats = false); recording startup snapshot only"
+        );
     }
 
     Ok(ApplicationComponents {
@@ -335,36 +343,7 @@ pub async fn bootstrap(
 
     // Seed default storage if necessary (using SystemTablesRegistry)
     let phase_start = std::time::Instant::now();
-    let storages_provider = app_context.system_tables().storages();
-    let existing_storages = storages_provider.scan_all_storages()?;
-    let storage_count = existing_storages.num_rows();
-
-    // TODO: Extract as a separate function create_default_storage_if_needed
-    if storage_count == 0 {
-        info!("No storages found, creating default 'local' storage");
-        let now = chrono::Utc::now().timestamp_millis();
-        let default_storage = kalamdb_system::Storage {
-            storage_id: StorageId::from("local"),
-            storage_name: "Local Filesystem".to_string(),
-            description: Some("Default local filesystem storage".to_string()),
-            storage_type: kalamdb_system::providers::storages::models::StorageType::Filesystem,
-            base_directory: config.storage.storage_dir().to_string_lossy().into_owned(),
-            credentials: None,
-            config_json: None,
-            shared_tables_template: config.storage.shared_tables_template.clone(), /* Need clone
-                                                                                    * for Storage
-                                                                                    * struct */
-            user_tables_template: config.storage.user_tables_template.clone(), /* Need clone
-                                                                                * for Storage
-                                                                                * struct */
-            created_at: now,
-            updated_at: now,
-        };
-        storages_provider.insert_storage(default_storage)?;
-        info!("Default 'local' storage created successfully");
-    } else {
-        debug!("Found {} existing storage(s)", storage_count);
-    }
+    startup::create_default_storage_if_needed(config, &app_context)?;
     debug!(
         "Storage initialization completed ({:.2}ms)",
         phase_start.elapsed().as_secs_f64() * 1000.0
@@ -430,25 +409,7 @@ async fn bootstrap_isolated_inner(
     // apply commands that interact with these providers.
 
     // Seed default storage if necessary
-    let storages_provider = app_context.system_tables().storages();
-    let existing_storages = storages_provider.scan_all_storages()?;
-    if existing_storages.num_rows() == 0 {
-        let now = chrono::Utc::now().timestamp_millis();
-        let default_storage = kalamdb_system::Storage {
-            storage_id: StorageId::from("local"),
-            storage_name: "Local Filesystem".to_string(),
-            description: Some("Default local filesystem storage".to_string()),
-            storage_type: kalamdb_system::providers::storages::models::StorageType::Filesystem,
-            base_directory: config.storage.storage_dir().to_string_lossy().into_owned(),
-            credentials: None,
-            config_json: None,
-            shared_tables_template: config.storage.shared_tables_template.clone(),
-            user_tables_template: config.storage.user_tables_template.clone(),
-            created_at: now,
-            updated_at: now,
-        };
-        storages_provider.insert_storage(default_storage)?;
-    }
+    startup::create_default_storage_if_needed(config, &app_context)?;
 
     let components = prepare_components(config, app_context.clone(), false).await?;
 
@@ -520,7 +481,7 @@ pub async fn run(
     }
 
     if config.security.cors.allowed_origins.is_empty()
-        || config.security.cors.allowed_origins.contains(&"*".to_string())
+        || config.security.cors.allowed_origins.iter().any(|origin| origin == "*")
     {
         debug!("CORS: allowing any origin");
     } else {
@@ -530,72 +491,47 @@ pub async fn run(
     // Get JobsManager for graceful shutdown
     let job_manager_shutdown = app_context.job_manager();
     let shutdown_timeout_secs = config.shutdown.flush.timeout;
+    let connection_registry_shutdown = components.connection_registry.clone();
 
-    let session_factory = components.session_factory.clone();
-    let sql_executor = components.sql_executor.clone();
-    let rate_limiter = components.rate_limiter.clone();
-    let live_query_manager = components.live_query_manager.clone();
-    let user_repo = components.user_repo.clone();
-    let connection_registry = components.connection_registry.clone();
-
-    // Create connection protection middleware from config
-    let connection_protection = middleware::ConnectionProtection::from_server_config(config);
-
-    // Build CORS middleware from config (uses actix-cors)
-    let cors_config = config.clone();
-
-    let app_context_for_handler = app_context.clone();
-    let connection_registry_for_handler = connection_registry.clone();
-
-    // Initialize shared JWT configuration for kalamdb-auth
-    kalamdb_auth::services::unified::init_auth_config(&config.auth, &config.oauth);
-    kalamdb_auth::init_trusted_proxy_ranges(&config.security.trusted_proxy_ranges)?;
-
-    // Share auth settings with HTTP handlers
-    let auth_settings = config.auth.clone();
-    let ui_path = config.server.ui_path.clone();
-    let ui_runtime_config =
-        kalamdb_api::ui::UiRuntimeConfig::new(config.server.configured_public_origin());
-
-    // Log UI serving status
-    let ui_status = if kalamdb_api::routes::is_embedded_ui_available() {
-        "embedded in binary"
-    } else if let Some(ref _path) = ui_path {
-        "filesystem"
-    } else {
-        "disabled"
-    };
+    let http_runtime = HttpRuntimeState::new(
+        config,
+        &components,
+        app_context.clone(),
+        AuthRuntimeMode::AlreadyConfigured,
+    )?;
+    let ui_status = http_runtime.ui_status();
     debug!("Admin UI: {} (at /ui)", ui_status);
 
     let server = HttpServer::new(move || {
+        let runtime = http_runtime.clone();
         let mut app = App::new()
             // Connection protection (first middleware - drops bad requests early)
-            .wrap(connection_protection.clone())
+            .wrap(runtime.connection_protection.clone())
             // Tracing middleware (creates a root span per HTTP request)
             // Uses KalamDbRootSpanBuilder to force `parent: None` on each request,
             // preventing cross-request span contamination in OTel/Jaeger.
             .wrap(TracingLogger::<KalamDbRootSpanBuilder>::new())
-            .wrap(middleware::build_cors_from_config(&cors_config))
-            .app_data(web::Data::new(app_context_for_handler.clone()))
-            .app_data(web::Data::new(session_factory.clone()))
-            .app_data(web::Data::new(sql_executor.clone()))
-            .app_data(web::Data::new(rate_limiter.clone()))
-            .app_data(web::Data::new(live_query_manager.clone()))
-            .app_data(web::Data::new(user_repo.clone()))
-            .app_data(web::Data::new(connection_registry_for_handler.clone()))
-            .app_data(web::Data::new(auth_settings.clone()))
+            .wrap(middleware::build_cors_from_settings(runtime.cors_settings.as_ref()))
+            .app_data(runtime.app_context.clone())
+            .app_data(runtime.session_factory.clone())
+            .app_data(runtime.sql_executor.clone())
+            .app_data(runtime.rate_limiter.clone())
+            .app_data(runtime.live_query_manager.clone())
+            .app_data(runtime.user_repo.clone())
+            .app_data(runtime.connection_registry.clone())
+            .app_data(runtime.auth_settings.clone())
             .configure(routes::configure);
 
         // Add UI routes - prefer embedded, fallback to filesystem path
         #[cfg(feature = "embedded-ui")]
         if kalamdb_api::routes::is_embedded_ui_available() {
-            let runtime_config = ui_runtime_config.clone();
+            let runtime_config = runtime.ui_runtime_config.clone();
             app = app.configure(move |cfg| {
                 kalamdb_api::routes::configure_embedded_ui_routes(cfg, runtime_config.clone());
             });
-        } else if let Some(ref path) = ui_path {
+        } else if let Some(ref path) = runtime.ui_path {
             let path: String = path.clone();
-            let runtime_config = ui_runtime_config.clone();
+            let runtime_config = runtime.ui_runtime_config.clone();
             app = app.configure(move |cfg| {
                 kalamdb_api::routes::configure_ui_routes(
                     cfg,
@@ -606,9 +542,9 @@ pub async fn run(
         }
 
         #[cfg(not(feature = "embedded-ui"))]
-        if let Some(ref path) = ui_path {
+        if let Some(ref path) = runtime.ui_path {
             let path: String = path.clone();
-            let runtime_config = ui_runtime_config.clone();
+            let runtime_config = runtime.ui_runtime_config.clone();
             app = app.configure(move |cfg| {
                 kalamdb_api::routes::configure_ui_routes(
                     cfg,
@@ -677,7 +613,7 @@ pub async fn run(
 
             // Gracefully shutdown WebSocket connections
             info!("Shutting down WebSocket connections...");
-            connection_registry.shutdown(std::time::Duration::from_secs(5)).await;
+            connection_registry_shutdown.shutdown(std::time::Duration::from_secs(5)).await;
 
             info!(
                 "Waiting up to {}s for active jobs to complete...",
@@ -796,59 +732,47 @@ pub async fn run_for_tests(
     let listener = TcpListener::bind((bind_ip, 0))?;
     let bind_addr = listener.local_addr()?;
 
-    let session_factory = components.session_factory.clone();
-    let sql_executor = components.sql_executor.clone();
-    let rate_limiter = components.rate_limiter.clone();
-    let live_query_manager = components.live_query_manager.clone();
-    let user_repo = components.user_repo.clone();
-    let connection_registry = components.connection_registry.clone();
-
-    let connection_protection = middleware::ConnectionProtection::from_server_config(config);
-    let cors_config = config.clone();
-
-    let app_context_for_handler = app_context.clone();
-    let connection_registry_for_handler = connection_registry.clone();
-
-    kalamdb_auth::services::unified::init_auth_config(&config.auth, &config.oauth);
-    kalamdb_auth::init_trusted_proxy_ranges(&config.security.trusted_proxy_ranges)?;
-    let auth_settings = config.auth.clone();
-    let ui_path = config.server.ui_path.clone();
-    let ui_runtime_config =
-        kalamdb_api::ui::UiRuntimeConfig::new(config.server.configured_public_origin());
+    let http_runtime = HttpRuntimeState::new(
+        config,
+        &components,
+        app_context.clone(),
+        AuthRuntimeMode::Configure,
+    )?;
 
     let server = HttpServer::new(move || {
+        let runtime = http_runtime.clone();
         let mut app = App::new()
-            .wrap(connection_protection.clone())
+            .wrap(runtime.connection_protection.clone())
             .wrap(TracingLogger::<KalamDbRootSpanBuilder>::new())
-            .wrap(middleware::build_cors_from_config(&cors_config))
-            .app_data(web::Data::new(app_context_for_handler.clone()))
-            .app_data(web::Data::new(session_factory.clone()))
-            .app_data(web::Data::new(sql_executor.clone()))
-            .app_data(web::Data::new(rate_limiter.clone()))
-            .app_data(web::Data::new(live_query_manager.clone()))
-            .app_data(web::Data::new(user_repo.clone()))
-            .app_data(web::Data::new(connection_registry_for_handler.clone()))
-            .app_data(web::Data::new(auth_settings.clone()))
+            .wrap(middleware::build_cors_from_settings(runtime.cors_settings.as_ref()))
+            .app_data(runtime.app_context.clone())
+            .app_data(runtime.session_factory.clone())
+            .app_data(runtime.sql_executor.clone())
+            .app_data(runtime.rate_limiter.clone())
+            .app_data(runtime.live_query_manager.clone())
+            .app_data(runtime.user_repo.clone())
+            .app_data(runtime.connection_registry.clone())
+            .app_data(runtime.auth_settings.clone())
             .configure(routes::configure);
 
         #[cfg(feature = "embedded-ui")]
         if kalamdb_api::routes::is_embedded_ui_available() {
-            let runtime_config = ui_runtime_config.clone();
+            let runtime_config = runtime.ui_runtime_config.clone();
             app = app.configure(move |cfg| {
                 kalamdb_api::routes::configure_embedded_ui_routes(cfg, runtime_config.clone());
             });
-        } else if let Some(ref path) = ui_path {
+        } else if let Some(ref path) = runtime.ui_path {
             let path: String = path.clone();
-            let runtime_config = ui_runtime_config.clone();
+            let runtime_config = runtime.ui_runtime_config.clone();
             app = app.configure(move |cfg| {
                 kalamdb_api::routes::configure_ui_routes(cfg, &path, runtime_config.clone());
             });
         }
 
         #[cfg(not(feature = "embedded-ui"))]
-        if let Some(ref path) = ui_path {
+        if let Some(ref path) = runtime.ui_path {
             let path: String = path.clone();
-            let runtime_config = ui_runtime_config.clone();
+            let runtime_config = runtime.ui_runtime_config.clone();
             app = app.configure(move |cfg| {
                 kalamdb_api::routes::configure_ui_routes(cfg, &path, runtime_config.clone());
             });
@@ -893,59 +817,47 @@ pub async fn run_detached(
 ) -> Result<RunningTestHttpServer> {
     let bind_addr = format!("{}:{}", config.server.host, config.server.port);
 
-    let session_factory = components.session_factory.clone();
-    let sql_executor = components.sql_executor.clone();
-    let rate_limiter = components.rate_limiter.clone();
-    let live_query_manager = components.live_query_manager.clone();
-    let user_repo = components.user_repo.clone();
-    let connection_registry = components.connection_registry.clone();
-
-    let connection_protection = middleware::ConnectionProtection::from_server_config(config);
-    let cors_config = config.clone();
-
-    let app_context_for_handler = app_context.clone();
-    let connection_registry_for_handler = connection_registry.clone();
-
-    kalamdb_auth::services::unified::init_auth_config(&config.auth, &config.oauth);
-    kalamdb_auth::init_trusted_proxy_ranges(&config.security.trusted_proxy_ranges)?;
-    let auth_settings = config.auth.clone();
-    let ui_path = config.server.ui_path.clone();
-    let ui_runtime_config =
-        kalamdb_api::ui::UiRuntimeConfig::new(config.server.configured_public_origin());
+    let http_runtime = HttpRuntimeState::new(
+        config,
+        &components,
+        app_context.clone(),
+        AuthRuntimeMode::Configure,
+    )?;
 
     let server = HttpServer::new(move || {
+        let runtime = http_runtime.clone();
         let mut app = App::new()
-            .wrap(connection_protection.clone())
+            .wrap(runtime.connection_protection.clone())
             .wrap(TracingLogger::<KalamDbRootSpanBuilder>::new())
-            .wrap(middleware::build_cors_from_config(&cors_config))
-            .app_data(web::Data::new(app_context_for_handler.clone()))
-            .app_data(web::Data::new(session_factory.clone()))
-            .app_data(web::Data::new(sql_executor.clone()))
-            .app_data(web::Data::new(rate_limiter.clone()))
-            .app_data(web::Data::new(live_query_manager.clone()))
-            .app_data(web::Data::new(user_repo.clone()))
-            .app_data(web::Data::new(connection_registry_for_handler.clone()))
-            .app_data(web::Data::new(auth_settings.clone()))
+            .wrap(middleware::build_cors_from_settings(runtime.cors_settings.as_ref()))
+            .app_data(runtime.app_context.clone())
+            .app_data(runtime.session_factory.clone())
+            .app_data(runtime.sql_executor.clone())
+            .app_data(runtime.rate_limiter.clone())
+            .app_data(runtime.live_query_manager.clone())
+            .app_data(runtime.user_repo.clone())
+            .app_data(runtime.connection_registry.clone())
+            .app_data(runtime.auth_settings.clone())
             .configure(routes::configure);
 
         #[cfg(feature = "embedded-ui")]
         if kalamdb_api::routes::is_embedded_ui_available() {
-            let runtime_config = ui_runtime_config.clone();
+            let runtime_config = runtime.ui_runtime_config.clone();
             app = app.configure(move |cfg| {
                 kalamdb_api::routes::configure_embedded_ui_routes(cfg, runtime_config.clone());
             });
-        } else if let Some(ref path) = ui_path {
+        } else if let Some(ref path) = runtime.ui_path {
             let path: String = path.clone();
-            let runtime_config = ui_runtime_config.clone();
+            let runtime_config = runtime.ui_runtime_config.clone();
             app = app.configure(move |cfg| {
                 kalamdb_api::routes::configure_ui_routes(cfg, &path, runtime_config.clone());
             });
         }
 
         #[cfg(not(feature = "embedded-ui"))]
-        if let Some(ref path) = ui_path {
+        if let Some(ref path) = runtime.ui_path {
             let path: String = path.clone();
-            let runtime_config = ui_runtime_config.clone();
+            let runtime_config = runtime.ui_runtime_config.clone();
             app = app.configure(move |cfg| {
                 kalamdb_api::routes::configure_ui_routes(cfg, &path, runtime_config.clone());
             });
@@ -1043,7 +955,7 @@ async fn create_default_system_user(
             } else {
                 None
             };
-            let root_password_from_config = config_root_password.clone().filter(|p| !p.is_empty());
+            let root_password_from_config = config_root_password.filter(|p| !p.is_empty());
             let root_password = root_password_from_env.or(root_password_from_config);
 
             let password_hash = match root_password {

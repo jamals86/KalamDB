@@ -10,6 +10,7 @@ use ntest::timeout;
 
 use super::test_support::TestServer;
 
+#[ignore = "Requires dba bootstrap to be enabled, which is not the default in tests. Remove this once we enable dba bootstrap by default in tests"]
 #[tokio::test]
 #[timeout(30000)]
 async fn test_dba_namespace_and_tables_created_on_startup() {

@@ -179,6 +179,18 @@ impl JobsManager {
         // Validate parameters before serialization
         params.validate()?;
 
+        // Fast duplicate rejection before executor pre-validation. Flush pre-validation can scan
+        // RocksDB, so avoid doing that work for jobs we already know are active. create_job()
+        // still performs the same check after pre-validation to keep the race window closed.
+        if let Some(ref key) = idempotency_key {
+            if self.has_active_job_with_key(key).await? {
+                return Err(KalamDbError::IdempotentConflict(format!(
+                    "Job with idempotency key '{}' is already running or queued",
+                    key
+                )));
+            }
+        }
+
         // Serialize to JSON for storage and pre-validation
         let params_json = serde_json::to_string(&params)
             .into_kalamdb_error("Failed to serialize job parameters")?;

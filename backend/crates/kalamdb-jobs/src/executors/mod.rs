@@ -24,6 +24,7 @@ pub mod restore;
 pub mod retention;
 pub(crate) mod shared_table_cleanup;
 pub mod stream_eviction;
+pub(crate) mod table_partition;
 pub mod topic_cleanup;
 pub mod topic_retention;
 pub mod user_cleanup;

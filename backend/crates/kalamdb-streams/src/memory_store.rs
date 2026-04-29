@@ -99,6 +99,37 @@ impl MemoryStreamLogStore {
         Ok(())
     }
 
+    pub fn append_row(
+        &self,
+        table_id: &TableId,
+        _user_id: &UserId,
+        row_id: &StreamTableRowId,
+        row: &StreamTableRow,
+    ) -> Result<()> {
+        self.ensure_table(table_id)?;
+        let key = self.make_key(row_id);
+        let user_id = row_id.user_id().clone();
+        let mut state = self
+            .state
+            .write()
+            .map_err(|e| StreamLogError::Io(format!("Failed to acquire write lock: {}", e)))?;
+        let was_new = state
+            .data
+            .insert(
+                key,
+                StreamLogRecord::Put {
+                    row_id: row_id.clone(),
+                    row: row.clone(),
+                },
+            )
+            .is_none();
+        if was_new {
+            *state.per_user_entry_counts.entry(user_id.clone()).or_default() += 1;
+        }
+        self.evict_excess_user_rows(&mut state, &user_id);
+        Ok(())
+    }
+
     /// Delete old logs before a given timestamp and return count of deleted entries.
     pub fn delete_old_logs_with_count(&self, before_time: u64) -> Result<usize> {
         let mut state = self

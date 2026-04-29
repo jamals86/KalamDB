@@ -31,7 +31,7 @@ use actix_web::{
 };
 use futures_util::future::LocalBoxFuture;
 use kalamdb_auth::extract_client_ip_addr_secure;
-use kalamdb_configs::{RateLimitSettings, ServerConfig};
+use kalamdb_configs::{CorsSettings, RateLimitSettings, ServerConfig};
 use log::warn;
 
 use crate::connection_guard::{ConnectionGuard, ConnectionGuardResult};
@@ -41,13 +41,15 @@ use crate::connection_guard::{ConnectionGuard, ConnectionGuardResult};
 /// Maps all CorsSettings options to actix-cors builder methods.
 /// See: https://docs.rs/actix-cors/latest/actix_cors/struct.Cors.html
 pub fn build_cors_from_config(config: &ServerConfig) -> Cors {
-    let cors_config = &config.security.cors;
+    build_cors_from_settings(&config.security.cors)
+}
 
+pub fn build_cors_from_settings(cors_config: &CorsSettings) -> Cors {
     let mut cors = Cors::default();
 
     // Configure allowed origins
     if cors_config.allowed_origins.is_empty()
-        || cors_config.allowed_origins.contains(&"*".to_string())
+        || cors_config.allowed_origins.iter().any(|origin| origin == "*")
     {
         cors = cors.allow_any_origin();
     } else {
@@ -64,7 +66,7 @@ pub fn build_cors_from_config(config: &ServerConfig) -> Cors {
     }
 
     // Configure allowed headers
-    if cors_config.allowed_headers.contains(&"*".to_string()) {
+    if cors_config.allowed_headers.iter().any(|header| header == "*") {
         cors = cors.allow_any_header();
     } else {
         let headers: Vec<HeaderName> =

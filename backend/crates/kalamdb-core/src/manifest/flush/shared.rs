@@ -5,25 +5,24 @@
 
 use std::sync::Arc;
 
-use datafusion::arrow::{datatypes::SchemaRef, record_batch::RecordBatch};
+use datafusion::arrow::datatypes::SchemaRef;
 use kalamdb_commons::{
     constants::SystemColumnNames,
     ids::SharedTableRowId,
     models::{rows::Row, TableId},
-    schemas::TableType,
     StorageKey,
 };
 use kalamdb_store::EntityStore;
 use kalamdb_tables::{SharedTableIndexedStore, SharedTableRow};
 
-use super::base::{FlushJobResult, FlushMetadata, TableFlush};
+use super::base::{config, helpers, FlushDedupStats, FlushJobResult, FlushMetadata, TableFlush};
+use super::scope_writer::FlushScopeWriter;
 use crate::{
     app_context::AppContext,
     error::KalamDbError,
     error_extensions::KalamDbResultExt,
     manifest::{FlushManifestHelper, ManifestService},
     schema_registry::SchemaRegistry,
-    vector::flush_shared_scope_vectors,
 };
 
 /// Shared table flush job
@@ -88,27 +87,21 @@ impl SharedTableFlushJob {
         }
     }
 
-    /// Get current schema version for the table
-    fn get_schema_version(&self) -> u32 {
-        super::base::helpers::get_schema_version(&self.unified_cache, &self.table_id)
+    fn scan_batch_size(&self) -> usize {
+        self.app_context.config().flush.flush_batch_size.max(1)
     }
 
-    /// Generate batch filename using manifest max_batch (T115)
-    /// Returns (batch_number, filename)
-    fn generate_batch_filename(&self) -> Result<(u64, String), KalamDbError> {
-        let batch_number = self.manifest_helper.get_next_batch_number(&self.table_id, None)?;
-        let filename = FlushManifestHelper::generate_batch_filename(batch_number);
-        log::debug!(
-            "[MANIFEST] Generated batch filename: {} (batch_number={})",
-            filename,
-            batch_number
-        );
-        Ok((batch_number, filename))
-    }
-
-    /// Convert stored rows to Arrow RecordBatch without JSON round-trips
-    fn rows_to_record_batch(&self, rows: &[(Vec<u8>, Row)]) -> Result<RecordBatch, KalamDbError> {
-        super::base::helpers::rows_to_arrow_batch(&self.schema, rows)
+    fn scope_writer(&self) -> FlushScopeWriter<'_> {
+        FlushScopeWriter::new(
+            &self.app_context,
+            &self.table_id,
+            kalamdb_commons::schemas::TableType::Shared,
+            &self.schema,
+            &self.unified_cache,
+            &self.manifest_helper,
+            &self.bloom_filter_columns,
+            &self.indexed_columns,
+        )
     }
 
     /// Delete flushed rows from RocksDB after successful Parquet write
@@ -117,21 +110,22 @@ impl SharedTableFlushJob {
             return Ok(());
         }
 
-        let parsed_keys: Result<Vec<_>, _> = keys
-            .iter()
-            .map(|key_bytes| {
-                kalamdb_commons::ids::SharedTableRowId::from_bytes(key_bytes)
-                    .into_invalid_operation("Invalid key bytes")
-            })
-            .collect();
-        let parsed_keys = parsed_keys?;
+        for chunk in keys.chunks(config::DELETE_BATCH_SIZE) {
+            let parsed_keys: Result<Vec<_>, _> = chunk
+                .iter()
+                .map(|key_bytes| {
+                    kalamdb_commons::ids::SharedTableRowId::from_bytes(key_bytes)
+                        .into_invalid_operation("Invalid key bytes")
+                })
+                .collect();
+            let parsed_keys = parsed_keys?;
 
-        // Batch delete: single RocksDB batch write for all main + index entries.
-        self.store
-            .delete_batch(&parsed_keys)
-            .into_kalamdb_error("Failed to delete flushed rows")?;
+            self.store
+                .delete_batch(&parsed_keys)
+                .into_kalamdb_error("Failed to delete flushed rows")?;
+        }
 
-        log::debug!("Deleted {} flushed rows from storage", parsed_keys.len());
+        log::debug!("Deleted {} flushed rows from storage", keys.len());
         Ok(())
     }
 }
@@ -141,8 +135,6 @@ impl TableFlush for SharedTableFlushJob {
         log::debug!("🔄 Starting shared table flush: table={}", self.table_id);
 
         use std::collections::HashMap;
-
-        use super::base::{config, helpers, FlushDedupStats};
 
         // Get primary key field name from schema
         let pk_field = helpers::extract_pk_field_name(&self.schema);
@@ -156,10 +148,11 @@ impl TableFlush for SharedTableFlushJob {
 
         // Batched scan with cursor
         let mut cursor: Option<SharedTableRowId> = None;
+        let scan_batch_size = self.scan_batch_size();
         loop {
             let batch = self
                 .store
-                .scan_typed_with_prefix_and_start(None, cursor.as_ref(), config::BATCH_SIZE)
+                .scan_typed_with_prefix_and_start(None, cursor.as_ref(), scan_batch_size)
                 .map_err(|e| {
                     log::error!("❌ Failed to scan rows for shared table={}: {}", self.table_id, e);
                     KalamDbError::Other(format!("Failed to scan rows: {}", e))
@@ -208,7 +201,7 @@ impl TableFlush for SharedTableFlushJob {
             }
 
             // Check if we got fewer rows than batch size (end of data)
-            if batch_len < config::BATCH_SIZE {
+            if batch_len < scan_batch_size {
                 break;
             }
         }
@@ -225,8 +218,7 @@ impl TableFlush for SharedTableFlushJob {
                 continue;
             }
 
-            let row_data =
-                helpers::add_system_columns(row.fields.clone(), row._seq.as_i64(), false);
+            let row_data = helpers::add_system_columns(row.fields, row._seq.as_i64(), false);
             rows.push((key_bytes, row_data));
         }
 
@@ -253,97 +245,13 @@ impl TableFlush for SharedTableFlushJob {
             self.table_id
         );
 
-        // Convert rows to RecordBatch
-        let batch = self.rows_to_record_batch(&rows)?;
-
-        // T114-T115: Generate batch filename using manifest (sequential numbering)
-        let (batch_number, batch_filename) = self.generate_batch_filename()?;
-        let temp_filename = FlushManifestHelper::generate_temp_filename(batch_number);
-        let cached = self.unified_cache.get(&self.table_id).ok_or_else(|| {
-            KalamDbError::TableNotFound(format!("Table not found: {}", self.table_id))
-        })?;
-
-        let storage_cached = cached
-            .storage_cached(&self.app_context.storage_registry())
-            .into_kalamdb_error("Failed to get storage cache")?;
-
-        let temp_path = storage_cached
-            .get_file_path(TableType::Shared, &self.table_id, None, &temp_filename)
-            .full_path;
-        let destination_path = storage_cached
-            .get_file_path(TableType::Shared, &self.table_id, None, &batch_filename)
-            .full_path;
-
-        // Use cached bloom_filter_columns and indexed_columns (fetched once at job construction)
-        // This avoids per-flush lookups and matches UserTableFlushJob optimization pattern
-        let bloom_filter_columns = &self.bloom_filter_columns;
-        let indexed_columns = &self.indexed_columns;
-
-        log::debug!("🌸 Bloom filters enabled for columns: {:?}", bloom_filter_columns);
-
-        // ===== ATOMIC FLUSH PATTERN =====
-        // Step 1: Mark manifest as syncing (flush in progress)
-        //         If crash occurs after this, we know a flush was in progress
-        if let Err(e) = self.manifest_helper.mark_syncing(&self.table_id, None) {
-            log::warn!("⚠️  Failed to mark manifest as syncing (continuing anyway): {}", e);
-        }
-
-        // Extract manifest stats from the batch BEFORE writing Parquet,
-        // so we can move the batch into write_parquet_sync without cloning.
-        let (min_seq, max_seq) = FlushManifestHelper::extract_seq_range(&batch);
-        let column_stats = FlushManifestHelper::extract_column_stats(&batch, indexed_columns);
-        let row_count = batch.num_rows() as u64;
-
-        // Step 2: Write Parquet to TEMP location first (consumes batch — no clone)
-        log::debug!("📝 [ATOMIC] Writing Parquet to temp path: {}, rows={}", temp_path, rows_count);
-        let result = storage_cached
-            .write_parquet_sync(
-                TableType::Shared,
-                &self.table_id,
-                None,
-                &temp_filename,
-                self.schema.clone(),
-                vec![batch],
-                Some(bloom_filter_columns.clone()),
-            )
-            .into_kalamdb_error("Filestore error")?;
-
-        // Step 3: Rename temp file to final location (atomic operation)
-        log::debug!("📝 [ATOMIC] Renaming {} -> {}", temp_path, destination_path);
-        storage_cached
-            .rename_sync(TableType::Shared, &self.table_id, None, &temp_filename, &batch_filename)
-            .into_kalamdb_error("Failed to rename Parquet file to final location")?;
-
+        let write_result = self.scope_writer().write_scope(None, rows)?;
         log::info!(
             "✅ Flushed {} rows for shared table={} to {}",
             rows_count,
             self.table_id,
-            destination_path
+            write_result.destination_path
         );
-
-        let size_bytes = result.size_bytes;
-
-        // Update manifest using pre-extracted stats (batch was consumed above)
-        let schema_version = self.get_schema_version();
-        self.manifest_helper.update_manifest_after_flush_with_stats(
-            &self.table_id,
-            None,
-            batch_filename.clone(),
-            min_seq,
-            max_seq,
-            column_stats,
-            row_count,
-            size_bytes,
-            schema_version,
-        )?;
-
-        // Flush vector hot-staging artifacts for embedding columns in shared scope.
-        flush_shared_scope_vectors(
-            &self.app_context,
-            &self.table_id,
-            &self.schema,
-            &storage_cached,
-        )?;
 
         // Delete ALL flushed rows from RocksDB (including old versions)
         log::info!(
@@ -357,11 +265,9 @@ impl TableFlush for SharedTableFlushJob {
         // to avoid blocking job completion. Removing the inline compact() call here
         // eliminates a redundant double-compaction.
 
-        let parquet_path = destination_path;
-
         Ok(FlushJobResult {
             rows_flushed: rows_count,
-            parquet_files: vec![parquet_path],
+            parquet_files: vec![write_result.destination_path],
             metadata: FlushMetadata::shared_table(),
         })
     }

@@ -19,6 +19,7 @@
 //! ```
 
 pub mod base;
+pub(crate) mod scope_writer;
 pub mod shared;
 pub mod users;
 

@@ -11,28 +11,42 @@ pub(crate) fn parse_log_window(path: &Path) -> Option<u64> {
     trimmed.parse::<u64>().ok()
 }
 
-pub(crate) fn read_dirs(path: &Path) -> Result<Vec<PathBuf>> {
-    let mut dirs = Vec::new();
+pub(crate) fn parse_tmp_log_window(path: &Path) -> Option<u64> {
+    let file_name = path.file_name()?.to_string_lossy();
+    let trimmed = file_name.strip_suffix(".log.tmp")?;
+    trimmed.parse::<u64>().ok()
+}
+
+pub(crate) fn visit_dirs<F>(path: &Path, mut visitor: F) -> Result<bool>
+where
+    F: FnMut(PathBuf) -> Result<bool>,
+{
     for entry in fs::read_dir(path).map_err(|e| StreamLogError::Io(e.to_string()))? {
         let entry = entry.map_err(|e| StreamLogError::Io(e.to_string()))?;
         let path = entry.path();
         if path.is_dir() {
-            dirs.push(path);
+            if !visitor(path)? {
+                return Ok(false);
+            }
         }
     }
-    Ok(dirs)
+    Ok(true)
 }
 
-pub(crate) fn read_files(path: &Path) -> Result<Vec<PathBuf>> {
-    let mut files = Vec::new();
+pub(crate) fn visit_files<F>(path: &Path, mut visitor: F) -> Result<bool>
+where
+    F: FnMut(PathBuf) -> Result<bool>,
+{
     for entry in fs::read_dir(path).map_err(|e| StreamLogError::Io(e.to_string()))? {
         let entry = entry.map_err(|e| StreamLogError::Io(e.to_string()))?;
         let path = entry.path();
         if path.is_file() {
-            files.push(path);
+            if !visitor(path)? {
+                return Ok(false);
+            }
         }
     }
-    Ok(files)
+    Ok(true)
 }
 
 pub(crate) fn cleanup_empty_dir(path: &Path) {
