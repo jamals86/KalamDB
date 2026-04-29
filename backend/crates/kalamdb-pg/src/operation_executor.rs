@@ -8,9 +8,13 @@ pub use kalamdb_commons::models::pg_operations::{
     DeleteRequest, InsertRequest, MutationResult, ScanRequest, ScanResult, UpdateRequest,
 };
 use kalamdb_commons::{
-    models::{rows::Row, TransactionId, UserId},
+    models::{
+        rows::{Row, StoredScalarValue},
+        TransactionId, UserId,
+    },
     TableId, TableType,
 };
+use serde_json::Value;
 use tonic::Status;
 
 use crate::{
@@ -85,9 +89,68 @@ pub fn parse_user_id(raw: Option<&str>) -> Option<UserId> {
     raw.map(str::trim).filter(|s| !s.is_empty()).map(UserId::new)
 }
 
+fn stored_scalar_from_json_value(value: &Value) -> StoredScalarValue {
+    match value {
+        Value::Null => StoredScalarValue::Null,
+        Value::Bool(value) => StoredScalarValue::Boolean(Some(*value)),
+        Value::Number(value) => {
+            if let Some(value) = value.as_i64() {
+                StoredScalarValue::Int64(Some(value.to_string()))
+            } else if let Some(value) = value.as_u64() {
+                StoredScalarValue::UInt64(Some(value.to_string()))
+            } else if let Some(value) = value.as_f64() {
+                StoredScalarValue::Float64(Some(value))
+            } else {
+                StoredScalarValue::Fallback(value.to_string())
+            }
+        },
+        Value::String(value) => StoredScalarValue::Utf8(Some(value.clone())),
+        Value::Array(_) | Value::Object(_) => StoredScalarValue::Fallback(value.to_string()),
+    }
+}
+
+fn parse_row_value(value: &Value) -> Result<Row, Status> {
+    match value {
+        Value::Object(values) => {
+            let row = values
+                .iter()
+                .map(|(column_name, value)| {
+                    Ok((column_name.clone(), stored_scalar_from_json_value(value).into()))
+                })
+                .collect::<Result<Vec<_>, Status>>()?;
+            Ok(Row::from_vec(row))
+        },
+        _ => Err(Status::invalid_argument("invalid row JSON: expected object payload")),
+    }
+}
+
 pub fn parse_row(json: &str) -> Result<Row, Status> {
-    serde_json::from_str::<Row>(json)
-        .map_err(|e| Status::invalid_argument(format!("invalid row JSON: {}", e)))
+    if let Ok(row) = serde_json::from_str::<Row>(json) {
+        return Ok(row);
+    }
+
+    let value = serde_json::from_str::<Value>(json)
+        .map_err(|e| Status::invalid_argument(format!("invalid row JSON: {}", e)))?;
+
+    parse_row_value(&value)
+}
+
+fn parse_rows_json(json: &str) -> Result<Vec<Row>, Status> {
+    if let Ok(rows) = serde_json::from_str::<Vec<Row>>(json) {
+        return Ok(rows);
+    }
+
+    if let Ok(row) = serde_json::from_str::<Row>(json) {
+        return Ok(vec![row]);
+    }
+
+    let value = serde_json::from_str::<Value>(json)
+        .map_err(|e| Status::invalid_argument(format!("invalid row JSON: {}", e)))?;
+
+    match value {
+        Value::Array(rows) => rows.iter().map(parse_row_value).collect(),
+        other => Ok(vec![parse_row_value(&other)?]),
+    }
 }
 
 /// Encode Arrow RecordBatches into IPC bytes for gRPC transport.
@@ -170,7 +233,7 @@ pub fn insert_request_from_rpc(rpc: &InsertRpcRequest) -> Result<InsertRequest, 
 pub fn update_request_from_rpc(rpc: &UpdateRpcRequest) -> Result<UpdateRequest, Status> {
     let table_id = parse_table_id(&rpc.namespace, &rpc.table_name)?;
     let table_type = parse_table_type(&rpc.table_type)?;
-    let updates = vec![parse_row(&rpc.updates_json)?];
+    let updates = parse_rows_json(&rpc.updates_json)?;
     Ok(UpdateRequest {
         table_id,
         table_type,
@@ -179,6 +242,80 @@ pub fn update_request_from_rpc(rpc: &UpdateRpcRequest) -> Result<UpdateRequest, 
         updates,
         pk_value: rpc.pk_value.clone(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_row_accepts_plain_json_scalars() {
+        let row = parse_row(r#"{"active":true,"count":7,"id":"msg-1","missing":null}"#)
+            .expect("plain row JSON should parse");
+
+        assert_eq!(row.len(), 4);
+        assert_eq!(
+            row.get("id").map(StoredScalarValue::from),
+            Some(StoredScalarValue::Utf8(Some("msg-1".to_string())))
+        );
+        assert_eq!(
+            row.get("count").map(StoredScalarValue::from),
+            Some(StoredScalarValue::Int64(Some("7".to_string())))
+        );
+        assert_eq!(
+            row.get("active").map(StoredScalarValue::from),
+            Some(StoredScalarValue::Boolean(Some(true)))
+        );
+        assert_eq!(row.get("missing").map(StoredScalarValue::from), Some(StoredScalarValue::Null));
+    }
+
+    #[test]
+    fn update_request_from_rpc_accepts_row_arrays() {
+        let request = UpdateRpcRequest {
+            namespace: "app".to_string(),
+            table_name: "messages".to_string(),
+            table_type: "shared".to_string(),
+            session_id: "session-1".to_string(),
+            user_id: None,
+            pk_value: "row-1".to_string(),
+            updates_json: r#"[{"name":{"Utf8":"updated"}}]"#.to_string(),
+        };
+
+        let parsed = update_request_from_rpc(&request).expect("update array payload should parse");
+
+        assert_eq!(parsed.updates.len(), 1);
+        assert_eq!(
+            parsed.updates[0].get("name").map(StoredScalarValue::from),
+            Some(StoredScalarValue::Utf8(Some("updated".to_string())))
+        );
+    }
+
+    #[test]
+    fn update_request_from_rpc_accepts_single_typed_row_object() {
+        let request = UpdateRpcRequest {
+            namespace: "app".to_string(),
+            table_name: "messages".to_string(),
+            table_type: "shared".to_string(),
+            session_id: "session-1".to_string(),
+            user_id: None,
+            pk_value: "row-1".to_string(),
+            updates_json: r#"{"name":{"Utf8":"updated"},"value":{"Int32":110}}"#
+                .to_string(),
+        };
+
+        let parsed =
+            update_request_from_rpc(&request).expect("single typed update payload should parse");
+
+        assert_eq!(parsed.updates.len(), 1);
+        assert_eq!(
+            parsed.updates[0].get("name").map(StoredScalarValue::from),
+            Some(StoredScalarValue::Utf8(Some("updated".to_string())))
+        );
+        assert_eq!(
+            parsed.updates[0].get("value").map(StoredScalarValue::from),
+            Some(StoredScalarValue::Int32(Some(110)))
+        );
+    }
 }
 
 /// Convert a `DeleteRpcRequest` into a domain `DeleteRequest`.

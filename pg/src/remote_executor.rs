@@ -88,7 +88,7 @@ impl KalamBackendExecutor for RemoteBackendExecutor {
         request.validate()?;
         let user_id = request.tenant_context.effective_user_id().map(|u| u.as_str().to_string());
 
-        let updates_json = serde_json::to_string(&request.updates).map_err(|error| {
+        let updates_json = serde_json::to_string(&[&request.updates]).map_err(|error| {
             KalamPgError::Execution(format!(
                 "failed to serialize update payload for {} pk {}: {}",
                 request.table_id.full_name(),

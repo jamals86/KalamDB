@@ -1,5 +1,6 @@
 use std::fmt;
 
+use datafusion::{arrow::array::Array, scalar::ScalarValue};
 use kalamdb_commons::{
     models::{rows::Row, OperationKind, TableId, TransactionId, UserId},
     TableType,
@@ -24,6 +25,46 @@ impl fmt::Display for StagedInsertBuildError {
 }
 
 impl std::error::Error for StagedInsertBuildError {}
+
+#[inline]
+fn approximate_row_size_bytes(row: &Row) -> usize {
+    row.values
+        .iter()
+        .map(|(column_name, value)| column_name.len() + approximate_scalar_value_size_bytes(value))
+        .sum()
+}
+
+#[inline]
+fn approximate_scalar_value_size_bytes(value: &ScalarValue) -> usize {
+    let base_size = std::mem::size_of::<ScalarValue>();
+
+    match value {
+        ScalarValue::Utf8(Some(value))
+        | ScalarValue::Utf8View(Some(value))
+        | ScalarValue::LargeUtf8(Some(value)) => base_size + value.len(),
+        ScalarValue::Binary(Some(value))
+        | ScalarValue::BinaryView(Some(value))
+        | ScalarValue::FixedSizeBinary(_, Some(value))
+        | ScalarValue::LargeBinary(Some(value)) => base_size + value.len(),
+        ScalarValue::FixedSizeList(array) => base_size + array.get_array_memory_size(),
+        ScalarValue::List(array) => base_size + array.get_array_memory_size(),
+        ScalarValue::LargeList(array) => base_size + array.get_array_memory_size(),
+        ScalarValue::Struct(array) => base_size + array.get_array_memory_size(),
+        ScalarValue::Map(array) => base_size + array.get_array_memory_size(),
+        ScalarValue::TimestampSecond(_, Some(timezone))
+        | ScalarValue::TimestampMillisecond(_, Some(timezone))
+        | ScalarValue::TimestampMicrosecond(_, Some(timezone))
+        | ScalarValue::TimestampNanosecond(_, Some(timezone)) => base_size + timezone.len(),
+        ScalarValue::Union(Some((_, nested_value)), _, _) => {
+            base_size + approximate_scalar_value_size_bytes(nested_value)
+        },
+        ScalarValue::Dictionary(_, nested_value)
+        | ScalarValue::RunEndEncoded(_, _, nested_value) => {
+            base_size + approximate_scalar_value_size_bytes(nested_value)
+        },
+        _ => base_size,
+    }
+}
 
 /// Shared logical DML mutation buffered inside an explicit transaction.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -65,11 +106,10 @@ impl StagedMutation {
 
     #[inline]
     pub fn approximate_size_bytes(&self) -> usize {
-        let payload_bytes = serde_json::to_vec(&self.payload).map(|bytes| bytes.len()).unwrap_or(0);
         self.primary_key.len()
             + self.table_id.full_name().len()
             + self.user_id.as_ref().map(|user_id| user_id.as_str().len()).unwrap_or(0)
-            + payload_bytes
+            + approximate_row_size_bytes(&self.payload)
             + std::mem::size_of::<u64>()
     }
 

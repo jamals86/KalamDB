@@ -79,6 +79,8 @@ mod smoke_test_topic_consumption;
 mod smoke_test_topic_high_load;
 #[path = "smoke/topics/smoke_test_topic_throughput.rs"]
 mod smoke_test_topic_throughput;
+#[path = "smoke/topics/topic_test_support.rs"]
+mod topic_test_support;
 
 // CLI tests
 #[path = "smoke/cli/smoke_test_cli_commands.rs"]

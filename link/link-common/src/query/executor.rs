@@ -16,11 +16,12 @@ use http_body_util::StreamBody;
 use log::{debug, warn};
 #[cfg(feature = "file-uploads")]
 use reqwest::multipart::{Form, Part};
+use serde::Serialize;
 
 use crate::{
     auth::AuthProvider,
     error::{KalamLinkError, Result},
-    models::{QueryRequest, QueryResponse, UploadProgress},
+    models::{QueryResponse, UploadProgress},
 };
 
 /// Progress callback for multipart file uploads.
@@ -90,6 +91,15 @@ impl From<(String, String, Vec<u8>, Option<String>)> for MultipartUploadFile {
             mime_type,
         }
     }
+}
+
+#[derive(Serialize)]
+struct BorrowedQueryRequest<'a> {
+    sql: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    params: Option<&'a [serde_json::Value]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    namespace_id: Option<&'a str>,
 }
 
 /// Async callback that resolves fresh [`AuthProvider`] credentials.
@@ -168,13 +178,17 @@ impl QueryExecutor {
     }
 
     fn is_retry_safe_sql(sql: &str) -> bool {
-        matches!(
-            Self::first_keyword(sql).as_deref(),
-            Some("SELECT" | "SHOW" | "DESCRIBE" | "EXPLAIN")
-        )
+        let Some(keyword) = Self::first_keyword(sql) else {
+            return false;
+        };
+
+        keyword.eq_ignore_ascii_case("SELECT")
+            || keyword.eq_ignore_ascii_case("SHOW")
+            || keyword.eq_ignore_ascii_case("DESCRIBE")
+            || keyword.eq_ignore_ascii_case("EXPLAIN")
     }
 
-    fn first_keyword(sql: &str) -> Option<String> {
+    fn first_keyword(sql: &str) -> Option<&str> {
         let bytes = sql.as_bytes();
         let mut i = 0;
         while i < bytes.len() {
@@ -216,7 +230,7 @@ impl QueryExecutor {
             if start == i {
                 return None;
             }
-            return Some(sql[start..i].to_ascii_uppercase());
+            return Some(&sql[start..i]);
         }
 
         None
@@ -240,6 +254,18 @@ impl QueryExecutor {
         files: Option<Vec<(String, String, Vec<u8>, Option<String>)>>,
         params: Option<Vec<serde_json::Value>>,
         namespace_id: Option<String>,
+        progress: Option<UploadProgressCallback>,
+    ) -> Result<QueryResponse> {
+        self.execute_with_progress_ref(sql, files, params, namespace_id.as_deref(), progress)
+            .await
+    }
+
+    pub(crate) async fn execute_with_progress_ref(
+        &self,
+        sql: &str,
+        files: Option<Vec<(String, String, Vec<u8>, Option<String>)>>,
+        params: Option<Vec<serde_json::Value>>,
+        namespace_id: Option<&str>,
         progress: Option<UploadProgressCallback>,
     ) -> Result<QueryResponse> {
         let has_files = files.as_ref().map(|f| !f.is_empty()).unwrap_or(false);
@@ -313,9 +339,9 @@ impl QueryExecutor {
 
         let _ = progress;
 
-        let request = QueryRequest {
-            sql: sql.to_string(),
-            params,
+        let request = BorrowedQueryRequest {
+            sql,
+            params: params.as_deref(),
             namespace_id,
         };
 

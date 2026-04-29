@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     collections::HashMap,
     sync::{
         atomic::{AtomicBool, AtomicU32, Ordering},
@@ -547,16 +548,16 @@ pub(super) async fn connection_task(
                                             &data,
                                             crate::connection::MAX_WS_DECOMPRESSED_MESSAGE_BYTES,
                                         ) {
-                                            Ok(decoded) => decoded,
+                                            Ok(decoded) => Cow::Owned(decoded),
                                             Err(error) => {
                                                 log::warn!("Failed to decompress msgpack: {}", error);
                                                 continue;
                                             },
                                         }
                                     } else {
-                                        data.to_vec()
+                                        Cow::Borrowed(data.as_ref())
                                     };
-                                    match parse_message_msgpack(&raw) {
+                                    match parse_message_msgpack(raw.as_ref()) {
                                         Ok(Some(event)) => {
                                             route_event_and_refresh_connection(
                                                 event,

@@ -2357,6 +2357,20 @@ fn is_transient_missing_relation(sql: &str, message: &str) -> bool {
         || lower_sql.starts_with("alter table")
 }
 
+fn is_redacted_cluster_sql_error(sql: &str, message: &str) -> bool {
+    let lower_msg = message.to_ascii_lowercase();
+    if !lower_msg.contains("sql_execution_error") || !lower_msg.contains("sql statement failed") {
+        return false;
+    }
+
+    let lower_sql = sql.trim_start().to_ascii_lowercase();
+    lower_sql.starts_with("select ")
+        || lower_sql.starts_with("insert ")
+        || lower_sql.starts_with("update ")
+        || lower_sql.starts_with("delete ")
+        || lower_sql.starts_with("execute as user ")
+}
+
 fn is_rate_limited_error(message: &str) -> bool {
     let lower = message.to_ascii_lowercase();
     lower.contains("rate_limit_exceeded")
@@ -2369,6 +2383,7 @@ pub fn is_retryable_cluster_error_for_sql(sql: &str, message: &str) -> bool {
     is_leader_error(message)
         || is_network_error(message)
         || is_transient_missing_relation(sql, message)
+        || is_redacted_cluster_sql_error(sql, message)
 }
 
 fn cli_output_error(stdout: &str) -> Option<String> {
@@ -2896,18 +2911,35 @@ where
 {
     let start = Instant::now();
     let poll_interval = Duration::from_millis(200);
+    let mut last_error = None;
+    let mut last_output = None;
 
     loop {
-        let output = execute(sql)?;
-        if output.contains(expected) {
-            return Ok(output);
+        match execute(sql) {
+            Ok(output) => {
+                if output.contains(expected) {
+                    return Ok(output);
+                }
+                last_output = Some(output);
+            },
+            Err(err) if is_cluster_mode() => {
+                last_error = Some(err.to_string());
+            },
+            Err(err) => return Err(err),
         }
+
         if start.elapsed() > timeout {
-            return Err(format!(
-                "Timeout waiting for query to contain '{}'. Last output: {}",
-                expected, output
-            )
-            .into());
+            let detail = match (last_output, last_error) {
+                (Some(output), Some(error)) => {
+                    format!("Last output: {}. Last error: {}", output, error)
+                },
+                (Some(output), None) => format!("Last output: {}", output),
+                (None, Some(error)) => format!("Last error: {}", error),
+                (None, None) => "No output observed".to_string(),
+            };
+            return Err(
+                format!("Timeout waiting for query to contain '{}'. {}", expected, detail).into()
+            );
         }
         thread::sleep(poll_interval);
     }

@@ -35,13 +35,57 @@ use registry::ConnCmd;
 
 pub(crate) struct SharedConnection {
     cmd_tx: mpsc::Sender<ConnCmd>,
-    unsub_tx: mpsc::Sender<(String, u64)>,
-    progress_tx: mpsc::Sender<(String, u64, SeqId, bool)>,
     connected: Arc<AtomicBool>,
     _reconnect_attempts: Arc<AtomicU32>,
     _task: JoinHandle<()>,
-    _unsub_bridge: JoinHandle<()>,
-    _progress_bridge: JoinHandle<()>,
+}
+
+#[derive(Clone)]
+pub(crate) struct SharedSubscriptionControl {
+    cmd_tx: mpsc::Sender<ConnCmd>,
+}
+
+impl SharedSubscriptionControl {
+    pub(crate) async fn unsubscribe(&self, id: String, generation: u64) {
+        let _ = self
+            .cmd_tx
+            .send(ConnCmd::Unsubscribe {
+                id,
+                generation: Some(generation),
+            })
+            .await;
+    }
+
+    pub(crate) fn try_unsubscribe(&self, id: String, generation: u64) {
+        let _ = self.cmd_tx.try_send(ConnCmd::Unsubscribe {
+            id,
+            generation: Some(generation),
+        });
+    }
+
+    pub(crate) async fn progress(
+        &self,
+        id: String,
+        generation: u64,
+        seq_id: SeqId,
+        advance_resume: bool,
+    ) {
+        let _ = self
+            .cmd_tx
+            .send(ConnCmd::Progress {
+                id,
+                generation,
+                seq_id,
+                advance_resume,
+            })
+            .await;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_control() -> Self {
+        let (cmd_tx, _cmd_rx) = mpsc::channel::<ConnCmd>(1);
+        Self { cmd_tx }
+    }
 }
 
 impl SharedConnection {
@@ -85,43 +129,11 @@ impl SharedConnection {
             },
         }
 
-        let (unsub_tx, mut unsub_rx) = mpsc::channel::<(String, u64)>(256);
-        let cmd_tx_bridge = cmd_tx.clone();
-        let unsub_bridge = tokio::spawn(async move {
-            while let Some((id, generation)) = unsub_rx.recv().await {
-                let _ = cmd_tx_bridge
-                    .send(ConnCmd::Unsubscribe {
-                        id,
-                        generation: Some(generation),
-                    })
-                    .await;
-            }
-        });
-
-        let (progress_tx, mut progress_rx) = mpsc::channel::<(String, u64, SeqId, bool)>(256);
-        let cmd_tx_progress = cmd_tx.clone();
-        let progress_bridge = tokio::spawn(async move {
-            while let Some((id, generation, seq_id, advance_resume)) = progress_rx.recv().await {
-                let _ = cmd_tx_progress
-                    .send(ConnCmd::Progress {
-                        id,
-                        generation,
-                        seq_id,
-                        advance_resume,
-                    })
-                    .await;
-            }
-        });
-
         Ok(Self {
             cmd_tx,
-            unsub_tx,
-            progress_tx,
             connected,
             _reconnect_attempts: reconnect_attempts,
             _task: task,
-            _unsub_bridge: unsub_bridge,
-            _progress_bridge: progress_bridge,
         })
     }
 
@@ -198,12 +210,10 @@ impl SharedConnection {
         self.connected.load(Ordering::Relaxed)
     }
 
-    pub(crate) fn unsubscribe_tx(&self) -> mpsc::Sender<(String, u64)> {
-        self.unsub_tx.clone()
-    }
-
-    pub(crate) fn progress_tx(&self) -> mpsc::Sender<(String, u64, SeqId, bool)> {
-        self.progress_tx.clone()
+    pub(crate) fn subscription_control(&self) -> SharedSubscriptionControl {
+        SharedSubscriptionControl {
+            cmd_tx: self.cmd_tx.clone(),
+        }
     }
 }
 

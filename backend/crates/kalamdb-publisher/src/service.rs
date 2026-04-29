@@ -140,13 +140,10 @@ impl ClaimState {
         }
     }
 
-    /// Return the next cursor that is not covered by an unacked pending claim.
-    ///
-    /// When an older claim expires before a newer claim, the cursor may move
-    /// back behind still-pending ranges. Skipping those ranges preserves
-    /// same-group single-delivery semantics for claims that have not timed out.
-    fn next_available_from(&self, start_offset: u64) -> u64 {
-        let mut next = self.cursor.max(start_offset);
+    /// Return the next server-owned cursor and maximum contiguous fetch size
+    /// before a still-pending claim.
+    fn next_available_window(&self, requested_limit: usize) -> (u64, usize) {
+        let mut next = self.cursor;
 
         loop {
             let mut advanced = false;
@@ -158,9 +155,24 @@ impl ClaimState {
             }
 
             if !advanced {
-                return next;
+                break;
             }
         }
+
+        let next_pending_start = self
+            .pending
+            .iter()
+            .filter(|claim| claim.start > next)
+            .map(|claim| claim.start)
+            .min();
+
+        let available_offsets = next_pending_start
+            .map(|claim_start| claim_start.saturating_sub(next))
+            .unwrap_or(u64::MAX);
+        let available_limit =
+            requested_limit.min(available_offsets.try_into().unwrap_or(usize::MAX));
+
+        (next, available_limit)
     }
 }
 
@@ -605,7 +617,7 @@ impl TopicPublisherService {
         let cursor_key = GroupPartitionKey::new(topic_id, group_id, partition_id);
 
         loop {
-            let effective_start = {
+            let (effective_start, effective_limit) = {
                 let mut state = self
                     .group_claim_state
                     .entry(cursor_key.clone())
@@ -613,12 +625,16 @@ impl TopicPublisherService {
 
                 // Expire stale claims so crashed consumers don't block delivery.
                 state.expire_stale_claims(Instant::now(), self.visibility_timeout);
-                state.next_available_from(start_offset)
+                state.next_available_window(limit)
             };
+
+            if effective_limit == 0 {
+                return Ok(Vec::new());
+            }
 
             let messages = self
                 .message_store
-                .fetch_messages(topic_id, partition_id, effective_start, limit)
+                .fetch_messages(topic_id, partition_id, effective_start, effective_limit)
                 .map_err(|e| CommonError::Internal(format!("Failed to fetch messages: {}", e)))?;
 
             let Some(last_message) = messages.last() else {
@@ -635,7 +651,7 @@ impl TopicPublisherService {
                 .or_insert_with(|| ClaimState::new(start_offset));
 
             state.expire_stale_claims(claimed_at, self.visibility_timeout);
-            let current_start = state.next_available_from(start_offset);
+            let (current_start, _) = state.next_available_window(limit);
             if current_start != effective_start {
                 continue;
             }
@@ -1437,6 +1453,55 @@ mod tests {
             Some(20),
             "fetch should skip the still-pending 10..20 range after redelivering 0..10"
         );
+    }
+
+    #[test]
+    fn test_expired_claim_redelivery_uses_group_cursor_not_client_position() {
+        let backend = Arc::new(InMemoryBackend::new());
+        let service =
+            TopicPublisherService::with_visibility_timeout(backend, StdDuration::from_millis(120));
+
+        let ns = NamespaceId::new("test_ns");
+        let table_id = TableId::new(ns.clone(), TableName::from("events"));
+        let topic_id = TopicId::new("position_ahead_recovery_topic");
+        let group_id = ConsumerGroupId::new("position_ahead_recovery_group");
+
+        let topic = create_test_topic_with_partitions(
+            topic_id.clone(),
+            table_id.clone(),
+            TopicOp::Insert,
+            1,
+        );
+        service.add_topic(topic);
+
+        for idx in 0..480 {
+            let row = create_test_row(idx, &format!("event_{}", idx));
+            service.publish_message(&table_id, TopicOp::Insert, &row, None).unwrap();
+        }
+
+        let crashed_claim =
+            service.fetch_messages_for_group(&topic_id, &group_id, 0, 0, 160).unwrap();
+        assert_eq!(crashed_claim.first().map(|message| message.offset), Some(0));
+        assert_eq!(crashed_claim.last().map(|message| message.offset), Some(159));
+
+        thread::sleep(StdDuration::from_millis(80));
+
+        let active_tail_claim =
+            service.fetch_messages_for_group(&topic_id, &group_id, 0, 0, 120).unwrap();
+        assert_eq!(active_tail_claim.first().map(|message| message.offset), Some(160));
+        assert_eq!(active_tail_claim.last().map(|message| message.offset), Some(279));
+
+        thread::sleep(StdDuration::from_millis(60));
+
+        let recovered_prefix =
+            service.fetch_messages_for_group(&topic_id, &group_id, 0, 280, 120).unwrap();
+        assert_eq!(recovered_prefix.first().map(|message| message.offset), Some(0));
+        assert_eq!(recovered_prefix.last().map(|message| message.offset), Some(119));
+
+        let recovered_gap =
+            service.fetch_messages_for_group(&topic_id, &group_id, 0, 120, 120).unwrap();
+        assert_eq!(recovered_gap.first().map(|message| message.offset), Some(120));
+        assert_eq!(recovered_gap.last().map(|message| message.offset), Some(159));
     }
 
     #[test]

@@ -62,6 +62,18 @@ fn is_table_discovery_error_message(message: &str) -> bool {
 }
 
 #[inline]
+fn is_leader_routing_error_message(message: &str) -> bool {
+    message.contains("not leader")
+        || message.contains("not_leader")
+        || message.contains("unknown leader")
+        || message.contains("no cluster leader")
+        || message.contains("no raft leader")
+        || message.contains("forward request to cluster leader")
+        || message.contains("failed to forward request to cluster leader")
+        || message.contains("forward to leader")
+}
+
+#[inline]
 fn is_safe_validation_error_message(message: &str) -> bool {
     (message.contains("column") && message.contains("not found"))
         || (message.contains("field") && message.contains("not found"))
@@ -78,6 +90,9 @@ fn is_safe_validation_error_message(message: &str) -> bool {
 #[inline]
 fn classify_sql_error(err: &KalamDbError) -> (StatusCode, ErrorCode, bool) {
     match err {
+        KalamDbError::NotLeader { .. } => {
+            (StatusCode::SERVICE_UNAVAILABLE, ErrorCode::NotLeader, true)
+        },
         KalamDbError::PermissionDenied(_) | KalamDbError::Unauthorized(_) => {
             (StatusCode::FORBIDDEN, ErrorCode::PermissionDenied, true)
         },
@@ -112,7 +127,9 @@ fn classify_sql_error(err: &KalamDbError) -> (StatusCode, ErrorCode, bool) {
         },
         KalamDbError::ExecutionError(message) => {
             let message_lower = message.to_lowercase();
-            if is_permission_error_message(&message_lower) {
+            if is_leader_routing_error_message(&message_lower) {
+                (StatusCode::SERVICE_UNAVAILABLE, ErrorCode::NotLeader, true)
+            } else if is_permission_error_message(&message_lower) {
                 (StatusCode::FORBIDDEN, ErrorCode::PermissionDenied, true)
             } else if is_safe_validation_error_message(&message_lower) {
                 (StatusCode::BAD_REQUEST, ErrorCode::SqlExecutionError, true)
@@ -173,6 +190,19 @@ fn build_statement_error_response(
             took,
             is_admin,
             preserve_message,
+        );
+    }
+
+    let err_msg = err.to_string();
+    if is_leader_routing_error_message(&err_msg.to_lowercase()) {
+        return build_sql_error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            ErrorCode::NotLeader,
+            &format!("Statement {} failed: {}", statement_index, err_msg),
+            Some(sql),
+            took,
+            is_admin,
+            true,
         );
     }
 

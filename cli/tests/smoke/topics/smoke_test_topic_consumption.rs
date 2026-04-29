@@ -13,13 +13,10 @@ use std::{
 };
 
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine};
-use kalam_client::{
-    consumer::{AutoOffsetReset, ConsumerRecord, TopicOp},
-    KalamLinkTimeouts,
-};
+use kalam_client::consumer::{AutoOffsetReset, ConsumerRecord, TopicOp};
 use serde::Deserialize;
 
-use crate::common;
+use crate::{common, topic_test_support};
 
 #[derive(Debug, Deserialize)]
 struct HttpTopicConsumeResponse {
@@ -47,59 +44,17 @@ impl HttpTopicMessage {
 
 /// Create a test client using common infrastructure
 async fn create_test_client() -> kalam_client::KalamLinkClient {
-    let base_url = common::leader_or_server_url();
-    common::client_for_user_on_url_with_timeouts(
-        &base_url,
-        common::default_username(),
-        common::default_password(),
-        KalamLinkTimeouts::builder()
-            .connection_timeout_secs(5)
-            .receive_timeout_secs(120)
-            .send_timeout_secs(30)
-            .subscribe_timeout_secs(10)
-            .auth_timeout_secs(10)
-            .initial_data_timeout(Duration::from_secs(120))
-            .build(),
-    )
-    .expect("Failed to build test client")
+    topic_test_support::create_test_client_with_timeouts(topic_test_support::long_topic_timeouts())
+        .await
 }
 
 /// Execute SQL via HTTP helper
 async fn execute_sql(sql: &str) {
-    common::execute_sql_via_http_as_root(sql).await.expect("Failed to execute SQL");
+    topic_test_support::execute_sql(sql).await.expect("Failed to execute SQL");
 }
 
 async fn wait_for_topic_ready(topic: &str, expected_routes: usize) {
-    let sql = format!("SELECT routes FROM system.topics WHERE topic_id = '{}'", topic);
-    let deadline = std::time::Instant::now() + Duration::from_secs(20);
-
-    while std::time::Instant::now() < deadline {
-        if let Ok(response) = common::execute_sql_via_http_as_root(&sql).await {
-            if let Some(rows) = common::get_rows_as_hashmaps(&response) {
-                if let Some(row) = rows.first() {
-                    if let Some(routes_value) = row.get("routes") {
-                        let routes_untyped = common::extract_typed_value(routes_value);
-                        if let Some(routes_json) = routes_untyped
-                            .as_str()
-                            .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
-                        {
-                            let route_count =
-                                routes_json.as_array().map(|routes| routes.len()).unwrap_or(0);
-                            if route_count >= expected_routes {
-                                return;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-
-    panic!(
-        "Timed out waiting for topic '{}' to have at least {} route(s)",
-        topic, expected_routes
-    );
+    topic_test_support::wait_for_topic_ready(topic, expected_routes).await;
 }
 
 async fn create_topic_with_sources(topic: &str, table: &str, operations: &[&str]) {

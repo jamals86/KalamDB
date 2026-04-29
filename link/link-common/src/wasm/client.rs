@@ -4,6 +4,7 @@ use std::{
     rc::Rc,
 };
 
+use serde::Serialize;
 use wasm_bindgen::{prelude::*, JsCast};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{CloseEvent, ErrorEvent, MessageEvent, WebSocket};
@@ -25,9 +26,18 @@ use super::{
     wasm_debug_log,
 };
 use crate::models::{
-    ClientMessage, ConnectionOptions, QueryRequest, SerializationType, ServerMessage,
-    SubscriptionOptions, SubscriptionRequest,
+    ClientMessage, ConnectionOptions, SerializationType, ServerMessage, SubscriptionOptions,
+    SubscriptionRequest,
 };
+
+#[derive(Serialize)]
+struct BorrowedQueryRequest<'a> {
+    sql: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    params: Option<&'a [serde_json::Value]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    namespace_id: Option<&'a str>,
+}
 
 /// WASM-compatible KalamDB client with auto-reconnection support
 ///
@@ -250,7 +260,7 @@ impl SubscriptionDispatch {
     }
 }
 
-fn subscription_id_from_server_message(event: &ServerMessage) -> Option<String> {
+fn subscription_id_from_server_message(event: &ServerMessage) -> Option<&str> {
     match event {
         ServerMessage::SubscriptionAck {
             subscription_id,
@@ -261,7 +271,7 @@ fn subscription_id_from_server_message(event: &ServerMessage) -> Option<String> 
                 "KalamClient: Parsed SubscriptionAck - id: {}, total_rows: {}",
                 subscription_id, _total_rows
             ));
-            Some(subscription_id.clone())
+            Some(subscription_id.as_str())
         },
         ServerMessage::InitialDataBatch {
             subscription_id,
@@ -274,7 +284,7 @@ fn subscription_id_from_server_message(event: &ServerMessage) -> Option<String> 
                 _rows.len(),
                 _batch_control.status
             ));
-            Some(subscription_id.clone())
+            Some(subscription_id.as_str())
         },
         ServerMessage::Change {
             subscription_id,
@@ -288,7 +298,7 @@ fn subscription_id_from_server_message(event: &ServerMessage) -> Option<String> 
                 _change_type,
                 _rows.as_ref().map(|value| value.len())
             ));
-            Some(subscription_id.clone())
+            Some(subscription_id.as_str())
         },
         ServerMessage::Error {
             subscription_id,
@@ -300,21 +310,21 @@ fn subscription_id_from_server_message(event: &ServerMessage) -> Option<String> 
                 "KalamClient: Parsed Error - id: {}, code: {}, msg: {}",
                 subscription_id, _code, _message
             ));
-            Some(subscription_id.clone())
+            Some(subscription_id.as_str())
         },
         _ => None,
     }
 }
 
-fn resolve_subscription_key(
-    subscription_id: &str,
+fn resolve_subscription_key<'a>(
+    subscription_id: &'a str,
     subscriptions: &HashMap<String, SubscriptionState>,
-) -> Option<String> {
+) -> Option<&'a str> {
     // The server echoes the exact subscription_id the client sent, so an exact
     // match is always correct. The previous ends_with() fallback was unsafe with
     // multiple concurrent subscriptions because it could match the wrong entry.
     if subscriptions.contains_key(subscription_id) {
-        Some(subscription_id.to_string())
+        Some(subscription_id)
     } else {
         None
     }
@@ -351,7 +361,7 @@ fn dispatch_subscription_server_message(
 
     {
         let mut subs = subscriptions.borrow_mut();
-        if let Some(state) = subs.get_mut(&client_id) {
+        if let Some(state) = subs.get_mut(client_id) {
             callback = Some(state.callback.clone());
             if let Some(filtered_event) = filter_subscription_event(&state.options, event) {
                 track_subscription_checkpoint(&mut state.last_seq_id, &filtered_event);
@@ -384,7 +394,7 @@ fn dispatch_subscription_server_message(
         }
 
         if remove_state {
-            subs.remove(&client_id);
+            subs.remove(client_id);
         }
     }
 
@@ -1897,9 +1907,9 @@ impl KalamClient {
         sql: &str,
         params: &Option<Vec<serde_json::Value>>,
     ) -> Result<String, JsValue> {
-        let body = QueryRequest {
-            sql: sql.to_string(),
-            params: params.clone(),
+        let body = BorrowedQueryRequest {
+            sql,
+            params: params.as_deref(),
             namespace_id: None,
         };
         let body_str = serde_json::to_string(&body)

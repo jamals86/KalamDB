@@ -53,7 +53,7 @@
 //! let retrieved = store.get(&user_id).unwrap().unwrap();
 //! ```
 
-use std::{collections::VecDeque, sync::Arc};
+use std::sync::Arc;
 
 use kalamdb_commons::{next_storage_key_bytes, KSerializable, StorageKey};
 
@@ -163,28 +163,32 @@ where
             },
             ScanDirection::Older => {
                 let start_bytes = start_key.map(|k| k.storage_key());
-                let iter = self.backend().scan(&partition, None, None, None)?;
-                let mut collected: VecDeque<(Vec<u8>, Vec<u8>)> =
-                    VecDeque::with_capacity(limit.min(MAX_PREALLOC_CAPACITY));
+                let scan_limit = if start_bytes.is_some() {
+                    limit.saturating_add(1)
+                } else {
+                    limit
+                };
+                let iter = self.backend().scan_reverse(
+                    &partition,
+                    None,
+                    start_bytes.as_deref(),
+                    Some(scan_limit),
+                )?;
 
+                let mut rows = Vec::with_capacity(limit.min(MAX_PREALLOC_CAPACITY));
                 for (key_bytes, value_bytes) in iter {
                     if let Some(start) = &start_bytes {
                         if key_bytes.as_slice() >= start.as_slice() {
-                            break;
+                            continue;
                         }
                     }
-                    if collected.len() == limit {
-                        collected.pop_front();
-                    }
-                    collected.push_back((key_bytes, value_bytes));
-                }
-
-                let mut rows = Vec::with_capacity(collected.len().min(MAX_PREALLOC_CAPACITY));
-                for (key_bytes, value_bytes) in collected.into_iter().rev() {
                     let key = K::from_storage_key(&key_bytes)
                         .map_err(StorageError::SerializationError)?;
                     let entity = self.deserialize(&value_bytes)?;
                     rows.push(Ok((key, entity)));
+                    if rows.len() >= limit {
+                        break;
+                    }
                 }
 
                 Ok(Box::new(rows.into_iter()))
@@ -654,28 +658,31 @@ where
             },
             ScanDirection::Older => {
                 let start_bytes = start_key.map(|k| k.storage_key());
-                let iter = self.backend().scan(&partition, None, None, None)?;
-                let mut collected: Vec<Vec<u8>> = Vec::new();
+                let scan_limit = if start_bytes.is_some() {
+                    limit.saturating_add(1)
+                } else {
+                    limit
+                };
+                let iter = self.backend().scan_reverse(
+                    &partition,
+                    None,
+                    start_bytes.as_deref(),
+                    Some(scan_limit),
+                )?;
 
+                let mut keys = Vec::with_capacity(limit.min(MAX_PREALLOC_CAPACITY));
                 for (key_bytes, _) in iter {
                     if let Some(start) = &start_bytes {
                         if key_bytes.as_slice() >= start.as_slice() {
-                            break;
+                            continue;
                         }
                     }
-                    collected.push(key_bytes);
-                }
-
-                if collected.len() > limit {
-                    let drain_end = collected.len() - limit;
-                    collected.drain(0..drain_end);
-                }
-
-                let mut keys = Vec::with_capacity(collected.len());
-                for key_bytes in collected {
                     let key = K::from_storage_key(&key_bytes)
                         .map_err(StorageError::SerializationError)?;
                     keys.push(key);
+                    if keys.len() >= limit {
+                        break;
+                    }
                 }
                 Ok(keys)
             },

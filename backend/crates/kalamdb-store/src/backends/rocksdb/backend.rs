@@ -4,7 +4,7 @@
 //! as the underlying storage engine. Logical partitions are encoded as key prefixes
 //! inside a small fixed set of physical RocksDB column families.
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use kalamdb_configs::RocksDbSettings;
 use rocksdb::{BoundColumnFamily, Cache, IteratorMode, Options, PrefixRange, WriteOptions, DB};
@@ -31,6 +31,15 @@ const LIVE_SST_FILES_SIZE_PROPERTY: &str = "rocksdb.live-sst-files-size";
 const TOTAL_SST_FILES_SIZE_PROPERTY: &str = "rocksdb.total-sst-files-size";
 const ALL_MEMTABLES_SIZE_PROPERTY: &str = "rocksdb.cur-size-all-mem-tables";
 const PENDING_COMPACTION_BYTES_PROPERTY: &str = "rocksdb.estimate-pending-compaction-bytes";
+const DROP_PARTITION_BATCH_SIZE: usize = 4_096;
+
+#[inline]
+fn prefixed_physical_key(partition_prefix: &[u8], user_key: &[u8]) -> Vec<u8> {
+    let mut physical_key = Vec::with_capacity(partition_prefix.len() + user_key.len());
+    physical_key.extend_from_slice(partition_prefix);
+    physical_key.extend_from_slice(user_key);
+    physical_key
+}
 
 /// RocksDB implementation of the StorageBackend trait.
 pub struct RocksDBBackend {
@@ -52,8 +61,7 @@ impl RocksDBBackend {
         let mut write_opts = WriteOptions::default();
         write_opts.set_sync(sync_writes);
         write_opts.disable_wal(disable_wal);
-        let block_cache =
-            Cache::new_lru_cache(std::cmp::min(settings.block_cache_size, 1024 * 1024));
+        let block_cache = Cache::new_lru_cache(settings.block_cache_size);
         let backend = Self {
             db,
             write_opts,
@@ -256,22 +264,37 @@ impl StorageBackend for RocksDBBackend {
         let _span = tracing::debug_span!("rocksdb.batch", op_count = operations.len()).entered();
         use rocksdb::WriteBatch;
 
+        if operations.is_empty() {
+            return Ok(());
+        }
+
         let mut batch = WriteBatch::default();
+        let mut partition_cache: HashMap<String, (Arc<BoundColumnFamily<'_>>, Vec<u8>)> =
+            HashMap::with_capacity(operations.len().min(16));
 
         for op in operations {
-            match op {
+            let (partition, key, value) = match op {
                 Operation::Put {
                     partition,
                     key,
                     value,
-                } => {
+                } => (partition, key, Some(value)),
+                Operation::Delete { partition, key } => (partition, key, None),
+            };
+
+            let partition_name = partition.name();
+            let cache_entry = match partition_cache.entry(partition_name.to_string()) {
+                std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+                std::collections::hash_map::Entry::Vacant(entry) => {
                     let cf = self.get_cf(&partition)?;
-                    batch.put_cf(&cf, physical_key(partition.name(), &key), value);
+                    entry.insert((cf, partition_key_prefix(partition_name)))
                 },
-                Operation::Delete { partition, key } => {
-                    let cf = self.get_cf(&partition)?;
-                    batch.delete_cf(&cf, physical_key(partition.name(), &key));
-                },
+            };
+            let physical_key = prefixed_physical_key(&cache_entry.1, &key);
+
+            match value {
+                Some(value) => batch.put_cf(&cache_entry.0, physical_key, value),
+                None => batch.delete_cf(&cache_entry.0, physical_key),
             }
         }
 
@@ -499,30 +522,48 @@ impl StorageBackend for RocksDBBackend {
     fn drop_partition(&self, partition: &Partition) -> Result<()> {
         let cf = self.get_cf(partition)?;
         let prefix = partition_key_prefix(partition.name());
-        let snapshot = self.db.snapshot();
-        let mut readopts = rocksdb::ReadOptions::default();
-        readopts.set_snapshot(&snapshot);
-        readopts.set_iterate_range(PrefixRange(prefix.clone()));
 
-        let keys: Vec<Vec<u8>> = self
-            .db
-            .iterator_cf_opt(
-                &cf,
-                readopts,
-                IteratorMode::From(prefix.as_slice(), rocksdb::Direction::Forward),
-            )
-            .filter_map(|item| item.ok().map(|(key, _)| key.to_vec()))
-            .take_while(|key| key.starts_with(&prefix))
-            .collect();
+        loop {
+            let (batch, deleted_count) = {
+                let snapshot = self.db.snapshot();
+                let mut readopts = rocksdb::ReadOptions::default();
+                readopts.set_snapshot(&snapshot);
+                readopts.set_iterate_range(PrefixRange(prefix.clone()));
 
-        if !keys.is_empty() {
-            let mut batch = rocksdb::WriteBatch::default();
-            for key in keys {
-                batch.delete_cf(&cf, key);
+                let mut batch = rocksdb::WriteBatch::default();
+                let mut deleted_count = 0usize;
+
+                for item in self.db.iterator_cf_opt(
+                    &cf,
+                    readopts,
+                    IteratorMode::From(prefix.as_slice(), rocksdb::Direction::Forward),
+                ) {
+                    let (key, _) = item.map_err(|e| StorageError::IoError(e.to_string()))?;
+                    if !key.starts_with(&prefix) {
+                        break;
+                    }
+
+                    batch.delete_cf(&cf, key.as_ref());
+                    deleted_count += 1;
+                    if deleted_count >= DROP_PARTITION_BATCH_SIZE {
+                        break;
+                    }
+                }
+
+                (batch, deleted_count)
+            };
+
+            if deleted_count == 0 {
+                break;
             }
+
             self.db
                 .write_opt(batch, &self.write_opts)
                 .map_err(|e| StorageError::IoError(e.to_string()))?;
+
+            if deleted_count < DROP_PARTITION_BATCH_SIZE {
+                break;
+            }
         }
 
         if let Ok(mut names) = self.logical_partition_names.write() {

@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use dashmap::DashMap;
+use dashmap::{mapref::entry::Entry, DashMap};
 use kalamdb_commons::{
     models::{NodeId, TableId, TransactionId, TransactionOrigin, TransactionState, UserId},
     TableType,
@@ -72,13 +72,6 @@ impl TransactionCoordinator {
         owner_id: Arc<str>,
         origin: TransactionOrigin,
     ) -> Result<TransactionId, KalamDbError> {
-        if self.active_by_owner.contains_key(&owner_key) {
-            return Err(KalamDbError::Conflict(format!(
-                "owner '{}' already has an active transaction",
-                owner_id
-            )));
-        }
-
         let transaction_id = TransactionId::new(Uuid::now_v7().to_string());
         let snapshot_commit_seq = self.commit_sequence_tracker.current_committed();
         let handle = TransactionHandle::new(
@@ -91,9 +84,17 @@ impl TransactionCoordinator {
             Instant::now(),
         );
 
-        self.active_by_owner.insert(owner_key, transaction_id.clone());
-        self.active_by_id.insert(transaction_id.clone(), handle);
-        Ok(transaction_id)
+        match self.active_by_owner.entry(owner_key) {
+            Entry::Occupied(_) => Err(KalamDbError::Conflict(format!(
+                "owner '{}' already has an active transaction",
+                owner_id
+            ))),
+            Entry::Vacant(entry) => {
+                self.active_by_id.insert(transaction_id.clone(), handle);
+                entry.insert(transaction_id.clone());
+                Ok(transaction_id)
+            },
+        }
     }
 
     pub fn stage(
@@ -321,7 +322,7 @@ impl TransactionCoordinator {
         };
 
         let affected_rows = write_set.affected_rows();
-        let mutations = write_set.ordered_mutations.clone();
+        let mutations = write_set.ordered_mutations;
 
         let response = match self
             .app_context
