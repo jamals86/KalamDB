@@ -134,19 +134,47 @@ In interactive mode, meta-commands start with `\`:
 | `\update-credentials <u> <p>`  | Update stored credentials                 |
 | `\delete-credentials`          | Delete stored credentials                 |
 
-**Cluster meta-commands**:
+### Cluster meta-commands
 
 - `\cluster snapshot`
 - `\cluster purge --upto <index>` (or `\cluster purge <index>`)
 - `\cluster trigger-election`
 - `\cluster transfer-leader <node_id>`
+- `\cluster rebalance`
 - `\cluster stepdown`
 - `\cluster clear`
 - `\cluster list` (alias: `\cluster ls`)
 - `\cluster list groups`
-- `\cluster status`
-- `\cluster join <node_addr>` (not yet implemented)
-- `\cluster leave` (not yet implemented)
+- `\cluster join <node_id> <rpc_addr> <api_addr>`
+
+### How follower writes are forwarded
+
+KalamDB uses Multi-Raft groups. A request does not have to land on the leader node first.
+
+Example:
+
+```bash
+kalam --url http://node-2:8080 --command "INSERT INTO app.messages (id, body) VALUES (101, 'hello')"
+```
+
+Assume the authenticated or effective user for that request is `user-42`, and `user-42` hashes to user data group `DataUserShard(7)`.
+
+1. The request can hit any node, including a follower for that group.
+2. The SQL layer prepares and classifies the statement once, then derives the target Raft group from the table type and current `user_id`.
+3. For user and stream tables, KalamDB hashes `user_id` into one of `cluster.user_shards` groups.
+4. If the receiving node is not the leader for that target group, it forwards the original SQL, params, auth header, and request id over gRPC to the current leader for that group.
+5. The group leader executes the write, appends it to that Raft log, replicates it to followers, commits it, and returns the result.
+6. The follower relays that leader-built response back to the client.
+
+This keeps writes local to the correct group leader even when clients connect to follower nodes.
+
+### Multi-Raft routing today
+
+- KalamDB runs one metadata Raft group plus multiple user data groups.
+- User and stream data are routed by `user_id`, so all rows for the same user go through the same user-data Raft group leader at a given time instead of scattering one user's working set across many leaders.
+- That locality reduces cross-group coordination and improves cache and write-path behavior.
+- Shared tables are different today: they currently route to a single shared group.
+- Shared-table sharding is still a work in progress. The planned direction is partition-by-key so each shared table can define how a row is partitioned and where it should be placed.
 
 ### Output formats
 

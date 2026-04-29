@@ -42,6 +42,8 @@ export interface GeneratedSql {
   fullSql: string;
   updateCount: number;
   deleteCount: number;
+  mutationCount: number;
+  isTransactional: boolean;
 }
 
 export function generateSqlStatements(
@@ -51,24 +53,34 @@ export function generateSqlStatements(
   deletions: Map<number, RowDeletion>,
 ): GeneratedSql {
   const qualifiedTable = `${namespace}.${tableName}`;
-  const statements: string[] = [];
+  const mutationStatements: string[] = [];
 
   const sortedEdits = Array.from(edits.values()).sort((left, right) => left.rowIndex - right.rowIndex);
+  let mutationCount = 0;
   for (const rowEdit of sortedEdits) {
     if (deletions.has(rowEdit.rowIndex)) continue;
-    statements.push(generateUpdate(qualifiedTable, rowEdit));
+    mutationCount += Object.keys(rowEdit.cellEdits).length;
+    mutationStatements.push(generateUpdate(qualifiedTable, rowEdit));
   }
 
   const sortedDeletions = Array.from(deletions.values()).sort((left, right) => left.rowIndex - right.rowIndex);
   for (const deletion of sortedDeletions) {
-    statements.push(generateDelete(qualifiedTable, deletion));
+    mutationCount += 1;
+    mutationStatements.push(generateDelete(qualifiedTable, deletion));
   }
+
+  const isTransactional = mutationCount > 1;
+  const statements = isTransactional
+    ? ["BEGIN;", ...mutationStatements, "COMMIT;"]
+    : mutationStatements;
 
   return {
     statements,
     fullSql: statements.join("\n"),
     updateCount: sortedEdits.filter((edit) => !deletions.has(edit.rowIndex)).length,
     deleteCount: sortedDeletions.length,
+    mutationCount,
+    isTransactional,
   };
 }
 

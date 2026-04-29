@@ -544,10 +544,12 @@ export function StudioResultsGrid({
 
     openSqlPreview({
       title: "Review Changes",
-      description: `${generated.updateCount} update(s), ${generated.deleteCount} delete(s)`,
+      description: `${generated.updateCount} update(s), ${generated.deleteCount} delete(s)${generated.isTransactional ? "; wrapped in BEGIN/COMMIT" : ""}`,
       sql: generated.fullSql,
-      onExecute: async (statement: string) => {
-        await executeSql(statement);
+      statements: generated.statements,
+      editable: false,
+      onExecute: async (batchSql: string) => {
+        await executeSql(batchSql);
       },
       onComplete: async () => {
         discardAll();

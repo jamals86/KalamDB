@@ -2,8 +2,8 @@
 //!
 //! This module contains:
 //! - [`models`]: Connection-level data models (always available)
-//! - [`websocket`]: Low-level WebSocket helpers (URL resolution, auth headers,
-//!   message parsing, keepalive jitter, local bind addresses, decompression)
+//! - [`websocket`]: Low-level WebSocket helpers (URL resolution, auth headers, message parsing,
+//!   keepalive jitter, local bind addresses, decompression)
 //! - [`shared`]: Shared multiplexed WebSocket connection with auto-reconnect
 
 pub mod models;
@@ -15,7 +15,7 @@ pub mod websocket;
 
 // Re-export the shared connection type for crate-internal use.
 #[cfg(feature = "tokio-runtime")]
-pub(crate) use shared::SharedConnection;
+pub(crate) use shared::{SharedConnection, SharedSubscriptionControl};
 #[cfg(feature = "tokio-runtime")]
 pub(crate) use websocket::{
     apply_ws_auth_headers, authenticate_ws, connect_with_optional_local_bind, decode_ws_payload,
@@ -25,7 +25,7 @@ pub(crate) use websocket::{
 
 #[cfg(feature = "tokio-runtime")]
 /// Default capacity for subscription event channels.
-pub(crate) const DEFAULT_EVENT_CHANNEL_CAPACITY: usize = 8192;
+pub(crate) const DEFAULT_EVENT_CHANNEL_CAPACITY: usize = 1024;
 
 #[cfg(feature = "tokio-runtime")]
 /// Maximum text message size (64 MiB).

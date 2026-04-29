@@ -1,19 +1,24 @@
 //! System.job_nodes table provider
 
-use crate::error::{SystemError, SystemResultExt};
-use crate::providers::base::{system_rows_to_batch, IndexedProviderDefinition};
-use crate::providers::job_nodes::models::JobNode;
-use crate::system_row_mapper::{model_to_system_row, system_row_to_model};
-use crate::JobStatus;
-use chrono::Utc;
-use datafusion::arrow::array::RecordBatch;
-use datafusion::arrow::datatypes::SchemaRef;
-use kalamdb_commons::models::rows::SystemTableRow;
-use kalamdb_commons::models::JobNodeId;
-use kalamdb_commons::{JobId, NodeId, SystemTable};
-use kalamdb_store::entity_store::EntityStore;
-use kalamdb_store::{IndexedEntityStore, StorageBackend};
 use std::sync::{Arc, OnceLock};
+
+use chrono::Utc;
+use datafusion::arrow::{array::RecordBatch, datatypes::SchemaRef};
+use kalamdb_commons::{
+    models::{rows::SystemTableRow, JobNodeId},
+    next_storage_key_bytes, JobId, NodeId, StorageKey, SystemTable,
+};
+use kalamdb_store::{entity_store::EntityStore, IndexedEntityStore, StorageBackend};
+
+use crate::{
+    error::{SystemError, SystemResultExt},
+    providers::{
+        base::{system_rows_to_batch, IndexedProviderDefinition},
+        job_nodes::models::JobNode,
+    },
+    system_row_mapper::{model_to_system_row, system_row_to_model},
+    JobStatus,
+};
 
 pub type JobNodesStore = IndexedEntityStore<JobNodeId, SystemTableRow>;
 
@@ -76,32 +81,46 @@ impl JobNodesTableProvider {
         statuses: &[JobStatus],
         limit: usize,
     ) -> Result<Vec<JobNode>, SystemError> {
+        const PAGE_SIZE: usize = 256;
+
         let prefix = JobNodeId::prefix_for_node(node_id);
-        let scan_limit = if limit == 0 {
-            10_000
-        } else {
-            limit.saturating_mul(10)
-        };
-        let rows = {
-            let store = self.store.clone();
-            tokio::task::spawn_blocking(move || {
-                store.scan_with_raw_prefix(&prefix, None, scan_limit)
-            })
-            .await
-            .into_system_error("scan_async job_nodes join error")?
-            .into_system_error("scan_async job_nodes error")?
-        };
+        let mut start_key: Option<Vec<u8>> = None;
+        let mut filtered = Vec::new();
 
-        let mut filtered = Vec::with_capacity(rows.len());
-        for (_, row) in rows {
-            let node = Self::decode_job_node_row(&row)?;
-            if statuses.contains(&node.status) {
-                filtered.push(node);
+        loop {
+            let rows = {
+                let store = self.store.clone();
+                let prefix = prefix.clone();
+                let start_key = start_key.clone();
+                tokio::task::spawn_blocking(move || {
+                    store.scan_with_raw_prefix(&prefix, start_key.as_deref(), PAGE_SIZE)
+                })
+                .await
+                .into_system_error("scan_async job_nodes join error")?
+                .into_system_error("scan_async job_nodes error")?
+            };
+
+            if rows.is_empty() {
+                break;
             }
-        }
 
-        if limit > 0 && filtered.len() > limit {
-            filtered.truncate(limit);
+            let next_start_key =
+                rows.last().map(|(key, _)| next_storage_key_bytes(&key.storage_key()));
+
+            for (_, row) in rows {
+                let node = Self::decode_job_node_row(&row)?;
+                if statuses.contains(&node.status) {
+                    filtered.push(node);
+                    if limit > 0 && filtered.len() >= limit {
+                        return Ok(filtered);
+                    }
+                }
+            }
+
+            if next_start_key.is_none() {
+                break;
+            }
+            start_key = next_start_key;
         }
 
         Ok(filtered)
@@ -200,3 +219,60 @@ crate::impl_indexed_system_table_provider!(
     definition = provider_definition,
     build_batch = create_batch
 );
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use kalamdb_store::{test_utils::InMemoryBackend, StorageBackend};
+
+    use super::*;
+
+    fn provider() -> JobNodesTableProvider {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
+        JobNodesTableProvider::new(backend)
+    }
+
+    fn job_node(job_id: &str, node_id: NodeId, status: JobStatus, now: i64) -> JobNode {
+        JobNode {
+            job_id: JobId::new(job_id),
+            node_id,
+            status,
+            error_message: None,
+            created_at: now,
+            updated_at: now,
+            started_at: None,
+            finished_at: None,
+        }
+    }
+
+    #[test]
+    fn list_for_node_with_statuses_scans_past_terminal_entries() {
+        let provider = provider();
+        let node_id = NodeId::from(1u64);
+        let now = Utc::now().timestamp_millis();
+
+        for idx in 0..300 {
+            provider
+                .create_job_node(job_node(
+                    &format!("AA-{idx:012}"),
+                    node_id,
+                    JobStatus::Completed,
+                    now,
+                ))
+                .expect("create completed job_node");
+        }
+
+        provider
+            .create_job_node(job_node("ZZ-queued", node_id, JobStatus::Queued, now))
+            .expect("create queued job_node");
+
+        let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+        let rows = runtime
+            .block_on(provider.list_for_node_with_statuses_async(&node_id, &[JobStatus::Queued], 1))
+            .expect("list queued job_nodes");
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].job_id, JobId::new("ZZ-queued"));
+    }
+}

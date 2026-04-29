@@ -16,13 +16,15 @@ Client                         Server
   ├── GET /v1/ws ───────────────►│  HTTP upgrade
   │                              │  1. Validate Origin header (if configured)
   │                              │  2. Check server not shutting down
-  │                              │  3. Check max_connections not exceeded (default 25,000)
+  │                              │  3. Atomically reserve max_connections slot
   │                              │  4. Generate ConnectionId (UUID)
   │                              │  5. Register in ConnectionsManager
   │                              │  6. Spawn per-connection Tokio task
   │◄──────────────── 101 Switch ─┤
   │                              │
-  │                        ┌─────┤  Auth timeout starts (default 10s)
+  │                        ┌─────┤  Auth timeout starts (default 3s)
+  │                        │     │  If Authorization: Bearer was supplied:
+  │                        │     │  validate token after upgrade and send AuthSuccess/AuthError
   │── Authenticate{JWT} ──►│     │
   │                        │     │  7. Rate limit check
   │                        │     │  8. Validate JWT token
@@ -54,7 +56,7 @@ Client                         Server
 ## Core Components
 
 ### 1. `websocket_handler` (kalamdb-api)
-HTTP endpoint (`GET /v1/ws`) that upgrades to WebSocket. Validates origin, generates connection ID, registers with ConnectionsManager, then spawns a per-connection `handle_websocket` task.
+HTTP endpoint (`GET /v1/ws`) that upgrades to WebSocket. Validates origin, parses optional `Authorization: Bearer` metadata without validating it on the HTTP upgrade path, generates connection ID, registers with ConnectionsManager, then spawns a per-connection `handle_websocket` task.
 
 ### 2. `handle_websocket` (kalamdb-api)
 Per-connection `tokio::select!` loop with **biased** priority ordering:
@@ -67,7 +69,8 @@ Shared singleton managing ALL connections:
 - **Primary storage**: `DashMap<ConnectionId, SharedConnectionState>` 
 - **Subscription indices**: `(UserId, TableId) → DashMap<LiveQueryId, SubscriptionHandle>` for O(1) notification routing
 - **Background heartbeat checker**: Single Tokio task, ticks every `heartbeat_interval` (default 5s), iterates ALL connections
-- **Channel-based communication**: Each connection gets bounded `event_tx/rx` (cap 64) and `notification_tx/rx` (cap 1000)
+- **Channel-based communication**: Each connection gets bounded `event_tx/rx` (cap 1) and `notification_tx/rx` (cap 64)
+- **Capacity enforcement**: Connection slots are reserved with atomic compare-and-swap before allocation, so concurrent handshakes cannot overshoot `max_connections`
 
 ### 4. `LiveQueryManager` (kalamdb-core)
 Handles subscription registration/unregistration:
@@ -148,8 +151,8 @@ Per-connection select! loop
 
 | Channel | Capacity | Purpose |
 |---------|----------|---------|
-| `event_tx/rx` | 16 | Control events (ping, timeout, shutdown) |
-| `notification_tx/rx` | 1000 | Live query notifications per connection |
+| `event_tx/rx` | 1 | Control close event (auth timeout, heartbeat timeout, shutdown) |
+| `notification_tx/rx` | 64 | Live query notifications per connection |
 
 ---
 

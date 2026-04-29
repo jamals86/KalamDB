@@ -106,7 +106,9 @@ derive_cluster_rpc_port() {
 }
 
 ensure_release_server_bin() {
-    if [[ -x "$BENCH_SERVER_BIN" ]]; then
+    if [[ -x "$BENCH_SERVER_BIN" ]] \
+        && ! find "$BACKEND_DIR" "$REPO_DIR/Cargo.toml" "$REPO_DIR/Cargo.lock" \
+            -newer "$BENCH_SERVER_BIN" -print -quit 2>/dev/null | grep -q .; then
         return
     fi
 

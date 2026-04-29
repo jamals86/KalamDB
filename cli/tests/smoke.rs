@@ -79,6 +79,8 @@ mod smoke_test_topic_consumption;
 mod smoke_test_topic_high_load;
 #[path = "smoke/topics/smoke_test_topic_throughput.rs"]
 mod smoke_test_topic_throughput;
+#[path = "smoke/topics/topic_test_support.rs"]
+mod topic_test_support;
 
 // CLI tests
 #[path = "smoke/cli/smoke_test_cli_commands.rs"]
@@ -141,16 +143,16 @@ mod leader_only_reads;
 // Query tests
 #[path = "smoke/query/smoke_test_00_parallel_query_burst.rs"]
 mod smoke_test_00_parallel_query_burst;
-#[path = "smoke/query/smoke_test_json_operators.rs"]
-mod smoke_test_json_operators;
 #[path = "smoke/query/smoke_test_filter_pushdown.rs"]
 mod smoke_test_filter_pushdown;
+#[path = "smoke/query/smoke_test_json_operators.rs"]
+mod smoke_test_json_operators;
 #[path = "smoke/query/smoke_test_provider_exec_models.rs"]
 mod smoke_test_provider_exec_models;
-#[path = "smoke/query/smoke_test_stream_explain_planning.rs"]
-mod smoke_test_stream_explain_planning;
 #[path = "smoke/query/smoke_test_queries_benchmark.rs"]
 mod smoke_test_queries_benchmark;
+#[path = "smoke/query/smoke_test_stream_explain_planning.rs"]
+mod smoke_test_stream_explain_planning;
 
 // System tests
 #[path = "smoke/system/smoke_test_all_system_tables_schemas.rs"]

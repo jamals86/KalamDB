@@ -1,6 +1,7 @@
 //! Integration tests for user table operations
 //!
-//! **Implements T037-T040, T064-T068**: User table CRUD operations, output formatting, and query features
+//! **Implements T037-T040, T064-T068**: User table CRUD operations, output formatting, and query
+//! features
 //!
 //! These tests validate:
 //! - Basic query execution on user tables
@@ -9,8 +10,9 @@
 //! - Empty queries and result pagination
 //! - Query result display and formatting
 
-use crate::common;
-use crate::common::*;
+use std::time::Duration;
+
+use crate::{common, common::*};
 
 /// T037: Test basic query execution
 #[test]
@@ -93,31 +95,23 @@ fn test_cli_table_output_formatting() {
         full_table_name
     ))
     .expect("CREATE TABLE failed");
+    wait_for_table_ready(&full_table_name, Duration::from_secs(15)).expect("table should be ready");
 
     let _ = execute_sql_as_root_via_cli(&format!(
         "INSERT INTO {} (content) VALUES ('Hello World'), ('Test Message')",
         full_table_name
     ));
 
-    // Query with table format (default)
-    let mut cmd = create_cli_command();
-    cmd.arg("-u")
-        .arg(server_url())
-        .arg("--user")
-        .arg(default_username())
-        .arg("--password")
-        .arg(root_password())
-        .arg("--command")
-        .arg(format!("SELECT * FROM {}", full_table_name));
-
-    let output = cmd.output().unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = wait_for_sql_output_contains(
+        &format!("SELECT * FROM {}", full_table_name),
+        "Test Message",
+        Duration::from_secs(20),
+    )
+    .expect("table query should return inserted rows");
 
     // Verify table formatting and content
     assert!(
-        stdout.contains("Hello World")
-            && stdout.contains("Test Message")
-            && output.status.success(),
+        stdout.contains("Hello World") && stdout.contains("Test Message"),
         "Output should contain both messages: {}",
         stdout
     );
@@ -148,6 +142,7 @@ fn test_cli_json_output_format() {
         ) WITH (TYPE='USER', FLUSH_POLICY='rows:10')"#,
         full_table_name
     ));
+    wait_for_table_ready(&full_table_name, Duration::from_secs(15)).expect("table should be ready");
 
     let _ = execute_sql_as_root_via_cli(&format!(
         "INSERT INTO {} (content) VALUES ('JSON Test')",
@@ -372,25 +367,15 @@ fn test_cli_result_pagination() {
         .expect("INSERT failed");
     }
 
-    // Query all rows via CLI
-    let mut cmd = create_cli_command();
-    cmd.arg("-u")
-        .arg(server_url())
-        .arg("--user")
-        .arg(default_username())
-        .arg("--password")
-        .arg(root_password())
-        .arg("--command")
-        .arg(format!("SELECT * FROM {}", full_table_name));
-
-    let output = cmd.output().unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = wait_for_sql_output_contains(
+        &format!("SELECT * FROM {}", full_table_name),
+        "Message",
+        Duration::from_secs(20),
+    )
+    .expect("pagination query should return inserted rows");
 
     // Should display results (pagination in interactive mode)
-    assert!(
-        stdout.contains("Message") || output.status.success(),
-        "Should handle result display"
-    );
+    assert!(stdout.contains("Message"), "Should handle result display");
 
     // Cleanup
     let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full_table_name));

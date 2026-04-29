@@ -1,5 +1,4 @@
 // KalamDB Server entrypoint
-//!
 //! The heavy lifting (initialization, middleware wiring, graceful shutdown)
 //! lives in dedicated modules so this file remains a thin orchestrator.
 
@@ -7,13 +6,19 @@ use kalamdb_core::metrics::{BUILD_DATE, SERVER_VERSION};
 
 mod logging;
 
+use std::{
+    collections::HashSet,
+    net::{SocketAddr, TcpListener, ToSocketAddrs},
+    path::{Path, PathBuf},
+};
+
 use anyhow::{anyhow, Result};
 use kalamdb_configs::ServerConfig;
-use kalamdb_server::lifecycle::{bootstrap, run};
+use kalamdb_server::{
+    lifecycle::{bootstrap, run},
+    startup::configure_auth_runtime,
+};
 use log::info;
-use std::collections::HashSet;
-use std::net::{SocketAddr, TcpListener, ToSocketAddrs};
-use std::path::{Path, PathBuf};
 
 fn resolve_bind_addrs(addr: &str, label: &str) -> Result<HashSet<SocketAddr>> {
     let addrs: Vec<SocketAddr> = addr
@@ -80,7 +85,8 @@ fn validate_startup_ports(config: &ServerConfig) -> Result<()> {
 
         if !http_addrs.is_disjoint(&rpc_addrs) {
             return Err(anyhow!(
-                "Invalid configuration: HTTP '{}' and Raft RPC '{}' resolve to at least one identical socket address. Configure distinct ports.",
+                "Invalid configuration: HTTP '{}' and Raft RPC '{}' resolve to at least one \
+                 identical socket address. Configure distinct ports.",
                 http_addr,
                 cluster.rpc_addr
             ));
@@ -185,10 +191,12 @@ fn load_server_config(config_path: &Path) -> ServerConfig {
 
     if config.should_warn_on_non_local_http_wildcard_cors() {
         eprintln!(
-            "⚠️  SECURITY WARNING: Non-localhost HTTP exposure is using security.cors.allowed_origins = [\"*\"]"
+            "⚠️  SECURITY WARNING: Non-localhost HTTP exposure is using \
+             security.cors.allowed_origins = [\"*\"]"
         );
         eprintln!(
-            "⚠️  Any browser origin can reach this server. Replace '*' with an explicit origin list before production use."
+            "⚠️  Any browser origin can reach this server. Replace '*' with an explicit origin \
+             list before production use."
         );
     }
 
@@ -240,8 +248,7 @@ async fn async_main(config: ServerConfig) -> Result<()> {
     // JWT CONFIG INITIALIZATION
     // ========================================================================
     // Initialize auth JWT config from server.toml (after env overrides are applied).
-    kalamdb_auth::services::unified::init_auth_config(&config.auth, &config.oauth);
-    kalamdb_auth::init_trusted_proxy_ranges(&config.security.trusted_proxy_ranges)?;
+    configure_auth_runtime(&config)?;
 
     // ========================================================================
     // Security: Validate critical configuration at startup
@@ -341,9 +348,7 @@ async fn async_main(config: ServerConfig) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use std::alloc::Layout;
-    use std::hint::black_box;
-    use std::time::Instant;
+    use std::{alloc::Layout, hint::black_box, time::Instant};
 
     use kalamdb_observability::{collect_runtime_metrics, force_allocator_collection};
 
@@ -478,7 +483,8 @@ mod tests {
         assert!(
             after.memory_bytes.unwrap_or_default()
                 <= before.memory_bytes.unwrap_or_default() + allowed_growth,
-            "runtime metrics collection retained too much process memory: before={} after={} source={}",
+            "runtime metrics collection retained too much process memory: before={} after={} \
+             source={}",
             before.memory_bytes.unwrap_or_default(),
             after.memory_bytes.unwrap_or_default(),
             after.memory_usage_source,

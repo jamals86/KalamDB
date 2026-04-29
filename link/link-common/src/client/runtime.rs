@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use super::{KalamLinkClient, KalamLinkClientBuilder};
 #[cfg(feature = "consumer")]
 use crate::consumer::ConsumerBuilder;
@@ -10,7 +12,6 @@ use crate::{
     subscription::{LiveRowsConfig, LiveRowsSubscription, SubscriptionManager},
     timeouts::KalamLinkTimeouts,
 };
-use std::sync::Arc;
 
 impl KalamLinkClient {
     /// Create a new builder for configuring the client
@@ -76,13 +77,7 @@ impl KalamLinkClient {
         });
 
         self.query_executor
-            .execute_with_progress(
-                sql,
-                files_owned,
-                params,
-                namespace_id.map(|s| s.to_string()),
-                progress,
-            )
+            .execute_with_progress_ref(sql, files_owned, params, namespace_id, progress)
             .await
     }
 
@@ -154,9 +149,8 @@ impl KalamLinkClient {
             if let Some(ref conn) = *conn_guard {
                 let (event_rx, result_rx) =
                     conn.subscribe_send(config.id.clone(), config.sql, config.options).await?;
-                let unsub_tx = conn.unsubscribe_tx();
-                let progress_tx = conn.progress_tx();
-                Some((event_rx, result_rx, unsub_tx, progress_tx))
+                let shared_control = conn.subscription_control();
+                Some((event_rx, result_rx, shared_control))
             } else {
                 None
             }
@@ -164,7 +158,7 @@ impl KalamLinkClient {
         // Lock released here ↑
 
         // Phase 2: Wait for the server Ready ack without the lock held.
-        if let Some((event_rx, result_rx, unsub_tx, progress_tx)) = pending {
+        if let Some((event_rx, result_rx, shared_control)) = pending {
             let (generation, resume_from) = result_rx.await.map_err(|_| {
                 KalamLinkError::WebSocketError(
                     "Connection task died before confirming subscribe".to_string(),
@@ -174,8 +168,7 @@ impl KalamLinkClient {
             return Ok(SubscriptionManager::from_shared(
                 config.id,
                 event_rx,
-                unsub_tx,
-                progress_tx,
+                shared_control,
                 generation,
                 resume_from,
                 &self.timeouts,

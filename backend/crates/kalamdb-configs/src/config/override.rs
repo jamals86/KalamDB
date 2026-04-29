@@ -1,6 +1,9 @@
-use super::cluster::{ClusterConfig, PeerConfig};
-use super::types::ServerConfig;
 use std::env;
+
+use super::{
+    cluster::{ClusterConfig, PeerConfig},
+    types::ServerConfig,
+};
 
 fn parse_csv_env_list(value: &str) -> Vec<String> {
     value
@@ -16,7 +19,8 @@ impl ServerConfig {
     /// Supported environment variables (T030):
     /// - KALAMDB_SERVER_HOST: Override server.host
     /// - KALAMDB_SERVER_PORT: Override server.port
-    /// - KALAMDB_SERVER_PUBLIC_ORIGIN: Override server.public_origin (empty keeps Admin UI browser-origin fallback)
+    /// - KALAMDB_SERVER_PUBLIC_ORIGIN: Override server.public_origin (empty keeps Admin UI
+    ///   browser-origin fallback)
     /// - KALAMDB_LOG_LEVEL: Override logging.level
     /// - KALAMDB_LOGS_DIR: Override logging.logs_path
     /// - KALAMDB_LOG_TO_CONSOLE: Override logging.log_to_console
@@ -25,7 +29,8 @@ impl ServerConfig {
     /// - KALAMDB_OTLP_PROTOCOL: Override logging.otlp.protocol ("grpc" | "http")
     /// - KALAMDB_OTLP_SERVICE_NAME: Override logging.otlp.service_name
     /// - KALAMDB_OTLP_TIMEOUT_MS: Override logging.otlp.timeout_ms
-    /// - KALAMDB_DATA_DIR: Override storage.data_path (base directory for rocksdb, storage, snapshots)
+    /// - KALAMDB_DATA_DIR: Override storage.data_path (base directory for rocksdb, storage,
+    ///   snapshots)
     /// - KALAMDB_CLUSTER_ID: Override cluster.cluster_id
     /// - KALAMDB_NODE_ID: Override cluster.node_id (alias: KALAMDB_CLUSTER_NODE_ID)
     /// - KALAMDB_CLUSTER_RPC_ADDR: Override cluster.rpc_addr
@@ -37,9 +42,13 @@ impl ServerConfig {
     /// - KALAMDB_JWT_EXPIRY_HOURS: Override auth.jwt_expiry_hours
     /// - KALAMDB_COOKIE_SECURE: Override auth.cookie_secure
     /// - KALAMDB_ALLOW_REMOTE_SETUP: Override auth.allow_remote_setup
-    /// - KALAMDB_SECURITY_CORS_ALLOWED_ORIGINS: Override security.cors.allowed_origins with a comma-separated list or "*"
+    /// - KALAMDB_SECURITY_CORS_ALLOWED_ORIGINS: Override security.cors.allowed_origins with a
+    ///   comma-separated list or "*"
     /// - KALAMDB_SECURITY_TRUSTED_PROXY_RANGES: Override security.trusted_proxy_ranges
-    /// - KALAMDB_RATE_LIMIT_AUTH_REQUESTS_PER_IP_PER_SEC: Override rate_limit.max_auth_requests_per_ip_per_sec
+    /// - KALAMDB_RATE_LIMIT_AUTH_REQUESTS_PER_IP_PER_SEC: Override
+    ///   rate_limit.max_auth_requests_per_ip_per_sec
+    /// - KALAMDB_TOPIC_VISIBILITY_TIMEOUT_SECS: Override topics.visibility_timeout_secs
+    ///   (alias: KALAMDB_VISIBILITY_TIMEOUT_SECS)
     /// - KALAMDB_WEBSOCKET_CLIENT_TIMEOUT_SECS: Override websocket.client_timeout_secs
     /// - KALAMDB_WEBSOCKET_AUTH_TIMEOUT_SECS: Override websocket.auth_timeout_secs
     /// - KALAMDB_WEBSOCKET_HEARTBEAT_INTERVAL_SECS: Override websocket.heartbeat_interval_secs
@@ -78,6 +87,14 @@ impl ServerConfig {
         // Log level
         if let Ok(level) = env::var("KALAMDB_LOG_LEVEL") {
             self.logging.level = level;
+        }
+
+        let topic_visibility_timeout = env::var("KALAMDB_TOPIC_VISIBILITY_TIMEOUT_SECS")
+            .or_else(|_| env::var("KALAMDB_VISIBILITY_TIMEOUT_SECS"));
+        if let Ok(val) = topic_visibility_timeout {
+            self.topics.visibility_timeout_secs = val.parse().map_err(|_| {
+                anyhow::anyhow!("Invalid KALAMDB_TOPIC_VISIBILITY_TIMEOUT_SECS value: {}", val)
+            })?;
         }
 
         // Logs directory path
@@ -286,7 +303,8 @@ fn parse_cluster_peers(value: &str) -> anyhow::Result<Vec<PeerConfig>> {
         let parts: Vec<&str> = entry.split('@').collect();
         if parts.len() < 3 || parts.len() > 4 {
             return Err(anyhow::anyhow!(
-                "Invalid KALAMDB_CLUSTER_PEERS entry '{}'. Expected format: node_id@rpc_addr@api_addr[@rpc_server_name]",
+                "Invalid KALAMDB_CLUSTER_PEERS entry '{}'. Expected format: \
+                 node_id@rpc_addr@api_addr[@rpc_server_name]",
                 entry
             ));
         }
@@ -309,8 +327,9 @@ fn parse_cluster_peers(value: &str) -> anyhow::Result<Vec<PeerConfig>> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::sync::{Mutex, MutexGuard, OnceLock};
+
+    use super::*;
 
     static ENV_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
 
@@ -404,6 +423,34 @@ mod tests {
         assert_eq!(config.security.cors.allowed_origins, vec!["*".to_string()]);
 
         env::remove_var("KALAMDB_SECURITY_CORS_ALLOWED_ORIGINS");
+    }
+
+    #[test]
+    fn test_env_override_topic_visibility_timeout_secs() {
+        let _guard = acquire_env_lock();
+        env::remove_var("KALAMDB_VISIBILITY_TIMEOUT_SECS");
+        env::set_var("KALAMDB_TOPIC_VISIBILITY_TIMEOUT_SECS", "7");
+
+        let mut config = ServerConfig::default();
+        config.apply_env_overrides().unwrap();
+
+        assert_eq!(config.topics.visibility_timeout_secs, 7);
+
+        env::remove_var("KALAMDB_TOPIC_VISIBILITY_TIMEOUT_SECS");
+    }
+
+    #[test]
+    fn test_env_override_topic_visibility_timeout_secs_legacy_alias() {
+        let _guard = acquire_env_lock();
+        env::remove_var("KALAMDB_TOPIC_VISIBILITY_TIMEOUT_SECS");
+        env::set_var("KALAMDB_VISIBILITY_TIMEOUT_SECS", "5");
+
+        let mut config = ServerConfig::default();
+        config.apply_env_overrides().unwrap();
+
+        assert_eq!(config.topics.visibility_timeout_secs, 5);
+
+        env::remove_var("KALAMDB_VISIBILITY_TIMEOUT_SECS");
     }
 
     #[test]

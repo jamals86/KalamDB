@@ -2,15 +2,17 @@
 //!
 //! Attempts to transfer leadership for all Raft groups to the specified node.
 
+use std::sync::Arc;
+
+use super::result_rows::cluster_group_action_rows;
 use kalamdb_commons::models::NodeId;
-use kalamdb_core::app_context::AppContext;
-use kalamdb_core::error::KalamDbError;
-use kalamdb_core::sql::executor::handlers::{
-    ExecutionContext, ExecutionResult, ScalarValue, StatementHandler,
+use kalamdb_core::{
+    app_context::AppContext,
+    error::KalamDbError,
+    sql::executor::handlers::{ExecutionContext, ExecutionResult, ScalarValue, StatementHandler},
 };
 use kalamdb_raft::RaftExecutor;
 use kalamdb_sql::classifier::{SqlStatement, SqlStatementKind};
-use std::sync::Arc;
 
 pub struct ClusterTransferLeaderHandler {
     app_context: Arc<AppContext>,
@@ -56,31 +58,14 @@ impl StatementHandler for ClusterTransferLeaderHandler {
                 KalamDbError::InvalidOperation(format!("Failed to transfer leadership: {}", e))
             })?;
 
-        let success_count = results.iter().filter(|r| r.success).count();
-        let total_count = results.len();
-        let failed_count = total_count - success_count;
-
-        let mut message = if success_count == 0 && failed_count == total_count {
-            format!(
-                "CLUSTER TRANSFER-LEADER is unsupported in the current OpenRaft version (target={}).",
-                node_id
-            )
-        } else {
-            format!(
-                "Cluster transfer-leader completed: {}/{} groups requested (target={})",
-                success_count, total_count, node_id
-            )
-        };
-
-        if failed_count > 0 {
-            message.push_str("\n\nFailed groups:");
-            for result in results.iter().filter(|r| !r.success) {
-                if let Some(ref err) = result.error {
-                    message.push_str(&format!("\n  - {:?}: {}", result.group_id, err));
-                }
-            }
-        }
-
-        Ok(ExecutionResult::Success { message })
+        cluster_group_action_rows(
+            "transfer-leader",
+            Some(*node_id),
+            None,
+            None,
+            results
+                .into_iter()
+                .map(|result| (result.group_id.to_string(), result.success, result.error, None)),
+        )
     }
 }

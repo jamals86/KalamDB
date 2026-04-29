@@ -1,13 +1,15 @@
-use super::types::JobsManager;
-use crate::executors::JobParams;
 use chrono::Utc;
 use kalamdb_commons::JobId;
-use kalamdb_core::error::KalamDbError;
-use kalamdb_core::error_extensions::KalamDbResultExt;
+use kalamdb_core::{error::KalamDbError, error_extensions::KalamDbResultExt};
 use kalamdb_raft::commands::MetaCommand;
-use kalamdb_system::providers::jobs::models::{Job, JobOptions};
-use kalamdb_system::{JobStatus, JobType};
+use kalamdb_system::{
+    providers::jobs::models::{Job, JobOptions},
+    JobStatus, JobType,
+};
 use log::Level;
+
+use super::types::JobsManager;
+use crate::executors::JobParams;
 
 impl JobsManager {
     /// Insert a job in the database asynchronously via Raft or direct write
@@ -33,7 +35,8 @@ impl JobsManager {
     ///
     /// # Arguments
     /// * `job_type` - Type of job to create
-    /// * `parameters` - Job parameters as JSON value (should contain namespace_id, table_name, etc.)
+    /// * `parameters` - Job parameters as JSON value (should contain namespace_id, table_name,
+    ///   etc.)
     /// * `idempotency_key` - Optional key to prevent duplicate jobs
     /// * `options` - Optional job creation options (retry, priority, queue)
     ///
@@ -147,14 +150,16 @@ impl JobsManager {
 
     /// Create a job with type-safe parameters
     ///
-    /// **Type-Safe Alternative**: Accepts JobParams trait implementations for compile-time validation
+    /// **Type-Safe Alternative**: Accepts JobParams trait implementations for compile-time
+    /// validation
     ///
     /// # Type Parameters
     /// * `T` - JobParams implementation (FlushParams, CleanupParams, etc.)
     ///
     /// # Arguments
     /// * `job_type` - Type of job to create
-    /// * `params` - Typed parameters (automatically validated and serialized, should contain namespace_id, table_name)
+    /// * `params` - Typed parameters (automatically validated and serialized, should contain
+    ///   namespace_id, table_name)
     /// * `idempotency_key` - Optional key to prevent duplicate jobs
     /// * `options` - Optional job configuration (retries, priority, queue)
     ///
@@ -173,6 +178,18 @@ impl JobsManager {
     ) -> Result<JobId, KalamDbError> {
         // Validate parameters before serialization
         params.validate()?;
+
+        // Fast duplicate rejection before executor pre-validation. Flush pre-validation can scan
+        // RocksDB, so avoid doing that work for jobs we already know are active. create_job()
+        // still performs the same check after pre-validation to keep the race window closed.
+        if let Some(ref key) = idempotency_key {
+            if self.has_active_job_with_key(key).await? {
+                return Err(KalamDbError::IdempotentConflict(format!(
+                    "Job with idempotency key '{}' is already running or queued",
+                    key
+                )));
+            }
+        }
 
         // Serialize to JSON for storage and pre-validation
         let params_json = serde_json::to_string(&params)

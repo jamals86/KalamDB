@@ -77,6 +77,7 @@ pub async fn run_preflight_checks(client: &KalamClient, config: &Config) -> bool
     // 2b. scale benchmark capacity feasibility
     checks.push(check_subscriber_scale_target_capacity(config));
     checks.push(check_connection_scale_target_capacity(config));
+    checks.push(check_chat_realtime_target_capacity(config));
 
     // 3. SQL connectivity
     checks.push(check_sql_connectivity(client).await);
@@ -255,6 +256,72 @@ fn will_run_subscriber_scale(config: &Config) -> bool {
 
 fn will_run_connection_scale(config: &Config) -> bool {
     will_run_named_benchmark(config, "connection_scale", "scale")
+}
+
+fn check_chat_realtime_target_capacity(config: &Config) -> CheckResult {
+    if !will_run_chat_realtime(config) {
+        return CheckResult::pass("chat_realtime target", "Skipped (chat_realtime not selected)");
+    }
+
+    let ws_targets = resolve_ws_targets(&config.urls);
+    if ws_targets.len() != 1 {
+        return CheckResult::pass(
+            "chat_realtime target",
+            format!(
+                "{} endpoint(s); single-host client socket ceiling warning not applicable",
+                ws_targets.len()
+            ),
+        );
+    }
+
+    let Some(single_target_socket_limit) = detected_single_target_ws_limit() else {
+        return CheckResult::pass(
+            "chat_realtime target",
+            "Host-specific single-target socket ceiling unavailable",
+        );
+    };
+
+    let user_count = benchmark_chat_env_usize("KALAMDB_BENCH_CHAT_USERS", 1_000);
+    let realtime_conversations = benchmark_chat_env_usize("KALAMDB_BENCH_CHAT_REALTIME_CONVS", 100);
+    let target_active_users = user_count.min(realtime_conversations.max(2));
+    let estimated_client_sockets = target_active_users.saturating_mul(2);
+    let socket_limit_label = human_count(single_target_socket_limit);
+
+    if estimated_client_sockets > single_target_socket_limit {
+        return CheckResult::warn(
+            "chat_realtime target",
+            format!(
+                "Single target ({}) with target_active_chat_users={} implies about {} long-lived client sockets from this host (HTTP + WebSocket), which can hit the local ephemeral-port ceiling near {}. Resulting connect failures may be host-side rather than a backend bottleneck. Use multiple endpoints or loopback aliases for realistic same-host runs.",
+                ws_targets[0],
+                target_active_users,
+                estimated_client_sockets,
+                socket_limit_label,
+            ),
+        );
+    }
+
+    CheckResult::pass(
+        "chat_realtime target",
+        format!(
+            "Single target {}, estimated active users={} -> about {} long-lived client sockets (host ceiling near {})",
+            ws_targets[0],
+            target_active_users,
+            estimated_client_sockets,
+            socket_limit_label,
+        ),
+    )
+}
+
+fn will_run_chat_realtime(config: &Config) -> bool {
+    will_run_named_benchmark(config, "chat_realtime", "load")
+}
+
+fn benchmark_chat_env_usize(name: &str, default: usize) -> usize {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(default)
 }
 
 fn will_run_named_benchmark(config: &Config, name: &str, category: &str) -> bool {

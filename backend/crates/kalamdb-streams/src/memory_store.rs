@@ -4,14 +4,22 @@
 //! that don't need persistence. Data is organized by user_id and then by timestamp
 //! for efficient time-range queries.
 
-use crate::config::StreamLogConfig;
-use crate::error::{Result, StreamLogError};
-use crate::record::StreamLogRecord;
-use crate::store_trait::StreamLogStore;
-use kalamdb_commons::ids::StreamTableRowId;
-use kalamdb_commons::models::{StreamTableRow, TableId, UserId};
-use std::collections::{BTreeMap, HashMap, HashSet};
-use std::sync::RwLock;
+use std::{
+    collections::{BTreeMap, HashMap, HashSet},
+    sync::RwLock,
+};
+
+use kalamdb_commons::{
+    ids::StreamTableRowId,
+    models::{StreamTableRow, TableId, UserId},
+};
+
+use crate::{
+    config::StreamLogConfig,
+    error::{Result, StreamLogError},
+    record::StreamLogRecord,
+    store_trait::StreamLogStore,
+};
 
 /// Key for the in-memory store: (user_id string, timestamp_ms, row_id bytes for uniqueness)
 type RowKey = (String, u64, Vec<u8>);
@@ -88,6 +96,37 @@ impl MemoryStreamLogStore {
             *state.per_user_entry_counts.entry(row_id.user_id().clone()).or_default() += 1;
         }
         self.evict_excess_user_rows(&mut state, row_id.user_id());
+        Ok(())
+    }
+
+    pub fn append_row(
+        &self,
+        table_id: &TableId,
+        _user_id: &UserId,
+        row_id: &StreamTableRowId,
+        row: &StreamTableRow,
+    ) -> Result<()> {
+        self.ensure_table(table_id)?;
+        let key = self.make_key(row_id);
+        let user_id = row_id.user_id().clone();
+        let mut state = self
+            .state
+            .write()
+            .map_err(|e| StreamLogError::Io(format!("Failed to acquire write lock: {}", e)))?;
+        let was_new = state
+            .data
+            .insert(
+                key,
+                StreamLogRecord::Put {
+                    row_id: row_id.clone(),
+                    row: row.clone(),
+                },
+            )
+            .is_none();
+        if was_new {
+            *state.per_user_entry_counts.entry(user_id.clone()).or_default() += 1;
+        }
+        self.evict_excess_user_rows(&mut state, &user_id);
         Ok(())
     }
 
@@ -376,12 +415,15 @@ impl StreamLogStore for MemoryStreamLogStore {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use datafusion::scalar::ScalarValue;
-    use kalamdb_commons::ids::SeqId;
-    use kalamdb_commons::models::rows::Row;
-    use kalamdb_commons::models::{NamespaceId, TableName};
     use std::collections::BTreeMap;
+
+    use datafusion::scalar::ScalarValue;
+    use kalamdb_commons::{
+        ids::SeqId,
+        models::{rows::Row, NamespaceId, TableName},
+    };
+
+    use super::*;
 
     fn build_row(user_id: &UserId, seq: SeqId) -> StreamTableRow {
         let values: BTreeMap<String, ScalarValue> = BTreeMap::new();

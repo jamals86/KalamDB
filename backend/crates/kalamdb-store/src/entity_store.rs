@@ -53,11 +53,14 @@
 //! let retrieved = store.get(&user_id).unwrap().unwrap();
 //! ```
 
-use crate::async_utils::run_blocking_result;
-use crate::storage_trait::{Partition, Result, StorageBackend, StorageError};
-use kalamdb_commons::{next_storage_key_bytes, KSerializable, StorageKey};
-use std::collections::VecDeque;
 use std::sync::Arc;
+
+use kalamdb_commons::{next_storage_key_bytes, KSerializable, StorageKey};
+
+use crate::{
+    async_utils::run_blocking_result,
+    storage_trait::{Partition, Result, StorageBackend, StorageError},
+};
 
 /// Directional scanning for entity stores
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -115,7 +118,7 @@ where
     /// **Rationale**: Direct backend access bypasses type safety and proper key serialization.
     /// All operations should go through EntityStore methods which ensure:
     /// - Proper key serialization via StorageKey trait
-    /// - Type-safe deserialization via KSerializable trait  
+    /// - Type-safe deserialization via KSerializable trait
     /// - Consistent error handling
     /// - Future optimizations (caching, batching, etc.)
     #[doc(hidden)]
@@ -160,28 +163,32 @@ where
             },
             ScanDirection::Older => {
                 let start_bytes = start_key.map(|k| k.storage_key());
-                let iter = self.backend().scan(&partition, None, None, None)?;
-                let mut collected: VecDeque<(Vec<u8>, Vec<u8>)> =
-                    VecDeque::with_capacity(limit.min(MAX_PREALLOC_CAPACITY));
+                let scan_limit = if start_bytes.is_some() {
+                    limit.saturating_add(1)
+                } else {
+                    limit
+                };
+                let iter = self.backend().scan_reverse(
+                    &partition,
+                    None,
+                    start_bytes.as_deref(),
+                    Some(scan_limit),
+                )?;
 
+                let mut rows = Vec::with_capacity(limit.min(MAX_PREALLOC_CAPACITY));
                 for (key_bytes, value_bytes) in iter {
                     if let Some(start) = &start_bytes {
                         if key_bytes.as_slice() >= start.as_slice() {
-                            break;
+                            continue;
                         }
                     }
-                    if collected.len() == limit {
-                        collected.pop_front();
-                    }
-                    collected.push_back((key_bytes, value_bytes));
-                }
-
-                let mut rows = Vec::with_capacity(collected.len().min(MAX_PREALLOC_CAPACITY));
-                for (key_bytes, value_bytes) in collected.into_iter().rev() {
                     let key = K::from_storage_key(&key_bytes)
                         .map_err(StorageError::SerializationError)?;
                     let entity = self.deserialize(&value_bytes)?;
                     rows.push(Ok((key, entity)));
+                    if rows.len() >= limit {
+                        break;
+                    }
                 }
 
                 Ok(Box::new(rows.into_iter()))
@@ -651,28 +658,31 @@ where
             },
             ScanDirection::Older => {
                 let start_bytes = start_key.map(|k| k.storage_key());
-                let iter = self.backend().scan(&partition, None, None, None)?;
-                let mut collected: Vec<Vec<u8>> = Vec::new();
+                let scan_limit = if start_bytes.is_some() {
+                    limit.saturating_add(1)
+                } else {
+                    limit
+                };
+                let iter = self.backend().scan_reverse(
+                    &partition,
+                    None,
+                    start_bytes.as_deref(),
+                    Some(scan_limit),
+                )?;
 
+                let mut keys = Vec::with_capacity(limit.min(MAX_PREALLOC_CAPACITY));
                 for (key_bytes, _) in iter {
                     if let Some(start) = &start_bytes {
                         if key_bytes.as_slice() >= start.as_slice() {
-                            break;
+                            continue;
                         }
                     }
-                    collected.push(key_bytes);
-                }
-
-                if collected.len() > limit {
-                    let drain_end = collected.len() - limit;
-                    collected.drain(0..drain_end);
-                }
-
-                let mut keys = Vec::with_capacity(collected.len());
-                for key_bytes in collected {
                     let key = K::from_storage_key(&key_bytes)
                         .map_err(StorageError::SerializationError)?;
                     keys.push(key);
+                    if keys.len() >= limit {
+                        break;
+                    }
                 }
                 Ok(keys)
             },
@@ -823,7 +833,8 @@ where
         .await
     }
 
-    /// Async version of `scan_typed_with_prefix_and_start()` - scans entities with typed prefix and start key.
+    /// Async version of `scan_typed_with_prefix_and_start()` - scans entities with typed prefix and
+    /// start key.
     ///
     /// Uses `spawn_blocking` internally to prevent blocking the async runtime.
     async fn scan_typed_with_prefix_and_start_async(
@@ -933,10 +944,12 @@ use kalamdb_commons::models::{Role, TableAccess};
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::sync::Arc;
+
     use kalamdb_commons::models::{Role, TableAccess, UserId};
     use serde_json::Value as JsonValue;
-    use std::sync::Arc;
+
+    use super::*;
 
     // Mock implementation for testing
     struct MockStore {

@@ -3,12 +3,18 @@
 //! Receives events routed by the shared
 //! [`SharedConnection`](crate::connection::SharedConnection).
 
-use crate::{
-    error::Result, models::ChangeEvent, seq_id::SeqId, subscription::buffer_event,
-    subscription::event_progress, timeouts::KalamLinkTimeouts,
-};
 use std::collections::VecDeque;
+
 use tokio::sync::mpsc;
+
+use crate::{
+    connection::SharedSubscriptionControl,
+    error::Result,
+    models::ChangeEvent,
+    seq_id::SeqId,
+    subscription::{buffer_event, event_progress},
+    timeouts::KalamLinkTimeouts,
+};
 
 /// Manages WebSocket subscriptions for real-time change notifications.
 ///
@@ -18,9 +24,7 @@ use tokio::sync::mpsc;
 /// use kalam_client::KalamLinkClient;
 ///
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// let client = KalamLinkClient::builder()
-///     .base_url("http://localhost:3000")
-///     .build()?;
+/// let client = KalamLinkClient::builder().base_url("http://localhost:3000").build()?;
 ///
 /// let mut subscription = client.subscribe("SELECT * FROM messages").await?;
 ///
@@ -37,11 +41,8 @@ pub struct SubscriptionManager {
     subscription_id: String,
     /// Receives parsed events from the shared connection task.
     event_rx: mpsc::Receiver<Result<ChangeEvent>>,
-    /// When using a shared connection, this sender lets us unsubscribe.
-    /// The channel carries `(subscription_id, generation)`.
-    shared_unsubscribe_tx: Option<mpsc::Sender<(String, u64)>>,
-    /// Sends consumer-observed checkpoint progress back to the shared connection.
-    shared_progress_tx: Option<mpsc::Sender<(String, u64, SeqId, bool)>>,
+    /// Sends unsubscribe and checkpoint progress back to the shared connection.
+    shared_control: Option<SharedSubscriptionControl>,
     /// Generation tag assigned by the shared `connection_task`.
     generation: u64,
     /// Local event buffer for yielding batched events from a single WS message.
@@ -63,8 +64,7 @@ impl SubscriptionManager {
     pub(crate) fn from_shared(
         subscription_id: String,
         event_rx: mpsc::Receiver<Result<ChangeEvent>>,
-        unsubscribe_tx: mpsc::Sender<(String, u64)>,
-        progress_tx: mpsc::Sender<(String, u64, SeqId, bool)>,
+        shared_control: SharedSubscriptionControl,
         generation: u64,
         resume_from: Option<SeqId>,
         timeouts: &KalamLinkTimeouts,
@@ -72,8 +72,7 @@ impl SubscriptionManager {
         Self {
             subscription_id,
             event_rx,
-            shared_unsubscribe_tx: Some(unsubscribe_tx),
-            shared_progress_tx: Some(progress_tx),
+            shared_control: Some(shared_control),
             generation,
             event_queue: VecDeque::new(),
             buffered_changes: Vec::new(),
@@ -85,15 +84,20 @@ impl SubscriptionManager {
     }
 
     async fn report_shared_progress(&self, event: &ChangeEvent) {
-        let Some(progress_tx) = self.shared_progress_tx.as_ref() else {
+        let Some(shared_control) = self.shared_control.as_ref() else {
             return;
         };
-        let Some((seq_id, advance_resume)) = event_progress(event) else {
+        let Some(progress) = event_progress(event) else {
             return;
         };
 
-        let _ = progress_tx
-            .send((self.subscription_id.clone(), self.generation, seq_id, advance_resume))
+        shared_control
+            .progress(
+                self.subscription_id.clone(),
+                self.generation,
+                progress.seq_id,
+                progress.advance_resume,
+            )
             .await;
     }
 
@@ -159,8 +163,8 @@ impl SubscriptionManager {
         }
         self.closed = true;
 
-        if let Some(tx) = self.shared_unsubscribe_tx.take() {
-            let _ = tx.send((self.subscription_id.clone(), self.generation)).await;
+        if let Some(shared_control) = self.shared_control.take() {
+            shared_control.unsubscribe(self.subscription_id.clone(), self.generation).await;
         }
 
         Ok(())
@@ -174,10 +178,8 @@ impl SubscriptionManager {
 
 impl Drop for SubscriptionManager {
     fn drop(&mut self) {
-        if let Some(tx) = self.shared_unsubscribe_tx.take() {
-            let id = self.subscription_id.clone();
-            let gen = self.generation;
-            let _ = tx.try_send((id, gen));
+        if let Some(shared_control) = self.shared_control.take() {
+            shared_control.try_unsubscribe(self.subscription_id.clone(), self.generation);
         }
     }
 }
@@ -190,15 +192,12 @@ mod tests {
     /// for testing state-flag logic without a network dependency.
     fn make_test_sub() -> SubscriptionManager {
         let (event_tx, event_rx) = mpsc::channel(1);
-        let (unsubscribe_tx, _unsubscribe_rx) = mpsc::channel(1);
-        let (progress_tx, _progress_rx) = mpsc::channel(1);
         drop(event_tx);
 
         let mut subscription = SubscriptionManager::from_shared(
             "unit-test-id".to_string(),
             event_rx,
-            unsubscribe_tx,
-            progress_tx,
+            SharedSubscriptionControl::test_control(),
             0,
             None,
             &KalamLinkTimeouts::default(),

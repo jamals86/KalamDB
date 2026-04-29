@@ -9,18 +9,28 @@
 //!
 //! Runs in the unified Meta Raft group (replaces MetaSystem + MetaUsers + MetaJobs).
 
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
+
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
 
 use super::{
     decode as bincode_decode, encode as bincode_encode, ApplyResult, KalamStateMachine,
     StateMachineSnapshot,
 };
-use crate::applier::MetaApplier;
-use crate::commands::{MetaCommand, MetaResponse};
-use crate::{GroupId, RaftError};
+use crate::{
+    applier::MetaApplier,
+    commands::{MetaCommand, MetaResponse},
+    GroupId, RaftError,
+};
+
+fn is_namespace_already_exists_error(error: &RaftError) -> bool {
+    let message = error.to_string().to_ascii_lowercase();
+    message.contains("namespace") && message.contains("already exists")
+}
 
 // =============================================================================
 // Snapshot Structure
@@ -56,6 +66,8 @@ pub struct MetaStateMachine {
     last_applied_index: AtomicU64,
     /// Last applied log term
     last_applied_term: AtomicU64,
+    /// Notifies waiters when the applied index advances.
+    last_applied_tx: tokio::sync::watch::Sender<u64>,
     /// Approximate data size in bytes
     approximate_size: AtomicU64,
 
@@ -78,9 +90,11 @@ impl MetaStateMachine {
     ///
     /// Use `set_applier` to inject persistence after construction.
     pub fn new() -> Self {
+        let (last_applied_tx, _) = tokio::sync::watch::channel(0);
         Self {
             last_applied_index: AtomicU64::new(0),
             last_applied_term: AtomicU64::new(0),
+            last_applied_tx,
             approximate_size: AtomicU64::new(0),
             applier: parking_lot::RwLock::new(None),
         }
@@ -88,9 +102,11 @@ impl MetaStateMachine {
 
     /// Create a new MetaStateMachine with an applier
     pub fn with_applier(applier: Arc<dyn MetaApplier>) -> Self {
+        let (last_applied_tx, _) = tokio::sync::watch::channel(0);
         Self {
             last_applied_index: AtomicU64::new(0),
             last_applied_term: AtomicU64::new(0),
+            last_applied_tx,
             approximate_size: AtomicU64::new(0),
             applier: parking_lot::RwLock::new(Some(applier)),
         }
@@ -115,6 +131,10 @@ impl MetaStateMachine {
     /// This is used by data groups to capture the watermark at proposal time.
     pub fn last_applied_index(&self) -> u64 {
         self.last_applied_index.load(Ordering::Acquire)
+    }
+
+    fn publish_last_applied(&self, index: u64) {
+        self.last_applied_tx.send_replace(index);
     }
 
     /// Apply a meta command
@@ -149,6 +169,35 @@ impl MetaStateMachine {
 
                 let message = if let Some(ref a) = applier {
                     a.create_namespace(&namespace_id, created_by.as_ref()).await?
+                } else {
+                    String::new()
+                };
+
+                self.approximate_size.fetch_add(100, Ordering::Relaxed);
+                Ok(MetaResponse::NamespaceCreated {
+                    namespace_id,
+                    message,
+                })
+            },
+
+            MetaCommand::CreateNamespaceIfNotExists {
+                namespace_id,
+                created_by,
+            } => {
+                log::debug!(
+                    "MetaStateMachine: CreateNamespaceIfNotExists {:?} by {:?}",
+                    namespace_id,
+                    created_by
+                );
+
+                let message = if let Some(ref applier) = applier {
+                    match applier.create_namespace(&namespace_id, created_by.as_ref()).await {
+                        Ok(message) => message,
+                        Err(error) if is_namespace_already_exists_error(&error) => {
+                            format!("Namespace '{}' already exists", namespace_id)
+                        },
+                        Err(error) => return Err(error),
+                    }
                 } else {
                     String::new()
                 };
@@ -519,6 +568,7 @@ impl KalamStateMachine for MetaStateMachine {
         // Update last applied
         self.last_applied_index.store(index, Ordering::Release);
         self.last_applied_term.store(term, Ordering::Release);
+        self.publish_last_applied(index);
 
         // Notify data shards that meta has advanced (for watermark draining)
         super::get_coordinator().advance(index);
@@ -530,6 +580,21 @@ impl KalamStateMachine for MetaStateMachine {
 
     fn last_applied_index(&self) -> u64 {
         self.last_applied_index.load(Ordering::Acquire)
+    }
+
+    fn subscribe_last_applied(&self) -> Option<tokio::sync::watch::Receiver<u64>> {
+        Some(self.last_applied_tx.subscribe())
+    }
+
+    fn mark_applied_index(&self, index: u64, term: u64) {
+        let last_applied = self.last_applied_index.load(Ordering::Acquire);
+        if index <= last_applied {
+            return;
+        }
+
+        self.last_applied_index.store(index, Ordering::Release);
+        self.last_applied_term.store(term, Ordering::Release);
+        self.publish_last_applied(index);
     }
 
     fn last_applied_term(&self) -> u64 {
@@ -555,6 +620,7 @@ impl KalamStateMachine for MetaStateMachine {
 
         self.last_applied_index.store(snapshot.last_applied_index, Ordering::Release);
         self.last_applied_term.store(snapshot.last_applied_term, Ordering::Release);
+        self.publish_last_applied(snapshot.last_applied_index);
 
         log::info!(
             "MetaStateMachine: Restored snapshot at index {} term {}",

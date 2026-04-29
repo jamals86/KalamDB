@@ -2,14 +2,16 @@
 //!
 //! Attempts to step down leaders for all Raft groups.
 
-use kalamdb_core::app_context::AppContext;
-use kalamdb_core::error::KalamDbError;
-use kalamdb_core::sql::executor::handlers::{
-    ExecutionContext, ExecutionResult, ScalarValue, StatementHandler,
+use std::sync::Arc;
+
+use super::result_rows::cluster_group_action_rows;
+use kalamdb_core::{
+    app_context::AppContext,
+    error::KalamDbError,
+    sql::executor::handlers::{ExecutionContext, ExecutionResult, ScalarValue, StatementHandler},
 };
 use kalamdb_raft::RaftExecutor;
 use kalamdb_sql::classifier::{SqlStatement, SqlStatementKind};
-use std::sync::Arc;
 
 pub struct ClusterStepdownHandler {
     app_context: Arc<AppContext>,
@@ -49,24 +51,14 @@ impl StatementHandler for ClusterStepdownHandler {
             KalamDbError::InvalidOperation(format!("Failed to step down leaders: {}", e))
         })?;
 
-        let success_count = results.iter().filter(|r| r.success).count();
-        let total_count = results.len();
-        let failed_count = total_count - success_count;
-
-        let mut message = format!(
-            "Cluster stepdown completed: {}/{} groups requested",
-            success_count, total_count
-        );
-
-        if failed_count > 0 {
-            message.push_str("\n\nFailed groups:");
-            for result in results.iter().filter(|r| !r.success) {
-                if let Some(ref err) = result.error {
-                    message.push_str(&format!("\n  - {:?}: {}", result.group_id, err));
-                }
-            }
-        }
-
-        Ok(ExecutionResult::Success { message })
+        cluster_group_action_rows(
+            "stepdown",
+            None,
+            None,
+            None,
+            results
+                .into_iter()
+                .map(|result| (result.group_id.to_string(), result.success, result.error, None)),
+        )
     }
 }

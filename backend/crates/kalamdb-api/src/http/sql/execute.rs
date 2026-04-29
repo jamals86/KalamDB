@@ -13,42 +13,43 @@
 //!
 //! ## Performance notes
 //!
-//! - `extract_file_placeholders` is called **once** in the handler; the result
-//!   is passed into `execute_file_upload_path` to avoid rescanning.
-//! - `req_for_forward` (clones `sql` + `params`) is built lazily — only when
-//!   forwarding is actually needed.
-//! - In the batch loop, `params` is **moved** on the last iteration instead of
-//!   cloned, eliminating one allocation per single-statement request (>90% of
-//!   traffic).
-//! - Content-type detection uses ASCII-case-insensitive comparison without
-//!   allocating a lowercase copy.
-//! - `EXECUTE AS USER` prefix detection uses a fixed-length slice comparison
-//!   instead of uppercasing the entire input string.
+//! - `extract_file_placeholders` is called **once** in the handler; the result is passed into
+//!   `execute_file_upload_path` to avoid rescanning.
+//! - `req_for_forward` (clones `sql` + `params`) is built lazily — only when forwarding is actually
+//!   needed.
+//! - In the batch loop, `params` is **moved** on the last iteration instead of cloned, eliminating
+//!   one allocation per single-statement request (>90% of traffic).
+//! - Content-type detection uses ASCII-case-insensitive comparison without allocating a lowercase
+//!   copy.
+//! - `EXECUTE AS USER` prefix detection uses a fixed-length slice comparison instead of uppercasing
+//!   the entire input string.
+
+use std::{sync::Arc, time::Instant};
 
 use actix_web::{post, web, HttpRequest, HttpResponse, Responder};
 use kalamdb_auth::AuthSessionExtractor;
 use kalamdb_commons::models::NamespaceId;
-use kalamdb_core::app_context::AppContext;
-use kalamdb_core::sql::context::ExecutionContext;
-use kalamdb_core::sql::executor::SqlExecutor;
-use kalamdb_core::sql::SqlImpersonationService;
+use kalamdb_core::{
+    app_context::AppContext,
+    sql::{context::ExecutionContext, executor::SqlExecutor, SqlImpersonationService},
+};
+use kalamdb_jobs::health_monitor::record_activity_now;
 use kalamdb_raft::GroupId;
 use kalamdb_session::AuthSession;
-use std::sync::Arc;
-use std::time::Instant;
 use uuid::Uuid;
 
-use super::execution_paths::{execute_batch_path, execute_file_upload_path};
-use super::file_utils::extract_file_placeholders;
-use super::forward::forward_sql_if_follower;
-use super::helpers::parse_scalar_params;
-use super::models::{ErrorCode, QueryRequest, SqlResponse};
-use super::request::{parse_incoming_payload, took_ms, validate_sql_length};
-use super::statements::{
-    authorized_username, split_and_prepare_statements, PreparedApiExecutionStatement,
+use super::{
+    execution_paths::{execute_batch_path, execute_file_upload_path},
+    file_utils::extract_file_placeholders,
+    forward::{forward_sql_if_follower, prepared_statement_target_group},
+    helpers::parse_scalar_params,
+    models::{ErrorCode, QueryRequest, SqlResponse},
+    request::{parse_incoming_payload, took_ms, validate_sql_length},
+    statements::{
+        authorized_username, split_and_prepare_statements, PreparedApiExecutionStatement,
+    },
 };
 use crate::limiter::RateLimiter;
-use kalamdb_jobs::health_monitor::record_activity_now;
 
 #[inline]
 fn batch_requires_request_id(prepared_statements: &[PreparedApiExecutionStatement]) -> bool {
@@ -77,8 +78,8 @@ fn batch_requires_request_id(prepared_statements: &[PreparedApiExecutionStatemen
 /// Accepts either JSON or multipart/form-data payloads.
 ///
 /// - JSON: `sql` plus optional `params` and `namespace_id`.
-/// - Multipart: `sql`, optional `params` (JSON array), optional `namespace_id`,
-///   and file parts named `file:<placeholder>` for FILE("name") placeholders.
+/// - Multipart: `sql`, optional `params` (JSON array), optional `namespace_id`, and file parts
+///   named `file:<placeholder>` for FILE("name") placeholders.
 ///
 /// Multiple statements can be separated by semicolons and will be executed sequentially.
 /// File uploads require a single SQL statement.
@@ -138,33 +139,60 @@ pub async fn execute_sql_v1(
     let base_session = app_context.base_session_context();
     let mut exec_ctx = ExecutionContext::from_session(session, Arc::clone(&base_session))
         .with_namespace_id(default_namespace.clone());
-    let is_meta_leader = app_context.executor().is_leader(GroupId::Meta).await;
 
-    // 5. File uploads must go to the leader
-    if files_present && !is_meta_leader {
-        return HttpResponse::ServiceUnavailable().json(SqlResponse::error(
-            ErrorCode::NotLeader,
-            "File uploads must be sent to the current leader",
-            took_ms(start_time),
-        ));
+    // 5. Split, parse, and classify SQL statements once. Follower forwarding reuses
+    // this metadata so read-only follower requests do not pay a second parse pass.
+    let prepared_statements =
+        match split_and_prepare_statements(&sql, &exec_ctx, sql_executor.get_ref(), start_time) {
+            Ok(stmts) => stmts,
+            Err(resp) => return resp,
+        };
+
+    if exec_ctx.request_id().is_none() && batch_requires_request_id(&prepared_statements) {
+        exec_ctx = exec_ctx.with_request_id(Uuid::now_v7().to_string());
     }
 
-    // 6. Forward to leader if this node is a follower (non-file path).
-    if !files_present && !is_meta_leader {
-        if exec_ctx.request_id().is_none() {
-            exec_ctx = exec_ctx.with_request_id(Uuid::now_v7().to_string());
+    // 6. Multipart uploads cannot use the normal gRPC SQL forwarder because the
+    // file payload is local to this HTTP request. Instead, reject early with a
+    // standard leader hint before any file staging happens so the client can retry.
+    if files_present {
+        if let Some(target_group) = prepared_statements.iter().find_map(|statement| {
+            prepared_statement_target_group(statement, app_context.get_ref(), exec_ctx.user_id())
+        }) {
+            if !app_context.executor().is_leader(target_group).await {
+                let leader_addr = match target_group {
+                    GroupId::DataSharedShard(_) => app_context.leader_addr_for_shared().await,
+                    GroupId::DataUserShard(_) => {
+                        app_context.leader_addr_for_user(exec_ctx.user_id()).await
+                    },
+                    _ => None,
+                };
+                let message = match leader_addr {
+                    Some(addr) => format!("Not leader for shard. Leader: {}", addr),
+                    None => "Not leader for shard. Leader unknown".to_string(),
+                };
+                return HttpResponse::ServiceUnavailable().json(SqlResponse::error(
+                    ErrorCode::NotLeader,
+                    &message,
+                    took_ms(start_time),
+                ));
+            }
         }
+    }
 
-        let req_for_forward = QueryRequest {
-            sql: sql.clone(),
-            params: params_json.clone(),
-            namespace_id: namespace_id.clone(),
-        };
+    // 7. Forward leader-routed operations to their actual group leader if this
+    // node is a follower for the target group (non-file path). A node may be
+    // Meta leader while another node leads the relevant data shard, so this
+    // check must not be gated by Meta leadership.
+    if !files_present {
         if let Some(response) = forward_sql_if_follower(
             &http_req,
-            &req_for_forward,
+            &sql,
+            &params_json,
+            &namespace_id,
             app_context.get_ref(),
-            &default_namespace,
+            &prepared_statements,
+            exec_ctx.user_id(),
             exec_ctx.request_id(),
         )
         .await
@@ -173,7 +201,7 @@ pub async fn execute_sql_v1(
         }
     }
 
-    // 7. Parse query parameters
+    // 8. Parse query parameters
     let params = match parse_scalar_params(&params_json) {
         Ok(p) => p,
         Err(err) => {
@@ -184,17 +212,6 @@ pub async fn execute_sql_v1(
             ));
         },
     };
-
-    // 8. Split, parse, and classify SQL statements
-    let prepared_statements =
-        match split_and_prepare_statements(&sql, &exec_ctx, sql_executor.get_ref(), start_time) {
-            Ok(stmts) => stmts,
-            Err(resp) => return resp,
-        };
-
-    if exec_ctx.request_id().is_none() && batch_requires_request_id(&prepared_statements) {
-        exec_ctx = exec_ctx.with_request_id(Uuid::now_v7().to_string());
-    }
 
     let auth_username = authorized_username(&exec_ctx);
     let impersonation_service = SqlImpersonationService::new(Arc::clone(app_context.get_ref()));

@@ -19,22 +19,30 @@
 //! - Dead TCP detected at the client (write failure) rather than waiting for timeout
 //! - O(N) atomic reads per tick — no mpsc events, no synchronised wakeups
 
+use std::{
+    sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Arc,
+    },
+    time::{Duration, Instant},
+};
+
+use dashmap::{mapref::entry::Entry, DashMap};
+#[cfg(any(test, feature = "test-helpers"))]
+use kalamdb_commons::WireNotification;
+use kalamdb_commons::{
+    models::{ConnectionId, ConnectionInfo, LiveQueryId, TableId, UserId},
+    NodeId,
+};
+use kalamdb_system::{LiveQuery, LiveQueryStatus};
+use log::{debug, info, warn};
+use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
+
 use super::super::models::{
     ConnectionEvent, ConnectionRegistration, ConnectionState, SharedConnectionState,
     SubscriptionHandle, EVENT_CHANNEL_CAPACITY, NOTIFICATION_CHANNEL_CAPACITY,
 };
-use dashmap::DashMap;
-use kalamdb_commons::models::{ConnectionId, ConnectionInfo, LiveQueryId, TableId, UserId};
-use kalamdb_commons::NodeId;
-#[cfg(any(test, feature = "test-helpers"))]
-use kalamdb_commons::WireNotification;
-use kalamdb_system::{LiveQuery, LiveQueryStatus};
-use log::{debug, info, warn};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-use tokio::sync::mpsc;
-use tokio_util::sync::CancellationToken;
 
 /// Connections Manager
 ///
@@ -185,9 +193,7 @@ impl ConnectionsManager {
             return None;
         }
 
-        // DoS protection: reject if at max connections
-        let current = self.total_connections.load(Ordering::Acquire);
-        if current >= self.max_connections {
+        if !self.try_reserve_connection_slot() {
             warn!(
                 "Rejecting connection {}: max connections ({}) reached",
                 connection_id, self.max_connections
@@ -203,9 +209,16 @@ impl ConnectionsManager {
             ConnectionState::new(connection_id.clone(), client_ip, notification_tx, event_tx);
 
         let shared_state = Arc::new(state);
-        self.connections.insert(connection_id.clone(), Arc::clone(&shared_state));
-        let count = self.total_connections.fetch_add(1, Ordering::AcqRel) + 1;
-        self.peak_connections.fetch_max(count, Ordering::AcqRel);
+        match self.connections.entry(connection_id.clone()) {
+            Entry::Vacant(entry) => {
+                entry.insert(Arc::clone(&shared_state));
+            },
+            Entry::Occupied(_) => {
+                self.release_connection_slot();
+                warn!("Rejecting duplicate connection id: {}", connection_id);
+                return None;
+            },
+        }
 
         Some(ConnectionRegistration {
             connection_id,
@@ -213,6 +226,38 @@ impl ConnectionsManager {
             notification_rx,
             event_rx,
         })
+    }
+
+    fn try_reserve_connection_slot(&self) -> bool {
+        let mut current = self.total_connections.load(Ordering::Acquire);
+        loop {
+            if current >= self.max_connections {
+                return false;
+            }
+
+            match self.total_connections.compare_exchange_weak(
+                current,
+                current + 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => {
+                    self.peak_connections.fetch_max(current + 1, Ordering::AcqRel);
+                    return true;
+                },
+                Err(observed) => current = observed,
+            }
+        }
+    }
+
+    fn release_connection_slot(&self) {
+        if self
+            .total_connections
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| current.checked_sub(1))
+            .is_err()
+        {
+            warn!("Connection count release requested while count was already zero");
+        }
     }
 
     /// Unregister a connection and all its subscriptions
@@ -223,7 +268,7 @@ impl ConnectionsManager {
         let removed_live_ids = if let Some((_, shared_state)) =
             self.connections.remove(connection_id)
         {
-            self.total_connections.fetch_sub(1, Ordering::AcqRel);
+            self.release_connection_slot();
 
             // Remove from user_table_subscriptions and shared_table_subscriptions indices
             if let Some(user_id) = shared_state.user_id() {
@@ -276,7 +321,8 @@ impl ConnectionsManager {
     // NOTE: Actual subscription storage is in ConnectionState.subscriptions
     // These methods maintain secondary indices for efficient notification routing
 
-    /// Add subscription to user_table_subscriptions index (called by LiveQueryManager after adding to ConnectionState)
+    /// Add subscription to user_table_subscriptions index (called by LiveQueryManager after adding
+    /// to ConnectionState)
     ///
     /// Uses lightweight SubscriptionHandle for the index instead of cloning full state.
     pub fn index_subscription(
@@ -343,7 +389,8 @@ impl ConnectionsManager {
         self.peak_subscriptions.fetch_max(count, Ordering::AcqRel);
     }
 
-    /// Remove subscription from indices (called by LiveQueryManager after removing from ConnectionState)
+    /// Remove subscription from indices (called by LiveQueryManager after removing from
+    /// ConnectionState)
     pub fn unindex_subscription(
         &self,
         user_id: &UserId,
@@ -465,7 +512,8 @@ impl ConnectionsManager {
                 Ok(_) => {},
                 Err(mpsc::error::TrySendError::Full(_))
                 | Err(mpsc::error::TrySendError::Closed(_)) => {
-                    // Handler is likely stalled or gone; unregister immediately so shutdown doesn't wait forever.
+                    // Handler is likely stalled or gone; unregister immediately so shutdown doesn't
+                    // wait forever.
                     force_unregister.push(conn_id);
                 },
             }
@@ -549,7 +597,8 @@ impl ConnectionsManager {
                     table_name: subscription.table_id.table_name().clone(),
                     user_id: user_id.clone(),
                     query: runtime_metadata.query().to_string(),
-                    options: runtime_metadata.options_json()
+                    options: runtime_metadata
+                        .options_json()
                         .and_then(|s| serde_json::from_str(s).ok()),
                     status: LiveQueryStatus::Active,
                     created_at: runtime_metadata.created_at_ms(),
@@ -902,8 +951,9 @@ mod tests {
 
     // ==================== Shared Table Subscription Tests ====================
 
-    use super::super::super::models::{SubscriptionFlowControl, SubscriptionRuntimeMetadata};
     use kalamdb_commons::models::{NamespaceId, TableName};
+
+    use super::super::super::models::{SubscriptionFlowControl, SubscriptionRuntimeMetadata};
 
     /// Helper: create a SubscriptionHandle with pre-completed flow control
     fn create_test_handle(
@@ -1007,6 +1057,7 @@ mod tests {
                     initial_load: Some(super::super::super::models::InitialLoadState {
                         batch_size: 100,
                         snapshot_end_seq: None,
+                        snapshot_end_commit_seq: None,
                         current_batch_num: 0,
                         flow_control: Arc::new(SubscriptionFlowControl::new()),
                     }),

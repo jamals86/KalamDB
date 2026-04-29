@@ -1,26 +1,28 @@
-//! Stream table store implementation backed by in-memory storage.
+//! Stream table store implementation backed by append-only stream log storage.
 //!
-//! Stream tables now use in-memory BTreeMap storage for fast ephemeral access.
-//! In the future, we will support specifying persistence mode when creating a stream table.
+//! Stream tables use file-backed logs in production and an in-memory backend for tests or
+//! explicitly ephemeral tables.
 //!
 //! **MVCC Architecture (Phase 13.2)**:
 //! - StreamTableRowId: Composite struct with user_id and _seq fields
 //! - StreamTableRow: Minimal structure with user_id, _seq, fields (JSON)
 //! - Ordering: (user_id, _seq) for deterministic scans
 
-use crate::common::partition_name;
-use kalamdb_commons::ids::{SeqId, StreamTableRowId};
-use kalamdb_commons::models::{StreamTableRow, UserId};
-use kalamdb_commons::storage::Partition;
-use kalamdb_commons::TableId;
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
+
+use kalamdb_commons::{
+    ids::{SeqId, StreamTableRowId},
+    models::{StreamTableRow, UserId},
+    storage::Partition,
+    TableId,
+};
 use kalamdb_sharding::ShardRouter;
 use kalamdb_store::storage_trait::{Result, StorageError};
 use kalamdb_streams::{
     bucket_for_ttl, FileStreamLogStore, MemoryStreamLogStore, StreamLogConfig, StreamLogStore,
 };
-use std::collections::HashMap;
-use std::path::PathBuf;
-use std::sync::Arc;
+
+use crate::common::partition_name;
 
 const MAX_SCAN_LIMIT: usize = 100000;
 
@@ -60,18 +62,19 @@ enum StreamLogStoreBackend {
 }
 
 impl StreamLogStoreBackend {
-    fn append_rows(
+    fn append_row(
         &self,
         table_id: &TableId,
         user_id: &UserId,
-        rows: HashMap<StreamTableRowId, StreamTableRow>,
+        key: &StreamTableRowId,
+        row: &StreamTableRow,
     ) -> Result<()> {
         match self {
             Self::Memory(store) => {
-                store.append_rows(table_id, user_id, rows).map_err(map_stream_error)
+                store.append_row(table_id, user_id, key, row).map_err(map_stream_error)
             },
             Self::File(store) => {
-                store.append_rows(table_id, user_id, rows).map_err(map_stream_error)
+                store.append_row(table_id, user_id, key, row).map_err(map_stream_error)
             },
         }
     }
@@ -154,7 +157,7 @@ fn map_stream_error(error: kalamdb_streams::StreamLogError) -> StorageError {
     StorageError::IoError(error.to_string())
 }
 
-/// Store for stream tables (in-memory BTreeMap storage for fast ephemeral access).
+/// Store for stream tables.
 #[derive(Clone)]
 pub struct StreamTableStore {
     table_id: TableId,
@@ -163,7 +166,7 @@ pub struct StreamTableStore {
 }
 
 impl StreamTableStore {
-    /// Create a new stream table store (in-memory backed)
+    /// Create a new stream table store.
     pub fn new(
         table_id: TableId,
         partition: impl Into<Partition>,
@@ -200,9 +203,7 @@ impl StreamTableStore {
 
     /// Append a row.
     pub fn put(&self, key: &StreamTableRowId, entity: &StreamTableRow) -> Result<()> {
-        let mut rows = HashMap::new();
-        rows.insert(key.clone(), entity.clone());
-        self.log_store.append_rows(&self.table_id, key.user_id(), rows)
+        self.log_store.append_row(&self.table_id, key.user_id(), key, entity)
     }
 
     /// Flush all buffered segment writers to the OS page cache.
@@ -337,13 +338,21 @@ impl StreamTableStore {
             return Ok(Vec::new());
         }
 
-        let start_time = start_seq.map(|seq| seq.timestamp_millis()).unwrap_or(0);
+        let mut start_time = start_seq.map(|seq| seq.timestamp_millis()).unwrap_or(0);
+        if let Some(ttl) = ttl_ms {
+            start_time = start_time.max(now_ms.saturating_sub(ttl).saturating_add(1));
+        }
+        let read_limit = if start_seq.is_some() {
+            MAX_SCAN_LIMIT
+        } else {
+            limit
+        };
         let rows = self.log_store.read_in_time_range(
             &self.table_id,
             user_id,
             start_time,
             u64::MAX,
-            MAX_SCAN_LIMIT,
+            read_limit,
         )?;
 
         // Filter by start_seq, apply TTL, and collect with early termination
@@ -399,7 +408,6 @@ impl StreamTableStore {
         .await
         .map_err(|e| StorageError::Other(format!("spawn_blocking join error: {}", e)))?
     }
-
 }
 
 /// Helper function to create a new stream table store (in-memory backed).
@@ -423,11 +431,13 @@ pub fn new_stream_table_store(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::collections::BTreeMap;
+
     use datafusion::scalar::ScalarValue;
     use kalamdb_commons::models::{rows::Row, NamespaceId, TableName};
     use kalamdb_sharding::ShardRouter;
-    use std::collections::BTreeMap;
+
+    use super::*;
 
     fn create_test_store(_base_dir: &std::path::Path) -> StreamTableStore {
         let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("test_stream"));

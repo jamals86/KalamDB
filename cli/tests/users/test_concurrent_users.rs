@@ -2,12 +2,12 @@
 //!
 //! Validates user isolation, parallel operations, and live query notifications
 
-use crate::common::*;
-
 use std::{
     thread,
     time::{Duration, Instant},
 };
+
+use crate::common::*;
 
 const NUM_USERS: usize = 5;
 const ROWS_PER_USER: usize = 2000;
@@ -27,42 +27,32 @@ fn test_concurrent_users_isolation() {
     let test_start = Instant::now();
 
     // Generate unique user suffix to avoid conflicts
-    //Instead of timestamp add random str from 5 characters
+    // Instead of timestamp add random str from 5 characters
     let user_suffix = random_string(5);
 
     // Setup namespace and table
-    let namespace = "concurrent";
-    let table_name = "user_data";
+    let namespace = generate_unique_namespace("concurrent");
+    let table_name = generate_unique_table("user_data");
     let full_table = format!("{}.{}", namespace, table_name);
 
     let setup_start = Instant::now();
-    //Drop the current table if it exists
-    let drop_sql = format!("DROP TABLE IF EXISTS {}", full_table);
-    let _ = execute_sql_as_root_via_cli(&drop_sql);
-
-    //Check if the table was dropped successfully
-    let check_sql = format!("SELECT * FROM {}", full_table);
-    let check_result = execute_sql_as_root_via_cli(&check_sql);
-    if check_result.is_ok() {
-        eprintln!("⚠️  Failed to drop existing table. Skipping test.");
-        return;
-    }
-
     if let Err(e) =
-        execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+        execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
     {
         eprintln!("⚠️  Failed to create namespace: {}. Skipping test.", e);
         return;
     }
 
     let create_table_sql = format!(
-        "CREATE TABLE {} (id INTEGER, message TEXT, timestamp BIGINT, current_user_id TEXT DEFAULT CURRENT_USER()) WITH (TYPE='USER', FLUSH_POLICY='rows:100')",
+        "CREATE TABLE {} (id INTEGER, message TEXT, timestamp BIGINT, current_user_id TEXT \
+         DEFAULT CURRENT_USER()) WITH (TYPE='USER', FLUSH_POLICY='rows:100')",
         full_table
     );
-    if let Err(e) = execute_sql_as_root_via_cli(&create_table_sql) {
+    if let Err(e) = execute_sql_as_root_via_client(&create_table_sql) {
         eprintln!("⚠️  Failed to create table: {}. Skipping test.", e);
         return;
     }
+    wait_for_table_ready(&full_table, Duration::from_secs(15)).expect("table should become ready");
     println!("✅ Setup complete ({:.2?})", setup_start.elapsed());
 
     // Create test users with unique timestamp suffix
@@ -73,12 +63,12 @@ fn test_concurrent_users_isolation() {
         let username = format!("user{}_{}", num, user_suffix);
         let password = format!("password{}", num);
 
-        if let Err(e) = execute_sql_as_root_via_cli(&format!(
+        if let Err(e) = execute_sql_as_root_via_client(&format!(
             "CREATE USER {} WITH PASSWORD '{}' ROLE 'user'",
             username, password
         )) {
             eprintln!("⚠️  Failed to create user {}: {}. Skipping test.", username, e);
-            cleanup(namespace, &user_credentials);
+            cleanup(&namespace, &user_credentials);
             return;
         }
 
@@ -211,40 +201,38 @@ fn test_concurrent_users_isolation() {
     let mut verify_cli_times = Vec::new();
 
     for (username, password) in user_credentials.iter() {
-        let timing = match execute_sql_via_cli_as_with_timing(
-            username,
-            password,
-            &format!("SELECT * FROM {}", full_table),
-        ) {
-            Ok(t) => t,
-            Err(e) => {
-                eprintln!("⚠️  SELECT failed for {}: {}", username, e);
-                cleanup(namespace, &user_credentials);
-                return;
-            },
+        let count_sql = format!("SELECT count(*) as count FROM {}", full_table);
+        let verify_deadline = Instant::now() + Duration::from_secs(20);
+        let timing = loop {
+            match execute_sql_via_cli_as_with_timing(username, password, &count_sql) {
+                Ok(timing) if timing.output.contains(&ROWS_PER_USER.to_string()) => break timing,
+                Ok(_) if Instant::now() < verify_deadline => {
+                    thread::sleep(Duration::from_millis(200));
+                },
+                Ok(timing) => {
+                    eprintln!(
+                        "❌ User {} got unexpected count output after waiting: {}",
+                        username, timing.output
+                    );
+                    cleanup(&namespace, &user_credentials);
+                    panic!("Row count mismatch for {}", username);
+                },
+                Err(e) if Instant::now() < verify_deadline => {
+                    eprintln!("⚠️  COUNT failed for {}: {}", username, e);
+                    thread::sleep(Duration::from_millis(200));
+                },
+                Err(e) => {
+                    eprintln!("⚠️  COUNT failed for {}: {}", username, e);
+                    cleanup(&namespace, &user_credentials);
+                    return;
+                },
+            }
         };
 
         if let Some(s) = timing.server_time_ms {
             verify_server_times.push(s);
         }
         verify_cli_times.push(timing.total_time_ms);
-
-        // Count data rows (skip header/separator lines)
-        let row_count = timing
-            .output
-            .lines()
-            .filter(|l| {
-                l.contains("│") && l.contains(|c: char| c.is_ascii_digit()) && !l.contains("─")
-            })
-            .count();
-
-        // Verify count
-        if row_count != ROWS_PER_USER {
-            eprintln!("❌ User {} got {} rows, expected {}", username, row_count, ROWS_PER_USER);
-            eprintln!("Output:\n{}", timing.output);
-            cleanup(namespace, &user_credentials);
-            panic!("Row count mismatch for {}", username);
-        }
     }
 
     let verify_elapsed = verify_start.elapsed();
@@ -267,7 +255,7 @@ fn test_concurrent_users_isolation() {
     );
 
     // Cleanup
-    cleanup(namespace, &user_credentials);
+    cleanup(&namespace, &user_credentials);
 
     let total_time = test_start.elapsed();
     println!("\n🎉 Test PASSED - All {} users correctly isolated", NUM_USERS);
@@ -297,7 +285,8 @@ fn test_concurrent_users_isolation() {
 
 fn cleanup(namespace: &str, creds: &[(String, String)]) {
     for (username, _) in creds {
-        let _ = execute_sql_as_root_via_cli(&format!("DROP USER IF EXISTS {}", username));
+        let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", username));
     }
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 }

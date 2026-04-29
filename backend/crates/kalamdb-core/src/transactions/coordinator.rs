@@ -1,27 +1,25 @@
-use std::collections::HashSet;
-use std::sync::{Arc, Weak};
-use std::time::{Duration, Instant};
-
-use dashmap::DashMap;
-use tokio::runtime::Handle;
-use tokio::time::MissedTickBehavior;
-use uuid::Uuid;
-
-use kalamdb_commons::models::{
-    NodeId, TableId, TransactionId, TransactionOrigin, TransactionState, UserId,
+use std::{
+    collections::HashSet,
+    sync::{Arc, Weak},
+    time::{Duration, Instant},
 };
-use kalamdb_commons::TableType;
+
+use dashmap::{mapref::entry::Entry, DashMap};
+use kalamdb_commons::{
+    models::{NodeId, TableId, TransactionId, TransactionOrigin, TransactionState, UserId},
+    TableType,
+};
 use kalamdb_raft::RaftExecutor;
 use kalamdb_sharding::{GroupId, ShardRouter};
-
-use crate::app_context::AppContext;
-use crate::error::KalamDbError;
+use tokio::{runtime::Handle, time::MissedTickBehavior};
+use uuid::Uuid;
 
 use super::{
     ActiveTransactionMetric, CommitSequenceTracker, ExecutionOwnerKey, StagedMutation,
     TransactionCommitResult, TransactionHandle, TransactionOverlay, TransactionRaftBinding,
     TransactionWriteSet,
 };
+use crate::{app_context::AppContext, error::KalamDbError};
 
 /// In-memory coordinator for active explicit transactions.
 #[derive(Debug)]
@@ -60,7 +58,8 @@ impl TransactionCoordinator {
             },
             Err(error) => {
                 log::warn!(
-                    "transaction timeout sweeper was not started because no Tokio runtime is active: {}",
+                    "transaction timeout sweeper was not started because no Tokio runtime is \
+                     active: {}",
                     error
                 );
             },
@@ -73,13 +72,6 @@ impl TransactionCoordinator {
         owner_id: Arc<str>,
         origin: TransactionOrigin,
     ) -> Result<TransactionId, KalamDbError> {
-        if self.active_by_owner.contains_key(&owner_key) {
-            return Err(KalamDbError::Conflict(format!(
-                "owner '{}' already has an active transaction",
-                owner_id
-            )));
-        }
-
         let transaction_id = TransactionId::new(Uuid::now_v7().to_string());
         let snapshot_commit_seq = self.commit_sequence_tracker.current_committed();
         let handle = TransactionHandle::new(
@@ -92,9 +84,17 @@ impl TransactionCoordinator {
             Instant::now(),
         );
 
-        self.active_by_owner.insert(owner_key, transaction_id.clone());
-        self.active_by_id.insert(transaction_id.clone(), handle);
-        Ok(transaction_id)
+        match self.active_by_owner.entry(owner_key) {
+            Entry::Occupied(_) => Err(KalamDbError::Conflict(format!(
+                "owner '{}' already has an active transaction",
+                owner_id
+            ))),
+            Entry::Vacant(entry) => {
+                self.active_by_id.insert(transaction_id.clone(), handle);
+                entry.insert(transaction_id.clone());
+                Ok(transaction_id)
+            },
+        }
     }
 
     pub fn stage(
@@ -322,7 +322,7 @@ impl TransactionCoordinator {
         };
 
         let affected_rows = write_set.affected_rows();
-        let mutations = write_set.ordered_mutations.clone();
+        let mutations = write_set.ordered_mutations;
 
         let response = match self
             .app_context
@@ -482,7 +482,8 @@ impl TransactionCoordinator {
             } => {
                 if bound_group_id != group_id {
                     Err(KalamDbError::InvalidOperation(format!(
-                        "explicit transaction '{}' is already bound to data raft group '{}' and cannot access table '{}' in group '{}'",
+                        "explicit transaction '{}' is already bound to data raft group '{}' and \
+                         cannot access table '{}' in group '{}'",
                         transaction_id, bound_group_id, table_id, group_id
                     )))
                 } else {
@@ -750,7 +751,8 @@ impl TransactionCoordinator {
             .map(|node_id| node_id.to_string())
             .unwrap_or_else(|| "unknown".to_string());
         KalamDbError::InvalidOperation(format!(
-            "transaction '{}' was aborted because leader for bound raft group '{}' changed from node '{}' to '{}'; retry in a new transaction",
+            "transaction '{}' was aborted because leader for bound raft group '{}' changed from \
+             node '{}' to '{}'; retry in a new transaction",
             transaction_id, group_id, prior_leader_node_id, current_leader
         ))
     }

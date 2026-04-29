@@ -1,10 +1,18 @@
-use crate::JobsManager;
-use kalamdb_commons::models::{schemas::TableOptions, TableId};
-use kalamdb_commons::TableType;
-use kalamdb_core::app_context::AppContext;
-use kalamdb_core::error::KalamDbError;
-use kalamdb_system::JobType;
 use std::sync::Arc;
+
+use kalamdb_commons::{
+    models::{schemas::TableOptions, TableId},
+    TableType,
+};
+use kalamdb_core::{app_context::AppContext, error::KalamDbError};
+use kalamdb_system::JobType;
+
+use crate::{
+    scheduler_common::{
+        classify_schedule_error, hourly_date_key, hourly_table_idempotency_key, ScheduleErrorKind,
+    },
+    JobsManager,
+};
 
 /// Scheduler for stream table eviction jobs
 pub struct StreamEvictionScheduler;
@@ -24,8 +32,9 @@ impl StreamEvictionScheduler {
 
         let mut stream_tables_found = 0;
         let mut jobs_created = 0;
+        let date_key = hourly_date_key();
 
-        //Loop over the tables
+        // Loop over the tables
         for table in tables.iter() {
             // Only process STREAM tables
             if table.table_type != TableType::Stream {
@@ -55,9 +64,8 @@ impl StreamEvictionScheduler {
             };
 
             // Generate idempotency key (hourly granularity)
-            let now = chrono::Utc::now();
-            let date_key = now.format("%Y-%m-%d-%H").to_string();
-            let idempotency_key = format!("SE:{}:{}", table_id, date_key);
+            let idempotency_key =
+                hourly_table_idempotency_key(JobType::StreamEviction, &table_id, &date_key);
 
             // Create eviction job
             match jobs_manager
@@ -73,23 +81,28 @@ impl StreamEvictionScheduler {
                         ttl_seconds
                     );
                 },
-                Err(e) => {
-                    let err_msg = e.to_string();
+                Err(err) => match classify_schedule_error(&err) {
                     // Idempotency errors are expected (job already exists for this hour)
-                    if err_msg.contains("already running") || err_msg.contains("already exists") {
+                    ScheduleErrorKind::AlreadyActive => {
                         log::trace!(
                             "Stream eviction job for {} already exists (idempotent)",
                             table_id
                         );
-                    } else if err_msg.contains("pre-validation returned false") {
+                    },
+                    ScheduleErrorKind::PreValidationSkipped => {
                         // Pre-validation skipped job creation (nothing to evict)
                         log::trace!(
                             "Stream eviction job for {} skipped (no expired rows)",
                             table_id
                         );
-                    } else {
-                        log::warn!("Failed to create stream eviction job for {}: {}", table_id, e);
-                    }
+                    },
+                    ScheduleErrorKind::Other => {
+                        log::warn!(
+                            "Failed to create stream eviction job for {}: {}",
+                            table_id,
+                            err
+                        );
+                    },
                 },
             }
         }

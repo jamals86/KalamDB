@@ -1,13 +1,18 @@
 // Topic throughput benchmark smoke test
 // Measures messages per second under various publisher/consumer configurations
 
-use crate::common;
+use std::{
+    collections::HashSet,
+    sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Arc,
+    },
+    time::{Duration, Instant},
+};
+
 use kalam_client::consumer::AutoOffsetReset;
-use kalam_client::KalamLinkTimeouts;
-use std::collections::HashSet;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+
+use crate::{common, topic_test_support};
 
 // Baseline thresholds (90% of current measured performance)
 // Single-publisher is bottlenecked by sequential HTTP round-trips (~385 inserts/s),
@@ -18,70 +23,16 @@ const THRESHOLD_MULTI_PUB_MULTI_CONSUMER: f64 = 220.0; // Stable floor across lo
 
 /// Create a test client using common infrastructure
 async fn create_test_client() -> kalam_client::KalamLinkClient {
-    let base_url = common::leader_or_server_url();
-    common::client_for_user_on_url_with_timeouts(
-        &base_url,
-        common::default_username(),
-        common::default_password(),
-        KalamLinkTimeouts::builder()
-            .connection_timeout_secs(10)
-            .receive_timeout_secs(15)
-            .send_timeout_secs(30)
-            .subscribe_timeout_secs(15)
-            .auth_timeout_secs(10)
-            .initial_data_timeout(Duration::from_secs(60))
-            .build(),
-    )
-    .expect("Failed to build test client")
+    topic_test_support::create_test_client().await
 }
 
 /// Execute SQL via HTTP helper with error handling
 async fn execute_sql(sql: &str) -> Result<(), String> {
-    let response = common::execute_sql_via_http_as_root(sql).await.map_err(|e| e.to_string())?;
-    let status = response.get("status").and_then(|s| s.as_str()).unwrap_or("");
-    if status.eq_ignore_ascii_case("success") {
-        Ok(())
-    } else {
-        let err_msg = response
-            .get("error")
-            .and_then(|e| e.get("message"))
-            .and_then(|m| m.as_str())
-            .unwrap_or("Unknown error");
-        Err(format!("SQL failed: {}", err_msg))
-    }
+    topic_test_support::execute_sql(sql).await
 }
 
 async fn wait_for_topic_ready(topic: &str, expected_routes: usize) {
-    let sql = format!("SELECT routes FROM system.topics WHERE topic_id = '{}'", topic);
-    let deadline = Instant::now() + Duration::from_secs(30);
-
-    while Instant::now() < deadline {
-        if let Ok(response) = common::execute_sql_via_http_as_root(&sql).await {
-            if let Some(rows) = common::get_rows_as_hashmaps(&response) {
-                if let Some(row) = rows.first() {
-                    if let Some(routes_value) = row.get("routes") {
-                        let routes_untyped = common::extract_typed_value(routes_value);
-                        if let Some(routes_json) = routes_untyped
-                            .as_str()
-                            .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
-                        {
-                            let route_count =
-                                routes_json.as_array().map(|routes| routes.len()).unwrap_or(0);
-                            if route_count >= expected_routes {
-                                return;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-
-    panic!(
-        "Timed out waiting for topic '{}' to have at least {} route(s)",
-        topic, expected_routes
-    );
+    topic_test_support::wait_for_topic_ready(topic, expected_routes).await;
 }
 
 /// Test: Single publisher, single consumer
@@ -506,7 +457,8 @@ async fn smoke_test_topic_throughput_benchmark() {
 
     if !(pass1 && pass2 && pass3) {
         println!(
-            "⚠️ Throughput below advisory baseline under current load (1P→1C: {:.1}/{:.1}, 24P→1C: {:.1}/{:.1}, 40P→4C: {:.1}/{:.1})",
+            "⚠️ Throughput below advisory baseline under current load (1P→1C: {:.1}/{:.1}, \
+             24P→1C: {:.1}/{:.1}, 40P→4C: {:.1}/{:.1})",
             rate1, threshold1, rate2, threshold2, rate3, threshold3
         );
     }

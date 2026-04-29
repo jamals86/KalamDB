@@ -9,18 +9,20 @@
 //!
 //! Run with: cargo test --test smoke smoke_test_file_datatype
 
-use crate::common::{
-    force_auto_test_server_url_async, generate_unique_namespace, get_access_token_for_url,
-    test_context,
-};
 use reqwest::Client;
 use serde_json::Value;
+
+use crate::common::{
+    force_auto_test_server_url_async, generate_unique_namespace, get_access_token_for_url,
+    get_available_server_urls, is_cluster_mode, is_leader_error,
+    is_retryable_cluster_error_for_sql, shared_http_client, test_context,
+};
 
 #[tokio::test]
 #[ntest::timeout(60000)]
 async fn test_file_datatype_upload_and_download() {
     let ctx = test_context();
-    let client = Client::new();
+    let client = shared_http_client();
     let base_url = force_auto_test_server_url_async().await;
     let ns = generate_unique_namespace("file_test");
     let table = "documents";
@@ -45,7 +47,8 @@ async fn test_file_datatype_upload_and_download() {
     // 3. Upload file via multipart endpoint
     let test_content = b"This is the file content for testing FILE datatype!";
     let sql = format!(
-        "INSERT INTO {}.{} (id, name, attachment) VALUES ('doc1', 'My Document', FILE(\"myfile.txt\"))",
+        "INSERT INTO {}.{} (id, name, attachment) VALUES ('doc1', 'My Document', \
+         FILE(\"myfile.txt\"))",
         ns, table
     );
     let boundary = "kalamdb-boundary";
@@ -59,7 +62,8 @@ async fn test_file_datatype_upload_and_download() {
     push_line(&mut body, &format!("--{}", boundary));
     push_line(
         &mut body,
-        "Content-Disposition: form-data; name=\"file:myfile.txt\"; filename=\"test-attachment.txt\"",
+        "Content-Disposition: form-data; name=\"file:myfile.txt\"; \
+         filename=\"test-attachment.txt\"",
     );
     push_line(&mut body, "Content-Type: text/plain");
     push_line(&mut body, "");
@@ -67,14 +71,10 @@ async fn test_file_datatype_upload_and_download() {
     body.extend_from_slice(b"\r\n");
     push_line(&mut body, &format!("--{}--", boundary));
 
-    let request = client
-        .post(format!("{}/v1/api/sql", &base_url))
-        .bearer_auth(&token)
-        .header("Accept", "application/json")
-        .header("Content-Type", format!("multipart/form-data; boundary={}", boundary))
-        .body(body)
-        .build()
-        .expect("Failed to build multipart request");
+    let content_type = format!("multipart/form-data; boundary={}", boundary);
+    let request =
+        build_multipart_sql_request(&client, &base_url, &token, &content_type, body.clone())
+            .expect("Failed to build multipart request");
     let content_type_header = request
         .headers()
         .get(reqwest::header::CONTENT_TYPE)
@@ -86,31 +86,17 @@ async fn test_file_datatype_upload_and_download() {
         content_type_header
     );
 
-    let response = client.execute(request).await.expect("Failed to send multipart request");
-
-    let status = response.status();
-    let response_content_type = response
-        .headers()
-        .get(reqwest::header::CONTENT_TYPE)
-        .and_then(|v: &reqwest::header::HeaderValue| v.to_str().ok())
-        .unwrap_or("")
-        .to_string();
-    if !status.is_success() {
-        let body_text = response.text().await.expect("Failed to read upload error body");
-        panic!(
-            "File upload failed: status={}, content-type={}, body={}",
-            status, response_content_type, body_text
-        );
-    }
-
-    let body_text = response.text().await.expect("Failed to read upload response body");
+    let (upload_base_url, upload_status, body_text) =
+        execute_multipart_sql_with_cluster_retry(&client, &base_url, &token, &content_type, &body)
+            .await
+            .expect("Failed to send multipart request");
     let body: Value = serde_json::from_str(&body_text)
         .unwrap_or_else(|e| panic!("Failed to parse response: {} (body: {})", e, body_text));
 
     assert!(
         body["status"] == "success",
         "File upload failed: status={}, body={}",
-        status,
+        upload_status,
         body
     );
 
@@ -150,7 +136,7 @@ async fn test_file_datatype_upload_and_download() {
 
     // 5. Download the file
     let download_url =
-        format!("{}/v1/files/{}/{}/{}/{}", &base_url, ns, table, subfolder, stored_name);
+        format!("{}/v1/files/{}/{}/{}/{}", upload_base_url, ns, table, subfolder, stored_name);
 
     let download_response = client
         .get(&download_url)
@@ -240,16 +226,143 @@ async fn execute_sql_via_http_as_for_url(
     token: &str,
     sql: &str,
 ) -> Result<Value, Box<dyn std::error::Error>> {
-    let response = client
+    let max_attempts = if is_cluster_mode() { 5 } else { 1 };
+    let mut last_error = None;
+
+    for attempt in 0..max_attempts {
+        let urls = if is_cluster_mode() {
+            get_available_server_urls()
+        } else {
+            vec![base_url.to_string()]
+        };
+
+        for url in urls {
+            let response = client
+                .post(format!("{}/v1/api/sql", url))
+                .bearer_auth(token)
+                .json(&serde_json::json!({ "sql": sql }))
+                .send()
+                .await?;
+
+            let status = response.status();
+            let body_text = response.text().await?;
+            let parsed: Value = serde_json::from_str(&body_text)?;
+            let response_status = parsed.get("status").and_then(Value::as_str).unwrap_or("");
+
+            if status.is_success() && response_status.eq_ignore_ascii_case("success") {
+                return Ok(parsed);
+            }
+
+            let message = json_error_message(&parsed)
+                .unwrap_or_else(|| format!("SQL failed: status={}, body={}", status, body_text));
+            if is_retryable_cluster_error_for_sql(sql, &message) {
+                last_error = Some(message);
+                continue;
+            }
+
+            return Err(message.into());
+        }
+
+        if attempt + 1 < max_attempts {
+            tokio::time::sleep(std::time::Duration::from_millis(200 + attempt as u64 * 150)).await;
+        }
+    }
+
+    Err(last_error
+        .unwrap_or_else(|| "SQL request failed on all cluster nodes".to_string())
+        .into())
+}
+
+fn json_error_message(parsed: &Value) -> Option<String> {
+    let error = parsed.get("error")?;
+    let message = error.get("message")?.as_str().unwrap_or("");
+    let details = error.get("details").and_then(Value::as_str);
+    if let Some(details) = details {
+        return Some(format!("{} ({})", message, details));
+    }
+    Some(message.to_string())
+}
+
+fn build_multipart_sql_request(
+    client: &Client,
+    base_url: &str,
+    token: &str,
+    content_type: &str,
+    body: Vec<u8>,
+) -> Result<reqwest::Request, reqwest::Error> {
+    client
         .post(format!("{}/v1/api/sql", base_url))
         .bearer_auth(token)
-        .json(&serde_json::json!({ "sql": sql }))
-        .send()
-        .await?;
+        .header("Accept", "application/json")
+        .header("Content-Type", content_type)
+        .body(body)
+        .build()
+}
 
-    let body = response.text().await?;
-    let parsed: Value = serde_json::from_str(&body)?;
-    Ok(parsed)
+async fn execute_multipart_sql_with_cluster_retry(
+    client: &Client,
+    initial_base_url: &str,
+    token: &str,
+    content_type: &str,
+    body: &[u8],
+) -> Result<(String, reqwest::StatusCode, String), Box<dyn std::error::Error>> {
+    let max_attempts = if is_cluster_mode() { 5 } else { 1 };
+    let mut last_error = None;
+
+    for attempt in 0..max_attempts {
+        let mut urls = if is_cluster_mode() {
+            get_available_server_urls()
+        } else {
+            vec![initial_base_url.to_string()]
+        };
+        if !urls.iter().any(|url| url == initial_base_url) {
+            urls.push(initial_base_url.to_string());
+        }
+
+        for base_url in urls {
+            let response = client
+                .execute(build_multipart_sql_request(
+                    client,
+                    &base_url,
+                    token,
+                    content_type,
+                    body.to_vec(),
+                )?)
+                .await?;
+
+            let status = response.status();
+            let response_content_type = response
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|v: &reqwest::header::HeaderValue| v.to_str().ok())
+                .unwrap_or("")
+                .to_string();
+            let body_text = response.text().await?;
+
+            if status.is_success() {
+                return Ok((base_url, status, body_text));
+            }
+
+            let message = format!(
+                "File upload failed: status={}, content-type={}, body={}",
+                status, response_content_type, body_text
+            );
+            if is_cluster_mode() && is_leader_error(&message) {
+                last_error = Some(message);
+                break;
+            }
+
+            return Err(message.into());
+        }
+
+        if attempt + 1 < max_attempts {
+            tokio::time::sleep(std::time::Duration::from_millis(250 + attempt as u64 * 150)).await;
+        }
+    }
+
+    Err(last_error
+        .unwrap_or_else(|| "File upload failed on all cluster nodes".to_string())
+        .into())
 }
 
 fn push_line(body: &mut Vec<u8>, line: &str) {

@@ -1,23 +1,25 @@
-use super::types::JobsManager;
-use super::utils::log_job;
-use crate::executors::JobDecision;
-use crate::AppContextJobsExt;
-use crate::{FlushScheduler, HealthMonitor, StreamEvictionScheduler};
+use std::{collections::VecDeque, sync::Arc};
+
 use kalamdb_commons::{JobId, NodeId};
-use kalamdb_core::error::KalamDbError;
-use kalamdb_core::error_extensions::KalamDbResultExt;
-use kalamdb_raft::commands::MetaCommand;
-use kalamdb_raft::GroupId;
-use kalamdb_system::providers::jobs::models::{Job, JobFilter};
-use kalamdb_system::JobNode;
-use kalamdb_system::JobStatus;
+use kalamdb_core::{error::KalamDbError, error_extensions::KalamDbResultExt};
+use kalamdb_raft::{commands::MetaCommand, GroupId};
+use kalamdb_system::{
+    providers::jobs::models::{Job, JobFilter},
+    JobNode, JobStatus,
+};
 use log::Level;
-use std::sync::Arc;
-use tokio::sync::mpsc;
-use tokio::sync::Semaphore;
-use tokio::task::JoinSet;
-use tokio::time::{sleep, Duration, Instant};
+use tokio::{
+    sync::{mpsc, Semaphore},
+    task::JoinSet,
+    time::{sleep, Duration, Instant},
+};
 use tracing::Instrument;
+
+use super::{types::JobsManager, utils::log_job};
+use crate::{
+    executors::JobDecision, AppContextJobsExt, FlushScheduler, HealthMonitor,
+    StreamEvictionScheduler,
+};
 
 const JOB_NODE_QUORUM_POLL_MS: u64 = 250;
 const JOB_NODE_QUORUM_TIMEOUT_SECS: u64 = 10;
@@ -280,6 +282,7 @@ impl JobsManager {
         let semaphore = Arc::new(Semaphore::new(max_concurrent));
         let job_manager = self.get_attached_app_context().job_manager();
         let mut join_set = JoinSet::new();
+        let mut pending_awakened_jobs = VecDeque::new();
 
         // Adaptive idle polling (reduces CPU in empty systems)
         let idle_poll_min_ms: u64 = 500;
@@ -304,97 +307,106 @@ impl JobsManager {
                 }
             }
 
-            // Event-driven loop: await job wakeups or periodic ticks
-            let job_id_opt = tokio::select! {
-                biased;
-                // Priority 1: awakened jobs from state machine
-                Some(job_id) = awake_receiver.recv() => Some(job_id),
-                // Priority 2: fallback polling for crash recovery/retries
-                _ = poll_interval.tick() => None,
-                // Periodic leadership check
-                _ = leadership_interval.tick() => {
-                    let leader_now = self.is_cluster_leader().await;
-                    if leader_now && !was_leader {
-                        log::info!("[JobLoop] This node became leader - handling failover");
-                        self.handle_leader_failover().await;
-                    } else if !leader_now && was_leader {
-                        log::info!("[JobLoop] This node lost leadership");
-                    }
-                    was_leader = leader_now;
-                    is_leader = leader_now;
-                    continue;
-                }
-                // Periodic health metrics logging (all nodes)
-                _ = health_interval.tick() => {
-                    let app_ctx = self.get_attached_app_context();
-                    if let Err(e) = HealthMonitor::log_metrics(app_ctx).await {
-                        log::warn!("Failed to log health metrics: {}", e);
-                    }
-                    continue;
-                }
-                // Periodic WAL cleanup: flush all RocksDB memtables so idle CFs
-                // don't pin WAL files forever (prevents WAL file accumulation)
-                _ = async {
-                    if wal_cleanup_enabled {
-                        let interval = wal_cleanup_interval
-                            .as_mut()
-                            .expect("wal cleanup interval missing");
-                        interval.tick().await;
-                    }
-                }, if wal_cleanup_enabled => {
-                    let app_ctx = self.get_attached_app_context();
-                    let backend = app_ctx.storage_backend();
-                    match tokio::task::spawn_blocking(move || backend.flush_all_memtables()).await {
-                        Ok(Ok(())) => {
-                            log::debug!("WAL cleanup: flushed all memtables");
-                        },
-                        Ok(Err(e)) => {
-                            log::warn!("WAL cleanup flush_all_memtables failed: {}", e);
-                        },
-                        Err(e) => {
-                            log::warn!("WAL cleanup task join failed: {}", e);
-                        },
-                    }
-                    continue;
-                }
-                // Periodic stream eviction job creation (leader-only)
-                _ = async {
-                    if stream_eviction_enabled {
-                        let interval = stream_eviction_interval
-                            .as_mut()
-                            .expect("stream eviction interval missing");
-                        interval.tick().await;
-                    }
-                }, if stream_eviction_enabled => {
-                    if is_leader {
-                        let app_ctx = self.get_attached_app_context();
-                        if let Err(e) = StreamEvictionScheduler::check_and_schedule(&app_ctx, self).await {
-                            log::warn!("Failed to check stream eviction: {}", e);
+            // Event-driven loop: preserve awakened jobs until a worker permit is available.
+            // Otherwise a full semaphore can drop a wakeup and leave the job dependent on
+            // fallback polling.
+            let job_id_opt = if let Some(job_id) = pending_awakened_jobs.pop_front() {
+                Some(job_id)
+            } else {
+                tokio::select! {
+                    biased;
+                    // Priority 1: awakened jobs from state machine
+                    Some(job_id) = awake_receiver.recv() => Some(job_id),
+                    // Priority 2: fallback polling for crash recovery/retries
+                    _ = poll_interval.tick() => None,
+                    // Periodic leadership check
+                    _ = leadership_interval.tick() => {
+                        let leader_now = self.is_cluster_leader().await;
+                        if leader_now && !was_leader {
+                            log::info!("[JobLoop] This node became leader - handling failover");
+                            self.handle_leader_failover().await;
+                        } else if !leader_now && was_leader {
+                            log::info!("[JobLoop] This node lost leadership");
                         }
+                        was_leader = leader_now;
+                        is_leader = leader_now;
+                        continue;
                     }
-                    continue;
-                }
-                // Periodic flush scheduler (leader-only) — creates flush jobs
-                // for tables with pending writes in RocksDB
-                _ = async {
-                    if flush_check_enabled {
-                        let interval = flush_check_interval
-                            .as_mut()
-                            .expect("flush check interval missing");
-                        interval.tick().await;
-                    }
-                }, if flush_check_enabled => {
-                    if is_leader {
+                    // Periodic health metrics logging (all nodes)
+                    _ = health_interval.tick() => {
                         let app_ctx = self.get_attached_app_context();
-                        if let Err(e) = FlushScheduler::check_and_schedule(&app_ctx, self).await {
-                            log::warn!("Failed to check periodic flush: {}", e);
+                        if let Err(e) = HealthMonitor::log_metrics(app_ctx).await {
+                            log::warn!("Failed to log health metrics: {}", e);
                         }
+                        continue;
                     }
-                    continue;
+                    // Periodic WAL cleanup: flush all RocksDB memtables so idle CFs
+                    // don't pin WAL files forever (prevents WAL file accumulation)
+                    _ = async {
+                        if wal_cleanup_enabled {
+                            let interval = wal_cleanup_interval
+                                .as_mut()
+                                .expect("wal cleanup interval missing");
+                            interval.tick().await;
+                        }
+                    }, if wal_cleanup_enabled => {
+                        let app_ctx = self.get_attached_app_context();
+                        let backend = app_ctx.storage_backend();
+                        match tokio::task::spawn_blocking(move || backend.flush_all_memtables()).await {
+                            Ok(Ok(())) => {
+                                log::debug!("WAL cleanup: flushed all memtables");
+                            },
+                            Ok(Err(e)) => {
+                                log::warn!("WAL cleanup flush_all_memtables failed: {}", e);
+                            },
+                            Err(e) => {
+                                log::warn!("WAL cleanup task join failed: {}", e);
+                            },
+                        }
+                        continue;
+                    }
+                    // Periodic stream eviction job creation (leader-only)
+                    _ = async {
+                        if stream_eviction_enabled {
+                            let interval = stream_eviction_interval
+                                .as_mut()
+                                .expect("stream eviction interval missing");
+                            interval.tick().await;
+                        }
+                    }, if stream_eviction_enabled => {
+                        if is_leader {
+                            let app_ctx = self.get_attached_app_context();
+                            if let Err(e) = StreamEvictionScheduler::check_and_schedule(&app_ctx, self).await {
+                                log::warn!("Failed to check stream eviction: {}", e);
+                            }
+                        }
+                        continue;
+                    }
+                    // Periodic flush scheduler (leader-only) — creates flush jobs
+                    // for tables with pending writes in RocksDB
+                    _ = async {
+                        if flush_check_enabled {
+                            let interval = flush_check_interval
+                                .as_mut()
+                                .expect("flush check interval missing");
+                            interval.tick().await;
+                        }
+                    }, if flush_check_enabled => {
+                        if is_leader {
+                            let app_ctx = self.get_attached_app_context();
+                            if let Err(e) = FlushScheduler::check_and_schedule(&app_ctx, self).await {
+                                log::warn!("Failed to check periodic flush: {}", e);
+                            }
+                        }
+                        continue;
+                    }
                 }
             };
 
             if semaphore.available_permits() == 0 {
+                if let Some(job_id) = job_id_opt {
+                    pending_awakened_jobs.push_front(job_id);
+                }
                 if let Some(Err(err)) = join_set.join_next().await {
                     log::error!("Job task panicked: {}", err);
                 }
@@ -404,6 +416,9 @@ impl JobsManager {
             let permit = match Arc::clone(&semaphore).try_acquire_owned() {
                 Ok(permit) => permit,
                 Err(_) => {
+                    if let Some(job_id) = job_id_opt {
+                        pending_awakened_jobs.push_front(job_id);
+                    }
                     tokio::task::yield_now().await;
                     continue;
                 },
@@ -772,7 +787,8 @@ impl JobsManager {
                                 &job_id,
                                 &Level::Warn,
                                 &format!(
-                                    "Quorum timeout (completed {}/{}); proceeding with leader actions",
+                                    "Quorum timeout (completed {}/{}); proceeding with leader \
+                                     actions",
                                     completed, total
                                 ),
                             );

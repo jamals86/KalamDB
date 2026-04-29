@@ -2,29 +2,37 @@
 //!
 //! Provides the network transport for Raft RPCs using gRPC (tonic).
 
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-
-use openraft::error::{
-    InstallSnapshotError, NetworkError, RPCError, RaftError, RemoteError, Unreachable,
+use std::{
+    collections::HashMap,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+    time::{Duration, Instant},
 };
-use openraft::network::{
-    RPCOption, RaftNetwork as OpenRaftNetwork, RaftNetworkFactory as OpenRaftNetworkFactory,
-};
-use openraft::raft::{
-    AppendEntriesRequest, AppendEntriesResponse, InstallSnapshotRequest, InstallSnapshotResponse,
-    VoteRequest, VoteResponse,
-};
-use parking_lot::RwLock;
-use tonic::transport::{Certificate, Channel, ClientTlsConfig, Identity};
 
 use kalamdb_commons::models::NodeId;
+use openraft::{
+    error::{InstallSnapshotError, NetworkError, RPCError, RaftError, RemoteError, Unreachable},
+    network::{
+        RPCOption, RaftNetwork as OpenRaftNetwork, RaftNetworkFactory as OpenRaftNetworkFactory,
+    },
+    raft::{
+        AppendEntriesRequest, AppendEntriesResponse, InstallSnapshotRequest,
+        InstallSnapshotResponse, VoteRequest, VoteResponse,
+    },
+};
+use parking_lot::RwLock;
+use serde::{de::DeserializeOwned, Serialize};
+use tonic::transport::{Certificate, Channel, ClientTlsConfig, Identity};
 
-use crate::manager::{PeerNode, RpcTlsConfig};
-use crate::storage::{KalamNode, KalamTypeConfig};
-use crate::GroupId;
+use crate::{
+    manager::{PeerNode, RpcTlsConfig},
+    storage::{KalamNode, KalamTypeConfig},
+    GroupId,
+};
+
+pub type RaftChannelPool = Arc<dashmap::DashMap<NodeId, Channel>>;
 
 /// Simple connection error wrapper for openraft compatibility
 #[derive(Debug)]
@@ -131,7 +139,8 @@ impl ConnectionTracker {
         if now.duration_since(entry.last_log) >= retry_interval {
             entry.last_log = now;
             log::warn!(
-                "Raft node {} in group {} left the cluster - trying to reconnect #{} (interval={}ms): {}",
+                "Raft node {} in group {} left the cluster - trying to reconnect #{} \
+                 (interval={}ms): {}",
                 target,
                 self.group_id,
                 entry.retry_count,
@@ -217,41 +226,47 @@ impl RaftNetwork {
         request.metadata_mut().insert("x-kalamdb-node-id", node_id);
         Ok(())
     }
-}
 
-impl OpenRaftNetwork<KalamTypeConfig> for RaftNetwork {
-    async fn append_entries(
+    fn build_raft_rpc_request<T: Serialize>(
+        &self,
+        rpc_kind: crate::network::service::RaftRpcKind,
+        rpc: &T,
+    ) -> Result<tonic::Request<crate::network::service::RaftRpcRequest>, ConnectionError> {
+        let rpc_type = rpc_kind.as_str();
+        let payload = crate::state_machine::encode(rpc)
+            .map_err(|e| ConnectionError(format!("failed to encode {}: {}", rpc_type, e)))?;
+        let mut request = tonic::Request::new(crate::network::service::RaftRpcRequest {
+            group_id: self.group_id.to_string(),
+            rpc_type: rpc_type.to_owned(),
+            payload,
+        });
+        self.add_outgoing_rpc_metadata(&mut request)?;
+        Ok(request)
+    }
+
+    async fn send_raft_rpc<T, E>(
         &mut self,
-        rpc: AppendEntriesRequest<KalamTypeConfig>,
-        _option: RPCOption,
-    ) -> Result<AppendEntriesResponse<u64>, RPCError<u64, KalamNode, RaftError<u64>>> {
+        rpc_kind: crate::network::service::RaftRpcKind,
+        rpc: &T,
+    ) -> Result<crate::network::service::RaftRpcResponse, RPCError<u64, KalamNode, E>>
+    where
+        E: std::error::Error + Send + Sync + 'static,
+        T: Serialize,
+    {
         if !self.connection_tracker.should_attempt(self.target) {
             return Err(RPCError::Unreachable(Unreachable::new(&ConnectionError(
                 "reconnect backoff".to_string(),
             ))));
         }
 
-        // Get channel
         let channel =
             self.get_channel().map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?;
-
-        // Serialize request
-        let request_bytes = crate::state_machine::encode(&rpc)
+        let request = self
+            .build_raft_rpc_request(rpc_kind, rpc)
             .map_err(|e| RPCError::Network(NetworkError::new(&e)))?;
 
-        // Create gRPC request
         let mut client = crate::network::service::raft_client::RaftClient::new(channel);
-
-        let mut grpc_request = tonic::Request::new(crate::network::service::RaftRpcRequest {
-            group_id: self.group_id.to_string(),
-            rpc_type: "append_entries".to_string(),
-            payload: request_bytes,
-        });
-        self.add_outgoing_rpc_metadata(&mut grpc_request)
-            .map_err(|e| RPCError::Network(NetworkError::new(&e)))?;
-
-        // Send request
-        let response = match client.raft_rpc(grpc_request).await {
+        let response = match client.raft_rpc(request).await {
             Ok(response) => {
                 self.connection_tracker.record_success(self.target);
                 response
@@ -262,23 +277,48 @@ impl OpenRaftNetwork<KalamTypeConfig> for RaftNetwork {
             },
         };
 
-        // Deserialize response
-        let inner = response.into_inner();
-        if !inner.error.is_empty() {
-            self.connection_tracker.record_failure(self.target, &inner.error);
-            return Err(RPCError::RemoteError(RemoteError::new(
-                self.target,
-                RaftError::Fatal(openraft::error::Fatal::Panicked),
-            )));
+        Ok(response.into_inner())
+    }
+
+    fn decode_raft_rpc_response<T, E>(
+        &self,
+        rpc_kind: crate::network::service::RaftRpcKind,
+        response: crate::network::service::RaftRpcResponse,
+        remote_error: E,
+    ) -> Result<T, RPCError<u64, KalamNode, E>>
+    where
+        E: std::error::Error + Send + Sync + 'static,
+        T: DeserializeOwned,
+    {
+        if !response.error.is_empty() {
+            self.connection_tracker.record_failure(self.target, &response.error);
+            return Err(RPCError::RemoteError(RemoteError::new(self.target, remote_error)));
         }
 
-        let result: AppendEntriesResponse<u64> = crate::state_machine::decode(&inner.payload)
-            .map_err(|e| {
-                self.connection_tracker.record_failure(self.target, &e.to_string());
-                RPCError::Network(NetworkError::new(&e))
-            })?;
+        crate::state_machine::decode(&response.payload).map_err(|e| {
+            self.connection_tracker.record_failure(self.target, &e.to_string());
+            RPCError::Network(NetworkError::new(&ConnectionError(format!(
+                "failed to decode {} response: {}",
+                rpc_kind, e
+            ))))
+        })
+    }
+}
 
-        Ok(result)
+impl OpenRaftNetwork<KalamTypeConfig> for RaftNetwork {
+    async fn append_entries(
+        &mut self,
+        rpc: AppendEntriesRequest<KalamTypeConfig>,
+        _option: RPCOption,
+    ) -> Result<AppendEntriesResponse<u64>, RPCError<u64, KalamNode, RaftError<u64>>> {
+        let response = self
+            .send_raft_rpc(crate::network::service::RaftRpcKind::AppendEntries, &rpc)
+            .await?;
+        self.decode_raft_rpc_response(
+            crate::network::service::RaftRpcKind::AppendEntries,
+            response,
+            RaftError::Fatal(openraft::error::Fatal::Panicked),
+        )
     }
 
     async fn install_snapshot(
@@ -289,60 +329,14 @@ impl OpenRaftNetwork<KalamTypeConfig> for RaftNetwork {
         InstallSnapshotResponse<u64>,
         RPCError<u64, KalamNode, RaftError<u64, InstallSnapshotError>>,
     > {
-        if !self.connection_tracker.should_attempt(self.target) {
-            return Err(RPCError::Unreachable(Unreachable::new(&ConnectionError(
-                "reconnect backoff".to_string(),
-            ))));
-        }
-
-        // Get channel
-        let channel =
-            self.get_channel().map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?;
-
-        // Serialize request
-        let request_bytes = crate::state_machine::encode(&rpc)
-            .map_err(|e| RPCError::Network(NetworkError::new(&e)))?;
-
-        // Create gRPC request
-        let mut client = crate::network::service::raft_client::RaftClient::new(channel);
-
-        let mut grpc_request = tonic::Request::new(crate::network::service::RaftRpcRequest {
-            group_id: self.group_id.to_string(),
-            rpc_type: "install_snapshot".to_string(),
-            payload: request_bytes,
-        });
-        self.add_outgoing_rpc_metadata(&mut grpc_request)
-            .map_err(|e| RPCError::Network(NetworkError::new(&e)))?;
-
-        // Send request
-        let response = match client.raft_rpc(grpc_request).await {
-            Ok(response) => {
-                self.connection_tracker.record_success(self.target);
-                response
-            },
-            Err(e) => {
-                self.connection_tracker.record_failure(self.target, &e.to_string());
-                return Err(RPCError::Network(NetworkError::new(&e)));
-            },
-        };
-
-        // Deserialize response
-        let inner = response.into_inner();
-        if !inner.error.is_empty() {
-            self.connection_tracker.record_failure(self.target, &inner.error);
-            return Err(RPCError::RemoteError(RemoteError::new(
-                self.target,
-                RaftError::Fatal(openraft::error::Fatal::Panicked),
-            )));
-        }
-
-        let result: InstallSnapshotResponse<u64> = crate::state_machine::decode(&inner.payload)
-            .map_err(|e| {
-                self.connection_tracker.record_failure(self.target, &e.to_string());
-                RPCError::Network(NetworkError::new(&e))
-            })?;
-
-        Ok(result)
+        let response = self
+            .send_raft_rpc(crate::network::service::RaftRpcKind::InstallSnapshot, &rpc)
+            .await?;
+        self.decode_raft_rpc_response(
+            crate::network::service::RaftRpcKind::InstallSnapshot,
+            response,
+            RaftError::Fatal(openraft::error::Fatal::Panicked),
+        )
     }
 
     async fn vote(
@@ -350,60 +344,12 @@ impl OpenRaftNetwork<KalamTypeConfig> for RaftNetwork {
         rpc: VoteRequest<u64>,
         _option: RPCOption,
     ) -> Result<VoteResponse<u64>, RPCError<u64, KalamNode, RaftError<u64>>> {
-        if !self.connection_tracker.should_attempt(self.target) {
-            return Err(RPCError::Unreachable(Unreachable::new(&ConnectionError(
-                "reconnect backoff".to_string(),
-            ))));
-        }
-
-        // Get channel
-        let channel =
-            self.get_channel().map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?;
-
-        // Serialize request
-        let request_bytes = crate::state_machine::encode(&rpc)
-            .map_err(|e| RPCError::Network(NetworkError::new(&e)))?;
-
-        // Create gRPC request
-        let mut client = crate::network::service::raft_client::RaftClient::new(channel);
-
-        let mut grpc_request = tonic::Request::new(crate::network::service::RaftRpcRequest {
-            group_id: self.group_id.to_string(),
-            rpc_type: "vote".to_string(),
-            payload: request_bytes,
-        });
-        self.add_outgoing_rpc_metadata(&mut grpc_request)
-            .map_err(|e| RPCError::Network(NetworkError::new(&e)))?;
-
-        // Send request
-        let response = match client.raft_rpc(grpc_request).await {
-            Ok(response) => {
-                self.connection_tracker.record_success(self.target);
-                response
-            },
-            Err(e) => {
-                self.connection_tracker.record_failure(self.target, &e.to_string());
-                return Err(RPCError::Network(NetworkError::new(&e)));
-            },
-        };
-
-        // Deserialize response
-        let inner = response.into_inner();
-        if !inner.error.is_empty() {
-            self.connection_tracker.record_failure(self.target, &inner.error);
-            return Err(RPCError::RemoteError(RemoteError::new(
-                self.target,
-                RaftError::Fatal(openraft::error::Fatal::Panicked),
-            )));
-        }
-
-        let result: VoteResponse<u64> =
-            crate::state_machine::decode(&inner.payload).map_err(|e| {
-                self.connection_tracker.record_failure(self.target, &e.to_string());
-                RPCError::Network(NetworkError::new(&e))
-            })?;
-
-        Ok(result)
+        let response = self.send_raft_rpc(crate::network::service::RaftRpcKind::Vote, &rpc).await?;
+        self.decode_raft_rpc_response(
+            crate::network::service::RaftRpcKind::Vote,
+            response,
+            RaftError::Fatal(openraft::error::Fatal::Panicked),
+        )
     }
 }
 
@@ -415,7 +361,7 @@ pub struct RaftNetworkFactory {
     /// Known nodes in the cluster
     nodes: Arc<RwLock<HashMap<NodeId, KalamNode>>>,
     /// Cached gRPC channels (node_id -> channel)
-    channels: Arc<dashmap::DashMap<NodeId, Channel>>,
+    channels: RaftChannelPool,
     /// Connection retry tracker
     connection_tracker: ConnectionTracker,
     /// Outgoing RPC auth identity (set during group start)
@@ -425,12 +371,22 @@ pub struct RaftNetworkFactory {
 }
 
 impl RaftNetworkFactory {
+    /// Create a shared channel pool for all Raft groups on a node.
+    pub fn new_channel_pool() -> RaftChannelPool {
+        Arc::new(dashmap::DashMap::new())
+    }
+
     /// Create a new network factory
     pub fn new(group_id: GroupId) -> Self {
+        Self::new_with_channel_pool(group_id, Self::new_channel_pool())
+    }
+
+    /// Create a new network factory backed by a shared channel pool.
+    pub fn new_with_channel_pool(group_id: GroupId, channels: RaftChannelPool) -> Self {
         Self {
             group_id,
             nodes: Arc::new(RwLock::new(HashMap::new())),
-            channels: Arc::new(dashmap::DashMap::new()),
+            channels,
             connection_tracker: ConnectionTracker::new(group_id, Duration::from_secs(3)),
             auth_identity: Arc::new(RwLock::new(None)),
             tls_material: Arc::new(RwLock::new(None)),
@@ -483,8 +439,10 @@ impl RaftNetworkFactory {
     ) -> Result<(), crate::RaftError> {
         if !tls.enabled {
             let mut guard = self.tls_material.write();
-            *guard = None;
-            self.channels.clear();
+            if guard.is_some() {
+                *guard = None;
+                self.channels.clear();
+            }
             return Ok(());
         }
 
@@ -616,6 +574,35 @@ impl RaftNetworkFactory {
         Some(ch)
     }
 
+    /// Send a follower-to-leader proposal over the shared Raft gRPC channel pool.
+    pub async fn send_client_proposal(
+        &self,
+        target_node_id: NodeId,
+        group_id: GroupId,
+        command: Vec<u8>,
+    ) -> Result<crate::network::service::ClientProposalResponse, crate::RaftError> {
+        let channel = self.get_or_create_channel(target_node_id).ok_or_else(|| {
+            crate::RaftError::Network(format!(
+                "No channel available for leader node {}",
+                target_node_id
+            ))
+        })?;
+
+        let mut client = crate::network::service::raft_client::RaftClient::new(channel);
+        let mut request = tonic::Request::new(crate::network::service::ClientProposalRequest {
+            group_id: group_id.to_string(),
+            command,
+        });
+        self.add_outgoing_rpc_metadata(&mut request)
+            .map_err(|e| crate::RaftError::Network(format!("Failed to add RPC metadata: {}", e)))?;
+
+        let response = client.client_proposal(request).await.map_err(|e| {
+            crate::RaftError::Network(format!("gRPC error forwarding proposal: {}", e))
+        })?;
+
+        Ok(response.into_inner())
+    }
+
     /// Get all registered peer node IDs and their info.
     ///
     /// Used by [`super::cluster_client::ClusterClient`] for broadcasting.
@@ -639,8 +626,8 @@ impl OpenRaftNetworkFactory<KalamTypeConfig> for RaftNetworkFactory {
         } else {
             let ch = self.build_channel(target_node_id, node).unwrap_or_else(|e| {
                 log::error!(
-                    "[group {}] Cannot build gRPC channel to node {}: {}. \
-                        Check network configuration and peer addresses.",
+                    "[group {}] Cannot build gRPC channel to node {}: {}. Check network \
+                     configuration and peer addresses.",
                     self.group_id,
                     target_node_id,
                     e
@@ -656,8 +643,8 @@ impl OpenRaftNetworkFactory<KalamTypeConfig> for RaftNetworkFactory {
 
         let auth_identity = self.auth_identity.read().clone().unwrap_or_else(|| {
             log::error!(
-                "[group {}] RPC auth identity is not configured. \
-                Ensure configure_rpc_auth_identity() is called before the Raft node starts.",
+                "[group {}] RPC auth identity is not configured. Ensure \
+                 configure_rpc_auth_identity() is called before the Raft node starts.",
                 self.group_id
             );
             panic!("RPC auth identity is not configured for group {}", self.group_id)

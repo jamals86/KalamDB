@@ -3,17 +3,19 @@
 //! Provides a small, typed API for inter-node cluster RPCs that are not part
 //! of Raft log replication (notify-followers, forward-sql, ping).
 
-use std::sync::Arc;
+use std::{future::Future, sync::Arc};
 
 use kalamdb_commons::models::NodeId;
+use tonic::{transport::Channel, Request, Response, Status};
 
-use super::cluster_service::cluster_client::ClusterServiceClient;
-use super::models::{
-    ForwardSqlRequest, ForwardSqlResponse, GetNodeInfoRequest, GetNodeInfoResponse, PingRequest,
-    PingResponse,
+use super::{
+    cluster_service::cluster_client::ClusterServiceClient,
+    models::{
+        ForwardSqlRequest, ForwardSqlResponse, GetNodeInfoRequest, GetNodeInfoResponse,
+        PingRequest, PingResponse,
+    },
 };
-use crate::manager::RaftManager;
-use crate::{GroupId, RaftError};
+use crate::{manager::RaftManager, GroupId, RaftError};
 
 /// High-level cluster RPC client built on top of the shared Raft channel pool.
 #[derive(Clone)]
@@ -27,15 +29,62 @@ impl ClusterClient {
         Self { manager }
     }
 
+    fn client_for_node(
+        &self,
+        target_node_id: NodeId,
+    ) -> Result<ClusterServiceClient<Channel>, RaftError> {
+        let channel = self
+            .manager
+            .get_peer_channel(target_node_id)
+            .ok_or_else(|| RaftError::Network(format!("No channel for node {}", target_node_id)))?;
+
+        Ok(ClusterServiceClient::new(channel))
+    }
+
+    fn request_with_metadata<T>(&self, payload: T) -> Result<Request<T>, RaftError> {
+        let mut request = Request::new(payload);
+        self.manager.add_outgoing_rpc_metadata(&mut request)?;
+        Ok(request)
+    }
+
+    async fn call_node<T, R, F, Fut>(
+        &self,
+        target_node_id: NodeId,
+        method: &'static str,
+        payload: T,
+        call: F,
+    ) -> Result<R, RaftError>
+    where
+        F: FnOnce(ClusterServiceClient<Channel>, Request<T>) -> Fut,
+        Fut: Future<Output = Result<Response<R>, Status>>,
+    {
+        let client = self.client_for_node(target_node_id)?;
+        let request = self.request_with_metadata(payload)?;
+        let response = call(client, request).await.map_err(|e| {
+            RaftError::Network(format!("gRPC {} to node {} failed: {}", method, target_node_id, e))
+        })?;
+
+        Ok(response.into_inner())
+    }
+
     /// Forward SQL to the current Meta leader.
     pub async fn forward_sql_to_leader(
         &self,
         request: ForwardSqlRequest,
     ) -> Result<ForwardSqlResponse, RaftError> {
+        self.forward_sql_to_group_leader(GroupId::Meta, request).await
+    }
+
+    /// Forward SQL to the current leader of a specific Raft group.
+    pub async fn forward_sql_to_group_leader(
+        &self,
+        group_id: GroupId,
+        request: ForwardSqlRequest,
+    ) -> Result<ForwardSqlResponse, RaftError> {
         let leader_node_id = self
             .manager
-            .current_leader(GroupId::Meta)
-            .ok_or_else(|| RaftError::Network("No meta leader available".to_string()))?;
+            .current_leader(group_id)
+            .ok_or_else(|| RaftError::Network(format!("No leader available for {}", group_id)))?;
 
         self.forward_sql_to_node(leader_node_id, request).await
     }
@@ -46,40 +95,22 @@ impl ClusterClient {
         target_node_id: NodeId,
         request: ForwardSqlRequest,
     ) -> Result<ForwardSqlResponse, RaftError> {
-        let channel = self
-            .manager
-            .get_peer_channel(target_node_id)
-            .ok_or_else(|| RaftError::Network(format!("No channel for node {}", target_node_id)))?;
-
-        let mut client = ClusterServiceClient::new(channel);
-        let mut grpc_request = tonic::Request::new(request);
-        self.manager.add_outgoing_rpc_metadata(&mut grpc_request)?;
-
-        let response = client.forward_sql(grpc_request).await.map_err(|e| {
-            RaftError::Network(format!("gRPC forward_sql to node {} failed: {}", target_node_id, e))
-        })?;
-
-        Ok(response.into_inner())
+        self.call_node(target_node_id, "forward_sql", request, |mut client, request| async move {
+            client.forward_sql(request).await
+        })
+        .await
     }
 
     /// Ping a specific peer node.
     pub async fn ping_peer(&self, target_node_id: NodeId) -> Result<PingResponse, RaftError> {
-        let channel = self
-            .manager
-            .get_peer_channel(target_node_id)
-            .ok_or_else(|| RaftError::Network(format!("No channel for node {}", target_node_id)))?;
-
-        let mut client = ClusterServiceClient::new(channel);
-        let mut grpc_request = tonic::Request::new(PingRequest {
+        let request = PingRequest {
             from_node_id: self.manager.node_id().as_u64(),
-        });
-        self.manager.add_outgoing_rpc_metadata(&mut grpc_request)?;
+        };
 
-        let response = client.ping(grpc_request).await.map_err(|e| {
-            RaftError::Network(format!("gRPC ping to node {} failed: {}", target_node_id, e))
-        })?;
-
-        Ok(response.into_inner())
+        self.call_node(target_node_id, "ping", request, |mut client, request| async move {
+            client.ping(request).await
+        })
+        .await
     }
 
     /// Fetch live node statistics from a specific peer.
@@ -90,25 +121,14 @@ impl ClusterClient {
         &self,
         target_node_id: NodeId,
     ) -> Result<GetNodeInfoResponse, RaftError> {
-        let channel = self
-            .manager
-            .get_peer_channel(target_node_id)
-            .ok_or_else(|| RaftError::Network(format!("No channel for node {}", target_node_id)))?;
-
-        let mut client = ClusterServiceClient::new(channel);
-        let mut grpc_request = tonic::Request::new(GetNodeInfoRequest {
+        let request = GetNodeInfoRequest {
             from_node_id: self.manager.node_id().as_u64(),
-        });
-        self.manager.add_outgoing_rpc_metadata(&mut grpc_request)?;
+        };
 
-        let response = client.get_node_info(grpc_request).await.map_err(|e| {
-            RaftError::Network(format!(
-                "gRPC get_node_info to node {} failed: {}",
-                target_node_id, e
-            ))
-        })?;
-
-        Ok(response.into_inner())
+        self.call_node(target_node_id, "get_node_info", request, |mut client, request| async move {
+            client.get_node_info(request).await
+        })
+        .await
     }
 
     /// Fan-out `GetNodeInfo` to every known peer (excluding self) **in parallel**.
@@ -124,6 +144,7 @@ impl ClusterClient {
         timeout_ms: u64,
     ) -> std::collections::HashMap<NodeId, GetNodeInfoResponse> {
         use std::time::Duration;
+
         use tokio::time::timeout;
 
         let self_id = self.manager.node_id();

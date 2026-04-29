@@ -1,8 +1,10 @@
 use async_trait::async_trait;
 use datafusion_common::ScalarValue;
-use kalam_pg_api::request::{DeleteRequest, InsertRequest, ScanRequest, UpdateRequest};
-use kalam_pg_api::response::{MutationResponse, ScanResponse};
-use kalam_pg_api::KalamBackendExecutor;
+use kalam_pg_api::{
+    request::{DeleteRequest, InsertRequest, ScanRequest, UpdateRequest},
+    response::{MutationResponse, ScanResponse},
+    KalamBackendExecutor,
+};
 use kalam_pg_client::RemoteKalamClient;
 use kalam_pg_common::KalamPgError;
 
@@ -86,7 +88,7 @@ impl KalamBackendExecutor for RemoteBackendExecutor {
         request.validate()?;
         let user_id = request.tenant_context.effective_user_id().map(|u| u.as_str().to_string());
 
-        let updates_json = serde_json::to_string(&request.updates).map_err(|error| {
+        let updates_json = serde_json::to_string(&[&request.updates]).map_err(|error| {
             KalamPgError::Execution(format!(
                 "failed to serialize update payload for {} pk {}: {}",
                 request.table_id.full_name(),

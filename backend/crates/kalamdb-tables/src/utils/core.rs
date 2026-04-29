@@ -1,9 +1,14 @@
-use crate::error::KalamDbError;
-use datafusion::arrow::datatypes::SchemaRef;
-use datafusion::logical_expr::Expr;
-use kalamdb_commons::schemas::{TableDefinition, TableType};
-use kalamdb_commons::websocket::ChangeNotification;
-use kalamdb_commons::TableId;
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
+
+use datafusion::{arrow::datatypes::SchemaRef, logical_expr::Expr};
+use kalamdb_commons::{
+    schemas::{TableDefinition, TableType},
+    websocket::ChangeNotification,
+    TableId,
+};
 use kalamdb_filestore::StorageRegistry;
 use kalamdb_system::{
     ClusterCoordinator as ClusterCoordinatorTrait, ManifestService as ManifestServiceTrait,
@@ -11,8 +16,8 @@ use kalamdb_system::{
     TopicPublisher as TopicPublisherTrait,
 };
 use kalamdb_transactions::CommitSequenceSource;
-use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+
+use crate::error::KalamDbError;
 
 /// Combined services struct shared across all table providers.
 ///
@@ -41,7 +46,8 @@ pub struct TableServices {
     /// Commit-sequence source for stamping direct DML writes that bypass the applier fast path.
     pub commit_sequence_source: Arc<dyn CommitSequenceSource>,
 
-    /// Topic publisher for synchronous CDC publishing (optional, None when topics are not configured)
+    /// Topic publisher for synchronous CDC publishing (optional, None when topics are not
+    /// configured)
     pub topic_publisher: Option<Arc<dyn TopicPublisherTrait>>,
 }
 
@@ -117,8 +123,7 @@ impl TableProviderCore {
         schema: SchemaRef,
         column_defaults: HashMap<String, Expr>,
     ) -> Self {
-        use kalamdb_commons::constants::SystemColumnNames;
-        use kalamdb_commons::schemas::ColumnDefault;
+        use kalamdb_commons::{constants::SystemColumnNames, schemas::ColumnDefault};
 
         // Precompute non-nullable columns from the schema.
         // Exclude system columns (_seq, _deleted) because they are auto-generated
@@ -300,9 +305,9 @@ impl TableProviderCore {
 
     /// Publish a row change to matching topics synchronously.
     ///
-    /// Only publishes if the current node is the leader (in cluster mode).
-    /// This ensures topic messages are persisted before the write is acknowledged,
-    /// replacing the previous async notification-queue approach that dropped events.
+    /// In cluster mode, publishing is tied to local apply plus the local topic route cache.
+    /// That lets the topic-owning node materialize CDC events for data groups led by
+    /// other nodes without requiring a separate async notification queue.
     pub async fn publish_to_topics(
         &self,
         table_id: &TableId,
@@ -314,16 +319,6 @@ impl TableProviderCore {
             Some(tp) if tp.has_topics_for_table(table_id) => tp,
             _ => return,
         };
-
-        // Leadership check: only leader publishes to avoid duplicates in cluster mode.
-        // In standalone mode, is_leader_for_* always returns true.
-        let is_leader = match user_id {
-            Some(uid) => self.services.cluster_coordinator.is_leader_for_user(uid).await,
-            None => self.services.cluster_coordinator.is_leader_for_shared().await,
-        };
-        if !is_leader {
-            return;
-        }
 
         if let Err(e) = topic_pub.publish_for_table(table_id, op, row, user_id) {
             log::warn!("Topic publish failed for table {}: {}", table_id, e);
@@ -350,15 +345,6 @@ impl TableProviderCore {
             Some(tp) if tp.has_topics_for_table(table_id) => tp,
             _ => return,
         };
-
-        // Leadership check: only leader publishes to avoid duplicates in cluster mode.
-        let is_leader = match user_id {
-            Some(uid) => self.services.cluster_coordinator.is_leader_for_user(uid).await,
-            None => self.services.cluster_coordinator.is_leader_for_shared().await,
-        };
-        if !is_leader {
-            return;
-        }
 
         if let Err(e) = topic_pub.publish_batch_for_table(table_id, op, rows, user_id) {
             log::warn!("Topic batch publish failed for table {}: {}", table_id, e);

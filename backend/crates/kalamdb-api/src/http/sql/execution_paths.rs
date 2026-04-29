@@ -1,30 +1,37 @@
+use std::{collections::HashMap, sync::Arc, time::Instant};
+
 use actix_web::{http::StatusCode, HttpRequest, HttpResponse};
 use bytes::Bytes;
-use kalamdb_commons::models::NamespaceId;
-use kalamdb_commons::schemas::TableType;
-use kalamdb_core::app_context::AppContext;
-use kalamdb_core::error::KalamDbError;
-use kalamdb_core::schema_registry::SchemaRegistry;
-use kalamdb_core::sql::context::ExecutionContext;
-use kalamdb_core::sql::executor::request_transaction_state::RequestTransactionState;
-use kalamdb_core::sql::executor::{PreparedExecutionStatement, ScalarValue, SqlExecutor};
-use kalamdb_core::sql::SqlImpersonationService;
+use kalamdb_commons::{models::NamespaceId, schemas::TableType};
+use kalamdb_core::{
+    app_context::AppContext,
+    error::KalamDbError,
+    schema_registry::SchemaRegistry,
+    sql::{
+        context::ExecutionContext,
+        executor::{
+            request_transaction_state::RequestTransactionState, PreparedExecutionStatement,
+            ScalarValue, SqlExecutor,
+        },
+        SqlImpersonationService,
+    },
+};
 use kalamdb_sql::classifier::SqlStatementKind;
 use kalamdb_system::FileSubfolderState;
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::Instant;
 
-use super::file_utils::{stage_and_finalize_files, substitute_file_placeholders};
-use super::forward::handle_not_leader_error;
-use super::helpers::{
-    cleanup_files, execute_single_statement, execute_single_statement_raw,
-    execution_result_to_query_result, stream_sql_rows_response,
-};
-use super::models::{ErrorCode, QueryRequest, QueryResult, SqlResponse};
-use super::request::took_ms;
-use super::statements::{
-    classify_sql, resolve_execute_as_user, resolve_result_username, PreparedApiExecutionStatement,
+use super::{
+    file_utils::{stage_and_finalize_files, substitute_file_placeholders},
+    forward::handle_not_leader_error,
+    helpers::{
+        cleanup_files, execute_single_statement, execute_single_statement_raw,
+        execution_result_to_query_result, stream_sql_rows_response,
+    },
+    models::{ErrorCode, QueryRequest, QueryResult, SqlResponse},
+    request::took_ms,
+    statements::{
+        classify_sql, resolve_execute_as_user, resolve_result_username,
+        PreparedApiExecutionStatement,
+    },
 };
 
 #[inline]
@@ -55,6 +62,18 @@ fn is_table_discovery_error_message(message: &str) -> bool {
 }
 
 #[inline]
+fn is_leader_routing_error_message(message: &str) -> bool {
+    message.contains("not leader")
+        || message.contains("not_leader")
+        || message.contains("unknown leader")
+        || message.contains("no cluster leader")
+        || message.contains("no raft leader")
+        || message.contains("forward request to cluster leader")
+        || message.contains("failed to forward request to cluster leader")
+        || message.contains("forward to leader")
+}
+
+#[inline]
 fn is_safe_validation_error_message(message: &str) -> bool {
     (message.contains("column") && message.contains("not found"))
         || (message.contains("field") && message.contains("not found"))
@@ -71,6 +90,9 @@ fn is_safe_validation_error_message(message: &str) -> bool {
 #[inline]
 fn classify_sql_error(err: &KalamDbError) -> (StatusCode, ErrorCode, bool) {
     match err {
+        KalamDbError::NotLeader { .. } => {
+            (StatusCode::SERVICE_UNAVAILABLE, ErrorCode::NotLeader, true)
+        },
         KalamDbError::PermissionDenied(_) | KalamDbError::Unauthorized(_) => {
             (StatusCode::FORBIDDEN, ErrorCode::PermissionDenied, true)
         },
@@ -105,7 +127,9 @@ fn classify_sql_error(err: &KalamDbError) -> (StatusCode, ErrorCode, bool) {
         },
         KalamDbError::ExecutionError(message) => {
             let message_lower = message.to_lowercase();
-            if is_permission_error_message(&message_lower) {
+            if is_leader_routing_error_message(&message_lower) {
+                (StatusCode::SERVICE_UNAVAILABLE, ErrorCode::NotLeader, true)
+            } else if is_permission_error_message(&message_lower) {
                 (StatusCode::FORBIDDEN, ErrorCode::PermissionDenied, true)
             } else if is_safe_validation_error_message(&message_lower) {
                 (StatusCode::BAD_REQUEST, ErrorCode::SqlExecutionError, true)
@@ -166,6 +190,19 @@ fn build_statement_error_response(
             took,
             is_admin,
             preserve_message,
+        );
+    }
+
+    let err_msg = err.to_string();
+    if is_leader_routing_error_message(&err_msg.to_lowercase()) {
+        return build_sql_error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            ErrorCode::NotLeader,
+            &format!("Statement {} failed: {}", statement_index, err_msg),
+            Some(sql),
+            took,
+            is_admin,
+            true,
         );
     }
 
@@ -233,7 +270,8 @@ pub(super) async fn execute_file_upload_path(
         None => {
             return HttpResponse::BadRequest().json(SqlResponse::error_for_privilege(
                 ErrorCode::InvalidInput,
-                "Could not determine target table from SQL. Use fully qualified table name (namespace.table).",
+                "Could not determine target table from SQL. Use fully qualified table name \
+                 (namespace.table).",
                 took_ms(start_time),
                 exec_ctx.is_admin(),
             ));
@@ -259,8 +297,8 @@ pub(super) async fn execute_file_upload_path(
         return HttpResponse::BadRequest().json(SqlResponse::error_for_privilege(
             ErrorCode::SqlExecutionError,
             &format!(
-                "EXECUTE AS USER is not allowed on SHARED tables (table '{}'). \
-                 AS USER impersonation is only supported for USER tables.",
+                "EXECUTE AS USER is not allowed on SHARED tables (table '{}'). AS USER \
+                 impersonation is only supported for USER tables.",
                 table_id
             ),
             took_ms(start_time),
@@ -523,8 +561,8 @@ pub(super) async fn execute_batch_path(
                 return HttpResponse::BadRequest().json(SqlResponse::error_for_privilege(
                     ErrorCode::SqlExecutionError,
                     &format!(
-                        "EXECUTE AS USER is not allowed on SHARED tables (table '{}'). \
-                         AS USER impersonation is only supported for USER tables.",
+                        "EXECUTE AS USER is not allowed on SHARED tables (table '{}'). AS USER \
+                         impersonation is only supported for USER tables.",
                         table_id
                     ),
                     took_ms(start_time),

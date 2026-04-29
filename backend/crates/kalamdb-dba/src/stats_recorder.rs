@@ -1,29 +1,35 @@
-use crate::error::{DbaError, Result};
-use crate::mapping::model_to_row;
-use crate::models::StatsRow;
+use std::{sync::Arc, time::Duration};
+
 use chrono::Utc;
-use kalamdb_core::app_context::AppContext;
-use kalamdb_core::providers::SharedTableProvider;
-use kalamdb_tables::utils::row_utils::system_user_id;
-use kalamdb_tables::BaseTableProvider;
-use std::sync::Arc;
-use std::time::Duration;
-use tokio::task::JoinHandle;
-use tokio::time::{interval_at, Instant, MissedTickBehavior};
+use kalamdb_core::{app_context::AppContext, providers::SharedTableProvider};
+use kalamdb_tables::{utils::row_utils::system_user_id, BaseTableProvider};
+use tokio::{
+    task::JoinHandle,
+    time::{interval_at, Instant, MissedTickBehavior},
+};
+
+use crate::{
+    error::{DbaError, Result},
+    mapping::model_to_row,
+    models::StatsRow,
+};
 
 const DEFAULT_STATS_RECORD_INTERVAL: Duration = Duration::from_secs(30);
 const DBA_STATS_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60);
 const DELETE_BATCH_SIZE: usize = 1_000;
 
-pub async fn start_stats_recorder(app_context: Arc<AppContext>) -> Result<JoinHandle<()>> {
-    let recorded = record_stats_snapshot(app_context.clone()).await?;
-    log::debug!("Recorded {} startup system.stats samples into dba.stats", recorded);
+const STARTUP_STATS_INITIAL_DELAY: Duration = Duration::from_secs(1);
 
-    if let Err(error) = prune_expired_stats(app_context.clone()).await {
-        log::warn!("Failed to prune expired dba.stats samples during startup: {}", error);
-    }
+pub fn start_startup_stats_snapshot(app_context: Arc<AppContext>) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        record_startup_snapshot(app_context).await;
+    })
+}
 
+pub fn start_stats_recorder(app_context: Arc<AppContext>) -> Result<JoinHandle<()>> {
     Ok(tokio::spawn(async move {
+        record_startup_snapshot(app_context.clone()).await;
+
         let mut ticker = interval_at(
             Instant::now() + DEFAULT_STATS_RECORD_INTERVAL,
             DEFAULT_STATS_RECORD_INTERVAL,
@@ -53,6 +59,23 @@ pub async fn start_stats_recorder(app_context: Arc<AppContext>) -> Result<JoinHa
             }
         }
     }))
+}
+
+async fn record_startup_snapshot(app_context: Arc<AppContext>) {
+    tokio::time::sleep(STARTUP_STATS_INITIAL_DELAY).await;
+
+    match record_stats_snapshot(app_context.clone()).await {
+        Ok(recorded) => {
+            log::debug!("Recorded {} startup system.stats samples into dba.stats", recorded);
+        },
+        Err(error) => {
+            log::warn!("Failed to record startup dba.stats snapshot: {}", error);
+        },
+    }
+
+    if let Err(error) = prune_expired_stats(app_context).await {
+        log::warn!("Failed to prune expired dba.stats samples during startup: {}", error);
+    }
 }
 
 pub async fn record_stats_snapshot(app_context: Arc<AppContext>) -> Result<usize> {

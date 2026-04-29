@@ -101,12 +101,18 @@ pub enum SqlStatementKind {
     ClusterTriggerElection,
     /// CLUSTER TRANSFER-LEADER - Transfer leadership
     ClusterTransferLeader(u64),
+    /// CLUSTER JOIN - Add a node at runtime
+    ClusterJoin {
+        node_id: u64,
+        rpc_addr: String,
+        api_addr: String,
+    },
+    /// CLUSTER REBALANCE - Best-effort leader redistribution
+    ClusterRebalance,
     /// CLUSTER STEPDOWN - Attempt leader stepdown
     ClusterStepdown,
     /// CLUSTER CLEAR - Clear old snapshots
     ClusterClear,
-    /// CLUSTER LIST - List cluster nodes
-    ClusterList,
 
     // ===== Job Management =====
     /// KILL JOB <job_id>
@@ -292,11 +298,10 @@ impl SqlStatement {
             | SqlStatementKind::ClusterPurge(_)
             | SqlStatementKind::ClusterTriggerElection
             | SqlStatementKind::ClusterTransferLeader(_)
+            | SqlStatementKind::ClusterJoin { .. }
+            | SqlStatementKind::ClusterRebalance
             | SqlStatementKind::ClusterStepdown
             | SqlStatementKind::ClusterClear => true,
-
-            // Read-only cluster inspection can run on any node
-            SqlStatementKind::ClusterList => false,
         }
     }
 
@@ -329,9 +334,10 @@ impl SqlStatement {
             SqlStatementKind::ClusterPurge(_) => "CLUSTER PURGE",
             SqlStatementKind::ClusterTriggerElection => "CLUSTER TRIGGER ELECTION",
             SqlStatementKind::ClusterTransferLeader(_) => "CLUSTER TRANSFER-LEADER",
+            SqlStatementKind::ClusterJoin { .. } => "CLUSTER JOIN",
+            SqlStatementKind::ClusterRebalance => "CLUSTER REBALANCE",
             SqlStatementKind::ClusterStepdown => "CLUSTER STEPDOWN",
             SqlStatementKind::ClusterClear => "CLUSTER CLEAR",
-            SqlStatementKind::ClusterList => "CLUSTER LIST",
             SqlStatementKind::KillJob(_) => "KILL JOB",
             SqlStatementKind::KillLiveQuery(_) => "KILL LIVE QUERY",
             SqlStatementKind::BeginTransaction => "BEGIN",

@@ -16,32 +16,40 @@
 //! - Request body size limits
 //! - Automatic IP banning for persistent abusers
 
-use crate::connection_guard::{ConnectionGuard, ConnectionGuardResult};
+use std::{
+    future::{ready, Ready},
+    net::IpAddr,
+    sync::Arc,
+};
+
 use actix_cors::Cors;
-use actix_web::body::{BoxBody, EitherBody};
-use actix_web::dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform};
-use actix_web::http::{header::HeaderName, Method, StatusCode};
-use actix_web::{Error, HttpResponse};
+use actix_web::{
+    body::{BoxBody, EitherBody},
+    dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform},
+    http::{header::HeaderName, Method, StatusCode},
+    Error, HttpResponse,
+};
 use futures_util::future::LocalBoxFuture;
 use kalamdb_auth::extract_client_ip_addr_secure;
-use kalamdb_configs::{RateLimitSettings, ServerConfig};
+use kalamdb_configs::{CorsSettings, RateLimitSettings, ServerConfig};
 use log::warn;
-use std::future::{ready, Ready};
-use std::net::IpAddr;
-use std::sync::Arc;
+
+use crate::connection_guard::{ConnectionGuard, ConnectionGuardResult};
 
 /// Build CORS middleware from server configuration using actix-cors.
 ///
 /// Maps all CorsSettings options to actix-cors builder methods.
 /// See: https://docs.rs/actix-cors/latest/actix_cors/struct.Cors.html
 pub fn build_cors_from_config(config: &ServerConfig) -> Cors {
-    let cors_config = &config.security.cors;
+    build_cors_from_settings(&config.security.cors)
+}
 
+pub fn build_cors_from_settings(cors_config: &CorsSettings) -> Cors {
     let mut cors = Cors::default();
 
     // Configure allowed origins
     if cors_config.allowed_origins.is_empty()
-        || cors_config.allowed_origins.contains(&"*".to_string())
+        || cors_config.allowed_origins.iter().any(|origin| origin == "*")
     {
         cors = cors.allow_any_origin();
     } else {
@@ -58,7 +66,7 @@ pub fn build_cors_from_config(config: &ServerConfig) -> Cors {
     }
 
     // Configure allowed headers
-    if cors_config.allowed_headers.contains(&"*".to_string()) {
+    if cors_config.allowed_headers.iter().any(|header| header == "*") {
         cors = cors.allow_any_header();
     } else {
         let headers: Vec<HeaderName> =
@@ -88,9 +96,12 @@ pub fn build_cors_from_config(config: &ServerConfig) -> Cors {
 
 #[cfg(test)]
 mod tests {
+    use actix_web::{
+        http::{header, Method},
+        test, web, App, HttpResponse,
+    };
+
     use super::*;
-    use actix_web::http::{header, Method};
-    use actix_web::{test, web, App, HttpResponse};
 
     #[actix_web::test]
     async fn preflight_login_request_allows_vite_chat_origin() {

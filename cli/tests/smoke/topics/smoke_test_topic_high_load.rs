@@ -10,138 +10,56 @@
 //!
 //! **Requirements**: Running KalamDB server with Topics feature enabled
 
-use crate::common;
+use std::{
+    collections::{HashMap, HashSet},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
+
 use kalam_client::consumer::{AutoOffsetReset, ConsumerRecord, TopicOp};
-use kalam_client::KalamLinkTimeouts;
 use kalamdb_configs::config::defaults::default_topic_visibility_timeout_secs;
-use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::Mutex as TokioMutex;
+
+use crate::{common, topic_test_support};
 
 /// Create a test client using common infrastructure
 async fn create_test_client() -> kalam_client::KalamLinkClient {
-    let base_url = common::leader_or_server_url();
-    common::client_for_user_on_url_with_timeouts(
-        &base_url,
-        common::default_username(),
-        common::default_password(),
-        KalamLinkTimeouts::builder()
-            .connection_timeout_secs(10)
-            .receive_timeout_secs(15)
-            .send_timeout_secs(30)
-            .subscribe_timeout_secs(15)
-            .auth_timeout_secs(10)
-            .initial_data_timeout(Duration::from_secs(60))
-            .build(),
-    )
-    .expect("Failed to build test client")
+    topic_test_support::create_test_client().await
 }
 
 /// Execute SQL via HTTP helper with error handling
 async fn execute_sql(sql: &str) -> Result<(), String> {
-    let response = common::execute_sql_via_http_as_root(sql).await.map_err(|e| e.to_string())?;
-    let status = response.get("status").and_then(|s| s.as_str()).unwrap_or("");
-    if status.eq_ignore_ascii_case("success") {
-        Ok(())
-    } else {
-        let err_msg = response
-            .get("error")
-            .and_then(|e| e.get("message"))
-            .and_then(|m| m.as_str())
-            .unwrap_or("Unknown error");
-        Err(format!("SQL failed: {}", err_msg))
-    }
+    topic_test_support::execute_sql(sql).await
 }
 
 fn is_retryable_consumer_poll_error(message: &str) -> bool {
-    let normalized = message.to_ascii_lowercase();
-    normalized.contains("error decoding") || normalized.contains("network")
-}
-
-fn using_fresh_test_server() -> bool {
-    if let Ok(value) = std::env::var("KALAMDB_SERVER_TYPE") {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "fresh" => return true,
-            "running" | "cluster" => return false,
-            _ => {},
-        }
-    }
-
-    if let Ok(value) = std::env::var("KALAMDB_AUTO_START_TEST_SERVER") {
-        match value.trim() {
-            "1" => return true,
-            "0" => return false,
-            _ => {},
-        }
-    }
-
-    if std::env::var_os("KALAMDB_STORAGE_DIR").is_some() {
-        return true;
-    }
-
-    std::env::var_os("KALAMDB_SERVER_URL").is_none()
-        && std::env::var_os("KALAMDB_CLUSTER_URLS").is_none()
+    topic_test_support::is_retryable_consumer_poll_error(message)
 }
 
 fn configured_topic_visibility_timeout_secs() -> u64 {
-    if let Some(value) = std::env::var("KALAMDB_VISIBILITY_TIMEOUT_SECS")
-        .ok()
-        .and_then(|raw| raw.parse().ok())
-    {
-        return value;
+    for env_key in [
+        "KALAMDB_TOPIC_VISIBILITY_TIMEOUT_SECS",
+        "KALAMDB_VISIBILITY_TIMEOUT_SECS",
+    ] {
+        if let Some(value) = std::env::var(env_key).ok().and_then(|raw| raw.parse().ok()) {
+            return value;
+        }
     }
 
-    if !using_fresh_test_server() {
-        return default_topic_visibility_timeout_secs();
-    }
+    default_topic_visibility_timeout_secs()
+}
 
-    let mut config_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    config_path.pop();
-    config_path.push("backend");
-    config_path.push("server.toml");
-
-    std::fs::read_to_string(config_path)
-        .ok()
-        .and_then(|raw| toml::from_str::<toml::Value>(&raw).ok())
-        .and_then(|config| config.get("topics")?.get("visibility_timeout_secs")?.as_integer())
-        .and_then(|value| (value >= 0).then_some(value as u64))
-        .unwrap_or_else(default_topic_visibility_timeout_secs)
+fn topic_recovery_deadline() -> Duration {
+    let configured = configured_topic_visibility_timeout_secs();
+    let fallback = default_topic_visibility_timeout_secs();
+    Duration::from_secs(configured.max(fallback) + 30)
 }
 
 async fn wait_for_topic_ready(topic: &str, expected_routes: usize) {
-    let sql = format!("SELECT routes FROM system.topics WHERE topic_id = '{}'", topic);
-    let deadline = std::time::Instant::now() + Duration::from_secs(30);
-
-    while std::time::Instant::now() < deadline {
-        if let Ok(response) = common::execute_sql_via_http_as_root(&sql).await {
-            if let Some(rows) = common::get_rows_as_hashmaps(&response) {
-                if let Some(row) = rows.first() {
-                    if let Some(routes_value) = row.get("routes") {
-                        let routes_untyped = common::extract_typed_value(routes_value);
-                        if let Some(routes_json) = routes_untyped
-                            .as_str()
-                            .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
-                        {
-                            let route_count =
-                                routes_json.as_array().map(|routes| routes.len()).unwrap_or(0);
-                            if route_count >= expected_routes {
-                                tokio::time::sleep(Duration::from_millis(100)).await;
-                                return;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-
-    panic!(
-        "Timed out waiting for topic '{}' to have at least {} route(s)",
-        topic, expected_routes
-    );
+    topic_test_support::wait_for_topic_ready(topic, expected_routes).await;
 }
 
 /// Helper to parse JSON payload from binary
@@ -191,7 +109,8 @@ async fn test_topic_high_load_concurrent_publishers() {
     // Create multiple tables with different types and schemas
     let shared_table = format!("{}.shared_metrics", namespace);
     execute_sql(&format!(
-        "CREATE SHARED TABLE {} (id BIGINT PRIMARY KEY, name TEXT, value DOUBLE, active BOOLEAN, counter INT, timestamp BIGINT)",
+        "CREATE SHARED TABLE {} (id BIGINT PRIMARY KEY, name TEXT, value DOUBLE, active BOOLEAN, \
+         counter INT, timestamp BIGINT)",
         shared_table
     ))
     .await
@@ -199,7 +118,8 @@ async fn test_topic_high_load_concurrent_publishers() {
 
     let user_table = format!("{}.user_profiles", namespace);
     execute_sql(&format!(
-        "CREATE USER TABLE {} (id INT PRIMARY KEY, username TEXT, score DOUBLE, level INT, verified BOOLEAN)",
+        "CREATE USER TABLE {} (id INT PRIMARY KEY, username TEXT, score DOUBLE, level INT, \
+         verified BOOLEAN)",
         user_table
     ))
     .await
@@ -207,7 +127,8 @@ async fn test_topic_high_load_concurrent_publishers() {
 
     let stream_table = format!("{}.event_stream", namespace);
     execute_sql(&format!(
-        "CREATE STREAM TABLE {} (event_id BIGINT, event_type TEXT, payload TEXT, value INT, success BOOLEAN) WITH (TTL_SECONDS = 3600)",
+        "CREATE STREAM TABLE {} (event_id BIGINT, event_type TEXT, payload TEXT, value INT, \
+         success BOOLEAN) WITH (TTL_SECONDS = 3600)",
         stream_table
     ))
     .await
@@ -215,7 +136,8 @@ async fn test_topic_high_load_concurrent_publishers() {
 
     let product_table = format!("{}.products", namespace);
     execute_sql(&format!(
-        "CREATE SHARED TABLE {} (product_id INT PRIMARY KEY, product_name TEXT, price DOUBLE, stock INT, available BOOLEAN)",
+        "CREATE SHARED TABLE {} (product_id INT PRIMARY KEY, product_name TEXT, price DOUBLE, \
+         stock INT, available BOOLEAN)",
         product_table
     ))
     .await
@@ -223,7 +145,8 @@ async fn test_topic_high_load_concurrent_publishers() {
 
     let session_table = format!("{}.user_sessions", namespace);
     execute_sql(&format!(
-        "CREATE USER TABLE {} (session_id BIGINT PRIMARY KEY, user_id INT, duration INT, active BOOLEAN, score DOUBLE)",
+        "CREATE USER TABLE {} (session_id BIGINT PRIMARY KEY, user_id INT, duration INT, active \
+         BOOLEAN, score DOUBLE)",
         session_table
     ))
     .await
@@ -360,7 +283,8 @@ async fn test_topic_high_load_concurrent_publishers() {
                                     || last_new_record_time.elapsed() > Duration::from_secs(3))
                             {
                                 eprintln!(
-                                    "[CONSUMER] No new records, stopping (unique: {}, time_since_new: {}s)",
+                                    "[CONSUMER] No new records, stopping (unique: {}, \
+                                     time_since_new: {}s)",
                                     seen_offsets.len(),
                                     last_new_record_time.elapsed().as_secs()
                                 );
@@ -429,7 +353,8 @@ async fn test_topic_high_load_concurrent_publishers() {
                     0 => {
                         // Shared metrics: INSERT then UPDATE
                         let insert_sql = format!(
-                            "INSERT INTO {} (id, name, value, active, counter, timestamp) VALUES ({}, 'metric_{}', {}, {}, {}, {})",
+                            "INSERT INTO {} (id, name, value, active, counter, timestamp) VALUES \
+                             ({}, 'metric_{}', {}, {}, {}, {})",
                             shared_table,
                             record_id,
                             record_id,
@@ -476,7 +401,8 @@ async fn test_topic_high_load_concurrent_publishers() {
                     1 => {
                         // User profiles: INSERT then UPDATE
                         let insert_sql = format!(
-                            "INSERT INTO {} (id, username, score, level, verified) VALUES ({}, 'user_{}', {}, {}, {})",
+                            "INSERT INTO {} (id, username, score, level, verified) VALUES ({}, \
+                             'user_{}', {}, {}, {})",
                             user_table,
                             record_id,
                             record_id,
@@ -522,7 +448,8 @@ async fn test_topic_high_load_concurrent_publishers() {
                     2 => {
                         // Stream events: INSERT only (2 records per iteration)
                         let insert_sql = format!(
-                            "INSERT INTO {} (event_id, event_type, payload, value, success) VALUES ({}, 'type_{}', 'payload_{}', {}, {})",
+                            "INSERT INTO {} (event_id, event_type, payload, value, success) \
+                             VALUES ({}, 'type_{}', 'payload_{}', {}, {})",
                             stream_table,
                             record_id,
                             record_id % 10,
@@ -548,7 +475,8 @@ async fn test_topic_high_load_concurrent_publishers() {
                         // Another INSERT for stream
                         let record_id2 = record_id + 100000;
                         let insert_sql2 = format!(
-                            "INSERT INTO {} (event_id, event_type, payload, value, success) VALUES ({}, 'type_{}', 'payload_{}', {}, {})",
+                            "INSERT INTO {} (event_id, event_type, payload, value, success) \
+                             VALUES ({}, 'type_{}', 'payload_{}', {}, {})",
                             stream_table,
                             record_id2,
                             record_id2 % 10,
@@ -572,7 +500,8 @@ async fn test_topic_high_load_concurrent_publishers() {
                     3 => {
                         // Products: INSERT then UPDATE
                         let insert_sql = format!(
-                            "INSERT INTO {} (product_id, product_name, price, stock, available) VALUES ({}, 'product_{}', {}, {}, {})",
+                            "INSERT INTO {} (product_id, product_name, price, stock, available) \
+                             VALUES ({}, 'product_{}', {}, {}, {})",
                             product_table,
                             record_id,
                             record_id,
@@ -618,7 +547,8 @@ async fn test_topic_high_load_concurrent_publishers() {
                     4 => {
                         // User sessions: INSERT then UPDATE
                         let insert_sql = format!(
-                            "INSERT INTO {} (session_id, user_id, duration, active, score) VALUES ({}, {}, {}, {}, {})",
+                            "INSERT INTO {} (session_id, user_id, duration, active, score) VALUES \
+                             ({}, {}, {}, {}, {})",
                             session_table,
                             record_id as i64,
                             record_id % 10000,
@@ -769,8 +699,9 @@ async fn test_topic_high_load_concurrent_publishers() {
 
     assert!(
         unique_coverage >= min_unique_coverage,
-        "Expected at least {}% unique event coverage, got {:.1}% ({}/{}) - Synchronous publishing should capture all events.\n\
-         Check for table creation failures or write errors that prevent events from being published.",
+        "Expected at least {}% unique event coverage, got {:.1}% ({}/{}) - Synchronous publishing \
+         should capture all events.\nCheck for table creation failures or write errors that \
+         prevent events from being published.",
         min_unique_coverage,
         unique_coverage,
         received_events.len(),
@@ -872,50 +803,22 @@ async fn test_topic_high_load_two_consumers_same_group_single_delivery() {
         let topic = topic.clone();
         let group_id = group_id.clone();
         tokio::spawn(async move {
-            let client = create_test_client().await;
-            let mut consumer = client
-                .consumer()
-                .topic(&topic)
-                .group_id(&group_id)
-                .auto_offset_reset(AutoOffsetReset::Earliest)
-                .max_poll_records(200)
-                .build()
-                .expect("Failed to build consumer");
-
-            let mut seen_offsets = HashSet::<(u32, u64)>::new();
-            let deadline = std::time::Instant::now() + Duration::from_secs(150);
-            let mut idle_loops: u32 = 0;
-
-            while std::time::Instant::now() < deadline {
-                match consumer.poll().await {
-                    Ok(batch) if batch.is_empty() => {
-                        idle_loops += 1;
-                        if publishers_done.load(Ordering::Relaxed) && idle_loops >= 40 {
-                            break;
-                        }
-                        tokio::time::sleep(Duration::from_millis(100)).await;
-                    },
-                    Ok(batch) => {
-                        idle_loops = 0;
-                        for record in &batch {
-                            seen_offsets.insert((record.partition_id, record.offset));
-                            consumer.mark_processed(record);
-                        }
-
-                        let _ = consumer.commit_sync().await;
-                    },
-                    Err(err) => {
-                        let message = err.to_string();
-                        if is_retryable_consumer_poll_error(&message) {
-                            tokio::time::sleep(Duration::from_millis(100)).await;
-                            continue;
-                        }
-                        panic!("{} poll error: {}", consumer_name, message);
-                    },
-                }
-            }
-
-            let _ = consumer.commit_sync().await;
+            let mut consumer =
+                topic_test_support::build_test_consumer(&topic, &group_id, 200, false).await;
+            let seen_offsets = topic_test_support::poll_unique_offsets_until(
+                &mut consumer,
+                topic_test_support::UniqueOffsetPollConfig {
+                    expected_messages: None,
+                    publishers_done: Some(publishers_done),
+                    deadline: Duration::from_secs(150),
+                    idle_break_after: 40,
+                    idle_sleep: Duration::from_millis(100),
+                    per_record_delay: Duration::ZERO,
+                    commit_each_batch: true,
+                },
+            )
+            .await;
+            eprintln!("[TEST] {} received {} offsets", consumer_name, seen_offsets.len());
             seen_offsets
         })
     };
@@ -926,27 +829,14 @@ async fn test_topic_high_load_two_consumers_same_group_single_delivery() {
     tokio::time::sleep(Duration::from_millis(300)).await;
 
     let publisher_parallelism = 24;
-    let per_publisher = expected_messages / publisher_parallelism;
-    let mut publish_handles = Vec::with_capacity(publisher_parallelism);
-
-    for publisher in 0..publisher_parallelism {
-        let table = table.clone();
-        publish_handles.push(tokio::spawn(async move {
-            for idx in 0..per_publisher {
-                let id = (publisher * per_publisher + idx) as i64;
-                execute_sql(&format!(
-                    "INSERT INTO {} (id, payload) VALUES ({}, 'event_{}')",
-                    table, id, id
-                ))
-                .await
-                .expect("Insert failed");
-            }
-        }));
-    }
-
-    for handle in publish_handles {
-        handle.await.expect("Publisher task failed");
-    }
+    topic_test_support::publish_numbered_rows(
+        &table,
+        "payload",
+        "event",
+        expected_messages,
+        publisher_parallelism,
+    )
+    .await;
     publishers_done.store(true, Ordering::Relaxed);
 
     let consumer_a_offsets = consumer_a_handle.await.expect("consumer-a failed");
@@ -1020,48 +910,22 @@ async fn test_topic_fan_out_different_groups_receive_all() {
         |group_id: String, publishers_done: Arc<AtomicBool>, label: &'static str| {
             let topic = topic.clone();
             tokio::spawn(async move {
-                let client = create_test_client().await;
-                let mut consumer = client
-                    .consumer()
-                    .topic(&topic)
-                    .group_id(&group_id)
-                    .auto_offset_reset(AutoOffsetReset::Earliest)
-                    .max_poll_records(200)
-                    .build()
-                    .expect("build consumer");
-
-                let mut seen = HashSet::<(u32, u64)>::new();
-                let deadline = std::time::Instant::now() + Duration::from_secs(150);
-                let mut idle: u32 = 0;
-
-                while std::time::Instant::now() < deadline {
-                    match consumer.poll().await {
-                        Ok(batch) if batch.is_empty() => {
-                            idle += 1;
-                            if publishers_done.load(Ordering::Relaxed) && idle >= 40 {
-                                break;
-                            }
-                            tokio::time::sleep(Duration::from_millis(100)).await;
-                        },
-                        Ok(batch) => {
-                            idle = 0;
-                            for rec in &batch {
-                                seen.insert((rec.partition_id, rec.offset));
-                                consumer.mark_processed(rec);
-                            }
-                            let _ = consumer.commit_sync().await;
-                        },
-                        Err(e) => {
-                            let msg = e.to_string();
-                            if is_retryable_consumer_poll_error(&msg) {
-                                tokio::time::sleep(Duration::from_millis(100)).await;
-                                continue;
-                            }
-                            panic!("{} poll error: {}", label, msg);
-                        },
-                    }
-                }
-                let _ = consumer.commit_sync().await;
+                let mut consumer =
+                    topic_test_support::build_test_consumer(&topic, &group_id, 200, false).await;
+                let seen = topic_test_support::poll_unique_offsets_until(
+                    &mut consumer,
+                    topic_test_support::UniqueOffsetPollConfig {
+                        expected_messages: None,
+                        publishers_done: Some(publishers_done),
+                        deadline: Duration::from_secs(150),
+                        idle_break_after: 40,
+                        idle_sleep: Duration::from_millis(100),
+                        per_record_delay: Duration::ZERO,
+                        commit_each_batch: true,
+                    },
+                )
+                .await;
+                eprintln!("[TEST] {} received {} offsets", label, seen.len());
                 seen
             })
         };
@@ -1071,27 +935,7 @@ async fn test_topic_fan_out_different_groups_receive_all() {
 
     tokio::time::sleep(Duration::from_millis(300)).await;
 
-    // Publish
-    let parallelism = 10;
-    let per = expected_messages / parallelism;
-    let mut pubs = Vec::new();
-    for p in 0..parallelism {
-        let tbl = table.clone();
-        pubs.push(tokio::spawn(async move {
-            for i in 0..per {
-                let id = (p * per + i) as i64;
-                execute_sql(&format!(
-                    "INSERT INTO {} (id, data) VALUES ({}, 'val_{}')",
-                    tbl, id, id
-                ))
-                .await
-                .expect("insert");
-            }
-        }));
-    }
-    for h in pubs {
-        h.await.expect("pub task");
-    }
+    topic_test_support::publish_numbered_rows(&table, "data", "val", expected_messages, 10).await;
     publishers_done.store(true, Ordering::Relaxed);
 
     let offsets_a = handle_a.await.expect("group-a consumer");
@@ -1159,75 +1003,28 @@ async fn test_topic_four_consumers_same_group_no_duplicates() {
         let label = format!("consumer-{}", idx);
 
         consumer_handles.push(tokio::spawn(async move {
-            let client = create_test_client().await;
-            let mut consumer = client
-                .consumer()
-                .topic(&topic)
-                .group_id(&group_id)
-                .auto_offset_reset(AutoOffsetReset::Earliest)
-                .max_poll_records(100)
-                .build()
-                .expect("build consumer");
-
-            let mut seen = HashSet::<(u32, u64)>::new();
-            let deadline = std::time::Instant::now() + Duration::from_secs(180);
-            let mut idle: u32 = 0;
-
-            while std::time::Instant::now() < deadline {
-                match consumer.poll().await {
-                    Ok(batch) if batch.is_empty() => {
-                        idle += 1;
-                        if done.load(Ordering::Relaxed) && idle >= 45 {
-                            break;
-                        }
-                        tokio::time::sleep(Duration::from_millis(80)).await;
-                    },
-                    Ok(batch) => {
-                        idle = 0;
-                        for rec in &batch {
-                            seen.insert((rec.partition_id, rec.offset));
-                            consumer.mark_processed(rec);
-                        }
-                        let _ = consumer.commit_sync().await;
-                    },
-                    Err(e) => {
-                        let msg = e.to_string();
-                        if is_retryable_consumer_poll_error(&msg) {
-                            tokio::time::sleep(Duration::from_millis(80)).await;
-                            continue;
-                        }
-                        panic!("{} poll error: {}", label, msg);
-                    },
-                }
-            }
-            let _ = consumer.commit_sync().await;
+            let mut consumer =
+                topic_test_support::build_test_consumer(&topic, &group_id, 100, false).await;
+            let seen = topic_test_support::poll_unique_offsets_until(
+                &mut consumer,
+                topic_test_support::UniqueOffsetPollConfig {
+                    expected_messages: None,
+                    publishers_done: Some(done),
+                    deadline: Duration::from_secs(180),
+                    idle_break_after: 45,
+                    idle_sleep: Duration::from_millis(80),
+                    per_record_delay: Duration::ZERO,
+                    commit_each_batch: true,
+                },
+            )
+            .await;
             (label, seen)
         }));
     }
 
     tokio::time::sleep(Duration::from_millis(300)).await;
 
-    // Publish with high parallelism
-    let publisher_parallelism = 24;
-    let per_publisher = expected_messages / publisher_parallelism;
-    let mut pub_handles = Vec::with_capacity(publisher_parallelism);
-    for p in 0..publisher_parallelism {
-        let tbl = table.clone();
-        pub_handles.push(tokio::spawn(async move {
-            for i in 0..per_publisher {
-                let id = (p * per_publisher + i) as i64;
-                execute_sql(&format!(
-                    "INSERT INTO {} (id, value) VALUES ({}, 'item_{}')",
-                    tbl, id, id
-                ))
-                .await
-                .expect("insert");
-            }
-        }));
-    }
-    for h in pub_handles {
-        h.await.expect("pub task");
-    }
+    topic_test_support::publish_numbered_rows(&table, "value", "item", expected_messages, 24).await;
     publishers_done.store(true, Ordering::Relaxed);
 
     // Collect results
@@ -1288,8 +1085,8 @@ async fn test_topic_four_consumers_same_group_no_duplicates() {
 
 /// High-load recovery test:
 /// 1. Consumer A claims a range and never commits (simulated ack failure/crash).
-/// 2. After visibility timeout, Consumer B (same group) must recover and process
-///    the entire stream without offset gaps, even with per-message processing latency.
+/// 2. After visibility timeout, Consumer B (same group) must recover and process the entire stream
+///    without offset gaps, even with per-message processing latency.
 #[tokio::test]
 #[ntest::timeout(180000)]
 async fn test_topic_ack_failure_recovery_no_message_loss_with_latency() {
@@ -1311,42 +1108,14 @@ async fn test_topic_ack_failure_recovery_no_message_loss_with_latency() {
     wait_for_topic_ready(&topic, 1).await;
 
     let expected_messages: usize = 480;
-    let publisher_parallelism = 12;
-    let per_publisher = expected_messages / publisher_parallelism;
-    let mut publisher_handles = Vec::with_capacity(publisher_parallelism);
-
-    for p in 0..publisher_parallelism {
-        let tbl = table.clone();
-        publisher_handles.push(tokio::spawn(async move {
-            for i in 0..per_publisher {
-                let id = (p * per_publisher + i) as i64;
-                execute_sql(&format!(
-                    "INSERT INTO {} (id, payload) VALUES ({}, 'payload_{}')",
-                    tbl, id, id
-                ))
-                .await
-                .expect("insert");
-            }
-        }));
-    }
-
-    for handle in publisher_handles {
-        handle.await.expect("publisher task");
-    }
+    topic_test_support::publish_numbered_rows(&table, "payload", "payload", expected_messages, 12)
+        .await;
 
     let consumer_a_claim_target = 160usize;
     let mut claimed_by_a = HashSet::<(u32, u64)>::new();
     {
-        let client = create_test_client().await;
-        let mut consumer_a = client
-            .consumer()
-            .topic(&topic)
-            .group_id(&group_id)
-            .auto_offset_reset(AutoOffsetReset::Earliest)
-            .enable_auto_commit(false)
-            .max_poll_records(80)
-            .build()
-            .expect("build consumer-a");
+        let mut consumer_a =
+            topic_test_support::build_test_consumer(&topic, &group_id, 80, false).await;
 
         let deadline = std::time::Instant::now() + Duration::from_secs(35);
         while std::time::Instant::now() < deadline && claimed_by_a.len() < consumer_a_claim_target {
@@ -1378,26 +1147,11 @@ async fn test_topic_ack_failure_recovery_no_message_loss_with_latency() {
         claimed_by_a.len()
     );
 
-    // Sleep long enough for the server's topic visibility timeout to expire so
-    // Consumer B can recover the range claimed by Consumer A. Fresh-mode CLI
-    // tests start the backend with backend/server.toml, which overrides the
-    // library default here.
-    let visibility_timeout_secs = configured_topic_visibility_timeout_secs();
-    tokio::time::sleep(Duration::from_secs(visibility_timeout_secs + 5)).await;
-
-    let client = create_test_client().await;
-    let mut consumer_b = client
-        .consumer()
-        .topic(&topic)
-        .group_id(&group_id)
-        .auto_offset_reset(AutoOffsetReset::Earliest)
-        .enable_auto_commit(false)
-        .max_poll_records(120)
-        .build()
-        .expect("build consumer-b");
+    let mut consumer_b =
+        topic_test_support::build_test_consumer(&topic, &group_id, 120, false).await;
 
     let mut recovered_offsets = HashSet::<(u32, u64)>::new();
-    let deadline = std::time::Instant::now() + Duration::from_secs(80);
+    let deadline = std::time::Instant::now() + topic_recovery_deadline();
     let mut idle_loops = 0u32;
 
     while std::time::Instant::now() < deadline && recovered_offsets.len() < expected_messages {

@@ -1,8 +1,9 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use kalamdb_commons::models::rows::Row;
-use kalamdb_commons::models::{OperationKind, TableId, TransactionId, UserId};
-use kalamdb_commons::TableType;
+use kalamdb_commons::{
+    models::{rows::Row, OperationKind, TableId, TransactionId, UserId},
+    TableType,
+};
 
 use crate::query_context::TransactionOverlayView;
 
@@ -65,18 +66,20 @@ impl TransactionOverlay {
         let entry_key = scoped_entry_key(user_id.as_ref(), primary_key.as_str());
         let effective_entry =
             self.merge_visible_entry(&table_id, user_id.as_ref(), primary_key.as_str(), entry);
+        let is_deleted = effective_entry.is_deleted();
+        let operation_kind = effective_entry.operation_kind;
 
         self.entries_by_table
             .entry(table_id.clone())
             .or_default()
-            .insert(entry_key.clone(), effective_entry.clone());
+            .insert(entry_key.clone(), effective_entry);
 
         self.clear_key_membership(&table_id, entry_key.as_str());
 
-        let target_map = if effective_entry.is_deleted() {
+        let target_map = if is_deleted {
             &mut self.deleted_keys
         } else {
-            match effective_entry.operation_kind {
+            match operation_kind {
                 OperationKind::Insert => &mut self.inserted_keys,
                 OperationKind::Update => &mut self.updated_keys,
                 OperationKind::Delete => &mut self.deleted_keys,
@@ -208,11 +211,12 @@ impl TransactionOverlayView for TransactionOverlay {
 
 #[cfg(test)]
 mod tests {
-    use datafusion::scalar::ScalarValue;
     use std::collections::BTreeMap;
 
-    use super::*;
+    use datafusion::scalar::ScalarValue;
     use kalamdb_commons::models::{NamespaceId, TableName};
+
+    use super::*;
 
     fn row(values: &[(&str, ScalarValue)]) -> Row {
         let mut fields = BTreeMap::new();

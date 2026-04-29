@@ -2,8 +2,7 @@
 //!
 //! Tests that verify cluster behavior during node failures
 
-use crate::cluster_common::*;
-use crate::common::*;
+use crate::{cluster_common::*, common::*};
 
 /// Test: Cluster remains operational when one node fails
 ///
@@ -38,6 +37,42 @@ fn cluster_test_node_health_detection() {
     );
 
     println!("\n  ✅ Cluster health detection working\n");
+}
+
+#[test]
+fn cluster_test_all_configured_nodes_are_queryable() {
+    if !require_cluster_running() {
+        return;
+    }
+
+    println!("\n=== TEST: All Configured Nodes Queryable ===\n");
+
+    let configured_urls = crate::cluster_common::cluster_urls_config_order();
+    assert!(
+        !configured_urls.is_empty(),
+        "Expected configured cluster URLs when running cluster tests"
+    );
+
+    for (i, url) in configured_urls.iter().enumerate() {
+        assert!(is_node_healthy(url), "Configured cluster node {} is unhealthy: {}", i, url);
+
+        let result = execute_on_node(
+            url,
+            "SELECT node_id, role, is_leader FROM system.cluster WHERE is_self = true",
+        )
+        .unwrap_or_else(|err| panic!("Configured cluster node {} failed self-query: {}", i, err));
+
+        assert!(
+            result.contains("leader") || result.contains("follower") || result.contains("true"),
+            "Configured cluster node {} returned unexpected self-query output: {}",
+            i,
+            result
+        );
+
+        println!("  ✓ Configured node {} is healthy and queryable: {}", i, url);
+    }
+
+    println!("\n  ✅ All configured cluster nodes are healthy and queryable\n");
 }
 
 /// Test: Leader election after leader disconnection

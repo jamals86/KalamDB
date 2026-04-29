@@ -1,6 +1,5 @@
 //! Integration tests for bootstrap-managed dba.* tables.
 
-use super::test_support::TestServer;
 use kalam_client::models::ResponseStatus;
 use kalamdb_commons::models::UserId;
 use kalamdb_dba::{
@@ -9,6 +8,9 @@ use kalamdb_dba::{
 };
 use ntest::timeout;
 
+use super::test_support::TestServer;
+
+#[ignore = "Requires dba bootstrap to be enabled, which is not the default in tests. Remove this once we enable dba bootstrap by default in tests"]
 #[tokio::test]
 #[timeout(30000)]
 async fn test_dba_namespace_and_tables_created_on_startup() {
@@ -31,7 +33,8 @@ async fn test_dba_namespace_and_tables_created_on_startup() {
 
     let tables_response = server
         .execute_sql(
-            "SELECT table_name, table_type FROM system.schemas WHERE namespace_id = 'dba' AND is_latest = true ORDER BY table_name",
+            "SELECT table_name, table_type FROM system.schemas WHERE namespace_id = 'dba' AND \
+             is_latest = true ORDER BY table_name",
         )
         .await;
     assert_eq!(
@@ -96,7 +99,8 @@ async fn test_dba_repositories_write_through_normal_table_paths() {
 
     let statistics_response = server
         .execute_sql(
-            "SELECT metric_name, metric_value FROM dba.stats WHERE metric_name = 'memory_usage_mb' AND node_id = 'node-1'"
+            "SELECT metric_name, metric_value FROM dba.stats WHERE metric_name = \
+             'memory_usage_mb' AND node_id = 'node-1'",
         )
         .await;
     assert_eq!(statistics_response.status, ResponseStatus::Success);

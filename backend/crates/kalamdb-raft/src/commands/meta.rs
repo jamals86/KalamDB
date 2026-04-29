@@ -10,13 +10,14 @@
 //! for data groups.
 
 use chrono::{DateTime, Utc};
-use kalamdb_commons::models::schemas::{TableDefinition, TableType};
-use kalamdb_commons::models::{JobId, NamespaceId, NodeId, StorageId, UserId};
-use kalamdb_commons::TableId;
-use kalamdb_system::providers::jobs::models::Job;
-use kalamdb_system::JobStatus;
-use kalamdb_system::Storage;
-use kalamdb_system::User;
+use kalamdb_commons::{
+    models::{
+        schemas::{TableDefinition, TableType},
+        JobId, NamespaceId, NodeId, StorageId, UserId,
+    },
+    TableId,
+};
+use kalamdb_system::{providers::jobs::models::Job, JobStatus, Storage, User};
 use serde::{Deserialize, Serialize};
 
 /// Commands for the unified metadata Raft group
@@ -176,13 +177,27 @@ pub enum MetaCommand {
         reason: String,
         cancelled_at: DateTime<Utc>,
     },
+
+    // =========================================================================
+    // Compatibility-Appended Operations
+    // =========================================================================
+    /// Create a new namespace, succeeding if it already exists.
+    ///
+    /// Keep this variant at the end so existing bincode-encoded Raft log
+    /// discriminants remain stable for older variants.
+    CreateNamespaceIfNotExists {
+        namespace_id: NamespaceId,
+        created_by: Option<UserId>,
+    },
 }
 
 impl MetaCommand {
     /// Returns the category of this command for logging/metrics
     pub fn category(&self) -> &'static str {
         match self {
-            Self::CreateNamespace { .. } | Self::DeleteNamespace { .. } => "namespace",
+            Self::CreateNamespace { .. }
+            | Self::CreateNamespaceIfNotExists { .. }
+            | Self::DeleteNamespace { .. } => "namespace",
             Self::CreateTable { .. } | Self::AlterTable { .. } | Self::DropTable { .. } => "table",
             Self::RegisterStorage { .. } | Self::UnregisterStorage { .. } => "storage",
             Self::CreateUser { .. }
@@ -288,8 +303,9 @@ impl MetaResponse {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use kalamdb_commons::{AuthType, Role};
+
+    use super::*;
 
     fn test_user() -> User {
         User {

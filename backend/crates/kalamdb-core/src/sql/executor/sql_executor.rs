@@ -1,22 +1,35 @@
-use super::{PreparedExecutionStatement, SqlExecutor};
-use crate::error::KalamDbError;
-use crate::sql::executor::handler_registry::HandlerRegistry;
-use crate::sql::executor::request_transaction_state::RequestTransactionState;
-use crate::sql::plan_cache::{PlanCacheKey, SqlCacheRegistry, SqlCacheRegistryConfig};
-use crate::sql::{ExecutionContext, ExecutionResult};
-use crate::transactions::CoordinatorAccessValidator;
+use std::{sync::Arc, time::Duration};
+
 use arrow::array::RecordBatch;
-use datafusion::prelude::SessionContext;
-use datafusion::scalar::ScalarValue;
-use kalamdb_commons::conversions::arrow_json_conversion::arrow_value_to_scalar;
-use kalamdb_commons::models::datatypes::KalamDataType;
-use kalamdb_commons::models::{NamespaceId, TableId, TransactionId};
-use kalamdb_commons::Role;
+use datafusion::{
+    dataframe::DataFrame, logical_expr::LogicalPlan, prelude::SessionContext, scalar::ScalarValue,
+};
+use kalamdb_commons::{
+    conversions::arrow_json_conversion::arrow_value_to_scalar,
+    models::{NamespaceId, TableId, TransactionId},
+    schemas::TableType,
+    Role,
+};
 use kalamdb_sql::classifier::{SqlStatement, SqlStatementKind, StatementClassificationError};
 use kalamdb_transactions::{TransactionQueryContext, TransactionQueryExtension};
-use std::sync::Arc;
-use std::time::Duration;
 use tracing::Instrument;
+use uuid::Uuid;
+
+use super::{PreparedExecutionStatement, SqlExecutor};
+use crate::{
+    error::KalamDbError,
+    sql::{
+        executor::{
+            default_ordering::apply_default_order_by,
+            handler_registry::HandlerRegistry,
+            parameter_binding::{replace_placeholders_in_plan, validate_params},
+            request_transaction_state::RequestTransactionState,
+        },
+        plan_cache::{PlanCacheKey, SqlCacheRegistry, SqlCacheRegistryConfig},
+        ExecutionContext, ExecutionResult,
+    },
+    transactions::CoordinatorAccessValidator,
+};
 
 #[derive(Debug, Clone, Copy)]
 enum DmlKind {
@@ -26,7 +39,7 @@ enum DmlKind {
 }
 
 impl SqlExecutor {
-    async fn try_execute_embedding_literal_insert_via_applier(
+    async fn try_execute_literal_insert_via_applier(
         &self,
         sql: &str,
         metadata: &PreparedExecutionStatement,
@@ -43,18 +56,6 @@ impl SqlExecutor {
             if state.is_active() {
                 return Ok(None);
             }
-        }
-
-        let Some(cached_table) = self.app_context.schema_registry().get(table_id) else {
-            return Ok(None);
-        };
-        let has_embedding_columns = cached_table
-            .table
-            .columns
-            .iter()
-            .any(|column| matches!(column.data_type, KalamDataType::Embedding(_)));
-        if !has_embedding_columns {
-            return Ok(None);
         }
 
         let dialect = sqlparser::dialect::GenericDialect {};
@@ -587,7 +588,7 @@ impl SqlExecutor {
         );
         // Enter the span for the entire execution
         async {
-            let classified = metadata.classified_statement.clone().ok_or_else(|| {
+            let classified = metadata.classified_statement.as_ref().ok_or_else(|| {
                 KalamDbError::InvalidSql(
                     "Missing pre-classified statement metadata for SQL execution".to_string(),
                 )
@@ -628,7 +629,7 @@ impl SqlExecutor {
                 SqlStatementKind::Insert(_) => {
                     if params.is_empty() {
                         if let Some(result) = self
-                            .try_execute_embedding_literal_insert_via_applier(
+                            .try_execute_literal_insert_via_applier(
                                 classified.as_str(),
                                 metadata,
                                 exec_ctx,
@@ -686,7 +687,8 @@ impl SqlExecutor {
                 | SqlStatementKind::CreateView(_)
                 | SqlStatementKind::CreateNamespace(_)
                 | SqlStatementKind::DropNamespace(_) => {
-                    let result = self.handler_registry.handle(classified, params, exec_ctx).await;
+                    let result =
+                        self.handler_registry.handle(classified.clone(), params, exec_ctx).await;
                     // Clear plan cache after DDL to invalidate any cached plans
                     // that may reference the modified schema
                     if result.is_ok() {
@@ -697,7 +699,7 @@ impl SqlExecutor {
                 },
 
                 // All other statements: Delegate to handler registry (no cache invalidation needed)
-                _ => self.handler_registry.handle(classified, params, exec_ctx).await,
+                _ => self.handler_registry.handle(classified.clone(), params, exec_ctx).await,
             };
 
             // Record row count in the span
@@ -718,6 +720,152 @@ impl SqlExecutor {
         .await
     }
 
+    fn should_stage_autocommit_dml(
+        &self,
+        metadata: &PreparedExecutionStatement,
+        exec_ctx: &ExecutionContext,
+    ) -> Result<bool, KalamDbError> {
+        if self.active_request_transaction_id(exec_ctx)?.is_some() {
+            return Ok(false);
+        }
+
+        let Some(table_id) = metadata.table_id.as_ref() else {
+            return Ok(false);
+        };
+
+        let Some(cached_table) = self.app_context.schema_registry().get(table_id) else {
+            return Ok(false);
+        };
+
+        let table_type: TableType = cached_table.table.table_type.into();
+        Ok(matches!(table_type, TableType::User | TableType::Shared))
+    }
+
+    async fn execute_autocommit_dml_via_transaction(
+        &self,
+        sql: &str,
+        metadata: &PreparedExecutionStatement,
+        params: Vec<ScalarValue>,
+        exec_ctx: &ExecutionContext,
+        dml_kind: DmlKind,
+    ) -> Result<ExecutionResult, KalamDbError> {
+        let owned_exec_ctx;
+        let dml_exec_ctx = if exec_ctx.request_id().is_some() {
+            exec_ctx
+        } else {
+            owned_exec_ctx =
+                exec_ctx.clone().with_request_id(format!("sql-autocommit-{}", Uuid::now_v7()));
+            &owned_exec_ctx
+        };
+
+        let mut request_state = RequestTransactionState::from_execution_context(dml_exec_ctx)?
+            .ok_or_else(|| {
+                KalamDbError::InvalidOperation(
+                    "autocommit DML requires a request-scoped execution context".to_string(),
+                )
+            })?;
+        request_state.sync_from_coordinator(&self.app_context);
+
+        if request_state.is_active() {
+            return self
+                .execute_dml_via_datafusion_inner(sql, metadata, params, dml_exec_ctx, dml_kind)
+                .await;
+        }
+
+        request_state.begin(&self.app_context)?;
+        let result = self
+            .execute_dml_via_datafusion_inner(sql, metadata, params, dml_exec_ctx, dml_kind)
+            .await;
+
+        match result {
+            Ok(result) => match request_state.commit(&self.app_context).await {
+                Ok(_) => Ok(result),
+                Err(error) => {
+                    let _ = request_state.rollback_if_active(&self.app_context);
+                    Err(error)
+                },
+            },
+            Err(error) => {
+                let _ = request_state.rollback_if_active(&self.app_context);
+                Err(error)
+            },
+        }
+    }
+
+    async fn execute_dml_via_datafusion(
+        &self,
+        sql: &str,
+        metadata: &PreparedExecutionStatement,
+        params: Vec<ScalarValue>,
+        exec_ctx: &ExecutionContext,
+        dml_kind: DmlKind,
+    ) -> Result<ExecutionResult, KalamDbError> {
+        if self.should_stage_autocommit_dml(metadata, exec_ctx)? {
+            return self
+                .execute_autocommit_dml_via_transaction(sql, metadata, params, exec_ctx, dml_kind)
+                .await;
+        }
+
+        self.execute_dml_via_datafusion_inner(sql, metadata, params, exec_ctx, dml_kind)
+            .await
+    }
+
+    async fn plan_dml_with_provider_reload(
+        &self,
+        execution_sql: &str,
+        original_sql: &str,
+        exec_ctx: &ExecutionContext,
+    ) -> Result<(SessionContext, DataFrame), KalamDbError> {
+        let session = self.create_session_with_transaction_context(exec_ctx)?;
+        let plan_start = std::time::Instant::now();
+
+        match session.sql(execution_sql).await {
+            Ok(df) => {
+                tracing::debug!(
+                    plan_ms = (plan_start.elapsed().as_micros() as f64 / 1000.0),
+                    "sql.dml_plan"
+                );
+                Ok((session, df))
+            },
+            Err(error) if Self::is_table_not_found_error(&error) => {
+                if let Err(load_err) = self.load_existing_tables().await {
+                    log::warn!(
+                        target: "sql::dml",
+                        "⚠️  Failed to reload table providers after missing table in DML | sql='{}' | error='{}'",
+                        original_sql,
+                        load_err
+                    );
+                }
+
+                let retry_session = self.create_session_with_transaction_context(exec_ctx)?;
+                let retry_start = std::time::Instant::now();
+                let retry_df = retry_session.sql(execution_sql).await.map_err(|retry_error| {
+                    self.log_sql_error(original_sql, exec_ctx, retry_error)
+                })?;
+                tracing::debug!(
+                    plan_ms = (retry_start.elapsed().as_micros() as f64 / 1000.0),
+                    reloaded_providers = true,
+                    "sql.dml_plan"
+                );
+                Ok((retry_session, retry_df))
+            },
+            Err(error) => Err(self.log_sql_error(original_sql, exec_ctx, error)),
+        }
+    }
+
+    fn cache_and_bind_dml_plan(
+        &self,
+        cache_key: &PlanCacheKey,
+        planned_df: DataFrame,
+        params: &[ScalarValue],
+    ) -> Result<LogicalPlan, KalamDbError> {
+        let template_plan = planned_df.logical_plan().clone();
+        self.sql_cache_registry
+            .plan_cache()
+            .insert(cache_key.clone(), template_plan.clone());
+        replace_placeholders_in_plan(template_plan, params)
+    }
+
     #[tracing::instrument(
         name = "sql.dml_datafusion",
         skip_all,
@@ -726,7 +874,7 @@ impl SqlExecutor {
             rows_affected = tracing::field::Empty,
         )
     )]
-    async fn execute_dml_via_datafusion(
+    async fn execute_dml_via_datafusion_inner(
         &self,
         sql: &str,
         metadata: &PreparedExecutionStatement,
@@ -739,10 +887,6 @@ impl SqlExecutor {
         let execution_sql = kalamdb_sql::rewrite_context_functions_for_datafusion(sql);
         let execution_sql: &str = &execution_sql;
 
-        use crate::sql::executor::parameter_binding::{
-            replace_placeholders_in_plan, validate_params,
-        };
-
         if !params.is_empty() {
             validate_params(&params)?;
         }
@@ -750,34 +894,7 @@ impl SqlExecutor {
         // Parameterized DML: reuse cached template plans and only bind placeholders per request.
         // This avoids reparsing/replanning the same INSERT/UPDATE/DELETE shape repeatedly.
         let df = if params.is_empty() {
-            let session = self.create_session_with_transaction_context(exec_ctx)?;
-            let plan_start = std::time::Instant::now();
-            match session.sql(execution_sql).await {
-                Ok(df) => {
-                    tracing::debug!(plan_ms = %plan_start.elapsed().as_micros() as f64 / 1000.0, "sql.dml_plan");
-                    df
-                },
-                Err(e) => {
-                    if Self::is_table_not_found_error(&e) {
-                        if let Err(load_err) = self.load_existing_tables().await {
-                            log::warn!(
-                                target: "sql::dml",
-                                "⚠️  Failed to reload table providers after missing table in DML | sql='{}' | error='{}'",
-                                sql,
-                                load_err
-                            );
-                        }
-                        let retry_session =
-                            self.create_session_with_transaction_context(exec_ctx)?;
-                        retry_session
-                            .sql(execution_sql)
-                            .await
-                            .map_err(|e2| self.log_sql_error(sql, exec_ctx, e2))?
-                    } else {
-                        return Err(self.log_sql_error(sql, exec_ctx, e));
-                    }
-                },
-            }
+            self.plan_dml_with_provider_reload(execution_sql, sql, exec_ctx).await?.1
         } else {
             let cache_key = PlanCacheKey::new(
                 exec_ctx.default_namespace().clone(),
@@ -790,103 +907,36 @@ impl SqlExecutor {
                 let bound_plan = replace_placeholders_in_plan((*template_plan).clone(), &params)?;
                 match session.execute_logical_plan(bound_plan).await {
                     Ok(df) => df,
-                    Err(e) => {
+                    Err(error) => {
+                        if let Some(not_leader_err) = Self::try_not_leader_error(&error) {
+                            return Err(not_leader_err);
+                        }
+
                         log::warn!(
                             target: "sql::dml",
                             "Failed to execute cached DML plan, reparsing SQL: {}",
-                            e
+                            error
                         );
 
-                        match session.sql(execution_sql).await {
-                            Ok(planned_df) => {
-                                let template_plan = planned_df.logical_plan().clone();
-                                self.sql_cache_registry
-                                    .plan_cache()
-                                    .insert(cache_key.clone(), template_plan.clone());
-                                let rebound_plan =
-                                    replace_placeholders_in_plan(template_plan, &params)?;
-                                session
-                                    .execute_logical_plan(rebound_plan)
-                                    .await
-                                    .map_err(|e2| Self::datafusion_to_execution_error(e2))?
-                            },
-                            Err(e) => {
-                                if Self::is_table_not_found_error(&e) {
-                                    if let Err(load_err) = self.load_existing_tables().await {
-                                        log::warn!(
-                                            target: "sql::dml",
-                                            "⚠️  Failed to reload table providers after missing table in DML | sql='{}' | error='{}'",
-                                            sql,
-                                            load_err
-                                        );
-                                    }
-                                    let retry_session =
-                                        self.create_session_with_transaction_context(exec_ctx)?;
-                                    let retry_df = retry_session
-                                        .sql(execution_sql)
-                                        .await
-                                        .map_err(|e2| self.log_sql_error(sql, exec_ctx, e2))?;
-                                    let template_plan = retry_df.logical_plan().clone();
-                                    self.sql_cache_registry
-                                        .plan_cache()
-                                        .insert(cache_key.clone(), template_plan.clone());
-                                    let rebound_plan =
-                                        replace_placeholders_in_plan(template_plan, &params)?;
-                                    retry_session
-                                        .execute_logical_plan(rebound_plan)
-                                        .await
-                                        .map_err(|e3| Self::datafusion_to_execution_error(e3))?
-                                } else {
-                                    return Err(self.log_sql_error(sql, exec_ctx, e));
-                                }
-                            },
-                        }
+                        let (plan_session, planned_df) = self
+                            .plan_dml_with_provider_reload(execution_sql, sql, exec_ctx)
+                            .await?;
+                        let rebound_plan =
+                            self.cache_and_bind_dml_plan(&cache_key, planned_df, &params)?;
+                        plan_session
+                            .execute_logical_plan(rebound_plan)
+                            .await
+                            .map_err(Self::datafusion_to_execution_error)?
                     },
                 }
             } else {
-                match session.sql(execution_sql).await {
-                    Ok(planned_df) => {
-                        let template_plan = planned_df.logical_plan().clone();
-                        self.sql_cache_registry
-                            .plan_cache()
-                            .insert(cache_key.clone(), template_plan.clone());
-                        let bound_plan = replace_placeholders_in_plan(template_plan, &params)?;
-                        session
-                            .execute_logical_plan(bound_plan)
-                            .await
-                            .map_err(|e2| Self::datafusion_to_execution_error(e2))?
-                    },
-                    Err(e) => {
-                        if Self::is_table_not_found_error(&e) {
-                            if let Err(load_err) = self.load_existing_tables().await {
-                                log::warn!(
-                                    target: "sql::dml",
-                                    "⚠️  Failed to reload table providers after missing table in DML | sql='{}' | error='{}'",
-                                    sql,
-                                    load_err
-                                );
-                            }
-                            let retry_session =
-                                self.create_session_with_transaction_context(exec_ctx)?;
-                            let retry_df = retry_session
-                                .sql(execution_sql)
-                                .await
-                                .map_err(|e2| self.log_sql_error(sql, exec_ctx, e2))?;
-
-                            let template_plan = retry_df.logical_plan().clone();
-                            self.sql_cache_registry
-                                .plan_cache()
-                                .insert(cache_key.clone(), template_plan.clone());
-                            let bound_plan = replace_placeholders_in_plan(template_plan, &params)?;
-                            retry_session
-                                .execute_logical_plan(bound_plan)
-                                .await
-                                .map_err(|e3| Self::datafusion_to_execution_error(e3))?
-                        } else {
-                            return Err(self.log_sql_error(sql, exec_ctx, e));
-                        }
-                    },
-                }
+                let (plan_session, planned_df) =
+                    self.plan_dml_with_provider_reload(execution_sql, sql, exec_ctx).await?;
+                let bound_plan = self.cache_and_bind_dml_plan(&cache_key, planned_df, &params)?;
+                plan_session
+                    .execute_logical_plan(bound_plan)
+                    .await
+                    .map_err(Self::datafusion_to_execution_error)?
             }
         };
 
@@ -918,10 +968,6 @@ impl SqlExecutor {
     ) -> Result<ExecutionResult, KalamDbError> {
         let execution_sql = kalamdb_sql::rewrite_context_functions_for_datafusion(sql);
         let execution_sql: &str = &execution_sql;
-        use crate::sql::executor::default_ordering::apply_default_order_by;
-        use crate::sql::executor::parameter_binding::{
-            replace_placeholders_in_plan, validate_params,
-        };
 
         // Validate parameters if present
         if !params.is_empty() {
@@ -931,7 +977,8 @@ impl SqlExecutor {
         let session = self.create_session_with_transaction_context(exec_ctx)?;
 
         // Try cached template plan first (works for both plain and parameterized SQL).
-        // Key excludes user_id because LogicalPlan is user-agnostic - filtering happens at scan time.
+        // Key excludes user_id because LogicalPlan is user-agnostic - filtering happens at scan
+        // time.
         let cache_key = PlanCacheKey::new(
             exec_ctx.default_namespace().clone(),
             exec_ctx.user_role(),
@@ -1310,7 +1357,7 @@ impl SqlExecutor {
     /// Called during server startup to restore table access after restart.
     /// Loads table definitions from the store and creates/registers:
     /// - UserTableShared instances for USER tables
-    /// - SharedTableProvider instances for SHARED tables  
+    /// - SharedTableProvider instances for SHARED tables
     /// - StreamTableProvider instances for STREAM tables
     ///
     /// # Returns

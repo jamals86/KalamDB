@@ -15,9 +15,8 @@
  * controlled via the useSqlPreview() hook.
  */
 
-import { useState, useCallback, useRef, useEffect } from 'react';
-// Temporarily disabled Monaco for debugging
-// import MonacoEditor from '@monaco-editor/react';
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
+import Editor from '@monaco-editor/react';
 import type { editor } from 'monaco-editor';
 import {
   Dialog,
@@ -27,6 +26,7 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { cn } from '@/lib/utils';
 import {
   Play,
@@ -53,11 +53,13 @@ export interface StatementAudit {
 export interface SqlPreviewOptions {
   /** The SQL to display in the editor. */
   sql: string;
+  /** Optional pre-split statement list for display and audit purposes. */
+  statements?: string[];
   /** Dialog title. */
   title?: string;
   /** Optional description below the title. */
   description?: string;
-  /** Callback to execute a single SQL statement. Should throw on error. */
+  /** Callback to execute the SQL currently displayed in the editor. Should throw on error. */
   onExecute: (sql: string) => Promise<void>;
   /** Callback when all statements complete successfully. */
   onComplete?: () => void | Promise<void>;
@@ -87,6 +89,85 @@ function formatAuditErrorMessage(message: string): string {
   }
 }
 
+function splitSqlStatements(sql: string): string[] {
+  const statements: string[] = [];
+  let current = "";
+  let inSingleQuotedString = false;
+
+  for (let index = 0; index < sql.length; index += 1) {
+    const character = sql[index];
+    current += character;
+
+    if (character === "'") {
+      if (inSingleQuotedString && sql[index + 1] === "'") {
+        current += sql[index + 1];
+        index += 1;
+        continue;
+      }
+
+      inSingleQuotedString = !inSingleQuotedString;
+      continue;
+    }
+
+    if (!inSingleQuotedString && character === ";") {
+      const statement = current.trim();
+      if (statement.length > 0) {
+        statements.push(statement);
+      }
+      current = "";
+    }
+  }
+
+  const trailingStatement = current.trim();
+  if (trailingStatement.length > 0) {
+    statements.push(trailingStatement);
+  }
+
+  return statements;
+}
+
+function buildPendingAudit(statements: string[]): StatementAudit[] {
+  return statements.map((statement, index) => ({
+    id: index + 1,
+    statement,
+    status: 'pending',
+  }));
+}
+
+function isTransactionStatement(statement: string): boolean {
+  return /^BEGIN\b/i.test(statement) || /^COMMIT\b/i.test(statement);
+}
+
+function isTransactionBatch(statements: string[]): boolean {
+  if (statements.length < 3) {
+    return false;
+  }
+
+  const first = statements[0]?.trim();
+  const last = statements[statements.length - 1]?.trim();
+  return /^BEGIN\b/i.test(first) && /^COMMIT\b/i.test(last);
+}
+
+function ExecutionSparkline({ active }: { active: boolean }) {
+  return (
+    <div className="flex items-end gap-1">
+      {[12, 24, 18, 28].map((height, index) => (
+        <span
+          key={`${height}-${index}`}
+          className={cn(
+            'w-1.5 rounded-full bg-sky-500/75 transition-opacity duration-300',
+            active ? 'animate-pulse opacity-100' : 'opacity-35',
+          )}
+          style={{
+            height,
+            animationDelay: `${index * 120}ms`,
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export function SqlPreviewDialog({ open, options, onClose }: SqlPreviewDialogProps) {
@@ -96,8 +177,29 @@ export function SqlPreviewDialog({ open, options, onClose }: SqlPreviewDialogPro
   const [progress, setProgress] = useState(0);
   const [isReadOnly, setIsReadOnly] = useState(false);
   const [auditLog, setAuditLog] = useState<StatementAudit[]>([]);
+  const [activeAuditIndex, setActiveAuditIndex] = useState<number | null>(null);
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const progressTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const auditTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const previewStatements = useMemo(() => {
+    if (options?.editable === false && options.statements && options.statements.length > 0) {
+      return options.statements;
+    }
+
+    return splitSqlStatements(sql);
+  }, [options?.editable, options?.statements, sql]);
+
+  const visibleAudit = useMemo(() => {
+    return auditLog.length > 0 ? auditLog : buildPendingAudit(previewStatements);
+  }, [auditLog, previewStatements]);
+
+  const statementCount = previewStatements.length;
+  const transactionBatch = useMemo(() => isTransactionBatch(previewStatements), [previewStatements]);
+  const mutationStatementCount = useMemo(
+    () => previewStatements.filter((statement) => !isTransactionStatement(statement)).length,
+    [previewStatements],
+  );
 
   // Sync SQL when options change
   useEffect(() => {
@@ -107,6 +209,7 @@ export function SqlPreviewDialog({ open, options, onClose }: SqlPreviewDialogPro
       setStatusMessage('');
       setProgress(0);
       setAuditLog([]);
+      setActiveAuditIndex(null);
       setIsReadOnly(options.editable === false);
       // Also update the editor directly if it's already mounted
       if (editorRef.current) {
@@ -132,6 +235,7 @@ export function SqlPreviewDialog({ open, options, onClose }: SqlPreviewDialogPro
   useEffect(() => {
     return () => {
       if (progressTimerRef.current) clearInterval(progressTimerRef.current);
+      if (auditTimerRef.current) clearInterval(auditTimerRef.current);
     };
   }, []);
 
@@ -158,95 +262,80 @@ export function SqlPreviewDialog({ open, options, onClose }: SqlPreviewDialogPro
     setProgress(complete ? 100 : 0);
   }, []);
 
-  /** Execute the SQL statements one-by-one and update audit log. */
+  const startAuditAnimation = useCallback((count: number) => {
+    if (count === 0) {
+      setActiveAuditIndex(null);
+      return;
+    }
+
+    setActiveAuditIndex(0);
+
+    if (auditTimerRef.current) {
+      clearInterval(auditTimerRef.current);
+    }
+
+    auditTimerRef.current = setInterval(() => {
+      setActiveAuditIndex((current) => {
+        if (current === null) {
+          return 0;
+        }
+        return (current + 1) % count;
+      });
+    }, 650);
+  }, []);
+
+  const stopAuditAnimation = useCallback(() => {
+    if (auditTimerRef.current) {
+      clearInterval(auditTimerRef.current);
+      auditTimerRef.current = null;
+    }
+
+    setActiveAuditIndex(null);
+  }, []);
+
+  /** Execute the SQL batch exactly as displayed and update the audit UI. */
   const handleCommit = useCallback(async () => {
     if (!options?.onExecute || !sql.trim()) {
       console.warn('[SqlPreviewDialog] Cannot commit - no onExecute or empty SQL');
       return;
     }
 
-    // Parse statements (split by newline, filter empty/comments)
-    const statements = sql
-      .split('\n')
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0 && !s.startsWith('--'));
-
-    if (statements.length === 0) {
+    if (previewStatements.length === 0) {
       setStatusMessage('No statements to execute');
       return;
     }
 
-    // Initialize audit log with all statements as 'pending'
-    const initialAudit: StatementAudit[] = statements.map((stmt, idx) => ({
-      id: idx + 1,
-      statement: stmt,
-      status: 'pending',
-    }));
+    const initialAudit = buildPendingAudit(previewStatements);
     setAuditLog(initialAudit);
 
     setStatus('executing');
-    setStatusMessage('Executing statements...');
+    setStatusMessage(transactionBatch ? 'Executing transaction batch...' : 'Executing statements...');
     setIsReadOnly(true);
     startProgress();
+    startAuditAnimation(previewStatements.length);
 
-    let successCount = 0;
-    let failedCount = 0;
+    const startTime = performance.now();
 
-    // Execute each statement sequentially
-    for (let i = 0; i < statements.length; i++) {
-      const stmt = statements[i];
-      const startTime = performance.now();
+    try {
+      await options.onExecute(sql);
+      const timeTook = Math.round(performance.now() - startTime);
 
-      // Update audit: mark as running
-      setAuditLog((prev) =>
-        prev.map((item) =>
-          item.id === i + 1 ? { ...item, status: 'running' as StatementStatus } : item
-        )
+      stopAuditAnimation();
+      stopProgress(true);
+      setAuditLog(
+        initialAudit.map((item) => ({
+          ...item,
+          status: 'success',
+          timeTook,
+        })),
+      );
+      setStatus('success');
+      setStatusMessage(
+        transactionBatch
+          ? `Transaction committed across ${mutationStatementCount} change statement${mutationStatementCount === 1 ? '' : 's'}`
+          : `Executed ${statementCount} statement${statementCount === 1 ? '' : 's'} successfully`,
       );
 
-      try {
-        await options.onExecute(stmt);
-        const endTime = performance.now();
-        const timeTook = Math.round(endTime - startTime);
-
-        // Update audit: mark as success
-        setAuditLog((prev) =>
-          prev.map((item) =>
-            item.id === i + 1
-              ? { ...item, status: 'success' as StatementStatus, timeTook }
-              : item
-          )
-        );
-        successCount++;
-      } catch (err) {
-        const endTime = performance.now();
-        const timeTook = Math.round(endTime - startTime);
-        const errorMsg = err instanceof Error ? err.message : 'Unknown error';
-        const formattedError = formatAuditErrorMessage(errorMsg);
-
-        // Update audit: mark as failed
-        setAuditLog((prev) =>
-          prev.map((item) =>
-            item.id === i + 1
-              ? { ...item, status: 'failed' as StatementStatus, timeTook, error: formattedError }
-              : item
-          )
-        );
-        failedCount++;
-      }
-
-      // Update progress
-      const progressPercent = ((i + 1) / statements.length) * 100;
-      setProgress(progressPercent);
-    }
-
-    stopProgress(true);
-
-    // Update final status
-    if (failedCount === 0) {
-      setStatus('success');
-      setStatusMessage(`All ${successCount} statement(s) executed successfully`);
-      // Call onComplete callback if all succeeded
       if (options.onComplete) {
         try {
           await options.onComplete();
@@ -254,16 +343,39 @@ export function SqlPreviewDialog({ open, options, onClose }: SqlPreviewDialogPro
           console.error('[SqlPreviewDialog] onComplete callback failed:', err);
         }
       }
-    } else if (successCount === 0) {
+    } catch (err) {
+      const timeTook = Math.round(performance.now() - startTime);
+      const errorMsg = err instanceof Error ? err.message : 'Unknown error';
+      const formattedError = formatAuditErrorMessage(errorMsg);
+      const errorIndex = previewStatements.findIndex((statement) => !isTransactionStatement(statement));
+
+      stopAuditAnimation();
+      stopProgress(false);
+      setAuditLog(
+        initialAudit.map((item, index) => ({
+          ...item,
+          status: 'failed',
+          timeTook,
+          error: index === (errorIndex >= 0 ? errorIndex : 0) ? formattedError : undefined,
+        })),
+      );
       setStatus('error');
-      setStatusMessage(`All ${failedCount} statement(s) failed`);
-    } else {
-      setStatus('error');
-      setStatusMessage(`${successCount} succeeded, ${failedCount} failed`);
+      setStatusMessage(transactionBatch ? 'Transaction failed and was rolled back' : 'Execution failed');
     }
 
-    // Keep dialog open so user can see audit log - don't auto-close
-  }, [options, sql, startProgress, stopProgress]);
+    // Keep dialog open so user can see the execution summary.
+  }, [
+    mutationStatementCount,
+    options,
+    previewStatements,
+    sql,
+    startAuditAnimation,
+    startProgress,
+    statementCount,
+    stopAuditAnimation,
+    stopProgress,
+    transactionBatch,
+  ]);
 
   /** Discard all changes and close. */
   const handleDiscard = useCallback(() => {
@@ -282,17 +394,10 @@ export function SqlPreviewDialog({ open, options, onClose }: SqlPreviewDialogPro
     return stmt.substring(0, maxLen) + '...';
   };
 
-  // Count statements for display
-  const statementCount = sql
-    .split('\n')
-    .filter((line) => line.trim().length > 0 && !line.trim().startsWith('--'))
-    .length;
-
   return (
     <Dialog open={open} onOpenChange={(isOpen) => { if (!isOpen) handleCancel(); }}>
-      <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col gap-0 p-0 overflow-hidden">
-        {/* ── Header ─────────────────────────────────────────────────── */}
-        <DialogHeader className="px-6 pt-6 pb-3">
+      <DialogContent className="flex h-[85vh] max-h-[90vh] max-w-5xl flex-col gap-0 overflow-hidden p-0">
+        <DialogHeader className="border-b px-6 pb-4 pt-6">
           <DialogTitle className="text-lg">
             {options?.title ?? 'SQL Preview'}
           </DialogTitle>
@@ -301,162 +406,227 @@ export function SqlPreviewDialog({ open, options, onClose }: SqlPreviewDialogPro
               {options.description}
             </DialogDescription>
           )}
+          {!options?.description && (
+            <DialogDescription className="sr-only">
+              Review the SQL batch before committing it.
+            </DialogDescription>
+          )}
+
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+            <span className="rounded-full bg-muted px-2.5 py-1 text-muted-foreground">
+              {statementCount} statement{statementCount === 1 ? '' : 's'}
+            </span>
+            <span className="rounded-full bg-muted px-2.5 py-1 text-muted-foreground">
+              {transactionBatch ? 'BEGIN / COMMIT transaction' : 'Single statement execution'}
+            </span>
+            <span
+              className={cn(
+                'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-medium',
+                status === 'idle' && 'bg-slate-200/70 text-slate-700',
+                status === 'executing' && 'bg-sky-100 text-sky-700',
+                status === 'success' && 'bg-emerald-100 text-emerald-700',
+                status === 'error' && 'bg-rose-100 text-rose-700',
+              )}
+            >
+              {status === 'executing' && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              {status === 'success' && <CheckCircle2 className="h-3.5 w-3.5" />}
+              {status === 'error' && <AlertCircle className="h-3.5 w-3.5" />}
+              {status === 'idle' ? 'Ready' : status === 'executing' ? 'Executing' : status === 'success' ? 'Committed' : 'Failed'}
+            </span>
+            {status === 'executing' && (
+              <span className="inline-flex items-center gap-2 text-sky-700">
+                <ExecutionSparkline active />
+                <span>{statusMessage}</span>
+              </span>
+            )}
+          </div>
         </DialogHeader>
 
-        {/* ── Progress bar ───────────────────────────────────────────── */}
-        {status === 'executing' && (
-          <div className="mx-6 h-1.5 bg-muted rounded-full overflow-hidden">
-            <div
-              className="h-full bg-blue-500 rounded-full transition-all duration-300 ease-out"
-              style={{ width: `${Math.min(progress, 100)}%` }}
-            />
-          </div>
-        )}
-        {status === 'success' && (
-          <div className="mx-6 h-1.5 bg-muted rounded-full overflow-hidden">
-            <div className="h-full bg-green-500 rounded-full w-full" />
-          </div>
-        )}
-        {status === 'error' && (
-          <div className="mx-6 h-1.5 bg-muted rounded-full overflow-hidden">
-            <div className="h-full bg-red-500 rounded-full w-full" />
-          </div>
-        )}
-
-        {/* ── SQL Editor ─────────────────────────────────────────────── */}
-        <div className="flex-1 min-h-[200px] max-h-[30vh] mx-6 mt-3 border rounded-md overflow-hidden">
-          {sql ? (
-            <>
-              {/* Temporary: Use textarea to verify data flow works */}
-              <textarea
-                value={sql}
-                onChange={(e) => {
-                  if (!isReadOnly) setSql(e.target.value);
-                }}
-                readOnly={isReadOnly}
-                className="w-full h-full p-4 font-mono text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="SQL will appear here..."
+        <div className="px-6 py-4">
+          <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+            {status === 'executing' && (
+              <div
+                className="h-full rounded-full bg-[linear-gradient(90deg,_rgba(14,165,233,0.65),_rgba(56,189,248,1),_rgba(14,165,233,0.65))] transition-all duration-300 ease-out"
+                style={{ width: `${Math.min(progress, 100)}%` }}
               />
-              {/* Monaco Editor - temporarily disabled for debugging
-              <MonacoEditor
-                key={sql.substring(0, 50)}
-                height="100%"
-                language="sql"
-                theme="vs-light"
-                value={sql}
-                onChange={(value) => {
-                  if (!isReadOnly) setSql(value ?? '');
-                }}
-                onMount={(editor) => {
-                  editorRef.current = editor;
-                  if (sql) {
-                    editor.setValue(sql);
-                  }
-                }}
-                options={{
-                  readOnly: isReadOnly,
-                  minimap: { enabled: false },
-                  fontSize: 13,
-                  lineNumbers: 'on',
-                  scrollBeyondLastLine: false,
-                  automaticLayout: true,
-                  tabSize: 2,
-                  wordWrap: 'on',
-                  padding: { top: 8, bottom: 8 },
-                  ...(isReadOnly ? { domReadOnly: true } : {}),
-                }}
-              />
-              */}
-            </>
-          ) : (
-            <div className="flex items-center justify-center h-full text-muted-foreground">
-              <p>No SQL to display</p>
-            </div>
-          )}
+            )}
+            {status === 'success' && (
+              <div className="h-full w-full rounded-full bg-emerald-500" />
+            )}
+            {status === 'error' && (
+              <div className="h-full w-full rounded-full bg-rose-500" />
+            )}
+            {status === 'idle' && (
+              <div className="h-full w-[18%] rounded-full bg-slate-300/70" />
+            )}
+          </div>
         </div>
 
-        {/* ── Audit Log ──────────────────────────────────────────────── */}
-        {auditLog.length > 0 && (
-          <div className="mx-6 mt-4 border rounded-md overflow-hidden">
-            <div className="bg-muted px-3 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-              Execution Audit
-            </div>
-            <div className="max-h-[200px] overflow-y-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-muted/50 sticky top-0">
-                  <tr className="text-left">
-                    <th className="px-3 py-2 w-12 font-medium text-muted-foreground">#</th>
-                    <th className="px-3 py-2 font-medium text-muted-foreground">Statement</th>
-                    <th className="px-3 py-2 w-24 font-medium text-muted-foreground">Status</th>
-                    <th className="px-3 py-2 w-20 text-right font-medium text-muted-foreground">Time</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {auditLog.map((item) => (
-                    <tr
-                      key={item.id}
-                      className={cn(
-                        'hover:bg-muted/30 transition-colors',
-                        item.status === 'running' && 'bg-blue-50',
-                        item.status === 'success' && 'bg-green-50',
-                        item.status === 'failed' && 'bg-red-50',
-                      )}
-                    >
-                      <td className="px-3 py-2 text-muted-foreground font-mono text-xs">
-                        {item.id}
-                      </td>
-                      <td className="px-3 py-2 font-mono text-xs">
-                        <span
-                          title={item.statement}
-                          className="cursor-help"
-                        >
-                          {truncateStatement(item.statement, 60)}
-                        </span>
-                        {item.error && (
-                          <div className="mt-1 rounded-sm border border-red-200 bg-red-50 px-2 py-1">
-                            <div className="text-[11px] font-medium uppercase tracking-wide text-red-700">
-                              Error
-                            </div>
-                            <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-[11px] leading-4 text-red-700">
-                              {item.error}
-                            </pre>
-                          </div>
-                        )}
-                      </td>
-                      <td className="px-3 py-2">
-                        <span
-                          className={cn(
-                            'inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium',
-                            item.status === 'pending' && 'bg-gray-100 text-gray-700',
-                            item.status === 'running' && 'bg-blue-100 text-blue-700',
-                            item.status === 'success' && 'bg-green-100 text-green-700',
-                            item.status === 'failed' && 'bg-red-100 text-red-700',
-                          )}
-                        >
-                          {item.status === 'running' && <Loader2 className="h-3 w-3 animate-spin" />}
-                          {item.status === 'success' && <CheckCircle2 className="h-3 w-3" />}
-                          {item.status === 'failed' && <AlertCircle className="h-3 w-3" />}
-                          {item.status.charAt(0).toUpperCase() + item.status.slice(1)}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2 text-right font-mono text-xs text-muted-foreground">
-                        {item.timeTook !== undefined ? `${item.timeTook}ms` : '—'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
+        <div className="min-h-0 flex-1 px-6 pb-4">
+          <ResizablePanelGroup orientation="vertical" className="min-h-0 flex-1">
+            <ResizablePanel defaultSize={50} minSize={20} className="min-h-0 overflow-hidden">
+              <section className="flex h-full min-h-0 flex-col">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-medium text-foreground">SQL Preview</p>
+                    <p className="text-xs text-muted-foreground">
+                      {isReadOnly ? 'Read-only Monaco preview for this commit.' : 'Edit the SQL before sending it.'}
+                    </p>
+                  </div>
+                  <span className="rounded-full border border-border bg-background px-2.5 py-1 text-xs text-muted-foreground">
+                    {mutationStatementCount} change unit{mutationStatementCount === 1 ? '' : 's'}
+                  </span>
+                </div>
+
+                <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-border bg-background">
+                  {sql ? (
+                    <Editor
+                      height="100%"
+                      language="sql"
+                      theme="vs-light"
+                      value={sql}
+                      onChange={(value) => {
+                        if (!isReadOnly) {
+                          setSql(value ?? '');
+                        }
+                      }}
+                      onMount={(instance) => {
+                        editorRef.current = instance;
+                      }}
+                      options={{
+                        readOnly: isReadOnly,
+                        domReadOnly: isReadOnly,
+                        minimap: { enabled: false },
+                        fontSize: 13,
+                        lineNumbers: 'on',
+                        scrollBeyondLastLine: false,
+                        automaticLayout: true,
+                        tabSize: 2,
+                        wordWrap: 'on',
+                        padding: { top: 16, bottom: 16 },
+                        overviewRulerBorder: false,
+                        renderLineHighlight: 'gutter',
+                        scrollbar: {
+                          verticalScrollbarSize: 10,
+                          horizontalScrollbarSize: 10,
+                        },
+                      }}
+                    />
+                  ) : (
+                    <div className="flex h-full items-center justify-center text-muted-foreground">
+                      <p>No SQL to display</p>
+                    </div>
+                  )}
+                </div>
+              </section>
+            </ResizablePanel>
+
+            <ResizableHandle withHandle className="my-3" />
+
+            <ResizablePanel defaultSize={50} minSize={20} className="min-h-0 overflow-hidden">
+              <section className="flex h-full min-h-0 flex-col">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-medium text-foreground">Execution Log</p>
+                    <p className="text-xs text-muted-foreground">
+                      {transactionBatch
+                        ? 'The full batch is sent once; the rows below show the statements included in that transaction.'
+                        : 'Statement audit for this execution.'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-border bg-background">
+                  <div className="h-full overflow-auto">
+                    <table className="w-full text-sm">
+                      <thead className="sticky top-0 z-10 bg-muted/80 text-left backdrop-blur">
+                        <tr>
+                          <th className="w-14 px-3 py-2 font-medium text-muted-foreground">#</th>
+                          <th className="px-3 py-2 font-medium text-muted-foreground">Statement</th>
+                          <th className="w-44 px-3 py-2 font-medium text-muted-foreground">Status</th>
+                          <th className="w-24 px-3 py-2 text-right font-medium text-muted-foreground">Time</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y">
+                        {visibleAudit.map((item, index) => {
+                          const isAnimated = status === 'executing' && activeAuditIndex === index;
+                          const badgeStatus: StatementStatus = item.status === 'pending' && isAnimated ? 'running' : item.status;
+
+                          return (
+                            <tr
+                              key={item.id}
+                              className={cn(
+                                'transition-colors',
+                                badgeStatus === 'running' && 'bg-sky-50/80',
+                                item.status === 'success' && 'bg-emerald-50/70',
+                                item.status === 'failed' && 'bg-rose-50/70',
+                              )}
+                            >
+                              <td className="px-3 py-3 align-top font-mono text-xs text-muted-foreground">
+                                #{item.id}
+                              </td>
+                              <td className="px-3 py-3 align-top">
+                                <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-5 text-foreground">
+                                  {truncateStatement(item.statement, 180)}
+                                </pre>
+                                {item.error && (
+                                  <div className="mt-2 rounded-md border border-rose-200 bg-rose-50 px-2 py-2">
+                                    <div className="text-[11px] font-medium uppercase tracking-wide text-rose-700">
+                                      Error
+                                    </div>
+                                    <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-[11px] leading-4 text-rose-700">
+                                      {item.error}
+                                    </pre>
+                                  </div>
+                                )}
+                              </td>
+                              <td className="px-3 py-3 align-top">
+                                <span
+                                  className={cn(
+                                    'inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium',
+                                    badgeStatus === 'pending' && 'bg-gray-100 text-gray-700',
+                                    badgeStatus === 'running' && 'bg-sky-100 text-sky-700',
+                                    item.status === 'success' && 'bg-emerald-100 text-emerald-700',
+                                    item.status === 'failed' && 'bg-rose-100 text-rose-700',
+                                  )}
+                                >
+                                  {badgeStatus === 'running' && <Loader2 className="h-3 w-3 animate-spin" />}
+                                  {item.status === 'success' && <CheckCircle2 className="h-3 w-3" />}
+                                  {item.status === 'failed' && <AlertCircle className="h-3 w-3" />}
+                                  {badgeStatus === 'pending' && 'Queued'}
+                                  {badgeStatus === 'running' && 'Running'}
+                                  {item.status === 'success' && (transactionBatch ? 'Committed' : 'Done')}
+                                  {item.status === 'failed' && (transactionBatch ? 'Rolled back' : 'Failed')}
+                                </span>
+                                {isAnimated && (
+                                  <div className="mt-2 flex items-center gap-2 text-[11px] text-sky-700">
+                                    <ExecutionSparkline active />
+                                    <span>Running</span>
+                                  </div>
+                                )}
+                              </td>
+                              <td className="px-3 py-3 text-right align-top font-mono text-xs text-muted-foreground">
+                                {item.timeTook !== undefined ? `${item.timeTook}ms` : '--'}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </section>
+            </ResizablePanel>
+          </ResizablePanelGroup>
+        </div>
 
         {/* ── Footer: Status + Actions ───────────────────────────────── */}
-        <div className="px-6 py-4 border-t flex items-center justify-between gap-4">
+        <div className="flex shrink-0 items-center justify-between gap-4 border-t bg-background px-6 py-4">
           {/* Left: status indicator */}
-          <div className="flex items-center gap-2 text-sm min-w-0 flex-1">
+          <div className="flex min-w-0 flex-1 items-center gap-2 text-sm">
             {status === 'idle' && (
               <span className="text-muted-foreground">
-                {statementCount} statement{statementCount !== 1 ? 's' : ''} ready
+                {statementCount} statement{statementCount !== 1 ? 's' : ''} ready to review
               </span>
             )}
             {status === 'executing' && (
@@ -480,7 +650,7 @@ export function SqlPreviewDialog({ open, options, onClose }: SqlPreviewDialogPro
           </div>
 
           {/* Right: action buttons */}
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex shrink-0 items-center gap-2">
             {options?.onDiscard && status !== 'executing' && (
               <Button
                 size="sm"

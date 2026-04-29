@@ -1,29 +1,30 @@
 #![allow(dead_code, unused_imports)]
 extern crate kalam_cli;
 #[cfg(unix)]
+use std::os::unix::io::AsRawFd;
+use std::{
+    collections::{HashMap, HashSet, VecDeque},
+    fs::OpenOptions,
+    io::{BufRead, BufReader},
+    net::TcpListener,
+    path::{Path, PathBuf},
+    process::{Child, Command, Stdio},
+    sync::{mpsc as std_mpsc, Mutex, OnceLock},
+    thread,
+    time::{Duration, Instant},
+};
+
+#[cfg(unix)]
 use libc::{flock, LOCK_EX, LOCK_UN};
 use rand::{distr::Alphanumeric, RngExt};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::fs::OpenOptions;
-use std::io::{BufRead, BufReader};
-use std::net::TcpListener;
-#[cfg(unix)]
-use std::os::unix::io::AsRawFd;
-use std::path::Path;
-use std::path::PathBuf;
-use std::process::Command;
-use std::process::{Child, Stdio};
-use std::sync::mpsc as std_mpsc;
-use std::sync::{Mutex, OnceLock};
-use std::thread;
-use std::time::Duration;
-use std::time::Instant;
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
-use tokio::runtime::{Handle, Runtime};
-use tokio::sync::Mutex as TokioMutex;
+use tokio::{
+    runtime::{Handle, Runtime},
+    sync::Mutex as TokioMutex,
+};
 
 // Load environment variables from .env file at test startup
 fn load_env_file() {
@@ -61,20 +62,22 @@ fn shared_token_cache_lock_path() -> PathBuf {
 }
 
 // Re-export commonly used types for credential tests
-pub use kalam_cli::FileCredentialStore;
-pub use kalam_client::client::KalamLinkClientBuilder;
-pub use kalam_client::credentials::{CredentialStore, Credentials};
-pub use kalam_client::{AuthProvider, KalamLinkClient, KalamLinkTimeouts};
-pub use tempfile::TempDir;
-
 #[cfg(unix)]
 pub use std::os::unix::fs::PermissionsExt;
+
+pub use kalam_cli::FileCredentialStore;
+pub use kalam_client::{
+    client::KalamLinkClientBuilder,
+    credentials::{CredentialStore, Credentials},
+    AuthProvider, KalamLinkClient, KalamLinkTimeouts,
+};
+pub use tempfile::TempDir;
 
 static SERVER_URL: OnceLock<String> = OnceLock::new();
 static ROOT_PASSWORD: OnceLock<String> = OnceLock::new();
 static ADMIN_PASSWORD: OnceLock<String> = OnceLock::new();
 static TEST_CONTEXT: OnceLock<TestContext> = OnceLock::new();
-static LAST_LEADER_URL: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+static LAST_LEADER_URL: OnceLock<Mutex<Option<CachedLeaderUrl>>> = OnceLock::new();
 static AUTO_TEST_SERVER: OnceLock<Mutex<Option<AutoTestServer>>> = OnceLock::new();
 static AUTO_TEST_SERVER_STATE_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
 static AUTO_TEST_RUNTIME: OnceLock<&'static Runtime> = OnceLock::new();
@@ -85,6 +88,28 @@ static LOGIN_MUTEX: OnceLock<TokioMutex<()>> = OnceLock::new();
 static TOKEN_FILE_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
 static TEST_CLI_HOME_DIR: OnceLock<PathBuf> = OnceLock::new();
 static TEST_CLI_CREDENTIALS_PATH: OnceLock<PathBuf> = OnceLock::new();
+static SHARED_HTTP_CLIENT: OnceLock<Client> = OnceLock::new();
+
+const LEADER_CACHE_TTL: Duration = Duration::from_secs(5);
+
+pub fn shared_http_client() -> Client {
+    SHARED_HTTP_CLIENT
+        .get_or_init(|| {
+            Client::builder()
+                .pool_max_idle_per_host(512)
+                .pool_idle_timeout(Duration::from_secs(90))
+                .tcp_nodelay(true)
+                .build()
+                .expect("failed to build shared test HTTP client")
+        })
+        .clone()
+}
+
+#[derive(Clone, Debug)]
+struct CachedLeaderUrl {
+    url: String,
+    confirmed_at: Instant,
+}
 static AUTO_TEST_SERVER_EXIT_CLEANUP_REGISTERED: OnceLock<()> = OnceLock::new();
 
 struct TestAuthManager {
@@ -179,7 +204,7 @@ impl TestAuthManager {
         &self,
         base_url: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let client = Client::new();
+        let client = shared_http_client();
         let status_response = client.get(format!("{}/v1/api/auth/status", base_url)).send().await;
 
         let Ok(status_response) = status_response else {
@@ -223,7 +248,7 @@ impl TestAuthManager {
         username: &str,
         password: &str,
     ) -> Result<String, Box<dyn std::error::Error>> {
-        let client = Client::new();
+        let client = shared_http_client();
         let mut attempt: u32 = 0;
         let max_attempts: u32 = 40;
         let retry_delay = Duration::from_millis(250);
@@ -317,7 +342,7 @@ impl TestAuthManager {
         invalidate_cached_token_for_credentials(base_url, admin_username(), admin_password());
 
         let root_token = self.token_for_url_cached(base_url, "root", root_password).await?;
-        let client = Client::new();
+        let client = shared_http_client();
         let exists_response = client
             .post(format!("{}/v1/api/sql", base_url))
             .bearer_auth(&root_token)
@@ -553,6 +578,7 @@ impl TestAuthManager {
             return KalamLinkClient::builder()
                 .base_url(base_url)
                 .auth(AuthProvider::none())
+                .http_pool_max_idle_per_host(256)
                 .timeouts(
                     KalamLinkTimeouts::builder()
                         .connection_timeout_secs(5)
@@ -571,6 +597,7 @@ impl TestAuthManager {
         KalamLinkClient::builder()
             .base_url(base_url)
             .auth(auth)
+            .http_pool_max_idle_per_host(256)
             .timeouts(
                 KalamLinkTimeouts::builder()
                     .connection_timeout_secs(5)
@@ -725,8 +752,7 @@ fn with_auto_test_server_state_lock<R>(
     #[cfg(unix)]
     {
         let lock_path = auto_test_server_state_lock_path();
-        let lock_file =
-            OpenOptions::new().create(true).read(true).write(true).open(&lock_path)?;
+        let lock_file = OpenOptions::new().create(true).read(true).write(true).open(&lock_path)?;
 
         unsafe {
             if flock(lock_file.as_raw_fd(), LOCK_EX) != 0 {
@@ -756,9 +782,8 @@ fn read_auto_test_server_state_locked(
         return Ok(None);
     }
 
-    let state = serde_json::from_str::<SharedAutoTestServerState>(&std::fs::read_to_string(
-        &state_path,
-    )?)?;
+    let state =
+        serde_json::from_str::<SharedAutoTestServerState>(&std::fs::read_to_string(&state_path)?)?;
     Ok(Some(state))
 }
 
@@ -766,10 +791,7 @@ fn write_auto_test_server_state_locked(
     state: &SharedAutoTestServerState,
 ) -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(auto_test_server_state_root())?;
-    std::fs::write(
-        auto_test_server_state_file_path(),
-        serde_json::to_vec(state)?,
-    )?;
+    std::fs::write(auto_test_server_state_file_path(), serde_json::to_vec(state)?)?;
     Ok(())
 }
 
@@ -791,8 +813,7 @@ fn pid_is_alive(pid: u32) -> bool {
     guard.process(pid).is_some()
 }
 
-fn remove_stale_auto_test_server_leases_locked(
-) -> Result<Vec<u32>, Box<dyn std::error::Error>> {
+fn remove_stale_auto_test_server_leases_locked() -> Result<Vec<u32>, Box<dyn std::error::Error>> {
     let leases_dir = auto_test_server_leases_dir();
     std::fs::create_dir_all(&leases_dir)?;
 
@@ -830,10 +851,7 @@ fn register_auto_test_server_lease_locked(pid: u32) -> Result<(), Box<dyn std::e
 fn take_local_auto_test_server(pid: u32) -> Option<AutoTestServer> {
     let server_mutex = AUTO_TEST_SERVER.get()?;
     let mut guard = server_mutex.lock().ok()?;
-    if guard
-        .as_ref()
-        .is_some_and(|server| server.pid == pid && server.child.is_some())
-    {
+    if guard.as_ref().is_some_and(|server| server.pid == pid && server.child.is_some()) {
         guard.take()
     } else {
         None
@@ -868,9 +886,7 @@ fn terminate_auto_test_server_process(pid: u32) {
 
     #[cfg(windows)]
     {
-        let _ = Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/T", "/F"])
-            .status();
+        let _ = Command::new("taskkill").args(["/PID", &pid.to_string(), "/T", "/F"]).status();
     }
 }
 
@@ -1014,6 +1030,49 @@ fn wait_for_url_reachable(url: &str, timeout: Duration) -> bool {
     url_reachable(url)
 }
 
+fn reachable_cluster_urls(urls: &[String]) -> Vec<String> {
+    urls.iter().filter(|url| url_reachable(url)).cloned().collect()
+}
+
+fn wait_for_reachable_cluster_urls(urls: &[String], timeout: Duration) -> Vec<String> {
+    let start = Instant::now();
+    loop {
+        let reachable = reachable_cluster_urls(urls);
+        if !reachable.is_empty() || start.elapsed() >= timeout {
+            return reachable;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+fn cluster_node_ready_for_sql(url: &str) -> bool {
+    if !url_reachable(url) {
+        return false;
+    }
+
+    let auth_ready = server_requires_auth_for_url(url).is_some();
+    if !auth_ready {
+        return false;
+    }
+
+    get_access_token_for_url_sync(url, default_username(), default_password()).is_some()
+}
+
+fn wait_for_sql_ready_cluster_urls(urls: &[String], timeout: Duration) -> Vec<String> {
+    let start = Instant::now();
+
+    loop {
+        let ready: Vec<String> =
+            urls.iter().filter(|url| cluster_node_ready_for_sql(url)).cloned().collect();
+
+        if !ready.is_empty() || start.elapsed() >= timeout {
+            return ready;
+        }
+
+        std::thread::sleep(Duration::from_millis(150));
+    }
+}
+
 fn ensure_auto_test_server() -> Option<(String, PathBuf)> {
     let server_mutex = AUTO_TEST_SERVER.get_or_init(|| Mutex::new(None));
     {
@@ -1056,9 +1115,10 @@ fn ensure_auto_test_server() -> Option<(String, PathBuf)> {
                         let (tx, rx) = std::sync::mpsc::channel();
                         std::thread::spawn(move || {
                             let runtime = AUTO_TEST_RUNTIME.get_or_init(|| {
-                                Box::leak(Box::new(Runtime::new().expect(
-                                    "Failed to create auto test server runtime",
-                                )))
+                                Box::leak(Box::new(
+                                    Runtime::new()
+                                        .expect("Failed to create auto test server runtime"),
+                                ))
                             });
                             let result = (*runtime)
                                 .block_on(start_local_test_server())
@@ -1148,7 +1208,8 @@ fn kalamdb_server_bin() -> Result<PathBuf, Box<dyn std::error::Error>> {
         Ok(path)
     } else {
         Err(format!(
-            "kalamdb-server binary not found at {}. Build it with `cargo build -p kalamdb-server --bin kalamdb-server`.",
+            "kalamdb-server binary not found at {}. Build it with `cargo build -p kalamdb-server \
+             --bin kalamdb-server`.",
             path.display()
         )
         .into())
@@ -1259,32 +1320,79 @@ fn parse_test_urls() -> Option<Vec<String>> {
     }
 }
 
+fn configured_cluster_urls_from_env() -> Vec<String> {
+    load_env_file();
+
+    parse_test_urls()
+        .or_else(|| {
+            std::env::var("KALAMDB_CLUSTER_URLS").ok().map(|raw| {
+                raw.split(',')
+                    .map(|url| url.trim().to_string())
+                    .filter(|url| !url.is_empty())
+                    .collect()
+            })
+        })
+        .filter(|urls: &Vec<String>| !urls.is_empty())
+        .unwrap_or_else(|| {
+            vec![
+                "http://127.0.0.1:8081".to_string(),
+                "http://127.0.0.1:8082".to_string(),
+                "http://127.0.0.1:8083".to_string(),
+            ]
+        })
+}
+
 fn ensure_server_ready_sync(base_url: &str) {
     let server_type = server_type_from_env();
-
-    if !url_reachable(base_url) {
-        // If explicitly configured to use a running/cluster server, fail loudly
-        if matches!(server_type, Some(ServerType::Running) | Some(ServerType::Cluster)) {
+    let ready_url = if matches!(server_type, Some(ServerType::Cluster)) {
+        let cluster_urls = configured_cluster_urls_from_env();
+        let reachable = wait_for_reachable_cluster_urls(&cluster_urls, Duration::from_secs(5));
+        if reachable.is_empty() {
             panic!(
                 "\n\n\
                 ╔══════════════════════════════════════════════════════════════════╗\n\
-                ║              SERVER NOT REACHABLE                                ║\n\
+                ║                 CLUSTER NODES NOT REACHABLE                      ║\n\
                 ╠══════════════════════════════════════════════════════════════════╣\n\
-                ║  KALAMDB_SERVER_TYPE={:?} but server is NOT reachable             ║\n\
-                ║  at: {}\n\
+                ║  KALAMDB_SERVER_TYPE=Cluster but no configured node is          ║\n\
+                ║  reachable within 5s.                                           ║\n\
                 ║                                                                  ║\n\
-                ║  Start the server:  cd backend && cargo run --release            ║\n\
-                ║  Or set KALAMDB_SERVER_TYPE=fresh to auto-start a test server    ║\n\
+                ║  Configured cluster URLs:                                        ║\n\
+                ║    {:?}                                                          ║\n\
+                ║                                                                  ║\n\
+                ║  Start/check the cluster: ./scripts/cluster.sh status           ║\n\
                 ╚══════════════════════════════════════════════════════════════════╝\n",
-                server_type.unwrap(),
-                base_url
+                cluster_urls
             );
         }
-        return;
-    }
+
+        reachable[0].clone()
+    } else {
+        if !wait_for_url_reachable(base_url, Duration::from_secs(2)) {
+            // If explicitly configured to use a running server, fail loudly.
+            if matches!(server_type, Some(ServerType::Running)) {
+                panic!(
+                    "\n\n\
+                    ╔══════════════════════════════════════════════════════════════════╗\n\
+                    ║              SERVER NOT REACHABLE                                ║\n\
+                    ╠══════════════════════════════════════════════════════════════════╣\n\
+                    ║  KALAMDB_SERVER_TYPE={:?} but server is NOT reachable             ║\n\
+                    ║  at: {}\n\
+                    ║                                                                  ║\n\
+                    ║  Start the server:  cd backend && cargo run --release            ║\n\
+                    ║  Or set KALAMDB_SERVER_TYPE=fresh to auto-start a test server    ║\n\
+                    ╚══════════════════════════════════════════════════════════════════╝\n",
+                    server_type.unwrap(),
+                    base_url
+                );
+            }
+            return;
+        }
+
+        base_url.to_string()
+    };
 
     if tokio::runtime::Handle::try_current().is_ok() {
-        let base_url_owned = base_url.to_string();
+        let base_url_owned = ready_url.clone();
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let runtime = match Runtime::new() {
@@ -1294,9 +1402,12 @@ fn ensure_server_ready_sync(base_url: &str) {
                     return;
                 },
             };
-            let result = runtime
-                .block_on(test_auth_manager().ensure_ready(&base_url_owned))
-                .map_err(|err| err.to_string());
+            let result = runtime.block_on(async {
+                test_auth_manager()
+                    .ensure_ready(&base_url_owned)
+                    .await
+                    .map_err(|err| err.to_string())
+            });
             let _ = tx.send(result);
         });
         match rx.recv_timeout(Duration::from_secs(30)) {
@@ -1343,18 +1454,33 @@ fn sql_body_is_self_leader(body: &serde_json::Value) -> Option<bool> {
     Some(json_value_is_true(&extracted))
 }
 
-fn leader_cache() -> &'static Mutex<Option<String>> {
+fn leader_cache() -> &'static Mutex<Option<CachedLeaderUrl>> {
     LAST_LEADER_URL.get_or_init(|| Mutex::new(None))
 }
 
 fn cache_leader_url(url: &str) {
     if let Ok(mut guard) = leader_cache().lock() {
-        *guard = Some(url.to_string());
+        *guard = Some(CachedLeaderUrl {
+            url: url.to_string(),
+            confirmed_at: Instant::now(),
+        });
     }
 }
 
-fn cached_leader_url() -> Option<String> {
+fn clear_cached_leader_url() {
+    if let Ok(mut guard) = leader_cache().lock() {
+        *guard = None;
+    }
+}
+
+fn cached_leader_url() -> Option<CachedLeaderUrl> {
     leader_cache().lock().ok().and_then(|guard| guard.clone())
+}
+
+fn trace_leader_cache(message: impl AsRef<str>) {
+    if std::env::var_os("KALAMDB_TEST_CLIENT_TRACE").is_some() {
+        eprintln!("[TEST_LEADER] {}", message.as_ref());
+    }
 }
 
 fn extract_leader_url(message: &str) -> Option<String> {
@@ -1391,7 +1517,7 @@ fn detect_leader_url(urls: &[String], username: &str, password: &str) -> Option<
         };
 
         let leader = runtime.block_on(async move {
-            let client = Client::new();
+            let client = shared_http_client();
             let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
 
             for _ in 0..15 {
@@ -1535,13 +1661,13 @@ pub fn test_context() -> &'static TestContext {
                     eprintln!("✅ [TEST] Auto-started fresh server at {}", server_url);
                 } else {
                     panic!(
-                        "\n\n\
-                        ╔══════════════════════════════════════════════════════════════════╗\n\
-                        ║          FAILED TO START FRESH TEST SERVER                       ║\n\
-                        ╠══════════════════════════════════════════════════════════════════╣\n\
-                        ║  KALAMDB_SERVER_TYPE=fresh but could not auto-start server.      ║\n\
-                        ║  Build the server: cd backend && cargo build                    ║\n\
-                        ╚══════════════════════════════════════════════════════════════════╝\n"
+                        "\n\n╔══════════════════════════════════════════════════════════════════╗\\
+                         \
+                         n║          FAILED TO START FRESH TEST SERVER                       \
+                         ║\n╠══════════════════════════════════════════════════════════════════╣\\
+                         n║  KALAMDB_SERVER_TYPE=fresh but could not auto-start server.      ║\n║  \
+                         Build the server: cd backend && cargo build                    \
+                         ║\n╚══════════════════════════════════════════════════════════════════╝\n"
                     );
                 }
             },
@@ -1630,12 +1756,12 @@ pub fn test_context() -> &'static TestContext {
             })
         });
 
-        let (is_cluster, mut cluster_urls) = match server_type {
+        let (is_cluster, mut cluster_urls, cluster_urls_raw) = match server_type {
             Some(ServerType::Cluster) => {
                 // Cluster mode: probe cluster URLs to find healthy nodes
                 let cluster_default =
                     "http://127.0.0.1:8081,http://127.0.0.1:8082,http://127.0.0.1:8083";
-                let cluster_urls: Vec<String> =
+                let configured_cluster_urls: Vec<String> =
                     explicit_cluster_urls.clone().unwrap_or_else(|| {
                         cluster_default
                             .split(',')
@@ -1643,66 +1769,70 @@ pub fn test_context() -> &'static TestContext {
                             .filter(|url| !url.is_empty())
                             .collect()
                     });
-                let healthy: Vec<String> = cluster_urls
-                    .iter()
-                    .filter(|url| {
-                        let host_port = url
-                            .trim_start_matches("http://")
-                            .trim_start_matches("https://")
-                            .split('/')
-                            .next()
-                            .unwrap_or("127.0.0.1:8081");
-                        host_port_reachable(host_port)
-                    })
-                    .cloned()
-                    .collect();
-                if let Some(explicit_urls) = explicit_cluster_urls {
-                    if healthy.is_empty() {
-                        if let Some((auto_url, storage_dir)) = ensure_auto_test_server() {
-                            std::env::set_var("KALAMDB_SERVER_URL", &auto_url);
-                            if std::env::var("KALAMDB_ROOT_PASSWORD").is_err() {
-                                std::env::set_var(
-                                    "KALAMDB_ROOT_PASSWORD",
-                                    root_password_from_env(),
-                                );
-                            }
-                            std::env::set_var(
-                                "KALAMDB_STORAGE_DIR",
-                                storage_dir.to_string_lossy().to_string(),
-                            );
-                            server_url = auto_url.clone();
-                            eprintln!(
-                                "[TEST] Cluster URLs configured but unreachable; falling back to fresh auto-started server at {}",
-                                server_url
-                            );
-                            (false, vec![auto_url])
-                        } else {
-                            eprintln!(
-                                "[TEST] Cluster URLs configured but unreachable; falling back to single-node URL {}",
-                                server_url
-                            );
-                            (false, vec![server_url.clone()])
-                        }
-                    } else {
-                        (explicit_urls.len() > 1, explicit_urls)
-                    }
-                } else if !healthy.is_empty() {
-                    (true, healthy)
-                } else {
-                    (false, vec![server_url.clone()])
+                let reachable_cluster_urls = wait_for_reachable_cluster_urls(
+                    &configured_cluster_urls,
+                    Duration::from_secs(15),
+                );
+
+                if reachable_cluster_urls.is_empty() {
+                    panic!(
+                        "\n\n\
+                        ╔══════════════════════════════════════════════════════════════════╗\n\
+                        ║                 CLUSTER NODES NOT REACHABLE                      ║\n\
+                        ╠══════════════════════════════════════════════════════════════════╣\n\
+                        ║  Cluster mode was requested, but no configured cluster node      ║\n\
+                        ║  became reachable within 15s.                                    ║\n\
+                        ║                                                                  ║\n\
+                        ║  Configured cluster URLs:                                        ║\n\
+                        ║    {:?}                                                          ║\n\
+                        ║                                                                  ║\n\
+                        ║  Start the cluster first: ./scripts/cluster.sh start             ║\n\
+                        ╚══════════════════════════════════════════════════════════════════╝\n\n",
+                        configured_cluster_urls
+                    );
                 }
+
+                let sql_ready_cluster_urls = wait_for_sql_ready_cluster_urls(
+                    &reachable_cluster_urls,
+                    Duration::from_secs(20),
+                );
+
+                if sql_ready_cluster_urls.is_empty() {
+                    panic!(
+                        "\n\n\
+                        ╔══════════════════════════════════════════════════════════════════╗\n\
+                        ║            CLUSTER NODES NOT READY FOR SQL/AUTH                 ║\n\
+                        ╠══════════════════════════════════════════════════════════════════╣\n\
+                        ║  Cluster nodes responded on TCP/HTTP, but none completed        ║\n\
+                        ║  SQL/auth readiness within 20s.                                 ║\n\
+                        ║                                                                  ║\n\
+                        ║  Reachable cluster URLs:                                         ║\n\
+                        ║    {:?}                                                          ║\n\
+                        ║                                                                  ║\n\
+                        ║  Check node logs: ./scripts/cluster.sh logs 1                    ║\n\
+                        ╚══════════════════════════════════════════════════════════════════╝\n\n",
+                        reachable_cluster_urls
+                    );
+                }
+
+                (true, sql_ready_cluster_urls, configured_cluster_urls)
             },
             Some(ServerType::Fresh) | Some(ServerType::Running) | None => {
                 // Single-node: no cluster probing, instant startup
                 if let Some(explicit_urls) = explicit_cluster_urls {
-                    (explicit_urls.len() > 1, explicit_urls)
+                    let reachable_urls = reachable_cluster_urls(&explicit_urls);
+                    let effective_urls = if explicit_urls.len() > 1 && !reachable_urls.is_empty() {
+                        reachable_urls
+                    } else {
+                        explicit_urls.clone()
+                    };
+                    (explicit_urls.len() > 1, effective_urls, explicit_urls)
                 } else {
-                    (false, vec![server_url.clone()])
+                    (false, vec![server_url.clone()], vec![server_url.clone()])
                 }
             },
         };
 
-        let cluster_urls_raw = cluster_urls.clone();
         if is_cluster {
             cluster_urls = reorder_cluster_urls_by_leader(cluster_urls, &username, &password);
         }
@@ -1767,20 +1897,54 @@ pub fn leader_url() -> Option<String> {
         return Some(ctx.server_url.clone());
     }
 
-    // Check cached leader first
+    // Check cached leader first. Reachability alone is not enough here: after a
+    // leader change the old leader is still healthy, but writes and some plans
+    // must route to the new leader.
+    //
+    // Performance: do NOT issue a synchronous TCP probe per SQL call on the
+    // hot path. The cache TTL already bounds staleness; an unreachable leader
+    // will surface as a request error and clear the cache via
+    // `report_leader_error`. Adding a fresh `TcpStream::connect()` here was
+    // creating a short-lived ephemeral socket per SQL call in cluster mode,
+    // which dominated runtime in high-concurrency tests and contributed to
+    // localhost port exhaustion on macOS.
     if let Some(cached) = cached_leader_url() {
-        eprintln!("DEBUG leader_url: Returning cached URL: {}", cached);
-        return Some(cached);
+        if ctx.cluster_urls.iter().any(|url| url == &cached.url) {
+            if cached.confirmed_at.elapsed() <= LEADER_CACHE_TTL {
+                trace_leader_cache(format!("using cached leader {}", cached.url));
+                return Some(cached.url);
+            }
+
+            if detect_leader_url(std::slice::from_ref(&cached.url), &ctx.username, &ctx.password)
+                .as_deref()
+                == Some(cached.url.as_str())
+            {
+                trace_leader_cache(format!("revalidated cached leader {}", cached.url));
+                cache_leader_url(&cached.url);
+                return Some(cached.url);
+            }
+        }
+        clear_cached_leader_url();
     }
 
-    if let Some(leader) = detect_leader_url(&ctx.cluster_urls_raw, &ctx.username, &ctx.password) {
-        eprintln!("DEBUG leader_url: Detected leader URL: {}", leader);
+    let leader_probe_urls = if ctx.cluster_urls.is_empty() {
+        &ctx.cluster_urls_raw
+    } else {
+        &ctx.cluster_urls
+    };
+
+    if let Some(leader) = detect_leader_url(leader_probe_urls, &ctx.username, &ctx.password) {
+        trace_leader_cache(format!("detected leader {}", leader));
         cache_leader_url(&leader);
         return Some(leader);
     }
 
-    let fallback = ctx.cluster_urls.first().cloned();
-    eprintln!("DEBUG leader_url: Using fallback URL: {:?}", fallback);
+    let fallback = ctx
+        .cluster_urls
+        .first()
+        .cloned()
+        .or_else(|| ctx.cluster_urls_raw.first().cloned());
+    trace_leader_cache(format!("using fallback leader {:?}", fallback));
     fallback
 }
 
@@ -1917,7 +2081,7 @@ pub async fn execute_sql_via_http_as(
     // Get access token first
     let token = get_access_token(username, password).await?;
 
-    let client = Client::new();
+    let client = shared_http_client();
     let mut last_parsed: Option<serde_json::Value> = None;
 
     for attempt in 0..5 {
@@ -2045,8 +2209,8 @@ pub fn extract_arrow_value(value: &serde_json::Value) -> Option<serde_json::Valu
 
 /// Convert array-based rows to HashMap-based rows using the schema.
 ///
-/// The new API format returns `schema: [{name, data_type, index}, ...]` and `rows: [[val1, val2], ...]`.
-/// This helper converts to the old format where each row is a `{col_name: value}` HashMap.
+/// The new API format returns `schema: [{name, data_type, index}, ...]` and `rows: [[val1, val2],
+/// ...]`. This helper converts to the old format where each row is a `{col_name: value}` HashMap.
 ///
 /// # Arguments
 /// * `result` - A single query result from the API (one element from the `results` array)
@@ -2056,8 +2220,9 @@ pub fn extract_arrow_value(value: &serde_json::Value) -> Option<serde_json::Valu
 pub fn rows_as_hashmaps(
     result: &serde_json::Value,
 ) -> Option<Vec<std::collections::HashMap<String, serde_json::Value>>> {
-    use serde_json::Value;
     use std::collections::HashMap;
+
+    use serde_json::Value;
 
     // Extract schema - array of {name, data_type, index}
     let schema = result.get("schema")?.as_array()?;
@@ -2137,10 +2302,11 @@ pub fn is_leader_error(message: &str) -> bool {
 
     if is_leader {
         if let Some(url) = extract_leader_url(message) {
-            eprintln!("DEBUG is_leader_error: Extracted and caching leader URL: {}", url);
+            trace_leader_cache(format!("leader error reported {}", url));
             cache_leader_url(&url);
         } else {
-            eprintln!("DEBUG is_leader_error: No URL extracted from message");
+            trace_leader_cache("leader error without URL; clearing cached leader");
+            clear_cached_leader_url();
         }
     }
 
@@ -2165,7 +2331,11 @@ fn is_network_error(message: &str) -> bool {
         || lower.contains("broken pipe")
         || lower.contains("connection error")
         || lower.contains("timed out")
-        || lower.contains("timeout")
+        || lower.contains("request timeout")
+        || lower.contains("connection timeout")
+        || lower.contains("read timeout")
+        || lower.contains("write timeout")
+        || lower.contains("deadline has elapsed")
 }
 
 fn is_transient_missing_relation(sql: &str, message: &str) -> bool {
@@ -2187,6 +2357,20 @@ fn is_transient_missing_relation(sql: &str, message: &str) -> bool {
         || lower_sql.starts_with("alter table")
 }
 
+fn is_redacted_cluster_sql_error(sql: &str, message: &str) -> bool {
+    let lower_msg = message.to_ascii_lowercase();
+    if !lower_msg.contains("sql_execution_error") || !lower_msg.contains("sql statement failed") {
+        return false;
+    }
+
+    let lower_sql = sql.trim_start().to_ascii_lowercase();
+    lower_sql.starts_with("select ")
+        || lower_sql.starts_with("insert ")
+        || lower_sql.starts_with("update ")
+        || lower_sql.starts_with("delete ")
+        || lower_sql.starts_with("execute as user ")
+}
+
 fn is_rate_limited_error(message: &str) -> bool {
     let lower = message.to_ascii_lowercase();
     lower.contains("rate_limit_exceeded")
@@ -2199,6 +2383,7 @@ pub fn is_retryable_cluster_error_for_sql(sql: &str, message: &str) -> bool {
     is_leader_error(message)
         || is_network_error(message)
         || is_transient_missing_relation(sql, message)
+        || is_redacted_cluster_sql_error(sql, message)
 }
 
 fn cli_output_error(stdout: &str) -> Option<String> {
@@ -2219,7 +2404,36 @@ fn cli_output_error(stdout: &str) -> Option<String> {
 /// Returns false only when no explicit server type is set and server is down.
 pub fn is_server_running() -> bool {
     // test_context() has already validated server reachability based on KALAMDB_SERVER_TYPE
-    let _ctx = test_context();
+    let ctx = test_context();
+
+    if ctx.is_cluster {
+        let urls = if ctx.cluster_urls.is_empty() {
+            ctx.cluster_urls_raw.clone()
+        } else {
+            ctx.cluster_urls.clone()
+        };
+        let reachable = wait_for_reachable_cluster_urls(&urls, Duration::from_secs(5));
+        if !reachable.is_empty() {
+            return true;
+        }
+
+        panic!(
+            "\n\n\
+            ╔══════════════════════════════════════════════════════════════════╗\n\
+            ║                 CLUSTER NODES NOT REACHABLE                      ║\n\
+            ╠══════════════════════════════════════════════════════════════════╣\n\
+            ║  Tests require at least one configured cluster node to be        ║\n\
+            ║  reachable, but none responded within 5s.                       ║\n\
+            ║                                                                  ║\n\
+            ║  Configured cluster URLs:                                        ║\n\
+            ║    {:?}                                                          ║\n\
+            ║                                                                  ║\n\
+            ║  Check the cluster: ./scripts/cluster.sh status                 ║\n\
+            ╚══════════════════════════════════════════════════════════════════╝\n\n",
+            urls
+        );
+    }
+
     let url = server_url();
 
     if is_server_reachable() {
@@ -2327,7 +2541,7 @@ fn server_requires_auth_for_url(url: &str) -> Option<bool> {
     for _attempt in 0..3 {
         let request_url = url.clone();
         let request = async move {
-            Client::new()
+            shared_http_client()
                 .post(format!("{}/v1/api/sql", request_url))
                 .json(&json!({ "sql": "SELECT 1" }))
                 .timeout(Duration::from_millis(2000))
@@ -2392,7 +2606,15 @@ fn server_requires_auth_for_url(url: &str) -> Option<bool> {
 pub fn get_available_server_urls() -> Vec<String> {
     let ctx = test_context();
     if ctx.is_cluster {
-        let mut urls = ctx.cluster_urls_raw.clone();
+        let seed_urls = if ctx.cluster_urls.is_empty() {
+            ctx.cluster_urls_raw.clone()
+        } else {
+            ctx.cluster_urls.clone()
+        };
+        let mut urls = wait_for_sql_ready_cluster_urls(&seed_urls, Duration::from_secs(2));
+        if urls.is_empty() {
+            urls = seed_urls;
+        }
         if let Some(leader) = leader_url() {
             urls.retain(|url| url != &leader);
             urls.insert(0, leader);
@@ -2473,7 +2695,7 @@ fn wait_for_namespace_on_all_nodes(namespace: &str, timeout: Duration) -> bool {
     if !is_cluster_mode() {
         return true;
     }
-    let urls = test_context().cluster_urls_raw.clone();
+    let urls = get_available_server_urls();
     let sql = format!(
         "SELECT namespace_id FROM system.namespaces WHERE namespace_id = '{}'",
         namespace
@@ -2486,6 +2708,7 @@ fn wait_for_namespace_on_all_nodes(namespace: &str, timeout: Duration) -> bool {
         if all_visible {
             return true;
         }
+        std::thread::sleep(Duration::from_millis(50));
     }
     false
 }
@@ -2494,7 +2717,7 @@ fn wait_for_table_on_all_nodes(namespace: &str, table: &str, timeout: Duration) 
     if !is_cluster_mode() {
         return true;
     }
-    let urls = test_context().cluster_urls_raw.clone();
+    let urls = get_available_server_urls();
     let sql = format!(
         "SELECT table_name FROM system.schemas WHERE namespace_id = '{}' AND table_name = '{}'",
         namespace, table
@@ -2507,12 +2730,24 @@ fn wait_for_table_on_all_nodes(namespace: &str, table: &str, timeout: Duration) 
         if all_visible {
             return true;
         }
+        std::thread::sleep(Duration::from_millis(50));
     }
     false
 }
 
 fn wait_for_cluster_after_sql(sql: &str) {
     if !is_cluster_mode() {
+        return;
+    }
+
+    let strict_visibility = std::env::var("KALAMDB_TEST_STRICT_CLUSTER_VISIBILITY")
+        .map(|value| {
+            let value = value.trim();
+            value == "1" || value.eq_ignore_ascii_case("true")
+        })
+        .unwrap_or(false);
+
+    if !strict_visibility {
         return;
     }
 
@@ -2580,6 +2815,71 @@ pub fn websocket_url() -> String {
     format!("{}/v1/ws", base)
 }
 
+fn retryable_embedded_cluster_error(
+    sql: &str,
+    response: &kalam_client::QueryResponse,
+) -> Option<String> {
+    for result in &response.results {
+        if let Some(message) = &result.message {
+            if is_retryable_cluster_error_for_sql(sql, message) {
+                return Some(message.clone());
+            }
+        }
+
+        let is_explain = sql.trim_start().to_ascii_uppercase().starts_with("EXPLAIN");
+        if let Some(rows) = &result.rows {
+            for row in rows {
+                for value in row {
+                    if let Some(message) = retryable_embedded_value(sql, value.inner(), is_explain)
+                    {
+                        return Some(message);
+                    }
+                }
+            }
+        }
+
+        if let Some(named_rows) = &result.named_rows {
+            for row in named_rows {
+                for value in row.values() {
+                    if let Some(message) = retryable_embedded_value(sql, value.inner(), is_explain)
+                    {
+                        return Some(message);
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
+fn retryable_embedded_value(
+    sql: &str,
+    value: &serde_json::Value,
+    is_explain: bool,
+) -> Option<String> {
+    match value {
+        serde_json::Value::String(message) => {
+            let lower = message.to_ascii_lowercase();
+            let looks_like_plan_error = lower.contains("physical_plan_error");
+            if (is_explain || looks_like_plan_error)
+                && is_retryable_cluster_error_for_sql(sql, message)
+            {
+                Some(message.clone())
+            } else {
+                None
+            }
+        },
+        serde_json::Value::Array(values) => {
+            values.iter().find_map(|value| retryable_embedded_value(sql, value, is_explain))
+        },
+        serde_json::Value::Object(values) => values
+            .values()
+            .find_map(|value| retryable_embedded_value(sql, value, is_explain)),
+        _ => None,
+    }
+}
+
 pub fn storage_base_dir() -> std::path::PathBuf {
     if let Ok(path) = std::env::var("KALAMDB_STORAGE_DIR") {
         return std::path::PathBuf::from(path);
@@ -2611,18 +2911,35 @@ where
 {
     let start = Instant::now();
     let poll_interval = Duration::from_millis(200);
+    let mut last_error = None;
+    let mut last_output = None;
 
     loop {
-        let output = execute(sql)?;
-        if output.contains(expected) {
-            return Ok(output);
+        match execute(sql) {
+            Ok(output) => {
+                if output.contains(expected) {
+                    return Ok(output);
+                }
+                last_output = Some(output);
+            },
+            Err(err) if is_cluster_mode() => {
+                last_error = Some(err.to_string());
+            },
+            Err(err) => return Err(err),
         }
+
         if start.elapsed() > timeout {
-            return Err(format!(
-                "Timeout waiting for query to contain '{}'. Last output: {}",
-                expected, output
-            )
-            .into());
+            let detail = match (last_output, last_error) {
+                (Some(output), Some(error)) => {
+                    format!("Last output: {}. Last error: {}", output, error)
+                },
+                (Some(output), None) => format!("Last output: {}", output),
+                (None, Some(error)) => format!("Last error: {}", error),
+                (None, None) => "No output observed".to_string(),
+            };
+            return Err(
+                format!("Timeout waiting for query to contain '{}'. {}", expected, detail).into()
+            );
         }
         thread::sleep(poll_interval);
     }
@@ -2721,35 +3038,19 @@ pub fn execute_sql_via_cli_as_with_timing(
     use std::time::Instant;
 
     let start = Instant::now();
-    let output = Command::new(env!("CARGO_BIN_EXE_kalam"))
-        .arg("-u")
-        .arg(server_url())
-        .arg("--user")
-        .arg(username)
-        .arg("--password")
-        .arg(password)
-        .arg("--command")
-        .arg(sql)
-        .output()?;
+    let output = execute_sql_via_cli_as(username, password, sql)?;
     let total_time_ms = start.elapsed().as_millis();
 
-    if output.status.success() {
-        let output_str = String::from_utf8_lossy(&output.stdout).to_string();
+    let server_time_ms = output
+        .lines()
+        .find(|l| l.starts_with("Took:"))
+        .and_then(|line| line.split_whitespace().nth(1).and_then(|s| s.parse::<f64>().ok()));
 
-        // Extract server time from output (looks for "Took: XXX.XXX ms")
-        let server_time_ms = output_str.lines().find(|l| l.starts_with("Took:")).and_then(|line| {
-            // Parse "Took: 123.456 ms"
-            line.split_whitespace().nth(1).and_then(|s| s.parse::<f64>().ok())
-        });
-
-        Ok(CliTiming {
-            output: output_str,
-            total_time_ms,
-            server_time_ms,
-        })
-    } else {
-        Err(format!("CLI command failed: {}", String::from_utf8_lossy(&output.stderr)).into())
-    }
+    Ok(CliTiming {
+        output,
+        total_time_ms,
+        server_time_ms,
+    })
 }
 
 /// Helper to execute SQL via CLI with authentication
@@ -2834,6 +3135,7 @@ fn execute_sql_via_cli_as_with_args_and_urls(
     urls_override: Option<Vec<String>>,
 ) -> Result<String, Box<dyn std::error::Error>> {
     use std::time::Instant;
+
     use wait_timeout::ChildExt;
 
     // test_context() already ensures server is started/reachable
@@ -3076,6 +3378,137 @@ pub fn execute_sql_as_root_via_cli_json(sql: &str) -> Result<String, Box<dyn std
     execute_sql_via_cli_as_with_args(admin_username(), admin_password(), sql, &["--json"])
 }
 
+pub fn execute_sql_file_as_root_via_cli(
+    file_path: &std::path::Path,
+) -> Result<String, Box<dyn std::error::Error>> {
+    static SETUP_DONE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    SETUP_DONE.get_or_init(|| {
+        ensure_cli_server_setup().expect("Failed to prepare CLI server setup");
+    });
+
+    let file_arg = file_path
+        .to_str()
+        .ok_or_else(|| format!("Non-UTF8 SQL file path: {:?}", file_path))?
+        .to_string();
+
+    let max_attempts = if is_cluster_mode() { 6 } else { 3 };
+    let mut last_err: Option<String> = None;
+
+    for attempt in 0..max_attempts {
+        let urls = if is_cluster_mode() {
+            get_available_server_urls()
+        } else {
+            vec![server_url().to_string()]
+        };
+        let mut retry_after_attempt = false;
+
+        for (idx, url) in urls.iter().enumerate() {
+            let creds_dir = TempDir::new().map_err(|err| err.to_string())?;
+            let creds_path = creds_dir.path().join("credentials.toml");
+            let token = get_access_token_for_url_sync(url, admin_username(), admin_password());
+
+            let mut child = Command::new(env!("CARGO_BIN_EXE_kalam"));
+            child.arg("-u").arg(url);
+
+            if let Some(token) = token {
+                child.arg("--token").arg(token);
+            } else {
+                child
+                    .arg("--user")
+                    .arg(admin_username())
+                    .arg("--password")
+                    .arg(admin_password());
+            }
+
+            child
+                .env("KALAMDB_CREDENTIALS_PATH", &creds_path)
+                .env("NO_PROXY", "127.0.0.1,localhost,::1")
+                .env("no_proxy", "127.0.0.1,localhost,::1")
+                .env_remove("HTTP_PROXY")
+                .env_remove("http_proxy")
+                .env_remove("HTTPS_PROXY")
+                .env_remove("https_proxy")
+                .env_remove("ALL_PROXY")
+                .env_remove("all_proxy")
+                .arg("--no-spinner")
+                .arg("--file")
+                .arg(&file_arg)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped());
+
+            let mut child = child.spawn()?;
+            use wait_timeout::ChildExt;
+
+            match child.wait_timeout(Duration::from_secs(60))? {
+                Some(status) => {
+                    let mut stdout = String::new();
+                    let mut stderr = String::new();
+                    if let Some(ref mut out) = child.stdout {
+                        use std::io::Read;
+                        out.read_to_string(&mut stdout)?;
+                    }
+                    if let Some(ref mut err) = child.stderr {
+                        use std::io::Read;
+                        err.read_to_string(&mut stderr)?;
+                    }
+
+                    if status.success() {
+                        if let Some(output_err) = cli_output_error(&stdout) {
+                            let err_msg = format!("CLI file output error: {}", output_err);
+                            if is_leader_error(&err_msg) || is_network_error(&err_msg) {
+                                last_err = Some(err_msg);
+                                if idx + 1 < urls.len() {
+                                    continue;
+                                }
+                                retry_after_attempt = true;
+                                break;
+                            }
+                            return Err(err_msg.into());
+                        }
+                        return Ok(stdout);
+                    }
+
+                    let err_msg = format!("CLI file command failed: {}", stderr);
+                    if is_refreshable_token_error(&err_msg) {
+                        invalidate_auth_caches_for_credentials(
+                            url,
+                            admin_username(),
+                            admin_password(),
+                        );
+                        last_err = Some(err_msg);
+                        retry_after_attempt = true;
+                        break;
+                    }
+                    if is_leader_error(&err_msg) || is_network_error(&err_msg) {
+                        last_err = Some(err_msg);
+                        if idx + 1 < urls.len() {
+                            continue;
+                        }
+                        retry_after_attempt = true;
+                        break;
+                    }
+                    return Err(err_msg.into());
+                },
+                None => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    last_err = Some("CLI file command timed out after 60s".to_string());
+                    retry_after_attempt = true;
+                },
+            }
+        }
+
+        if retry_after_attempt {
+            let delay_ms = 100 + attempt * 100;
+            std::thread::sleep(Duration::from_millis(delay_ms as u64));
+        }
+    }
+
+    Err(last_err
+        .unwrap_or_else(|| "CLI file command failed on all cluster nodes".to_string())
+        .into())
+}
+
 /// Wait for a SQL query to return output containing an expected substring.
 ///
 /// Useful for eventual consistency scenarios where data may not be immediately visible.
@@ -3171,6 +3604,7 @@ fn build_client_for_url_with_timeouts(
     KalamLinkClient::builder()
         .base_url(base_url)
         .auth(auth)
+        .http_pool_max_idle_per_host(256)
         .timeouts(timeouts)
         .build()
         .map_err(|err| Box::new(err) as Box<dyn std::error::Error + Send + Sync>)
@@ -3192,6 +3626,7 @@ pub fn client_for_url_no_auth(
     KalamLinkClient::builder()
         .base_url(base_url)
         .auth(AuthProvider::none())
+        .http_pool_max_idle_per_host(256)
         .timeouts(timeouts)
         .build()
         .map_err(|err| Box::new(err) as Box<dyn std::error::Error + Send + Sync>)
@@ -3370,6 +3805,16 @@ fn execute_sql_via_client_internal(
                                             break;
                                         }
                                         return Err(err_msg.into());
+                                    }
+                                    if let Some(err_msg) =
+                                        retryable_embedded_cluster_error(&sql, &response)
+                                    {
+                                        last_err = Some(err_msg.into());
+                                        if idx + 1 < urls.len() {
+                                            continue;
+                                        }
+                                        retry_after_attempt = true;
+                                        break;
                                     }
                                     return Ok(response);
                                 },
@@ -3710,8 +4155,10 @@ pub fn extract_typed_value(value: &serde_json::Value) -> serde_json::Value {
 
 /// Helper to generate unique namespace name
 pub fn generate_unique_namespace(base_name: &str) -> String {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::{
+        sync::atomic::{AtomicU64, Ordering},
+        time::{SystemTime, UNIX_EPOCH},
+    };
     static COUNTER: AtomicU64 = AtomicU64::new(0);
 
     let count = COUNTER.fetch_add(1, Ordering::SeqCst);
@@ -3730,8 +4177,10 @@ pub fn generate_unique_namespace(base_name: &str) -> String {
 
 /// Helper to generate unique table name
 pub fn generate_unique_table(base_name: &str) -> String {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::{
+        sync::atomic::{AtomicU64, Ordering},
+        time::{SystemTime, UNIX_EPOCH},
+    };
     static COUNTER: AtomicU64 = AtomicU64::new(0);
 
     let count = COUNTER.fetch_add(1, Ordering::SeqCst);
@@ -4003,7 +4452,8 @@ pub fn parse_job_id_from_flush_output(output: &str) -> Result<String, Box<dyn st
 
 /// Parse job ID from JSON response message field
 ///
-/// Expected JSON format: {"status":"success","results":[{"message":"Flush started... Job ID: FL-xxx"}]}
+/// Expected JSON format: {"status":"success","results":[{"message":"Flush started... Job ID:
+/// FL-xxx"}]}
 pub fn parse_job_id_from_json_message(
     json_output: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
@@ -4742,11 +5192,9 @@ pub fn assert_flush_storage_files_exist(
 
         if result.is_valid() {
             println!(
-                "✅ [{}] Verified flush storage: manifest.json ({} bytes), {} parquet file(s) ({} bytes total)",
-                context,
-                result.manifest_size,
-                result.parquet_file_count,
-                result.parquet_total_size
+                "✅ [{}] Verified flush storage: manifest.json ({} bytes), {} parquet file(s) ({} \
+                 bytes total)",
+                context, result.manifest_size, result.parquet_file_count, result.parquet_total_size
             );
             return;
         }

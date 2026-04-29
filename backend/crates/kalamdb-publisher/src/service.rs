@@ -7,8 +7,10 @@
 //! - Track consumer group offsets
 //! - Provide fast TableId → Topics lookup
 
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::{
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
+};
 
 use dashmap::DashMap;
 use kalamdb_commons::{
@@ -23,10 +25,7 @@ use kalamdb_system::providers::{
 };
 use kalamdb_tables::{TopicMessage, TopicMessageStore};
 
-use crate::models::TopicCacheStats;
-use crate::offset::OffsetAllocator;
-use crate::payload;
-use crate::routing::RouteCache;
+use crate::{models::TopicCacheStats, offset::OffsetAllocator, payload, routing::RouteCache};
 
 /// Lookup primary-key columns for a table so topic keys can be derived from
 /// stable row identity instead of the full row payload.
@@ -139,6 +138,41 @@ impl ClaimState {
         if self.cursor < next {
             self.cursor = next;
         }
+    }
+
+    /// Return the next server-owned cursor and maximum contiguous fetch size
+    /// before a still-pending claim.
+    fn next_available_window(&self, requested_limit: usize) -> (u64, usize) {
+        let mut next = self.cursor;
+
+        loop {
+            let mut advanced = false;
+            for claim in &self.pending {
+                if claim.start <= next && next < claim.end_exclusive {
+                    next = claim.end_exclusive;
+                    advanced = true;
+                }
+            }
+
+            if !advanced {
+                break;
+            }
+        }
+
+        let next_pending_start = self
+            .pending
+            .iter()
+            .filter(|claim| claim.start > next)
+            .map(|claim| claim.start)
+            .min();
+
+        let available_offsets = next_pending_start
+            .map(|claim_start| claim_start.saturating_sub(next))
+            .unwrap_or(u64::MAX);
+        let available_limit =
+            requested_limit.min(available_offsets.try_into().unwrap_or(usize::MAX));
+
+        (next, available_limit)
     }
 }
 
@@ -518,7 +552,11 @@ impl TopicPublisherService {
                     );
                     let msg_id = message.id();
 
-                    //TODO: Use the store to serialize the message directly to avoid redundant serialization in TopicMessage::new and TopicMessageStore::put. This would require refactoring TopicMessage to separate the in-memory model from the serialized form, or adding a method to get the pre-encoded bytes without going through the full struct construction.
+                    // TODO: Use the store to serialize the message directly to avoid redundant
+                    // serialization in TopicMessage::new and TopicMessageStore::put. This would
+                    // require refactoring TopicMessage to separate the in-memory model from the
+                    // serialized form, or adding a method to get the pre-encoded bytes without
+                    // going through the full struct construction.
                     let key_encoded = kalamdb_commons::StorageKey::storage_key(&msg_id);
                     let value_encoded =
                         kalamdb_commons::KSerializable::encode(&message).map_err(|e| {
@@ -560,10 +598,10 @@ impl TopicPublisherService {
     /// Fetch messages for a consumer group while claiming offsets in-memory.
     ///
     /// Guarantees:
-    /// - Concurrent consumers in the same group and partition never receive
-    ///   overlapping offset ranges (serialized via DashMap entry lock).
-    /// - If a consumer does not ack within [`VISIBILITY_TIMEOUT`], the
-    ///   claimed range expires and is re-delivered to the next consumer.
+    /// - Concurrent consumers in the same group and partition never receive overlapping offset
+    ///   ranges (serialized via DashMap entry lock).
+    /// - If a consumer does not ack within [`VISIBILITY_TIMEOUT`], the claimed range expires and is
+    ///   re-delivered to the next consumer.
     pub fn fetch_messages_for_group(
         &self,
         topic_id: &TopicId,
@@ -572,33 +610,61 @@ impl TopicPublisherService {
         start_offset: u64,
         limit: usize,
     ) -> Result<Vec<TopicMessage>> {
-        let cursor_key = GroupPartitionKey::new(topic_id, group_id, partition_id);
-        let mut state = self
-            .group_claim_state
-            .entry(cursor_key)
-            .or_insert_with(|| ClaimState::new(start_offset));
-
-        // Expire stale claims so crashed consumers don't block delivery.
-        state.expire_stale_claims(Instant::now(), self.visibility_timeout);
-
-        let effective_start = state.cursor.max(start_offset);
-
-        let messages = self
-            .message_store
-            .fetch_messages(topic_id, partition_id, effective_start, limit)
-            .map_err(|e| CommonError::Internal(format!("Failed to fetch messages: {}", e)))?;
-
-        if !messages.is_empty() {
-            let end_exclusive = messages.last().unwrap().offset + 1;
-            state.cursor = end_exclusive;
-            state.pending.push(PendingClaim {
-                start: effective_start,
-                end_exclusive,
-                claimed_at: Instant::now(),
-            });
+        if limit == 0 {
+            return Ok(Vec::new());
         }
 
-        Ok(messages)
+        let cursor_key = GroupPartitionKey::new(topic_id, group_id, partition_id);
+
+        loop {
+            let (effective_start, effective_limit) = {
+                let mut state = self
+                    .group_claim_state
+                    .entry(cursor_key.clone())
+                    .or_insert_with(|| ClaimState::new(start_offset));
+
+                // Expire stale claims so crashed consumers don't block delivery.
+                state.expire_stale_claims(Instant::now(), self.visibility_timeout);
+                state.next_available_window(limit)
+            };
+
+            if effective_limit == 0 {
+                return Ok(Vec::new());
+            }
+
+            let messages = self
+                .message_store
+                .fetch_messages(topic_id, partition_id, effective_start, effective_limit)
+                .map_err(|e| CommonError::Internal(format!("Failed to fetch messages: {}", e)))?;
+
+            let Some(last_message) = messages.last() else {
+                return Ok(messages);
+            };
+
+            let claim_start =
+                messages.first().map(|message| message.offset).unwrap_or(effective_start);
+            let end_exclusive = last_message.offset + 1;
+            let claimed_at = Instant::now();
+            let mut state = self
+                .group_claim_state
+                .entry(cursor_key.clone())
+                .or_insert_with(|| ClaimState::new(start_offset));
+
+            state.expire_stale_claims(claimed_at, self.visibility_timeout);
+            let (current_start, _) = state.next_available_window(limit);
+            if current_start != effective_start {
+                continue;
+            }
+
+            state.cursor = end_exclusive;
+            state.pending.push(PendingClaim {
+                start: claim_start,
+                end_exclusive,
+                claimed_at,
+            });
+
+            return Ok(messages);
+        }
     }
 
     /// Get the latest offset for a topic partition.
@@ -749,13 +815,21 @@ impl kalamdb_system::TopicPublisher for TopicPublisherService {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::collections::HashSet;
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Condvar, Mutex as StdMutex,
+    };
+    use std::time::Duration as StdDuration;
+    use std::{sync::mpsc, thread};
 
     use datafusion::scalar::ScalarValue;
     use kalamdb_commons::models::{NamespaceId, PayloadMode, TableName};
+    use kalamdb_store::storage_trait::{KvIterator, Operation, Partition, StorageBackend};
     use kalamdb_store::test_utils::InMemoryBackend;
     use kalamdb_system::providers::topics::TopicRoute;
+
+    use super::*;
 
     struct FixedPrimaryKeyLookup {
         columns: Vec<String>,
@@ -813,6 +887,132 @@ mod tests {
             Duration::from_secs(60),
             Some(lookup),
         )
+    }
+
+    struct PausingScanBackend {
+        inner: InMemoryBackend,
+        pause_next_scan: AtomicBool,
+        scan_started: (StdMutex<bool>, Condvar),
+        release_scan: (StdMutex<bool>, Condvar),
+    }
+
+    impl PausingScanBackend {
+        fn new() -> Self {
+            Self {
+                inner: InMemoryBackend::new(),
+                pause_next_scan: AtomicBool::new(false),
+                scan_started: (StdMutex::new(false), Condvar::new()),
+                release_scan: (StdMutex::new(false), Condvar::new()),
+            }
+        }
+
+        fn pause_next_scan(&self) {
+            self.pause_next_scan.store(true, Ordering::SeqCst);
+            *self.scan_started.0.lock().unwrap() = false;
+            *self.release_scan.0.lock().unwrap() = false;
+        }
+
+        fn wait_for_paused_scan(&self) {
+            let (lock, cvar) = &self.scan_started;
+            let started = lock.lock().unwrap();
+            let (started, _) = cvar
+                .wait_timeout_while(started, StdDuration::from_secs(1), |started| !*started)
+                .unwrap();
+            assert!(*started, "first consumer should enter the paused storage scan");
+        }
+
+        fn release_paused_scan(&self) {
+            let (lock, cvar) = &self.release_scan;
+            *lock.lock().unwrap() = true;
+            cvar.notify_all();
+        }
+    }
+
+    impl StorageBackend for PausingScanBackend {
+        fn get(
+            &self,
+            partition: &Partition,
+            key: &[u8],
+        ) -> kalamdb_store::storage_trait::Result<Option<Vec<u8>>> {
+            self.inner.get(partition, key)
+        }
+
+        fn put(
+            &self,
+            partition: &Partition,
+            key: &[u8],
+            value: &[u8],
+        ) -> kalamdb_store::storage_trait::Result<()> {
+            self.inner.put(partition, key, value)
+        }
+
+        fn delete(
+            &self,
+            partition: &Partition,
+            key: &[u8],
+        ) -> kalamdb_store::storage_trait::Result<()> {
+            self.inner.delete(partition, key)
+        }
+
+        fn batch(&self, operations: Vec<Operation>) -> kalamdb_store::storage_trait::Result<()> {
+            self.inner.batch(operations)
+        }
+
+        fn scan(
+            &self,
+            partition: &Partition,
+            prefix: Option<&[u8]>,
+            start_key: Option<&[u8]>,
+            limit: Option<usize>,
+        ) -> kalamdb_store::storage_trait::Result<KvIterator<'_>> {
+            if self.pause_next_scan.swap(false, Ordering::SeqCst) {
+                let (started_lock, started_cvar) = &self.scan_started;
+                *started_lock.lock().unwrap() = true;
+                started_cvar.notify_all();
+
+                let (release_lock, release_cvar) = &self.release_scan;
+                let released = release_lock.lock().unwrap();
+                let (released, _) = release_cvar
+                    .wait_timeout_while(released, StdDuration::from_secs(2), |released| !*released)
+                    .unwrap();
+                assert!(*released, "paused scan should be released by the test");
+            }
+
+            self.inner.scan(partition, prefix, start_key, limit)
+        }
+
+        fn partition_exists(&self, partition: &Partition) -> bool {
+            self.inner.partition_exists(partition)
+        }
+
+        fn create_partition(
+            &self,
+            partition: &Partition,
+        ) -> kalamdb_store::storage_trait::Result<()> {
+            self.inner.create_partition(partition)
+        }
+
+        fn list_partitions(&self) -> kalamdb_store::storage_trait::Result<Vec<Partition>> {
+            self.inner.list_partitions()
+        }
+
+        fn drop_partition(
+            &self,
+            partition: &Partition,
+        ) -> kalamdb_store::storage_trait::Result<()> {
+            self.inner.drop_partition(partition)
+        }
+
+        fn compact_partition(
+            &self,
+            partition: &Partition,
+        ) -> kalamdb_store::storage_trait::Result<()> {
+            self.inner.compact_partition(partition)
+        }
+
+        fn stats(&self) -> kalamdb_store::storage_trait::StorageStats {
+            self.inner.stats()
+        }
     }
 
     #[test]
@@ -931,8 +1131,12 @@ mod tests {
         let topic_id = TopicId::new("pk_batch_topic");
         let partitions = 32;
 
-        let topic =
-            create_test_topic_with_partitions(topic_id.clone(), table_id.clone(), TopicOp::Insert, partitions);
+        let topic = create_test_topic_with_partitions(
+            topic_id.clone(),
+            table_id.clone(),
+            TopicOp::Insert,
+            partitions,
+        );
         service.add_topic(topic);
 
         let first = create_test_row(7, "alpha");
@@ -1023,6 +1227,79 @@ mod tests {
         assert!(
             second_first_offset > first_last_offset,
             "second fetch should continue after first claimed range"
+        );
+    }
+
+    #[test]
+    fn test_group_fetch_does_not_hold_claim_state_during_storage_scan() {
+        let backend = Arc::new(PausingScanBackend::new());
+        let storage_backend: Arc<dyn StorageBackend> = backend.clone();
+        let service = Arc::new(TopicPublisherService::new(storage_backend));
+
+        let ns = NamespaceId::new("test_ns");
+        let table_id = TableId::new(ns.clone(), TableName::from("events"));
+        let topic_id = TopicId::new("nonblocking_claim_topic");
+        let group_id = ConsumerGroupId::new("nonblocking_claim_group");
+
+        let topic = create_test_topic_with_partitions(
+            topic_id.clone(),
+            table_id.clone(),
+            TopicOp::Insert,
+            1,
+        );
+        service.add_topic(topic);
+
+        for idx in 0..30 {
+            let row = create_test_row(idx, &format!("event_{}", idx));
+            service.publish_message(&table_id, TopicOp::Insert, &row, None).unwrap();
+        }
+
+        backend.pause_next_scan();
+
+        let first_service = service.clone();
+        let first_topic = topic_id.clone();
+        let first_group = group_id.clone();
+        let first_handle = thread::spawn(move || {
+            first_service
+                .fetch_messages_for_group(&first_topic, &first_group, 0, 0, 10)
+                .unwrap()
+        });
+
+        backend.wait_for_paused_scan();
+
+        let (tx, rx) = mpsc::channel();
+        let second_service = service.clone();
+        let second_topic = topic_id.clone();
+        let second_group = group_id.clone();
+        thread::spawn(move || {
+            let batch = second_service
+                .fetch_messages_for_group(&second_topic, &second_group, 0, 0, 10)
+                .unwrap();
+            let _ = tx.send(batch);
+        });
+
+        let second_batch = match rx.recv_timeout(StdDuration::from_millis(100)) {
+            Ok(batch) => batch,
+            Err(_) => {
+                backend.release_paused_scan();
+                let _ = first_handle.join();
+                panic!("second consumer should not wait for the first consumer's storage scan");
+            },
+        };
+
+        backend.release_paused_scan();
+        let first_batch = first_handle.join().unwrap();
+
+        let first_offsets: HashSet<u64> =
+            first_batch.iter().map(|message| message.offset).collect();
+        let second_offsets: HashSet<u64> =
+            second_batch.iter().map(|message| message.offset).collect();
+
+        assert_eq!(first_offsets.len(), 10);
+        assert_eq!(second_offsets.len(), 10);
+        assert!(
+            first_offsets.is_disjoint(&second_offsets),
+            "concurrent same-group fetches must reserve disjoint offsets"
         );
     }
 
@@ -1131,6 +1408,100 @@ mod tests {
             let state = service.group_claim_state.get(&cursor_key).unwrap();
             assert_eq!(state.pending.len(), 0, "Pending claim should be removed after ack");
         }
+    }
+
+    #[test]
+    fn test_expired_claim_redelivery_skips_still_pending_ranges() {
+        let backend = Arc::new(InMemoryBackend::new());
+        let service =
+            TopicPublisherService::with_visibility_timeout(backend, StdDuration::from_millis(80));
+
+        let ns = NamespaceId::new("test_ns");
+        let table_id = TableId::new(ns.clone(), TableName::from("events"));
+        let topic_id = TopicId::new("partial_expiry_topic");
+        let group_id = ConsumerGroupId::new("partial_expiry_group");
+
+        let topic = create_test_topic_with_partitions(
+            topic_id.clone(),
+            table_id.clone(),
+            TopicOp::Insert,
+            1,
+        );
+        service.add_topic(topic);
+
+        for idx in 0..30 {
+            let row = create_test_row(idx, &format!("event_{}", idx));
+            service.publish_message(&table_id, TopicOp::Insert, &row, None).unwrap();
+        }
+
+        let first = service.fetch_messages_for_group(&topic_id, &group_id, 0, 0, 10).unwrap();
+        assert_eq!(first.first().map(|message| message.offset), Some(0));
+
+        thread::sleep(StdDuration::from_millis(50));
+
+        let second = service.fetch_messages_for_group(&topic_id, &group_id, 0, 0, 10).unwrap();
+        assert_eq!(second.first().map(|message| message.offset), Some(10));
+
+        thread::sleep(StdDuration::from_millis(50));
+
+        let redelivered = service.fetch_messages_for_group(&topic_id, &group_id, 0, 0, 10).unwrap();
+        assert_eq!(redelivered.first().map(|message| message.offset), Some(0));
+
+        let next = service.fetch_messages_for_group(&topic_id, &group_id, 0, 0, 10).unwrap();
+        assert_eq!(
+            next.first().map(|message| message.offset),
+            Some(20),
+            "fetch should skip the still-pending 10..20 range after redelivering 0..10"
+        );
+    }
+
+    #[test]
+    fn test_expired_claim_redelivery_uses_group_cursor_not_client_position() {
+        let backend = Arc::new(InMemoryBackend::new());
+        let service =
+            TopicPublisherService::with_visibility_timeout(backend, StdDuration::from_millis(120));
+
+        let ns = NamespaceId::new("test_ns");
+        let table_id = TableId::new(ns.clone(), TableName::from("events"));
+        let topic_id = TopicId::new("position_ahead_recovery_topic");
+        let group_id = ConsumerGroupId::new("position_ahead_recovery_group");
+
+        let topic = create_test_topic_with_partitions(
+            topic_id.clone(),
+            table_id.clone(),
+            TopicOp::Insert,
+            1,
+        );
+        service.add_topic(topic);
+
+        for idx in 0..480 {
+            let row = create_test_row(idx, &format!("event_{}", idx));
+            service.publish_message(&table_id, TopicOp::Insert, &row, None).unwrap();
+        }
+
+        let crashed_claim =
+            service.fetch_messages_for_group(&topic_id, &group_id, 0, 0, 160).unwrap();
+        assert_eq!(crashed_claim.first().map(|message| message.offset), Some(0));
+        assert_eq!(crashed_claim.last().map(|message| message.offset), Some(159));
+
+        thread::sleep(StdDuration::from_millis(80));
+
+        let active_tail_claim =
+            service.fetch_messages_for_group(&topic_id, &group_id, 0, 0, 120).unwrap();
+        assert_eq!(active_tail_claim.first().map(|message| message.offset), Some(160));
+        assert_eq!(active_tail_claim.last().map(|message| message.offset), Some(279));
+
+        thread::sleep(StdDuration::from_millis(60));
+
+        let recovered_prefix =
+            service.fetch_messages_for_group(&topic_id, &group_id, 0, 280, 120).unwrap();
+        assert_eq!(recovered_prefix.first().map(|message| message.offset), Some(0));
+        assert_eq!(recovered_prefix.last().map(|message| message.offset), Some(119));
+
+        let recovered_gap =
+            service.fetch_messages_for_group(&topic_id, &group_id, 0, 120, 120).unwrap();
+        assert_eq!(recovered_gap.first().map(|message| message.offset), Some(120));
+        assert_eq!(recovered_gap.last().map(|message| message.offset), Some(159));
     }
 
     #[test]

@@ -1,31 +1,43 @@
-use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
-use std::rc::Rc;
+use std::{
+    cell::{Cell, RefCell},
+    collections::HashMap,
+    rc::Rc,
+};
 
-use wasm_bindgen::prelude::*;
-use wasm_bindgen::JsCast;
+use serde::Serialize;
+use wasm_bindgen::{prelude::*, JsCast};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{CloseEvent, ErrorEvent, MessageEvent, WebSocket};
 
+use super::{
+    auth::WasmAuthProvider,
+    helpers::{
+        create_promise, decode_ws_binary_payload, decode_ws_message, send_ws_message,
+        serialize_json_to_js_value, subscription_hash,
+    },
+    reconnect::{self, reconnect_internal_with_auth, resubscribe_all},
+    state::{
+        callback_payload, filter_subscription_event, track_subscription_checkpoint,
+        SubscriptionCallbackMode, SubscriptionState, WasmLiveRowsOptions,
+    },
+    validation::{
+        quote_table_name, validate_column_name, validate_row_id, validate_sql_identifier,
+    },
+    wasm_debug_log,
+};
 use crate::models::{
-    ClientMessage, ConnectionOptions, QueryRequest, SerializationType, ServerMessage,
-    SubscriptionOptions, SubscriptionRequest,
+    ClientMessage, ConnectionOptions, SerializationType, ServerMessage, SubscriptionOptions,
+    SubscriptionRequest,
 };
 
-use super::auth::WasmAuthProvider;
-use super::helpers::{
-    create_promise, decode_ws_binary_payload, decode_ws_message, send_ws_message,
-    serialize_json_to_js_value, subscription_hash,
-};
-use super::reconnect::{self, reconnect_internal_with_auth, resubscribe_all};
-use super::state::{
-    callback_payload, filter_subscription_event, track_subscription_checkpoint,
-    SubscriptionCallbackMode, SubscriptionState, WasmLiveRowsOptions,
-};
-use super::validation::{
-    quote_table_name, validate_column_name, validate_row_id, validate_sql_identifier,
-};
-use super::wasm_debug_log;
+#[derive(Serialize)]
+struct BorrowedQueryRequest<'a> {
+    sql: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    params: Option<&'a [serde_json::Value]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    namespace_id: Option<&'a str>,
+}
 
 /// WASM-compatible KalamDB client with auto-reconnection support
 ///
@@ -33,7 +45,8 @@ use super::wasm_debug_log;
 /// - Basic Auth: `new KalamClient(url, username, password)`
 /// - JWT Token: `KalamClient.withJwt(url, token)`
 /// - Anonymous: `KalamClient.anonymous(url)`
-/// - Dynamic Auth: `KalamClient.anonymous(url)` + `setAuthProvider(async () => ({ jwt: { token } }))`
+/// - Dynamic Auth: `KalamClient.anonymous(url)` + `setAuthProvider(async () => ({ jwt: { token }
+///   }))`
 ///
 /// # Example (JavaScript)
 /// ```js
@@ -247,7 +260,7 @@ impl SubscriptionDispatch {
     }
 }
 
-fn subscription_id_from_server_message(event: &ServerMessage) -> Option<String> {
+fn subscription_id_from_server_message(event: &ServerMessage) -> Option<&str> {
     match event {
         ServerMessage::SubscriptionAck {
             subscription_id,
@@ -258,7 +271,7 @@ fn subscription_id_from_server_message(event: &ServerMessage) -> Option<String> 
                 "KalamClient: Parsed SubscriptionAck - id: {}, total_rows: {}",
                 subscription_id, _total_rows
             ));
-            Some(subscription_id.clone())
+            Some(subscription_id.as_str())
         },
         ServerMessage::InitialDataBatch {
             subscription_id,
@@ -271,7 +284,7 @@ fn subscription_id_from_server_message(event: &ServerMessage) -> Option<String> 
                 _rows.len(),
                 _batch_control.status
             ));
-            Some(subscription_id.clone())
+            Some(subscription_id.as_str())
         },
         ServerMessage::Change {
             subscription_id,
@@ -285,7 +298,7 @@ fn subscription_id_from_server_message(event: &ServerMessage) -> Option<String> 
                 _change_type,
                 _rows.as_ref().map(|value| value.len())
             ));
-            Some(subscription_id.clone())
+            Some(subscription_id.as_str())
         },
         ServerMessage::Error {
             subscription_id,
@@ -297,21 +310,21 @@ fn subscription_id_from_server_message(event: &ServerMessage) -> Option<String> 
                 "KalamClient: Parsed Error - id: {}, code: {}, msg: {}",
                 subscription_id, _code, _message
             ));
-            Some(subscription_id.clone())
+            Some(subscription_id.as_str())
         },
         _ => None,
     }
 }
 
-fn resolve_subscription_key(
-    subscription_id: &str,
+fn resolve_subscription_key<'a>(
+    subscription_id: &'a str,
     subscriptions: &HashMap<String, SubscriptionState>,
-) -> Option<String> {
+) -> Option<&'a str> {
     // The server echoes the exact subscription_id the client sent, so an exact
     // match is always correct. The previous ends_with() fallback was unsafe with
     // multiple concurrent subscriptions because it could match the wrong entry.
     if subscriptions.contains_key(subscription_id) {
-        Some(subscription_id.to_string())
+        Some(subscription_id)
     } else {
         None
     }
@@ -348,7 +361,7 @@ fn dispatch_subscription_server_message(
 
     {
         let mut subs = subscriptions.borrow_mut();
-        if let Some(state) = subs.get_mut(&client_id) {
+        if let Some(state) = subs.get_mut(client_id) {
             callback = Some(state.callback.clone());
             if let Some(filtered_event) = filter_subscription_event(&state.options, event) {
                 track_subscription_checkpoint(&mut state.last_seq_id, &filtered_event);
@@ -381,7 +394,7 @@ fn dispatch_subscription_server_message(
         }
 
         if remove_state {
-            subs.remove(&client_id);
+            subs.remove(client_id);
         }
     }
 
@@ -1015,7 +1028,6 @@ impl KalamClient {
         self.connection_options.borrow_mut().ws_lazy_connect = lazy;
     }
 
-    ///
     /// # Returns
     /// Promise that resolves when connection is established and authenticated
     pub async fn connect(&mut self) -> Result<(), JsValue> {
@@ -1064,7 +1076,8 @@ impl KalamClient {
 
         if matches!(resolved_auth, WasmAuthProvider::Basic { .. }) {
             return Err(JsValue::from_str(
-                "WebSocket authentication requires a JWT token. Use KalamClient.withJwt, login first, or set an authProvider.",
+                "WebSocket authentication requires a JWT token. Use KalamClient.withJwt, login \
+                 first, or set an authProvider.",
             ));
         }
 
@@ -1221,7 +1234,8 @@ impl KalamClient {
         // Set up auto-reconnect onclose handler
         self.setup_auto_reconnect(&ws);
 
-        // T063K: Implement WebSocket onmessage handler to parse events and invoke registered callbacks
+        // T063K: Implement WebSocket onmessage handler to parse events and invoke registered
+        // callbacks
         let subscriptions = Rc::clone(&self.subscription_state);
         let auth_resolve_clone = auth_resolve.clone();
         let auth_reject_clone2 = auth_reject.clone();
@@ -1522,7 +1536,8 @@ impl KalamClient {
         validate_row_id(&row_id)?;
 
         // T063H: Implement using fetch API to execute DELETE statement via /v1/api/sql
-        // Security: Quote table name (handling namespace.table format) and use parameterized-style value
+        // Security: Quote table name (handling namespace.table format) and use parameterized-style
+        // value
         let sql = format!(
             "DELETE FROM {} WHERE id = '{}'",
             quote_table_name(&table_name),
@@ -1759,7 +1774,8 @@ impl KalamClient {
             WasmAuthProvider::Basic { username, password } => (username.clone(), password.clone()),
             _ => {
                 return Err(JsValue::from_str(
-                    "login() requires user/password credentials. Create client with new KalamClient(url, user, password)",
+                    "login() requires user/password credentials. Create client with new \
+                     KalamClient(url, user, password)",
                 ))
             },
         };
@@ -1854,7 +1870,8 @@ impl KalamClient {
                 {
                     if query_resp.is_token_expired() {
                         wasm_debug_log!(
-                            "KalamClient: TOKEN_EXPIRED detected — reauthenticating and retrying query",
+                            "KalamClient: TOKEN_EXPIRED detected — reauthenticating and retrying \
+                             query",
                         );
                         self.reauthenticate_for_http().await?;
                         return self.execute_sql_http(sql, &params).await;
@@ -1870,7 +1887,8 @@ impl KalamClient {
                     {
                         if query_resp.is_token_expired() {
                             wasm_debug_log!(
-                                "KalamClient: TOKEN_EXPIRED detected in HTTP error — reauthenticating and retrying query",
+                                "KalamClient: TOKEN_EXPIRED detected in HTTP error — \
+                                 reauthenticating and retrying query",
                             );
                             self.reauthenticate_for_http().await?;
                             return self.execute_sql_http(sql, &params).await;
@@ -1889,9 +1907,9 @@ impl KalamClient {
         sql: &str,
         params: &Option<Vec<serde_json::Value>>,
     ) -> Result<String, JsValue> {
-        let body = QueryRequest {
-            sql: sql.to_string(),
-            params: params.clone(),
+        let body = BorrowedQueryRequest {
+            sql,
+            params: params.as_deref(),
             namespace_id: None,
         };
         let body_str = serde_json::to_string(&body)

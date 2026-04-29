@@ -1,4 +1,5 @@
 pub mod bulk_insert_bench;
+pub mod chat_realtime_bench;
 pub mod concurrent_bench;
 pub mod connection_scale_bench;
 pub mod ddl_bench;
@@ -102,7 +103,7 @@ pub trait Benchmark: Send + Sync {
 /// `connection_scale` remains opt-in because single-host runs often need extra
 /// loopback aliases or explicit override flags to avoid macOS ephemeral-port limits.
 pub fn enabled_in_default_suite(name: &str) -> bool {
-    !matches!(name, "connection_scale")
+    !matches!(name, "connection_scale" | "chat_realtime")
 }
 
 /// Returns all registered benchmarks. Add new benchmarks here.
@@ -160,6 +161,7 @@ pub fn all_benchmarks() -> Vec<Box<dyn Benchmark>> {
         Box::new(load_connection_storm_bench::ConnectionStormBench),
         Box::new(load_mixed_rw_bench::MixedReadWriteBench),
         Box::new(load_wide_fanout_bench::WideFanoutQueryBench),
+        Box::new(chat_realtime_bench::ChatRealtimeBench),
         // --- Scale tests (run with --iterations 1 --warmup 0 --filter subscriber_scale) ---
         Box::new(connection_scale_bench::ConnectionScaleBench),
         Box::new(subscriber_scale_bench::SubscriberScaleBench::default()),

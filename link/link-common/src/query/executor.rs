@@ -1,10 +1,12 @@
 //! SQL query execution via HTTP.
 
-use crate::{
-    auth::AuthProvider,
-    error::{KalamLinkError, Result},
-    models::{QueryRequest, QueryResponse, UploadProgress},
+use std::{
+    future::Future,
+    pin::Pin,
+    sync::{Arc, Mutex},
+    time::Instant,
 };
+
 #[cfg(feature = "file-uploads")]
 use bytes::Bytes;
 #[cfg(feature = "file-uploads")]
@@ -14,38 +16,20 @@ use http_body_util::StreamBody;
 use log::{debug, warn};
 #[cfg(feature = "file-uploads")]
 use reqwest::multipart::{Form, Part};
-use std::{
-    future::Future,
-    pin::Pin,
-    sync::{Arc, Mutex},
-    time::Instant,
+use serde::Serialize;
+
+use crate::{
+    auth::AuthProvider,
+    error::{KalamLinkError, Result},
+    models::{QueryResponse, UploadProgress},
 };
-
-/// Async callback that resolves fresh [`AuthProvider`] credentials.
-///
-/// Called by the executor when a query requires a login exchange or returns
-/// `TOKEN_EXPIRED`.
-/// Implementations should obtain a fresh JWT (e.g. via login or dynamic
-/// auth provider) and return it.
-pub type AuthRefreshCallback =
-    Arc<dyn Fn() -> Pin<Box<dyn Future<Output = Result<AuthProvider>> + Send>> + Send + Sync>;
-
-/// Handles SQL query execution via HTTP.
-#[derive(Clone)]
-pub struct QueryExecutor {
-    sql_url: String,
-    http_client: reqwest::Client,
-    auth: Arc<Mutex<AuthProvider>>,
-    max_retries: u32,
-    auth_refresher: Option<AuthRefreshCallback>,
-}
 
 /// Progress callback for multipart file uploads.
 pub type UploadProgressCallback = Arc<dyn Fn(UploadProgress) + Send + Sync>;
 
 #[cfg(feature = "file-uploads")]
 fn build_progress_stream(
-    data: Arc<Vec<u8>>,
+    data: Bytes,
     file_name: Arc<str>,
     file_index: usize,
     total_files: usize,
@@ -54,7 +38,7 @@ fn build_progress_stream(
 {
     let chunk_size = 64 * 1024;
     futures_util::stream::unfold(0usize, move |offset| {
-        let data = Arc::clone(&data);
+        let data = data.clone();
         let progress_cb = progress_cb.clone();
         let file_name = Arc::clone(&file_name);
         async move {
@@ -63,7 +47,7 @@ fn build_progress_stream(
             }
 
             let end = (offset + chunk_size).min(data.len());
-            let chunk = Bytes::copy_from_slice(&data[offset..end]);
+            let chunk = data.slice(offset..end);
             let total_bytes = data.len() as u64;
             let bytes_sent = end as u64;
             let percent = if total_bytes == 0 {
@@ -84,6 +68,57 @@ fn build_progress_stream(
             Some((Ok(Frame::data(chunk)), end))
         }
     })
+}
+
+#[cfg(feature = "file-uploads")]
+#[derive(Clone)]
+struct MultipartUploadFile {
+    placeholder_name: String,
+    filename: String,
+    data: Bytes,
+    mime_type: Option<String>,
+}
+
+#[cfg(feature = "file-uploads")]
+impl From<(String, String, Vec<u8>, Option<String>)> for MultipartUploadFile {
+    fn from(
+        (placeholder_name, filename, data, mime_type): (String, String, Vec<u8>, Option<String>),
+    ) -> Self {
+        Self {
+            placeholder_name,
+            filename,
+            data: Bytes::from(data),
+            mime_type,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct BorrowedQueryRequest<'a> {
+    sql: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    params: Option<&'a [serde_json::Value]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    namespace_id: Option<&'a str>,
+}
+
+/// Async callback that resolves fresh [`AuthProvider`] credentials.
+///
+/// Called by the executor when a query requires a login exchange or returns
+/// `TOKEN_EXPIRED`.
+/// Implementations should obtain a fresh JWT (e.g. via login or dynamic
+/// auth provider) and return it.
+pub type AuthRefreshCallback =
+    Arc<dyn Fn() -> Pin<Box<dyn Future<Output = Result<AuthProvider>> + Send>> + Send + Sync>;
+
+/// Handles SQL query execution via HTTP.
+#[derive(Clone)]
+pub struct QueryExecutor {
+    sql_url: String,
+    http_client: reqwest::Client,
+    auth: Arc<Mutex<AuthProvider>>,
+    max_retries: u32,
+    auth_refresher: Option<AuthRefreshCallback>,
 }
 
 impl QueryExecutor {
@@ -113,7 +148,9 @@ impl QueryExecutor {
     fn validate_request_auth(auth: &AuthProvider) -> Result<()> {
         if matches!(auth, AuthProvider::BasicAuth(_, _)) {
             return Err(KalamLinkError::AuthenticationError(
-                "User/password credentials can only be used with /v1/api/auth/login; exchange them for a JWT before executing SQL requests.".to_string(),
+                "User/password credentials can only be used with /v1/api/auth/login; exchange \
+                 them for a JWT before executing SQL requests."
+                    .to_string(),
             ));
         }
 
@@ -141,13 +178,17 @@ impl QueryExecutor {
     }
 
     fn is_retry_safe_sql(sql: &str) -> bool {
-        matches!(
-            Self::first_keyword(sql).as_deref(),
-            Some("SELECT" | "SHOW" | "DESCRIBE" | "EXPLAIN")
-        )
+        let Some(keyword) = Self::first_keyword(sql) else {
+            return false;
+        };
+
+        keyword.eq_ignore_ascii_case("SELECT")
+            || keyword.eq_ignore_ascii_case("SHOW")
+            || keyword.eq_ignore_ascii_case("DESCRIBE")
+            || keyword.eq_ignore_ascii_case("EXPLAIN")
     }
 
-    fn first_keyword(sql: &str) -> Option<String> {
+    fn first_keyword(sql: &str) -> Option<&str> {
         let bytes = sql.as_bytes();
         let mut i = 0;
         while i < bytes.len() {
@@ -189,7 +230,7 @@ impl QueryExecutor {
             if start == i {
                 return None;
             }
-            return Some(sql[start..i].to_ascii_uppercase());
+            return Some(&sql[start..i]);
         }
 
         None
@@ -215,88 +256,76 @@ impl QueryExecutor {
         namespace_id: Option<String>,
         progress: Option<UploadProgressCallback>,
     ) -> Result<QueryResponse> {
+        self.execute_with_progress_ref(sql, files, params, namespace_id.as_deref(), progress)
+            .await
+    }
+
+    pub(crate) async fn execute_with_progress_ref(
+        &self,
+        sql: &str,
+        files: Option<Vec<(String, String, Vec<u8>, Option<String>)>>,
+        params: Option<Vec<serde_json::Value>>,
+        namespace_id: Option<&str>,
+        progress: Option<UploadProgressCallback>,
+    ) -> Result<QueryResponse> {
         let has_files = files.as_ref().map(|f| !f.is_empty()).unwrap_or(false);
 
         #[cfg(not(feature = "file-uploads"))]
         if has_files {
             return Err(KalamLinkError::ConfigurationError(
-                "This SDK build does not include file upload support. Rebuild with the `file-uploads` feature.".to_string(),
+                "This SDK build does not include file upload support. Rebuild with the \
+                 `file-uploads` feature."
+                    .to_string(),
             ));
         }
 
         #[cfg(feature = "file-uploads")]
         if has_files {
-            let mut form = Form::new().text("sql", sql.to_string());
-
-            if let Some(p) = &params {
-                form = form.text("params", serde_json::to_string(p)?);
-            }
-
-            if let Some(ns) = &namespace_id {
-                form = form.text("namespace_id", ns.clone());
-            }
-
-            if let Some(files) = files {
-                let total_files = files.len();
-                for (index, (placeholder_name, filename, data, mime_type)) in
-                    files.into_iter().enumerate()
-                {
-                    let total_bytes = data.len() as u64;
-                    let field_name = format!("file:{}", placeholder_name);
-
-                    let part = if let Some(progress_cb) = progress.clone() {
-                        let data = Arc::new(data);
-                        let file_name = Arc::<str>::from(filename.clone());
-                        let file_index = index + 1;
-
-                        let stream = build_progress_stream(
-                            Arc::clone(&data),
-                            Arc::clone(&file_name),
-                            file_index,
-                            total_files,
-                            progress_cb,
-                        );
-
-                        let body = reqwest::Body::wrap(StreamBody::new(stream));
-                        Part::stream_with_length(body, total_bytes)
-                    } else {
-                        Part::bytes(data)
-                    };
-
-                    let part = part
-                        .file_name(filename)
-                        .mime_str(mime_type.as_deref().unwrap_or("application/octet-stream"))
-                        .map_err(|e| {
-                            KalamLinkError::ConfigurationError(format!("Invalid MIME type: {}", e))
-                        })?;
-
-                    form = form.part(field_name, part);
-                }
-            }
-
+            let files = files
+                .unwrap_or_default()
+                .into_iter()
+                .map(MultipartUploadFile::from)
+                .collect::<Vec<_>>();
             let auth_snapshot = self.ensure_request_auth().await?;
-            let mut req_builder = self.http_client.post(&self.sql_url).multipart(form);
-            req_builder = auth_snapshot.apply_to_request(req_builder)?;
+            let mut result = self
+                .execute_multipart_once(
+                    &self.sql_url,
+                    &auth_snapshot,
+                    sql,
+                    &files,
+                    params.as_ref(),
+                    namespace_id.as_deref(),
+                    progress.clone(),
+                )
+                .await;
 
-            let attempt_start = Instant::now();
-            debug!("[LINK_HTTP] Sending multipart POST to {}", self.sql_url);
+            if let Some(leader_sql_url) = Self::multipart_leader_retry_url(&result, &self.sql_url) {
+                warn!(
+                    "[LINK_HTTP] Leader redirect for multipart request - retrying against {}",
+                    leader_sql_url
+                );
+                result = self
+                    .execute_multipart_once(
+                        &leader_sql_url,
+                        &auth_snapshot,
+                        sql,
+                        &files,
+                        params.as_ref(),
+                        namespace_id.as_deref(),
+                        progress.clone(),
+                    )
+                    .await;
+            }
 
-            let response = req_builder.send().await?;
-            let http_duration_ms = attempt_start.elapsed().as_millis();
-            debug!(
-                "[LINK_HTTP] Response received: status={} duration_ms={}",
-                response.status(),
-                http_duration_ms
-            );
+            let result = result?;
 
-            let result = Self::handle_response(response, sql).await?;
-
-            // Auto-refresh on TOKEN_EXPIRED (multipart — no retry, just report).
-            // Multipart uploads consume the body so we cannot replay them, but
-            // we still refresh the token so the *next* request succeeds.
+            // Auto-refresh on TOKEN_EXPIRED for subsequent requests.
             if result.is_token_expired() {
                 if let Some(refresher) = &self.auth_refresher {
-                    warn!("[LINK_HTTP] TOKEN_EXPIRED on multipart request — refreshing auth for subsequent requests");
+                    warn!(
+                        "[LINK_HTTP] TOKEN_EXPIRED on multipart request — refreshing auth for \
+                         subsequent requests"
+                    );
                     if let Ok(new_auth) = refresher().await {
                         if Self::validate_request_auth(&new_auth).is_ok() {
                             *self.auth.lock().unwrap() = new_auth;
@@ -310,9 +339,9 @@ impl QueryExecutor {
 
         let _ = progress;
 
-        let request = QueryRequest {
-            sql: sql.to_string(),
-            params,
+        let request = BorrowedQueryRequest {
+            sql,
+            params: params.as_deref(),
             namespace_id,
         };
 
@@ -428,9 +457,128 @@ impl QueryExecutor {
         err.is_timeout() || err.is_connect()
     }
 
+    fn multipart_leader_retry_url(
+        result: &Result<QueryResponse>,
+        current_sql_url: &str,
+    ) -> Option<String> {
+        let leader_url = match result {
+            Ok(response) => Self::leader_url_from_query_response(response),
+            Err(KalamLinkError::ServerError { message, .. }) => {
+                Self::leader_url_from_error_text(message)
+            },
+            Err(_) => None,
+        }?;
+
+        let retry_url = format!("{}/v1/api/sql", leader_url.trim_end_matches('/'));
+        (retry_url != current_sql_url).then_some(retry_url)
+    }
+
+    fn leader_url_from_query_response(response: &QueryResponse) -> Option<String> {
+        let error = response.error.as_ref()?;
+        Self::extract_leader_url(&error.message)
+            .or_else(|| error.details.as_deref().and_then(Self::extract_leader_url))
+    }
+
+    fn leader_url_from_error_text(error_text: &str) -> Option<String> {
+        serde_json::from_str::<QueryResponse>(error_text)
+            .ok()
+            .and_then(|response| Self::leader_url_from_query_response(&response))
+            .or_else(|| Self::extract_leader_url(error_text))
+    }
+
+    fn extract_leader_url(text: &str) -> Option<String> {
+        let marker = "Leader:";
+        let index = text.find(marker)?;
+        let mut leader = text[index + marker.len()..].trim();
+
+        if let Some(stripped) = leader.strip_prefix("Some(\"") {
+            leader = stripped;
+            leader = &leader[..leader.find("\")").unwrap_or(leader.len())];
+        }
+
+        leader = leader.trim_matches(|ch| matches!(ch, '"' | '\\' | ')' | '(' | '[' | ']'));
+        leader = leader.split_whitespace().next().unwrap_or(leader).trim_end_matches([',', ';']);
+
+        if leader.starts_with("http://") || leader.starts_with("https://") {
+            Some(leader.to_string())
+        } else {
+            None
+        }
+    }
+
+    #[cfg(feature = "file-uploads")]
+    async fn execute_multipart_once(
+        &self,
+        sql_url: &str,
+        auth_snapshot: &AuthProvider,
+        sql: &str,
+        files: &[MultipartUploadFile],
+        params: Option<&Vec<serde_json::Value>>,
+        namespace_id: Option<&str>,
+        progress: Option<UploadProgressCallback>,
+    ) -> Result<QueryResponse> {
+        let mut form = Form::new().text("sql", sql.to_string());
+
+        if let Some(p) = params {
+            form = form.text("params", serde_json::to_string(p)?);
+        }
+
+        if let Some(ns) = namespace_id {
+            form = form.text("namespace_id", ns.to_string());
+        }
+
+        let total_files = files.len();
+        for (index, file) in files.iter().enumerate() {
+            let total_bytes = file.data.len() as u64;
+            let field_name = format!("file:{}", file.placeholder_name);
+
+            let part = if let Some(progress_cb) = progress.clone() {
+                let file_name = Arc::<str>::from(file.filename.clone());
+                let file_index = index + 1;
+
+                let stream = build_progress_stream(
+                    file.data.clone(),
+                    Arc::clone(&file_name),
+                    file_index,
+                    total_files,
+                    progress_cb,
+                );
+
+                let body = reqwest::Body::wrap(StreamBody::new(stream));
+                Part::stream_with_length(body, total_bytes)
+            } else {
+                Part::stream_with_length(reqwest::Body::from(file.data.clone()), total_bytes)
+            };
+
+            let part = part
+                .file_name(file.filename.clone())
+                .mime_str(file.mime_type.as_deref().unwrap_or("application/octet-stream"))
+                .map_err(|e| {
+                    KalamLinkError::ConfigurationError(format!("Invalid MIME type: {}", e))
+                })?;
+
+            form = form.part(field_name, part);
+        }
+
+        let mut req_builder = self.http_client.post(sql_url).multipart(form);
+        req_builder = auth_snapshot.apply_to_request(req_builder)?;
+
+        let attempt_start = Instant::now();
+        debug!("[LINK_HTTP] Sending multipart POST to {}", sql_url);
+
+        let response = req_builder.send().await?;
+        let http_duration_ms = attempt_start.elapsed().as_millis();
+        debug!(
+            "[LINK_HTTP] Response received: status={} duration_ms={}",
+            response.status(),
+            http_duration_ms
+        );
+
+        Self::handle_response(response, sql).await
+    }
+
     async fn handle_response(response: reqwest::Response, _sql: &str) -> Result<QueryResponse> {
         let status = response.status();
-
         if status.is_success() {
             let parse_start = Instant::now();
             let query_response: QueryResponse = response.json().await?;
@@ -479,16 +627,18 @@ impl QueryExecutor {
 #[cfg(test)]
 mod tests {
     #[cfg(feature = "file-uploads")]
-    use super::{build_progress_stream, UploadProgress, UploadProgressCallback};
+    use std::sync::{Arc, Mutex};
+
     #[cfg(feature = "file-uploads")]
     use futures_util::StreamExt;
+
     #[cfg(feature = "file-uploads")]
-    use std::sync::{Arc, Mutex};
+    use super::{build_progress_stream, UploadProgress, UploadProgressCallback};
 
     #[cfg(feature = "file-uploads")]
     #[tokio::test]
     async fn progress_stream_reports_completion() {
-        let data = Arc::new(vec![1u8; 128 * 1024]);
+        let data = bytes::Bytes::from(vec![1u8; 128 * 1024]);
         let file_name = Arc::<str>::from("example.txt");
         let last_progress = Arc::new(Mutex::new(None::<UploadProgress>));
 
@@ -497,8 +647,7 @@ mod tests {
             *last_progress_clone.lock().unwrap() = Some(progress);
         });
 
-        let stream =
-            build_progress_stream(Arc::clone(&data), Arc::clone(&file_name), 2, 3, progress_cb);
+        let stream = build_progress_stream(data.clone(), Arc::clone(&file_name), 2, 3, progress_cb);
 
         futures_util::pin_mut!(stream);
         while let Some(frame) = stream.next().await {
@@ -512,5 +661,32 @@ mod tests {
         assert_eq!(progress.total_bytes, data.len() as u64);
         assert_eq!(progress.bytes_sent, data.len() as u64);
         assert!((progress.percent - 100.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn extract_leader_url_handles_optional_url_hint() {
+        let url = super::QueryExecutor::extract_leader_url(
+            "Statement 1 failed: Not leader for shard. Leader: Some(\"http://127.0.0.1:8083\")",
+        )
+        .expect("leader hint should parse");
+
+        assert_eq!(url, "http://127.0.0.1:8083");
+    }
+
+    #[test]
+    fn leader_retry_url_reads_structured_query_error() {
+        let error_text = r#"{
+            "status": "error",
+            "results": [],
+            "error": {
+                "code": "SQL_EXECUTION_ERROR",
+                "message": "Statement 1 failed: Not leader for shard. Leader: Some(\"http://127.0.0.1:8083\")"
+            }
+        }"#;
+
+        let url = super::QueryExecutor::leader_url_from_error_text(error_text)
+            .expect("structured query error should yield leader URL");
+
+        assert_eq!(url, "http://127.0.0.1:8083");
     }
 }

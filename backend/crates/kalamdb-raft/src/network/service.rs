@@ -6,13 +6,14 @@
 //! - Raft consensus RPCs (vote, append_entries, install_snapshot)
 //! - Client proposal forwarding (forward proposals from followers to leader)
 
+use std::{io::ErrorKind, time::Duration};
+
 use kalamdb_pg::{KalamPgService, PgServiceServer};
-use std::io::ErrorKind;
-use std::time::Duration;
-use tokio::sync::oneshot;
-use tokio::time::sleep;
-use tonic::transport::{Certificate, Identity, ServerTlsConfig};
-use tonic::{Request, Response, Status};
+use tokio::{sync::oneshot, time::sleep};
+use tonic::{
+    transport::{Certificate, Identity, ServerTlsConfig},
+    Request, Response, Status,
+};
 use tonic_prost::ProstCodec;
 
 /// Raft RPC request message
@@ -41,6 +42,43 @@ pub struct RaftRpcResponse {
     /// Error message if any
     #[prost(string, tag = "2")]
     pub error: String,
+}
+
+/// Canonical Raft RPC operation names carried in [`RaftRpcRequest`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RaftRpcKind {
+    Vote,
+    AppendEntries,
+    InstallSnapshot,
+}
+
+impl RaftRpcKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Vote => "vote",
+            Self::AppendEntries => "append_entries",
+            Self::InstallSnapshot => "install_snapshot",
+        }
+    }
+}
+
+impl std::fmt::Display for RaftRpcKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for RaftRpcKind {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "vote" => Ok(Self::Vote),
+            "append_entries" => Ok(Self::AppendEntries),
+            "install_snapshot" => Ok(Self::InstallSnapshot),
+            other => Err(format!("Unknown RPC type: {}", other)),
+        }
+    }
 }
 
 /// Client proposal request (for forwarding from follower to leader)
@@ -83,8 +121,9 @@ pub struct ClientProposalResponse {
 
 /// Generated gRPC client module
 pub mod raft_client {
-    use super::*;
     use tonic::codegen::*;
+
+    use super::*;
 
     /// Raft RPC client
     #[derive(Debug, Clone)]
@@ -144,8 +183,9 @@ pub mod raft_client {
 
 /// Generated gRPC server module
 pub mod raft_server {
-    use super::*;
     use tonic::codegen::*;
+
+    use super::*;
 
     /// Raft service trait
     #[async_trait::async_trait]
@@ -260,8 +300,9 @@ pub mod raft_server {
     }
 }
 
-use crate::manager::RaftManager;
 use std::sync::Arc;
+
+use crate::manager::RaftManager;
 
 /// Raft gRPC service implementation
 #[derive(Clone)]
@@ -292,18 +333,15 @@ impl raft_server::Raft for RaftService {
             .parse::<crate::GroupId>()
             .map_err(|e| Status::invalid_argument(format!("Invalid group ID: {}", e)))?;
 
-        // Route to appropriate Raft group
-        let result = match req.rpc_type.as_str() {
-            "vote" => self.manager.handle_vote(group_id, &req.payload).await,
-            "append_entries" => self.manager.handle_append_entries(group_id, &req.payload).await,
-            "install_snapshot" => {
-                self.manager.handle_install_snapshot(group_id, &req.payload).await
+        let rpc_kind = req.rpc_type.parse::<RaftRpcKind>().map_err(Status::invalid_argument)?;
+
+        let result = match rpc_kind {
+            RaftRpcKind::Vote => self.manager.handle_vote(group_id, &req.payload).await,
+            RaftRpcKind::AppendEntries => {
+                self.manager.handle_append_entries(group_id, &req.payload).await
             },
-            _ => {
-                return Err(Status::invalid_argument(format!(
-                    "Unknown RPC type: {}",
-                    req.rpc_type
-                )));
+            RaftRpcKind::InstallSnapshot => {
+                self.manager.handle_install_snapshot(group_id, &req.payload).await
             },
         };
 
@@ -501,7 +539,8 @@ pub async fn start_rpc_server(
     match tokio::time::timeout(tokio::time::Duration::from_secs(5), rx).await {
         Ok(Ok(Ok(()))) => {
             log::info!(
-                "✓ Raft RPC server started on {} (advertising as {})",
+                "[CLUSTER] Node {} RPC listener is up on {} and advertising {}",
+                manager.config().node_id,
                 bind_addr,
                 advertise_addr
             );
@@ -572,11 +611,11 @@ mod tests {
     fn test_request_message() {
         let req = RaftRpcRequest {
             group_id: "MetaSystem".to_string(),
-            rpc_type: "vote".to_string(),
+            rpc_type: RaftRpcKind::Vote.to_string(),
             payload: vec![1, 2, 3],
         };
 
         assert_eq!(req.group_id, "MetaSystem");
-        assert_eq!(req.rpc_type, "vote");
+        assert_eq!(req.rpc_type, RaftRpcKind::Vote.as_str());
     }
 }

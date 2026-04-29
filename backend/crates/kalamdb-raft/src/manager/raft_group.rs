@@ -2,19 +2,22 @@
 //!
 //! Represents a single Raft consensus group with its own log, state machine, and network.
 
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use kalamdb_commons::models::NodeId;
 use kalamdb_store::StorageBackend;
-use openraft::storage::Adaptor;
-use openraft::{Config, Raft, RaftMetrics};
+use openraft::{storage::Adaptor, Config, Raft, RaftMetrics};
 use parking_lot::RwLock;
 
-use crate::network::RaftNetworkFactory;
-use crate::state_machine::KalamStateMachine;
-use crate::storage::{KalamNode, KalamRaftStorage, KalamTypeConfig};
-use crate::{GroupId, RaftError};
+use crate::{
+    network::{RaftChannelPool, RaftNetworkFactory},
+    state_machine::KalamStateMachine,
+    storage::{KalamNode, KalamRaftStorage, KalamTypeConfig},
+    GroupId, RaftError,
+};
 
 /// Type alias for the openraft Raft instance
 pub type RaftInstance = Raft<KalamTypeConfig>;
@@ -44,11 +47,20 @@ pub struct RaftGroup<SM: KalamStateMachine + Send + Sync + 'static> {
 impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
     /// Create a new Raft group with in-memory storage (not yet started)
     pub fn new(group_id: GroupId, state_machine: SM) -> Self {
+        Self::new_with_channel_pool(group_id, state_machine, RaftNetworkFactory::new_channel_pool())
+    }
+
+    /// Create a new Raft group with in-memory storage and a shared channel pool.
+    pub fn new_with_channel_pool(
+        group_id: GroupId,
+        state_machine: SM,
+        channel_pool: RaftChannelPool,
+    ) -> Self {
         Self {
             group_id,
             raft: RwLock::new(None),
             storage: Arc::new(KalamRaftStorage::new(group_id, state_machine)),
-            network_factory: RaftNetworkFactory::new(group_id),
+            network_factory: RaftNetworkFactory::new_with_channel_pool(group_id, channel_pool),
         }
     }
 
@@ -62,6 +74,23 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
         backend: Arc<dyn StorageBackend>,
         snapshots_dir: std::path::PathBuf,
     ) -> Result<Self, RaftError> {
+        Self::new_persistent_with_channel_pool(
+            group_id,
+            state_machine,
+            backend,
+            snapshots_dir,
+            RaftNetworkFactory::new_channel_pool(),
+        )
+    }
+
+    /// Create a new persistent Raft group backed by a shared channel pool.
+    pub fn new_persistent_with_channel_pool(
+        group_id: GroupId,
+        state_machine: SM,
+        backend: Arc<dyn StorageBackend>,
+        snapshots_dir: std::path::PathBuf,
+        channel_pool: RaftChannelPool,
+    ) -> Result<Self, RaftError> {
         let storage =
             KalamRaftStorage::new_persistent(group_id, state_machine, backend, snapshots_dir)
                 .map_err(|e| {
@@ -72,7 +101,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
             group_id,
             raft: RwLock::new(None),
             storage: Arc::new(storage),
-            network_factory: RaftNetworkFactory::new(group_id),
+            network_factory: RaftNetworkFactory::new_with_channel_pool(group_id, channel_pool),
         })
     }
 
@@ -105,6 +134,69 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
     /// Get the last applied log ID from storage
     pub fn get_last_applied(&self) -> Option<openraft::LogId<u64>> {
         self.storage.get_last_applied()
+    }
+
+    /// Wait until this node has applied every log entry already known locally.
+    pub async fn wait_for_local_apply_barrier(&self, timeout: Duration) -> Result<u64, RaftError> {
+        let metrics =
+            self.metrics().ok_or_else(|| RaftError::NotStarted(self.group_id.to_string()))?;
+        let committed_index = self.storage.get_committed().map(|log_id| log_id.index).unwrap_or(0);
+        let snapshot_index = metrics.snapshot.map(|log_id| log_id.index).unwrap_or(0);
+        let target_index = committed_index.max(snapshot_index);
+
+        if target_index == 0 {
+            return Ok(0);
+        }
+
+        let start = Instant::now();
+        if let Some(mut applied_rx) = self.storage.state_machine().subscribe_last_applied() {
+            loop {
+                let applied_index = *applied_rx.borrow();
+                if applied_index >= target_index {
+                    return Ok(applied_index);
+                }
+
+                let elapsed = start.elapsed();
+                if elapsed >= timeout {
+                    return Err(RaftError::ReplicationTimeout {
+                        group: self.group_id.to_string(),
+                        committed_log_id: target_index.to_string(),
+                        timeout_ms: timeout.as_millis() as u64,
+                    });
+                }
+
+                match tokio::time::timeout(timeout - elapsed, applied_rx.changed()).await {
+                    Ok(Ok(())) => {},
+                    Ok(Err(_)) => break,
+                    Err(_) => {
+                        return Err(RaftError::ReplicationTimeout {
+                            group: self.group_id.to_string(),
+                            committed_log_id: target_index.to_string(),
+                            timeout_ms: timeout.as_millis() as u64,
+                        });
+                    },
+                }
+            }
+        }
+
+        let poll_interval = Duration::from_millis(5);
+
+        loop {
+            let applied_index = self.storage.state_machine().last_applied_index();
+            if applied_index >= target_index {
+                return Ok(applied_index);
+            }
+
+            if start.elapsed() > timeout {
+                return Err(RaftError::ReplicationTimeout {
+                    group: self.group_id.to_string(),
+                    committed_log_id: target_index.to_string(),
+                    timeout_ms: timeout.as_millis() as u64,
+                });
+            }
+
+            tokio::time::sleep(poll_interval).await;
+        }
     }
 
     /// Start the Raft group with the given node ID and configuration
@@ -449,8 +541,9 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
             .map_err(|e| RaftError::Proposal(format!("{:?}", e)))?;
 
         // Deserialize the response based on command type using centralized serde_helpers.
-        // The state machine returns MetaResponse or DataResponse directly, not wrapped in RaftResponse.
-        // If the state machine short-circuits with NoOp, response.data can be empty; treat as Ok.
+        // The state machine returns MetaResponse or DataResponse directly, not wrapped in
+        // RaftResponse. If the state machine short-circuits with NoOp, response.data can be
+        // empty; treat as Ok.
         let response_obj = if response.data.is_empty() {
             match command {
                 crate::RaftCommand::Meta(_) => crate::RaftResponse::Meta(crate::MetaResponse::Ok),
@@ -543,8 +636,10 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
                                     // This applies to ALL groups (Meta and Data shards)
                                     if log_index > 0 {
                                         log::debug!(
-                                            "Waiting for {} log index {} to be applied locally for read-your-writes consistency",
-                                            self.group_id, log_index
+                                            "Waiting for {} log index {} to be applied locally \
+                                             for read-your-writes consistency",
+                                            self.group_id,
+                                            log_index
                                         );
 
                                         // Poll the state machine until the log is applied
@@ -557,17 +652,24 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
                                                 self.storage.state_machine().last_applied_index();
                                             if applied >= log_index {
                                                 log::debug!(
-                                                    "{} log index {} applied locally (current: {}), read-your-writes consistency achieved",
-                                                    self.group_id, log_index, applied
+                                                    "{} log index {} applied locally (current: \
+                                                     {}), read-your-writes consistency achieved",
+                                                    self.group_id,
+                                                    log_index,
+                                                    applied
                                                 );
                                                 break;
                                             }
 
                                             if start.elapsed() > timeout {
                                                 log::warn!(
-                                                    "Timeout waiting for {} log index {} to be applied locally (current: {}). \
-                                                     Read-your-writes consistency may not be guaranteed.",
-                                                    self.group_id, log_index, applied
+                                                    "Timeout waiting for {} log index {} to be \
+                                                     applied locally (current: {}). \
+                                                     Read-your-writes consistency may not be \
+                                                     guaranteed.",
+                                                    self.group_id,
+                                                    log_index,
+                                                    applied
                                                 );
                                                 break;
                                             }
@@ -628,32 +730,10 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
         leader_node_id: NodeId,
         command: Vec<u8>,
     ) -> Result<(Vec<u8>, u64), RaftError> {
-        use crate::network::{ClientProposalRequest, RaftClient};
-        let channel =
-            self.network_factory.get_or_create_channel(leader_node_id).ok_or_else(|| {
-                RaftError::Network(format!(
-                    "No channel available for leader node {}",
-                    leader_node_id
-                ))
-            })?;
-
-        let mut client = RaftClient::new(channel);
-
-        // Send the proposal
-        let mut request = tonic::Request::new(ClientProposalRequest {
-            group_id: self.group_id.to_string(),
-            command,
-        });
-        self.network_factory
-            .add_outgoing_rpc_metadata(&mut request)
-            .map_err(|e| RaftError::Network(format!("Failed to add RPC metadata: {}", e)))?;
-
-        let response = client
-            .client_proposal(request)
-            .await
-            .map_err(|e| RaftError::Network(format!("gRPC error forwarding proposal: {}", e)))?;
-
-        let inner = response.into_inner();
+        let inner = self
+            .network_factory
+            .send_client_proposal(leader_node_id, self.group_id, command)
+            .await?;
 
         if inner.success {
             Ok((inner.payload, inner.log_index))
@@ -688,7 +768,8 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
     /// supported, we just log and continue - the cluster will re-elect.
     pub async fn transfer_leadership(&self, target_node_id: NodeId) -> Result<(), RaftError> {
         Err(RaftError::InvalidState(format!(
-            "Leadership transfer is unsupported in current OpenRaft version for group {} (target node {})",
+            "Leadership transfer is unsupported in current OpenRaft version for group {} (target \
+             node {})",
             self.group_id, target_node_id
         )))
     }

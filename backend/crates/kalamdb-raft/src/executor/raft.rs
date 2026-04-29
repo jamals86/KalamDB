@@ -3,30 +3,35 @@
 //! This executor routes commands through Raft groups for consensus
 //! before applying them to the local state machine.
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Arc;
-use std::time::Instant;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use async_trait::async_trait;
 use dashmap::DashMap;
+use kalamdb_commons::models::{NodeId, UserId};
 use kalamdb_observability::collect_runtime_metrics;
 use kalamdb_pg::KalamPgService;
+use kalamdb_sharding::ShardRouter;
 use openraft::ServerState;
 
-use kalamdb_commons::models::{NodeId, UserId};
-use kalamdb_sharding::ShardRouter;
-
-use crate::cluster_types::NodeStatus;
-use crate::network::cluster_client::ClusterClient;
-use crate::network::cluster_handler::ClusterMessageHandler;
-use crate::network::models::GetNodeInfoResponse;
 use crate::{
-    manager::RaftManager, ClusterInfo, ClusterNodeInfo, CommandExecutor, DataResponse, GroupId,
-    KalamNode, MetaCommand, MetaResponse, RaftError, SharedDataCommand, UserDataCommand,
+    cluster_types::NodeStatus,
+    manager::RaftManager,
+    network::{
+        cluster_client::ClusterClient, cluster_handler::ClusterMessageHandler,
+        models::GetNodeInfoResponse,
+    },
+    ClusterInfo, ClusterNodeInfo, CommandExecutor, DataResponse, GroupId, KalamNode, MetaCommand,
+    MetaResponse, RaftError, SharedDataCommand, UserDataCommand,
 };
 
 /// Result type for executor operations
 type Result<T> = std::result::Result<T, RaftError>;
+
+const PEER_STATS_REFRESH_MIN_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Cluster mode executor using Raft consensus.
 ///
@@ -46,6 +51,9 @@ pub struct RaftExecutor {
     /// Keyed by `NodeId`. Only populated in cluster mode when the node has peers.
     /// Stale entries are acceptable — they are replaced on the next refresh.
     peer_stats_cache: Arc<DashMap<NodeId, GetNodeInfoResponse>>,
+    /// Last successful peer stats refresh. Cluster health and UI surfaces poll frequently,
+    /// so bound fanout churn and reuse slightly stale cached peer metrics between polls.
+    peer_stats_cache_refreshed_at: Arc<tokio::sync::Mutex<Option<Instant>>>,
 }
 
 impl std::fmt::Debug for RaftExecutor {
@@ -65,6 +73,7 @@ impl RaftExecutor {
             cluster_handler: tokio::sync::OnceCell::new(),
             pg_service: tokio::sync::OnceCell::new(),
             peer_stats_cache: Arc::new(DashMap::new()),
+            peer_stats_cache_refreshed_at: Arc::new(tokio::sync::Mutex::new(None)),
         }
     }
 
@@ -107,11 +116,21 @@ impl RaftExecutor {
     /// This is called by `\cluster list` and future callers that need
     /// fresh per-node data before rendering cluster state.
     pub async fn refresh_peer_stats(&self) {
+        let mut refreshed_at = self.peer_stats_cache_refreshed_at.lock().await;
+        if refreshed_at
+            .as_ref()
+            .is_some_and(|instant| instant.elapsed() < PEER_STATS_REFRESH_MIN_INTERVAL)
+        {
+            return;
+        }
+
         let client = ClusterClient::new(Arc::clone(&self.manager));
         let fresh = client.gather_all_node_infos(2_000).await;
+        let refreshed_now = Instant::now();
         for (node_id, resp) in fresh {
             self.peer_stats_cache.insert(node_id, resp);
         }
+        *refreshed_at = Some(refreshed_now);
     }
 
     /// Compute the shard for a user based on their ID

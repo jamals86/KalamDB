@@ -134,6 +134,11 @@ The durable apply path is:
 
 -> RocksDB-backed table storage
 
+Topic publisher side effects are emitted from the local apply path on nodes that
+have matching topic routes in their local publisher cache. They are not gated on
+the node being the data-shard leader, so a topic-owning node can materialize CDC
+events for writes whose Raft group is led by another node.
+
 Parquet is not the commit target for explicit transactions. RocksDB-backed hot storage is the durable write path, and Parquet remains the later flush / cold-storage path.
 
 ### 5. Rollback

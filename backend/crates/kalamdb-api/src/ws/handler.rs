@@ -11,16 +11,19 @@
 //! - Subscriptions stored in ConnectionState.subscriptions
 //! - No local tracking needed - everything is in ConnectionState
 
+use std::sync::Arc;
+
 use actix_web::{get, web, Error, HttpRequest, HttpResponse};
 use kalamdb_auth::UserRepository;
 use kalamdb_core::app_context::AppContext;
 use kalamdb_live::{ConnectionId, ConnectionsManager, LiveQueryManager};
 use log::{debug, warn};
-use std::sync::Arc;
 
-use super::context::WsHandlerContext;
-use super::protocol::{authenticate_upgrade, compression_enabled_from_query, validate_origin};
-use super::runtime::run_websocket;
+use super::{
+    context::WsHandlerContext,
+    protocol::{compression_enabled_from_query, parse_upgrade_auth, validate_origin},
+    runtime::run_websocket,
+};
 use crate::limiter::RateLimiter;
 
 /// GET /v1/ws - Establish WebSocket connection
@@ -52,10 +55,7 @@ pub async fn websocket_handler(
     }
 
     let compression_enabled = compression_enabled_from_query(&req);
-    let pre_auth = match authenticate_upgrade(&req, user_repo.get_ref()).await {
-        Ok(pre_auth) => pre_auth,
-        Err(response) => return Ok(response),
-    };
+    let pre_auth = parse_upgrade_auth(&req);
 
     let connection_id = ConnectionId::new(uuid::Uuid::new_v4().simple().to_string());
     let client_ip = kalamdb_auth::extract_client_ip_secure(&req);

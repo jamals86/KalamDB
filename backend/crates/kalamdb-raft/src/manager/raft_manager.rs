@@ -5,27 +5,32 @@
 //! - DataUserShard(0..N): User table data shards (default 32)
 //! - DataSharedShard(0..M): Shared table data shards (default 1)
 
-use std::collections::BTreeSet;
-use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
-use std::sync::Arc;
-use std::time::Duration;
+use std::{
+    collections::{BTreeSet, HashMap},
+    net::{IpAddr, SocketAddr, ToSocketAddrs},
+    sync::Arc,
+    time::Duration,
+};
 
 use kalamdb_commons::models::{NodeId, TableId};
 use kalamdb_sharding::ShardRouter;
-use kalamdb_store::raft_storage::RAFT_PARTITION_NAME;
-use kalamdb_store::{Partition, StorageBackend};
+use kalamdb_store::{raft_storage::RAFT_PARTITION_NAME, Partition, StorageBackend};
 use openraft::RaftMetrics;
 use parking_lot::RwLock;
 use tonic::transport::{Certificate, ClientTlsConfig, Identity};
 
-use crate::manager::config::RaftManagerConfig;
-use crate::manager::RaftGroup;
-use crate::network::cluster_service::cluster_client::ClusterServiceClient;
-use crate::network::cluster_service::PingRequest;
-use crate::state_machine::KalamStateMachine;
-use crate::state_machine::{MetaStateMachine, SharedDataStateMachine, UserDataStateMachine};
-use crate::storage::KalamNode;
-use crate::{GroupId, RaftError};
+use crate::{
+    manager::{config::RaftManagerConfig, RaftGroup},
+    network::{
+        cluster_service::{cluster_client::ClusterServiceClient, PingRequest},
+        RaftNetworkFactory,
+    },
+    state_machine::{
+        KalamStateMachine, MetaStateMachine, SharedDataStateMachine, UserDataStateMachine,
+    },
+    storage::KalamNode,
+    GroupId, RaftError,
+};
 
 const RPC_CLUSTER_ID_HEADER: &str = "x-kalamdb-cluster-id";
 const RPC_NODE_ID_HEADER: &str = "x-kalamdb-node-id";
@@ -100,6 +105,9 @@ pub struct RaftManager {
     /// Cluster configuration
     config: RaftManagerConfig,
 
+    /// Nodes known at runtime, including dynamically joined nodes.
+    runtime_peers: RwLock<HashMap<NodeId, KalamNode>>,
+
     /// Number of user shards (cached from config)
     user_shards_count: u32,
 
@@ -151,20 +159,37 @@ async fn promote_learner<SM: KalamStateMachine + Send + Sync + 'static>(
 }
 
 impl RaftManager {
+    fn configured_peers_summary(&self) -> String {
+        self.config
+            .peers
+            .iter()
+            .map(|peer| {
+                format!("node {} (rpc={}, api={})", peer.node_id, peer.rpc_addr, peer.api_addr)
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
     /// Create a new Raft manager with in-memory storage (for testing or standalone mode)
     pub fn new(config: RaftManagerConfig) -> Self {
         let user_shards_count = config.user_shards;
         let shared_shards_count = config.shared_shards;
+        let channel_pool = RaftNetworkFactory::new_channel_pool();
 
         // Create unified meta group
-        let meta = Arc::new(RaftGroup::new(GroupId::Meta, MetaStateMachine::new()));
+        let meta = Arc::new(RaftGroup::new_with_channel_pool(
+            GroupId::Meta,
+            MetaStateMachine::new(),
+            Arc::clone(&channel_pool),
+        ));
 
         // Create user data shards (configurable)
         let user_data_shards: Vec<_> = (0..user_shards_count)
             .map(|shard_id| {
-                Arc::new(RaftGroup::new(
+                Arc::new(RaftGroup::new_with_channel_pool(
                     GroupId::DataUserShard(shard_id),
                     UserDataStateMachine::new(shard_id),
+                    Arc::clone(&channel_pool),
                 ))
             })
             .collect();
@@ -172,9 +197,10 @@ impl RaftManager {
         // Create shared data shards (configurable)
         let shared_data_shards: Vec<_> = (0..shared_shards_count)
             .map(|shard_id| {
-                Arc::new(RaftGroup::new(
+                Arc::new(RaftGroup::new_with_channel_pool(
                     GroupId::DataSharedShard(shard_id),
                     SharedDataStateMachine::new(shard_id),
+                    Arc::clone(&channel_pool),
                 ))
             })
             .collect();
@@ -186,6 +212,7 @@ impl RaftManager {
             shared_data_shards,
             started: RwLock::new(false),
             config,
+            runtime_peers: RwLock::new(HashMap::new()),
             user_shards_count,
             shared_shards_count,
             cluster_init_handle: RwLock::new(None),
@@ -205,6 +232,7 @@ impl RaftManager {
     ) -> Result<Self, RaftError> {
         let user_shards_count = config.user_shards;
         let shared_shards_count = config.shared_shards;
+        let channel_pool = RaftNetworkFactory::new_channel_pool();
 
         // Ensure the raft_data partition exists
         let partition = Partition::new(RAFT_PARTITION_NAME);
@@ -223,21 +251,23 @@ impl RaftManager {
         })?;
 
         // Create unified meta group with persistent storage
-        let meta = Arc::new(RaftGroup::new_persistent(
+        let meta = Arc::new(RaftGroup::new_persistent_with_channel_pool(
             GroupId::Meta,
             MetaStateMachine::new(),
             backend.clone(),
             snapshots_dir.clone(),
+            Arc::clone(&channel_pool),
         )?);
 
         // Create user data shards with persistent storage
         let user_data_shards: Vec<_> = (0..user_shards_count)
             .map(|shard_id| {
-                RaftGroup::new_persistent(
+                RaftGroup::new_persistent_with_channel_pool(
                     GroupId::DataUserShard(shard_id),
                     UserDataStateMachine::new(shard_id),
                     backend.clone(),
                     snapshots_dir.clone(),
+                    Arc::clone(&channel_pool),
                 )
                 .map(Arc::new)
             })
@@ -246,11 +276,12 @@ impl RaftManager {
         // Create shared data shards with persistent storage
         let shared_data_shards: Vec<_> = (0..shared_shards_count)
             .map(|shard_id| {
-                RaftGroup::new_persistent(
+                RaftGroup::new_persistent_with_channel_pool(
                     GroupId::DataSharedShard(shard_id),
                     SharedDataStateMachine::new(shard_id),
                     backend.clone(),
                     snapshots_dir.clone(),
+                    Arc::clone(&channel_pool),
                 )
                 .map(Arc::new)
             })
@@ -269,6 +300,7 @@ impl RaftManager {
             shared_data_shards,
             started: RwLock::new(false),
             config,
+            runtime_peers: RwLock::new(HashMap::new()),
             user_shards_count,
             shared_shards_count,
             cluster_init_handle: RwLock::new(None),
@@ -299,6 +331,29 @@ impl RaftManager {
         }
     }
 
+    /// Wait until the local replica has applied every log entry already known
+    /// for a Raft group.
+    pub async fn wait_for_local_apply_barrier(
+        &self,
+        group_id: GroupId,
+        timeout: std::time::Duration,
+    ) -> Result<u64, RaftError> {
+        match group_id {
+            GroupId::Meta => self.meta.wait_for_local_apply_barrier(timeout).await,
+            GroupId::DataUserShard(shard) if shard < self.user_shards_count => {
+                self.user_data_shards[shard as usize]
+                    .wait_for_local_apply_barrier(timeout)
+                    .await
+            },
+            GroupId::DataSharedShard(shard) if shard < self.shared_shards_count => {
+                self.shared_data_shards[shard as usize]
+                    .wait_for_local_apply_barrier(timeout)
+                    .await
+            },
+            _ => Err(RaftError::GroupNotFound(group_id.to_string())),
+        }
+    }
+
     /// Check if the manager has been started
     pub fn is_started(&self) -> bool {
         *self.started.read()
@@ -313,25 +368,24 @@ impl RaftManager {
             return Ok(());
         }
 
-        log::debug!(
-            "Starting Raft Cluster: node={} rpc={} api={}",
+        log::info!(
+            "[CLUSTER] Node {} starting Raft services (rpc={}, api={})",
             self.node_id,
             self.config.rpc_addr,
             self.config.api_addr
         );
-        // log::info!("Groups: {} (1 meta + {}u + {}s) │ Peers: {}",
-        //     self.group_count(), self.user_shards_count, self.shared_shards_count,
-        //     self.config.peers.len());
-        for peer in &self.config.peers {
+        if self.config.peers.is_empty() {
+            log::info!("[CLUSTER] No other configured cluster nodes");
+        } else {
             log::info!(
-                "[CLUSTER] Peer node_id={}: rpc={}, api={}",
-                peer.node_id,
-                peer.rpc_addr,
-                peer.api_addr
+                "[CLUSTER] Other configured cluster nodes ({}): {}",
+                self.config.peers.len(),
+                self.configured_peers_summary()
             );
         }
 
-        // Register this node for leader forwarding (covers self-forward when leader detection lags).
+        // Register this node for leader forwarding (covers self-forward when leader detection
+        // lags).
         self.register_peer(
             self.node_id,
             self.config.rpc_addr.clone(),
@@ -413,8 +467,10 @@ impl RaftManager {
         if already_initialized {
             let meta_last_applied = self.meta.get_last_applied().map(|id| id.index).unwrap_or(0);
             log::info!(
-                "Cluster already initialized (meta last_applied={}); skipping group initialization",
-                meta_last_applied
+                "[CLUSTER] Membership already initialized on node {} (meta last_applied={}); \
+                 skipping bootstrap",
+                self.node_id,
+                meta_last_applied,
             );
         } else {
             // Initialize unified meta group
@@ -441,10 +497,11 @@ impl RaftManager {
             );
         }
 
-        // After initialization, wait for peer nodes to come online before adding them to the cluster.
-        // This prevents OpenRaft from generating thousands of connection errors when trying to
-        // replicate to offline nodes. We wait for each peer's RPC endpoint to respond before
-        // calling add_node(), which ensures a clean cluster formation with minimal error logs.
+        // After initialization, wait for peer nodes to come online before adding them to the
+        // cluster. This prevents OpenRaft from generating thousands of connection errors
+        // when trying to replicate to offline nodes. We wait for each peer's RPC endpoint
+        // to respond before calling add_node(), which ensures a clean cluster formation
+        // with minimal error logs.
         let should_attempt_peer_join = if !already_initialized {
             // First boot: always attempt to add configured peers.
             true
@@ -490,9 +547,14 @@ impl RaftManager {
                     }
                     if attempt == 1 || attempt % 5 == 0 {
                         log::debug!(
-                            "Waiting for node {} to become leader for all groups (attempt {}/{}, meta={}, user={}, shared={})...",
-                            node_id, attempt, max_leadership_wait,
-                            is_meta_leader, all_user_leaders, all_shared_leaders
+                            "Waiting for node {} to become leader for all groups (attempt {}/{}, \
+                             meta={}, user={}, shared={})...",
+                            node_id,
+                            attempt,
+                            max_leadership_wait,
+                            is_meta_leader,
+                            all_user_leaders,
+                            all_shared_leaders
                         );
                     }
                     tokio::time::sleep(Duration::from_millis(200)).await;
@@ -507,15 +569,22 @@ impl RaftManager {
                     return;
                 }
 
-                log::info!("Waiting for {} peer nodes to come online...", peers.len());
+                log::info!(
+                    "[CLUSTER] Bootstrap node {} is connecting {} configured peer(s) to the \
+                     cluster",
+                    node_id,
+                    peers.len()
+                );
 
                 // Peer wait configuration from RaftManagerConfig
 
                 for peer in &peers {
                     log::info!(
-                        "  Waiting for peer node_id={} (rpc={}) to be online...",
+                        "[CLUSTER] Waiting for configured peer {} to come online (rpc={}, \
+                         api={})",
                         peer.node_id,
-                        peer.rpc_addr
+                        peer.rpc_addr,
+                        peer.api_addr,
                     );
 
                     // Wait for the peer's RPC endpoint to respond
@@ -532,7 +601,8 @@ impl RaftManager {
                     {
                         Ok(_) => {
                             log::info!(
-                                "    ✓ Peer {} is online, adding to cluster...",
+                                "[CLUSTER] Configured peer {} is online; starting join \
+                                 sequence",
                                 peer.node_id
                             );
 
@@ -548,15 +618,11 @@ impl RaftManager {
                             )
                             .await
                             {
-                                Ok(_) => {
-                                    log::info!(
-                                        "    ✓ Peer {} joined cluster successfully",
-                                        peer.node_id
-                                    );
-                                },
+                                Ok(_) => {},
                                 Err(e) => {
                                     log::error!(
-                                        "    ✗ Failed to add peer {} to cluster: {}",
+                                        "[CLUSTER] Failed to add configured peer {} to the \
+                                         cluster: {}",
                                         peer.node_id,
                                         e
                                     );
@@ -564,11 +630,15 @@ impl RaftManager {
                             }
                         },
                         Err(e) => {
-                            log::error!("    ✗ Peer {} did not come online: {}", peer.node_id, e);
+                            log::error!(
+                                "[CLUSTER] Configured peer {} did not come online: {}",
+                                peer.node_id,
+                                e
+                            );
                         },
                     }
                 }
-                log::info!("Cluster formation complete");
+                log::info!("[CLUSTER] Cluster formation complete");
             });
 
             let mut guard = self.cluster_init_handle.write();
@@ -737,7 +807,7 @@ impl RaftManager {
         replication_timeout: Duration,
     ) -> Result<(), RaftError> {
         log::info!(
-            "[CLUSTER] Node {} joining cluster (rpc={}, api={})",
+            "[CLUSTER] Starting join sequence for node {} (rpc={}, api={})",
             node_id,
             rpc_addr,
             api_addr
@@ -848,10 +918,23 @@ impl RaftManager {
             promote_learner(shard, node_id).await?;
         }
 
+        self.register_peer(node_id, rpc_addr.clone(), api_addr.clone());
+
         log::info!(
-            "[CLUSTER] ✓ Node {} joined cluster successfully (added to {} groups)",
+            "[CLUSTER] Node {} joined cluster successfully and now participates in {} Raft \
+             groups",
             node_id,
             self.group_count()
+        );
+
+        let rebalance_results = self.rebalance_data_leaders().await?;
+        let rebalance_success = rebalance_results.iter().filter(|result| result.success).count();
+        log::info!(
+            "[CLUSTER] Best-effort data leader rebalance requested for {}/{} groups after node {} \
+             join",
+            rebalance_success,
+            rebalance_results.len(),
+            node_id
         );
         Ok(())
     }
@@ -862,14 +945,36 @@ impl RaftManager {
     }
 
     fn is_known_cluster_node(&self, node_id: NodeId) -> bool {
-        if node_id == self.config.node_id {
-            return true;
-        }
-        self.config.peers.iter().any(|peer| peer.node_id == node_id)
+        self.rpc_addr_for_node(node_id).is_some()
     }
 
-    fn peer_for_node(&self, node_id: NodeId) -> Option<&crate::manager::PeerNode> {
-        self.config.peers.iter().find(|peer| peer.node_id == node_id)
+    fn node_for_node(&self, node_id: NodeId) -> Option<KalamNode> {
+        if let Some(node) = self.runtime_peers.read().get(&node_id) {
+            return Some(node.clone());
+        }
+
+        if node_id == self.config.node_id {
+            return Some(KalamNode::new(
+                self.config.rpc_addr.clone(),
+                self.config.api_addr.clone(),
+            ));
+        }
+
+        if let Some(peer) = self.config.peers.iter().find(|peer| peer.node_id == node_id) {
+            return Some(KalamNode::new(peer.rpc_addr.clone(), peer.api_addr.clone()));
+        }
+
+        self.meta.metrics().and_then(|metrics| {
+            metrics
+                .membership_config
+                .nodes()
+                .find(|(candidate_id, _)| **candidate_id == node_id.as_u64())
+                .map(|(_, node)| node.clone())
+        })
+    }
+
+    fn rpc_addr_for_node(&self, node_id: NodeId) -> Option<String> {
+        self.node_for_node(node_id).map(|node| node.rpc_addr)
     }
 
     fn extract_host_from_rpc_addr(rpc_addr: &str) -> Option<&str> {
@@ -903,11 +1008,11 @@ impl RaftManager {
             return true;
         }
 
-        let Some(peer) = self.peer_for_node(node_id) else {
+        let Some(rpc_addr) = self.rpc_addr_for_node(node_id) else {
             return false;
         };
 
-        let Some(host) = Self::extract_host_from_rpc_addr(&peer.rpc_addr) else {
+        let Some(host) = Self::extract_host_from_rpc_addr(&rpc_addr) else {
             return false;
         };
 
@@ -1210,6 +1315,8 @@ impl RaftManager {
     pub fn register_peer(&self, node_id: NodeId, rpc_addr: String, api_addr: String) {
         let node = KalamNode::new(rpc_addr, api_addr);
 
+        self.runtime_peers.write().insert(node_id, node.clone());
+
         // Register with unified meta group
         self.meta.register_peer(node_id, node.clone());
 
@@ -1229,6 +1336,12 @@ impl RaftManager {
     ///
     /// Returns `None` if the node is not registered.
     pub fn get_peer_channel(&self, node_id: NodeId) -> Option<tonic::transport::Channel> {
+        if let Some(channel) = self.meta.network_factory().get_or_create_channel(node_id) {
+            return Some(channel);
+        }
+
+        let node = self.node_for_node(node_id)?;
+        self.meta.register_peer(node_id, node);
         self.meta.network_factory().get_or_create_channel(node_id)
     }
 
@@ -1416,8 +1529,9 @@ impl RaftManager {
         group_id: GroupId,
         payload: &[u8],
     ) -> Result<Vec<u8>, RaftError> {
-        use crate::state_machine::{decode, encode};
         use openraft::raft::VoteRequest;
+
+        use crate::state_machine::{decode, encode};
 
         let raft = self.get_raft_instance(group_id)?;
         let request: VoteRequest<u64> = decode(payload)?;
@@ -1436,9 +1550,12 @@ impl RaftManager {
         group_id: GroupId,
         payload: &[u8],
     ) -> Result<Vec<u8>, RaftError> {
-        use crate::state_machine::{decode, encode};
-        use crate::storage::KalamTypeConfig;
         use openraft::raft::AppendEntriesRequest;
+
+        use crate::{
+            state_machine::{decode, encode},
+            storage::KalamTypeConfig,
+        };
 
         let raft = self.get_raft_instance(group_id)?;
         let request: AppendEntriesRequest<KalamTypeConfig> = decode(payload)?;
@@ -1457,9 +1574,12 @@ impl RaftManager {
         group_id: GroupId,
         payload: &[u8],
     ) -> Result<Vec<u8>, RaftError> {
-        use crate::state_machine::{decode, encode};
-        use crate::storage::KalamTypeConfig;
         use openraft::raft::InstallSnapshotRequest;
+
+        use crate::{
+            state_machine::{decode, encode},
+            storage::KalamTypeConfig,
+        };
 
         let raft = self.get_raft_instance(group_id)?;
         let request: InstallSnapshotRequest<KalamTypeConfig> = decode(payload)?;
@@ -1634,6 +1754,25 @@ impl RaftManager {
         results
     }
 
+    async fn run_action_for_data_groups(&self, action: ClusterAction) -> Vec<ClusterActionResult> {
+        let mut results =
+            Vec::with_capacity(self.user_data_shards.len() + self.shared_data_shards.len());
+
+        for (i, shard) in self.user_data_shards.iter().enumerate() {
+            results.push(
+                Self::run_action_for_group(GroupId::DataUserShard(i as u32), shard, action).await,
+            );
+        }
+
+        for (i, shard) in self.shared_data_shards.iter().enumerate() {
+            results.push(
+                Self::run_action_for_group(GroupId::DataSharedShard(i as u32), shard, action).await,
+            );
+        }
+
+        results
+    }
+
     /// Trigger elections for all Raft groups
     pub async fn trigger_all_elections(&self) -> Result<Vec<ClusterActionResult>, RaftError> {
         Ok(self.run_action_for_all_groups(ClusterAction::TriggerElection).await)
@@ -1652,6 +1791,14 @@ impl RaftManager {
         Ok(self
             .run_action_for_all_groups(ClusterAction::TransferLeadership { target_node_id })
             .await)
+    }
+
+    /// Best-effort data leader rebalance.
+    ///
+    /// OpenRaft 0.9 does not expose a targeted leadership-transfer API here, so this asks local
+    /// leaders for user/shared data groups to step down and lets Raft elect replacements.
+    pub async fn rebalance_data_leaders(&self) -> Result<Vec<ClusterActionResult>, RaftError> {
+        Ok(self.run_action_for_data_groups(ClusterAction::StepDown).await)
     }
 
     /// Attempt to step down leaders for all Raft groups
@@ -1790,10 +1937,14 @@ impl RaftManager {
                 // Give time for any leadership-transition side effects to settle.
                 tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
                 log::info!(
-                    "[CLUSTER] Leadership transfer attempts completed (explicit transfer may be unsupported by current OpenRaft version)"
+                    "[CLUSTER] Leadership transfer attempts completed (explicit transfer may be \
+                     unsupported by current OpenRaft version)"
                 );
             } else {
-                log::warn!("[CLUSTER] No peers available for leadership transfer - cluster may experience brief unavailability");
+                log::warn!(
+                    "[CLUSTER] No peers available for leadership transfer - cluster may \
+                     experience brief unavailability"
+                );
             }
         }
 
@@ -1837,14 +1988,22 @@ impl RaftManager {
 
     /// Get the total number of cluster nodes (self + peers)
     pub fn total_nodes(&self) -> usize {
-        1 + self.config.peers.len()
+        let mut nodes = BTreeSet::new();
+        nodes.insert(self.config.node_id.as_u64());
+        nodes.extend(self.config.peers.iter().map(|peer| peer.node_id.as_u64()));
+        nodes.extend(self.runtime_peers.read().keys().map(|node_id| node_id.as_u64()));
+        if let Some(metrics) = self.meta.metrics() {
+            nodes.extend(metrics.membership_config.nodes().map(|(node_id, _)| *node_id));
+        }
+        nodes.len()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use kalamdb_commons::models::{NamespaceId, TableName};
+
+    use super::*;
 
     fn test_config() -> RaftManagerConfig {
         RaftManagerConfig {
@@ -1913,6 +2072,27 @@ mod tests {
             "127.0.0.1:5002".to_string(),
             "127.0.0.1:3002".to_string(),
         );
+    }
+
+    #[test]
+    fn test_runtime_registered_peer_is_authorized() {
+        let manager = RaftManager::new(test_config());
+        let node_id = NodeId::new(2);
+
+        assert!(!manager.is_known_cluster_node(node_id));
+
+        manager.register_peer(node_id, "127.0.0.1:5002".to_string(), "127.0.0.1:3002".to_string());
+
+        assert!(manager.is_known_cluster_node(node_id));
+        assert_eq!(manager.total_nodes(), 2);
+        assert!(manager.is_allowed_peer_remote_addr(
+            node_id,
+            "127.0.0.1:61000".parse::<SocketAddr>().unwrap(),
+        ));
+        assert!(!manager.is_allowed_peer_remote_addr(
+            node_id,
+            "127.0.0.2:61000".parse::<SocketAddr>().unwrap(),
+        ));
     }
 
     #[test]

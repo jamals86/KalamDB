@@ -18,19 +18,26 @@
 //! `true` in [`dart_create_client`], events are queued internally and
 //! retrieved via [`dart_next_connection_event`].
 
+use std::{
+    collections::VecDeque,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+};
+
+use flutter_rust_bridge::frb;
+use tokio::sync::{Mutex, Notify};
+
 use crate::models::{
     DartAuthProvider, DartChangeEvent, DartConnectionError, DartConnectionEvent,
     DartDisconnectReason, DartLiveRowsConfig, DartLiveRowsEvent, DartLoginResponse,
     DartQueryResponse, DartSubscriptionConfig,
 };
-use flutter_rust_bridge::frb;
-use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use tokio::sync::{Mutex, Notify};
 
 const DART_INITIAL_RECONNECT_DELAY_MS: u64 = 200;
 const DART_MAX_RECONNECT_DELAY_MS: u64 = 2_000;
+const DART_CONNECTION_EVENT_QUEUE_CAPACITY: usize = 256;
 
 // ---------------------------------------------------------------------------
 // Client wrapper
@@ -63,18 +70,18 @@ pub struct DartKalamClient {
 /// * `auth` — authentication method (basic, JWT, or none).
 /// * `timeout_ms` — optional HTTP request timeout in milliseconds (default 30 000).
 /// * `max_retries` — optional retry count for idempotent queries (default 3).
-/// * `enable_connection_events` — when `true`, connection lifecycle events
-///   (connect, disconnect, error, receive, send) are queued internally and
-///   can be retrieved via [`dart_next_connection_event`].
-/// * `disable_compression` — when `true`, the WebSocket URL includes
-///   `?compress=false` so the server sends plain-text JSON frames instead of
-///   gzip-compressed binary frames. Useful during development.
-/// * `keepalive_interval_ms` — optional WebSocket keep-alive ping interval
-///   in milliseconds (default 10 000). Set to 0 to disable keep-alive pings.
-/// * `ws_lazy_connect` — controls when the WebSocket connection is established.
-///   When `true` (the default), the connection is deferred until the first
-///   `subscribe()` call. When `false`, the connection is established eagerly.
-///   Authentication uses the same provider configured for HTTP queries.
+/// * `enable_connection_events` — when `true`, connection lifecycle events (connect, disconnect,
+///   error, receive, send) are queued internally and can be retrieved via
+///   [`dart_next_connection_event`].
+/// * `disable_compression` — when `true`, the WebSocket URL includes `?compress=false` so the
+///   server sends plain-text JSON frames instead of gzip-compressed binary frames. Useful during
+///   development.
+/// * `keepalive_interval_ms` — optional WebSocket keep-alive ping interval in milliseconds (default
+///   10 000). Set to 0 to disable keep-alive pings.
+/// * `ws_lazy_connect` — controls when the WebSocket connection is established. When `true` (the
+///   default), the connection is deferred until the first `subscribe()` call. When `false`, the
+///   connection is established eagerly. Authentication uses the same provider configured for HTTP
+///   queries.
 ///
 /// **Note:** This function intentionally omits `#[frb(sync)]` so that FRB
 /// dispatches it to a worker thread via `executeNormal`. The client
@@ -206,9 +213,17 @@ pub fn dart_update_auth(client: &DartKalamClient, auth: DartAuthProvider) -> any
 
 #[cfg(test)]
 mod tests {
-    use super::build_dart_connection_options;
-    use super::{DART_INITIAL_RECONNECT_DELAY_MS, DART_MAX_RECONNECT_DELAY_MS};
+    use std::{collections::VecDeque, sync::Arc};
+
     use kalam_client::models::SerializationType;
+    use tokio::sync::Notify;
+
+    use super::{
+        build_dart_connection_options, push_connection_event, push_debug_connection_event,
+        DART_CONNECTION_EVENT_QUEUE_CAPACITY, DART_INITIAL_RECONNECT_DELAY_MS,
+        DART_MAX_RECONNECT_DELAY_MS,
+    };
+    use crate::models::DartConnectionEvent;
 
     #[test]
     fn dart_connection_options_default_to_msgpack() {
@@ -231,6 +246,44 @@ mod tests {
         assert_eq!(options.reconnect_delay_ms, DART_INITIAL_RECONNECT_DELAY_MS);
         assert_eq!(options.max_reconnect_delay_ms, DART_MAX_RECONNECT_DELAY_MS);
     }
+
+    #[test]
+    fn dart_debug_connection_events_are_bounded() {
+        let queue = Arc::new(std::sync::Mutex::new(VecDeque::new()));
+        let notify = Arc::new(Notify::new());
+
+        for index in 0..(DART_CONNECTION_EVENT_QUEUE_CAPACITY + 10) {
+            push_debug_connection_event(&queue, &notify, || DartConnectionEvent::Receive {
+                message: index.to_string(),
+            });
+        }
+
+        assert_eq!(queue.lock().unwrap().len(), DART_CONNECTION_EVENT_QUEUE_CAPACITY);
+    }
+
+    #[test]
+    fn dart_lifecycle_connection_events_keep_latest_when_full() {
+        let queue = Arc::new(std::sync::Mutex::new(VecDeque::new()));
+        let notify = Arc::new(Notify::new());
+
+        for _ in 0..DART_CONNECTION_EVENT_QUEUE_CAPACITY {
+            push_connection_event(&queue, &notify, DartConnectionEvent::Connect);
+        }
+        push_connection_event(
+            &queue,
+            &notify,
+            DartConnectionEvent::Error {
+                error: crate::models::DartConnectionError {
+                    message: "latest".to_string(),
+                    recoverable: true,
+                },
+            },
+        );
+
+        let guard = queue.lock().unwrap();
+        assert_eq!(guard.len(), DART_CONNECTION_EVENT_QUEUE_CAPACITY);
+        assert!(matches!(guard.back(), Some(DartConnectionEvent::Error { .. })));
+    }
 }
 
 /// Build [`EventHandlers`](kalam_client::EventHandlers) that push events into
@@ -246,10 +299,7 @@ fn build_event_handlers(
         let q = queue.clone();
         let n = notify.clone();
         handlers = handlers.on_connect(move || {
-            if let Ok(mut guard) = q.lock() {
-                guard.push_back(DartConnectionEvent::Connect);
-            }
-            n.notify_one();
+            push_connection_event(&q, &n, DartConnectionEvent::Connect);
         });
     }
 
@@ -264,10 +314,7 @@ fn build_event_handlers(
                     code: reason.code.map(|c| c as i32),
                 },
             };
-            if let Ok(mut guard) = q.lock() {
-                guard.push_back(event);
-            }
-            n.notify_one();
+            push_connection_event(&q, &n, event);
         });
     }
 
@@ -282,10 +329,7 @@ fn build_event_handlers(
                     recoverable: error.recoverable,
                 },
             };
-            if let Ok(mut guard) = q.lock() {
-                guard.push_back(event);
-            }
-            n.notify_one();
+            push_connection_event(&q, &n, event);
         });
     }
 
@@ -294,13 +338,9 @@ fn build_event_handlers(
         let q = queue.clone();
         let n = notify.clone();
         handlers = handlers.on_receive(move |msg: &str| {
-            let event = DartConnectionEvent::Receive {
+            push_debug_connection_event(&q, &n, || DartConnectionEvent::Receive {
                 message: msg.to_owned(),
-            };
-            if let Ok(mut guard) = q.lock() {
-                guard.push_back(event);
-            }
-            n.notify_one();
+            });
         });
     }
 
@@ -309,17 +349,41 @@ fn build_event_handlers(
         let q = queue;
         let n = notify;
         handlers = handlers.on_send(move |msg: &str| {
-            let event = DartConnectionEvent::Send {
+            push_debug_connection_event(&q, &n, || DartConnectionEvent::Send {
                 message: msg.to_owned(),
-            };
-            if let Ok(mut guard) = q.lock() {
-                guard.push_back(event);
-            }
-            n.notify_one();
+            });
         });
     }
 
     handlers
+}
+
+fn push_connection_event(
+    queue: &Arc<std::sync::Mutex<VecDeque<DartConnectionEvent>>>,
+    notify: &Arc<Notify>,
+    event: DartConnectionEvent,
+) {
+    if let Ok(mut guard) = queue.lock() {
+        if guard.len() >= DART_CONNECTION_EVENT_QUEUE_CAPACITY {
+            guard.pop_front();
+        }
+        guard.push_back(event);
+        notify.notify_one();
+    }
+}
+
+fn push_debug_connection_event(
+    queue: &Arc<std::sync::Mutex<VecDeque<DartConnectionEvent>>>,
+    notify: &Arc<Notify>,
+    event: impl FnOnce() -> DartConnectionEvent,
+) {
+    if let Ok(mut guard) = queue.lock() {
+        if guard.len() >= DART_CONNECTION_EVENT_QUEUE_CAPACITY {
+            return;
+        }
+        guard.push_back(event());
+        notify.notify_one();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -328,8 +392,8 @@ fn build_event_handlers(
 
 /// Execute a SQL query, optionally with parameters and namespace.
 ///
-/// * `params_json` — JSON-encoded array of parameter values, e.g. `'["val1", 42]'`.
-///   Pass `null` for no parameters.
+/// * `params_json` — JSON-encoded array of parameter values, e.g. `'["val1", 42]'`. Pass `null` for
+///   no parameters.
 /// * `namespace` — optional namespace context for unqualified table names.
 pub async fn dart_execute_query(
     client: &DartKalamClient,
@@ -500,8 +564,8 @@ pub async fn dart_is_connected(client: &DartKalamClient) -> anyhow::Result<bool>
 /// This sends an explicit unsubscribe command that:
 /// 1. Removes the subscription from the client-side map
 /// 2. Sends an unsubscribe message to the server
-/// 3. Drops the event channel, causing any blocking
-///    [`dart_subscription_next`] call to return `None`
+/// 3. Drops the event channel, causing any blocking [`dart_subscription_next`] call to return
+///    `None`
 ///
 /// Unlike [`dart_subscription_close`], this does **not** require the
 /// `DartSubscription` mutex, so it can be called safely even while

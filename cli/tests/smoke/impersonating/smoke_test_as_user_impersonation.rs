@@ -8,8 +8,9 @@
 //! - DELETE AS USER removes records as impersonated user
 //! - AS USER rejected on SHARED tables
 
-use crate::common::*;
 use std::time::Duration;
+
+use crate::common::*;
 
 /// Helper to create a unique namespace for this test
 fn create_test_namespace(suffix: &str) -> String {
@@ -60,6 +61,34 @@ fn get_user_id(user_id: &str) -> Option<String> {
         return user_id_value.as_str().map(|s| s.to_string());
     }
     None
+}
+
+fn wait_for_query_success_with<F>(
+    sql: &str,
+    timeout: Duration,
+    execute: F,
+) -> Result<String, Box<dyn std::error::Error>>
+where
+    F: Fn(&str) -> Result<String, Box<dyn std::error::Error>>,
+{
+    let start = std::time::Instant::now();
+    let mut last_error = None;
+
+    while start.elapsed() < timeout {
+        match execute(sql) {
+            Ok(output) => return Ok(output),
+            Err(err) => {
+                last_error = Some(err.to_string());
+                std::thread::sleep(Duration::from_millis(120));
+            },
+        }
+    }
+
+    Err(format!(
+        "Timed out waiting for query to succeed. Last error: {}",
+        last_error.unwrap_or_else(|| "<none>".to_string())
+    )
+    .into())
 }
 
 /// Smoke Test: Regular user CANNOT use AS USER (authorization check)
@@ -369,7 +398,8 @@ fn smoke_as_user_rejected_on_shared_table() {
 
     // Create SHARED table (not USER table)
     execute_sql_as_root_via_client(&format!(
-        "CREATE TABLE {} (config_key VARCHAR PRIMARY KEY, config_value VARCHAR) WITH (TYPE='SHARED')",
+        "CREATE TABLE {} (config_key VARCHAR PRIMARY KEY, config_value VARCHAR) WITH \
+         (TYPE='SHARED')",
         full_table
     ))
     .expect("Failed to create SHARED table");
@@ -450,7 +480,8 @@ fn smoke_as_user_full_workflow() {
         &service_user,
         password,
         &format!(
-            "EXECUTE AS USER '{}' (INSERT INTO {} (id, title, done) VALUES (1, 'Alice Task 1', false))",
+            "EXECUTE AS USER '{}' (INSERT INTO {} (id, title, done) VALUES (1, 'Alice Task 1', \
+             false))",
             alice_user_id, full_table
         ),
     )
@@ -460,7 +491,8 @@ fn smoke_as_user_full_workflow() {
         &service_user,
         password,
         &format!(
-            "EXECUTE AS USER '{}' (INSERT INTO {} (id, title, done) VALUES (2, 'Alice Task 2', false))",
+            "EXECUTE AS USER '{}' (INSERT INTO {} (id, title, done) VALUES (2, 'Alice Task 2', \
+             false))",
             alice_user_id, full_table
         ),
     )
@@ -471,7 +503,8 @@ fn smoke_as_user_full_workflow() {
         &service_user,
         password,
         &format!(
-            "EXECUTE AS USER '{}' (INSERT INTO {} (id, title, done) VALUES (10, 'Bob Task 1', false))",
+            "EXECUTE AS USER '{}' (INSERT INTO {} (id, title, done) VALUES (10, 'Bob Task 1', \
+             false))",
             bob_user_id, full_table
         ),
     )
@@ -681,10 +714,12 @@ fn smoke_as_user_stream_table_isolation() {
         .expect("Failed to create namespace");
 
     execute_sql_as_root_via_client(&format!(
-        "CREATE TABLE {} (id BIGINT PRIMARY KEY, payload VARCHAR) WITH (TYPE='STREAM', TTL_SECONDS=3600)",
+        "CREATE TABLE {} (id BIGINT PRIMARY KEY, payload VARCHAR) WITH (TYPE='STREAM', \
+         TTL_SECONDS=3600)",
         full_table
     ))
     .expect("Failed to create stream table");
+    wait_for_table_ready(&full_table, Duration::from_secs(10)).expect("stream table not ready");
 
     create_user_with_retry(&service_user, password, "service");
     create_user_with_retry(&user1, password, "user");
@@ -703,9 +738,12 @@ fn smoke_as_user_stream_table_isolation() {
     )
     .expect("Failed to insert stream row for user1");
 
-    let user2_direct =
-        execute_sql_via_client_as(&user2, password, &format!("SELECT * FROM {}", full_table))
-            .expect("User2 stream select failed");
+    let user2_direct = wait_for_query_success_with(
+        &format!("SELECT * FROM {}", full_table),
+        Duration::from_secs(30),
+        |sql| execute_sql_via_client_as(&user2, password, sql),
+    )
+    .expect("User2 stream select failed");
     assert!(!user2_direct.contains("stream-u1"));
 
     let user1_select_sql = format!("EXECUTE AS USER '{}' (SELECT * FROM {})", user1_id, full_table);
@@ -718,10 +756,10 @@ fn smoke_as_user_stream_table_isolation() {
     .expect("Service SELECT AS USER user1 on stream failed");
     assert!(service_as_user1.contains("stream-u1"));
 
-    let service_as_user2 = execute_sql_via_client_as(
-        &service_user,
-        password,
+    let service_as_user2 = wait_for_query_success_with(
         &format!("EXECUTE AS USER '{}' (SELECT * FROM {})", user2_id, full_table),
+        Duration::from_secs(30),
+        |sql| execute_sql_via_client_as(&service_user, password, sql),
     )
     .expect("Service SELECT AS USER user2 on stream failed");
     assert!(!service_as_user2.contains("stream-u1"));

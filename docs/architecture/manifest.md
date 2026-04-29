@@ -48,10 +48,11 @@ KalamDB employs a tiered architecture to balance sub-millisecond latency with lo
 
 ### 2. Flush Operation (Commit)
 When the MemTable fills up or a checkpoint is triggered:
-1.  **Write Parquet**: In-memory rows are sorted and written to a new `batch-N.parquet` file.
-2.  **Compute Stats**: `FlushManifestHelper` calculates min/max values for the primary key, `_seq`, and indexed columns *during* the write process.
-3.  **Update Hot Store**: A new `SegmentMetadata` entry is added to the `ManifestService` (updating L1 RAM and L2 RocksDB).
-4.  **Persist Cold Store**: The `ManifestService` serializes the updated state and performs an atomic write (write-tmp-rename) to `manifest.json`.
+1.  **Resolve Versions**: Hot rows are scanned in bounded batches and reduced to the latest `_seq` per primary key. User tables process one user scope at a time because hot keys are ordered by `(user_id, seq)`; shared tables resolve the shared scope as a whole to preserve the `_seq` fallback for rows with missing/null primary keys.
+2.  **Write Parquet**: The common flush scope writer writes the resolved rows to a temp `batch-N.parquet.tmp` Parquet file for either a shared scope or `Some(user_id)` scope.
+3.  **Compute Stats**: `FlushManifestHelper` calculates min/max values for the primary key, `_seq`, and indexed columns before the batch is moved into the Parquet writer.
+4.  **Commit File + Manifest**: The temp file is renamed to `batch-N.parquet`, then a new `SegmentMetadata` entry is added to the `ManifestService` (updating L1 RAM and L2 RocksDB) and persisted through the cold `manifest.json` atomic write.
+5.  **Clean Hot Store**: Flushed hot keys are removed in bounded indexed-store delete batches so cleanup does not build unbounded RocksDB operation vectors.
 
 ### 3. Query Execution (Read Path)
 1.  **Plan**: The `ManifestAccessPlanner` requests the Manifest from the **Hot Store**.

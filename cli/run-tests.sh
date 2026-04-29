@@ -280,46 +280,115 @@ validate_cluster_health() {
     local health_url="$1"
     local summary
 
-    if ! command -v curl >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1; then
+    if ! command -v python3 >/dev/null 2>&1; then
         return 0
     fi
 
-    summary="$(curl -fsS --max-time 3 "${health_url%/}/v1/api/cluster/health" 2>/dev/null | python3 -c '
+    summary="$(python3 - "$health_url" "${CLUSTER_URLS:-}" <<'PY'
 import json
 import sys
+from urllib.error import URLError
+from urllib.request import urlopen
+
+target_url = sys.argv[1].rstrip("/")
+cluster_urls_arg = sys.argv[2].strip() if len(sys.argv) > 2 else ""
+
+
+def fetch_health(base_url):
+    with urlopen(f"{base_url.rstrip('/')}/v1/api/cluster/health", timeout=3) as response:
+        return json.load(response)
+
 
 try:
-    payload = json.load(sys.stdin)
+    target_payload = fetch_health(target_url)
 except Exception:
-    raise SystemExit(1)
-
-is_cluster = bool(payload.get("is_cluster_mode"))
-groups_leading = payload.get("groups_leading")
-total_groups = payload.get("total_groups")
-
-if groups_leading is None or total_groups is None:
-    nodes = payload.get("nodes") or []
-    if nodes:
-        groups_leading = max((node.get("groups_leading") or 0) for node in nodes)
-        total_groups = max((node.get("total_groups") or 0) for node in nodes)
-
-if not is_cluster or groups_leading is None or total_groups is None:
     print("ok")
     raise SystemExit(0)
 
-if int(groups_leading) < int(total_groups):
+if not target_payload.get("is_cluster_mode"):
+    print("ok")
+    raise SystemExit(0)
+
+cluster_urls = [url.strip() for url in cluster_urls_arg.split(",") if url.strip()]
+if not cluster_urls:
+    seen = set()
+    for node in target_payload.get("nodes") or []:
+        api_addr = str(node.get("api_addr") or "").strip()
+        if api_addr and api_addr not in seen:
+            seen.add(api_addr)
+            cluster_urls.append(api_addr)
+
+if not cluster_urls:
+    cluster_urls = [target_url]
+
+payloads = []
+failed_urls = []
+for url in cluster_urls:
+    try:
+        payload = fetch_health(url)
+    except (OSError, URLError, TimeoutError, json.JSONDecodeError):
+        failed_urls.append(url)
+        continue
+    except Exception:
+        failed_urls.append(url)
+        continue
+    if payload.get("is_cluster_mode"):
+        payloads.append((url, payload))
+
+if failed_urls:
+    print(f"unreachable {','.join(failed_urls)}")
+    raise SystemExit(0)
+
+if not payloads:
+    print("ok")
+    raise SystemExit(0)
+
+total_groups = max(int(payload.get("total_groups") or 0) for _, payload in payloads)
+if total_groups <= 0:
+    print("ok")
+    raise SystemExit(0)
+
+groups_leading = 0
+seen_nodes = set()
+for url, payload in payloads:
+    node_id = payload.get("node_id") or url
+    if node_id in seen_nodes:
+        continue
+    seen_nodes.add(node_id)
+    groups_leading += int(payload.get("groups_leading") or 0)
+
+if len(payloads) == 1:
+    node_counts = [
+        int(node.get("groups_leading") or 0)
+        for node in (payloads[0][1].get("nodes") or [])
+        if node.get("groups_leading") is not None
+    ]
+    if node_counts:
+        groups_leading = sum(node_counts)
+
+if groups_leading != total_groups:
     print(f"degraded {groups_leading} {total_groups}")
 else:
     print("ok")
-')" || true
+PY
+)" || true
 
     case "$summary" in
         ok|"")
             return 0
             ;;
+        unreachable\ *)
+            set -- $summary
+            echo "Error: configured cluster node(s) are unreachable: ${2}"
+            echo "CLI e2e tests require every configured cluster node to be reachable."
+            echo ""
+            echo "Check: ${health_url%/}/v1/api/cluster/health"
+            echo "Fix the running cluster state, then rerun ./run-tests.sh."
+            exit 1
+            ;;
         degraded\ *)
             set -- $summary
-            echo "Error: target server reports incomplete cluster leadership (${2}/${3} groups leading)."
+            echo "Error: cluster reports incomplete Raft group leadership (${2}/${3} groups leading across configured nodes)."
             echo "This usually means stale or mismatched local Raft state, and CLI e2e tests will fail nondeterministically."
             echo ""
             echo "Check: ${health_url%/}/v1/api/cluster/health"

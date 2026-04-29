@@ -124,6 +124,8 @@ pub struct SubscriptionHandle {
 | last_heartbeat | 16 bytes | Instant |
 | notification_tx | 8 bytes | Arc pointer |
 | event_tx | 24 bytes | Channel sender |
+| event channel slots | 1 pending event | One close reason is enough; full channel triggers force-unregister |
+| notification channel slots | 64 pending notifications | Bounded live backlog per connection |
 | subscriptions (DashMap base) | ~64 bytes | Per-shard overhead |
 | **Base Connection Overhead** | **~300 bytes** | Without subscriptions |
 
