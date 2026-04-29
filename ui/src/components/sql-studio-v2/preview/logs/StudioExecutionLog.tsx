@@ -3,6 +3,13 @@ import type { LucideIcon } from "lucide-react";
 import { AlertCircle, ArrowDown, ArrowUp, CheckCircle2, Info } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { CodeBlock } from "@/components/ui/code-block";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import type { QueryLogEntry } from "../../shared/types";
@@ -218,6 +225,12 @@ function describeFlow(kind: LogEntryKind): string {
 export function StudioExecutionLog({ logs, status }: StudioExecutionLogProps) {
   const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
   const previousLastLogIdRef = useRef<string | null>(null);
+  const [detailModalId, setDetailModalId] = useState<string | null>(null);
+
+  const handleSelectLog = (id: string) => {
+    setSelectedLogId(id);
+    setDetailModalId(id);
+  };
 
   const decoratedLogs = useMemo(
     () => logs.map((entry, index) => decorateLogEntry(entry, index)),
@@ -266,7 +279,7 @@ export function StudioExecutionLog({ logs, status }: StudioExecutionLogProps) {
   const websocketFrameCount = decoratedLogs.filter((item) => item.kind === "send" || item.kind === "receive").length;
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col xl:flex-row">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col xl:flex-row">
       <section aria-label="Trace timeline" className="flex min-h-[220px] min-w-0 flex-col border-b border-border bg-muted/10 xl:w-[40%] xl:min-w-[300px] xl:max-w-[500px] xl:border-b-0 xl:border-r">
           <div className="flex shrink-0 items-center justify-between border-b border-border px-3 py-2">
             <div>
@@ -291,7 +304,7 @@ export function StudioExecutionLog({ logs, status }: StudioExecutionLogProps) {
               {websocketFrameCount > 0 ? "WS Trace" : "Execution"}
             </Badge>
           </div>
-          <ScrollArea className="min-h-0 flex-1">
+          <ScrollArea className="min-h-0 flex-1 [&>[data-radix-scroll-area-viewport]>div]:!block">
             <div className="space-y-1.5 p-2">
               {decoratedLogs.map((item) => {
                 const isSelected = item.entry.id === selectedEntry.entry.id;
@@ -300,7 +313,7 @@ export function StudioExecutionLog({ logs, status }: StudioExecutionLogProps) {
                   <button
                     key={item.entry.id}
                     type="button"
-                    onClick={() => setSelectedLogId(item.entry.id)}
+                    onClick={() => handleSelectLog(item.entry.id)}
                     className={cn(
                       "w-full rounded-md border px-2.5 py-1.5 text-left transition-colors",
                       "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
@@ -315,7 +328,10 @@ export function StudioExecutionLog({ logs, status }: StudioExecutionLogProps) {
                       <Badge variant="outline" className={cn("px-1.5 py-0 text-[10px] font-semibold uppercase tracking-wide", getBadgeClassName(item.kind))}>
                         {item.label}
                       </Badge>
-                      <p className="min-w-0 flex-1 truncate font-mono text-[11px] text-foreground">
+                      <p
+                        className="min-w-0 flex-1 truncate font-mono text-[11px] text-foreground"
+                        title={item.title}
+                      >
                           {item.title}
                       </p>
                       {item.sizeLabel && (
@@ -345,12 +361,12 @@ export function StudioExecutionLog({ logs, status }: StudioExecutionLogProps) {
       </section>
 
       <section aria-label="Trace details" className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
-          <div className="border-b border-border px-4 py-3">
-            <div className="flex items-center gap-2">
-              <Badge variant="outline" className={cn("px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide", getBadgeClassName(selectedEntry.kind))}>
+          <div className="min-w-0 border-b border-border px-4 py-3">
+            <div className="flex min-w-0 items-center gap-2">
+              <Badge variant="outline" className={cn("shrink-0 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide", getBadgeClassName(selectedEntry.kind))}>
                 {selectedEntry.label}
               </Badge>
-              <h3 className="min-w-0 truncate font-mono text-sm text-foreground">
+              <h3 className="min-w-0 flex-1 truncate font-mono text-sm text-foreground">
                 {selectedEntry.title}
               </h3>
             </div>
@@ -372,10 +388,39 @@ export function StudioExecutionLog({ logs, status }: StudioExecutionLogProps) {
             <span>Raw payload and structured detail for the selected entry</span>
           </div>
 
-          <div className="min-h-0 flex-1 p-3">
+          <div className="min-h-0 min-w-0 flex-1 p-3">
             <CodeBlock value={selectedEntry.payload} jsonPreferred maxHeightClassName="h-full max-h-full" />
           </div>
       </section>
+
+      {(() => {
+        const modalEntry = detailModalId
+          ? decoratedLogs.find((item) => item.entry.id === detailModalId)
+          : null;
+        return (
+          <Dialog open={!!modalEntry} onOpenChange={(o) => !o && setDetailModalId(null)}>
+            <DialogContent className="flex max-h-[85vh] max-w-3xl flex-col overflow-hidden">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2 font-mono text-sm">
+                  {modalEntry?.label} • {modalEntry?.title}
+                </DialogTitle>
+                <DialogDescription>
+                  Full payload for the selected event.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="min-h-0 flex-1 overflow-hidden">
+                {modalEntry && (
+                  <CodeBlock
+                    value={modalEntry.payload}
+                    jsonPreferred
+                    maxHeightClassName="h-full max-h-full"
+                  />
+                )}
+              </div>
+            </DialogContent>
+          </Dialog>
+        );
+      })()}
     </div>
   );
 }

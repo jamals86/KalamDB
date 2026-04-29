@@ -379,6 +379,7 @@ export async function fetchSqlStudioSchemaTree(): Promise<StudioNamespace[]> {
     SELECT namespace_id
     FROM system.namespaces
     ORDER BY namespace_id
+    LIMIT 100000
   `);
 
   const namespaces = new Map<string, StudioNamespace>();
@@ -413,6 +414,7 @@ export async function fetchSqlStudioSchemaTree(): Promise<StudioNamespace[]> {
       ON t.namespace_id = c.namespace_id
       AND t.table_name = c.table_name
     ORDER BY t.namespace_id, t.table_name, c.ordinal
+    LIMIT 100000
   `);
 
   const tableMap = new Map<string, StudioTable>();
@@ -453,6 +455,7 @@ export async function fetchSqlStudioSchemaTree(): Promise<StudioNamespace[]> {
       table_type
     FROM information_schema.tables
     ORDER BY table_schema, table_name
+    LIMIT 100000
   `);
 
   const infoSchemaColumnsResult = await executeSql(`
@@ -465,6 +468,7 @@ export async function fetchSqlStudioSchemaTree(): Promise<StudioNamespace[]> {
       CAST(ordinal_position AS BIGINT) AS ordinal_position
     FROM information_schema.columns
     ORDER BY table_schema, table_name, ordinal_position
+    LIMIT 100000
   `);
 
   const infoColumnsByTable = new Map<string, Record<string, unknown>[]>();

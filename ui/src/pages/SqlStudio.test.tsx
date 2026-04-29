@@ -7,9 +7,11 @@ import { Provider } from "react-redux";
 import { MemoryRouter } from "react-router-dom";
 import { useEffect, useRef } from "react";
 import { SqlPreviewProvider } from "@/components/sql-preview";
+import { Toaster } from "@/components/ui/toaster-provider";
 import SqlStudio from "@/pages/SqlStudio";
 import sqlStudioUiReducer from "@/features/sql-studio/state/sqlStudioUiSlice";
 import sqlStudioWorkspaceReducer from "@/features/sql-studio/state/sqlStudioWorkspaceSlice";
+import editorTabReducer from "@/features/sql-studio/state/editorTabSlice";
 
 const mockUseAuth = vi.fn();
 const mockSchemaTreeQuery = vi.fn();
@@ -219,6 +221,7 @@ function createTestStore() {
     reducer: {
       sqlStudioUi: sqlStudioUiReducer,
       sqlStudioWorkspace: sqlStudioWorkspaceReducer,
+      editorTab: editorTabReducer,
     },
   });
 }
@@ -227,9 +230,11 @@ async function renderSqlStudio(store = createTestStore()) {
   const view = render(
     <Provider store={store}>
       <MemoryRouter>
-        <SqlPreviewProvider>
-          <SqlStudio />
-        </SqlPreviewProvider>
+        <Toaster>
+          <SqlPreviewProvider>
+            <SqlStudio />
+          </SqlPreviewProvider>
+        </Toaster>
       </MemoryRouter>
     </Provider>,
   );

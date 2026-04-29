@@ -7,6 +7,7 @@ import {
   ChevronLeft,
   ChevronRight,
   KeyRound,
+  Plus,
   Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -24,12 +25,16 @@ import {
 import { useTableChanges } from "@/hooks/useTableChanges";
 import { CellContextMenu, type CellContextMenuState } from "./table/CellContextMenu";
 import { InlineCellEditor, type InlineEditContext } from "./table/InlineCellEditor";
-import { generateSqlStatements } from "./table/utils/sqlGenerator";
+import { InsertRowDialog } from "./table/InsertRowDialog";
+import { generateSqlStatements, generateInsertSql } from "./table/utils/sqlGenerator";
 import { extractTableContext } from "./table/utils/sqlParser";
 import { useSqlPreview } from "@/components/sql-preview";
 import { CellDisplay } from "@/components/datatype-display";
 import { KalamCellValue } from "@kalamdb/client";
 import { executeSql } from "@/lib/kalam-client";
+import { executeSqlPreviewStatement } from "@/components/sql-studio-v2/table-editor/run-sql";
+import { useToast } from "@/components/ui/toaster-provider";
+import { classifyFieldKind, coerceFieldValue } from "@/components/sql-studio-v2/shared/value-validation";
 import { LIVE_META, LIVE_HIGHLIGHT_DURATION_MS } from "@/features/sql-studio/state/sqlStudioWorkspaceSlice";
 import { cn } from "@/lib/utils";
 import { StudioExecutionLog } from "./logs/StudioExecutionLog";
@@ -182,6 +187,8 @@ export function StudioResultsGrid({
     discardAll,
   } = useTableChanges();
   const { openSqlPreview } = useSqlPreview();
+  const { notify } = useToast();
+  const [showInsertRow, setShowInsertRow] = useState(false);
 
   useEffect(() => {
     discardAll();
@@ -668,10 +675,23 @@ export function StudioResultsGrid({
         <>
           {canMutateRows && (
             <div className="flex h-10 items-center justify-between border-b border-border bg-amber-50/70 px-3 /20">
-              <div className="truncate text-xs text-amber-700">
-                {changeCount === 0
-                  ? "No pending table changes"
-                  : `${changeCount} change${changeCount === 1 ? "" : "s"} • ${editCount} edit${editCount === 1 ? "" : "s"} • ${deleteCount} delete${deleteCount === 1 ? "" : "s"}`}
+              <div className="flex items-center gap-3">
+                {selectedTable && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setShowInsertRow(true)}
+                    className="h-7 gap-1.5 text-amber-700 hover:bg-amber-100 hover:text-amber-900"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    Insert row
+                  </Button>
+                )}
+                <div className="truncate text-xs text-amber-700">
+                  {changeCount === 0
+                    ? "No pending table changes"
+                    : `${changeCount} change${changeCount === 1 ? "" : "s"} • ${editCount} edit${editCount === 1 ? "" : "s"} • ${deleteCount} delete${deleteCount === 1 ? "" : "s"}`}
+                </div>
               </div>
               <div className="flex items-center gap-2">
                 <Button
@@ -1035,14 +1055,30 @@ export function StudioResultsGrid({
                       NULL
                     </div>
                   ) : (
-                    <textarea
-                      className="min-h-[120px] flex-1 resize-none rounded-md border border-border bg-black p-3 font-mono text-xs leading-5 text-slate-200 outline-none focus:border-sky-500 focus:ring-1 focus:ring-ring"
-                      value={typeof cellViewer.editedValue === "string" ? cellViewer.editedValue : stringifyCellValue(cellViewer.editedValue)}
-                      onChange={(e) => {
-                        setCellViewer((prev) => ({ ...prev, editedValue: e.target.value }));
-                      }}
-                      spellCheck={false}
-                    />
+                    <>
+                      <textarea
+                        className="min-h-[120px] flex-1 resize-none rounded-md border border-border bg-black p-3 font-mono text-xs leading-5 text-slate-200 outline-none focus:border-sky-500 focus:ring-1 focus:ring-ring"
+                        value={typeof cellViewer.editedValue === "string" ? cellViewer.editedValue : stringifyCellValue(cellViewer.editedValue)}
+                        onChange={(e) => {
+                          setCellViewer((prev) => ({ ...prev, editedValue: e.target.value }));
+                        }}
+                        spellCheck={false}
+                      />
+                      {/* Per-type validation message (live) */}
+                      {(() => {
+                        if (!cellViewer.dataType) return null;
+                        const raw =
+                          typeof cellViewer.editedValue === "string"
+                            ? cellViewer.editedValue
+                            : stringifyCellValue(cellViewer.editedValue);
+                        const kind = classifyFieldKind(cellViewer.dataType);
+                        const { error } = coerceFieldValue(raw, kind);
+                        if (!error) return null;
+                        return (
+                          <div className="shrink-0 text-[11px] text-destructive">{error}</div>
+                        );
+                      })()}
+                    </>
                   )}
                 </div>
               ) : (
@@ -1062,44 +1098,69 @@ export function StudioResultsGrid({
                 >
                   Cancel
                 </Button>
-                {cellViewer.canEdit && (
-                  <Button
-                    onClick={() => {
-                      const { rowIndex, columnName, content, isNull, editedValue } = cellViewer;
-                      if (rowIndex === undefined || !columnName) return;
+                {cellViewer.canEdit && (() => {
+                  // Validate before allowing save
+                  const raw = cellViewer.isNull
+                    ? ""
+                    : typeof cellViewer.editedValue === "string"
+                      ? cellViewer.editedValue
+                      : stringifyCellValue(cellViewer.editedValue);
+                  const kind = cellViewer.dataType ? classifyFieldKind(cellViewer.dataType) : "text";
+                  const validation = cellViewer.isNull ? { value: null, error: null } : coerceFieldValue(raw, kind);
+                  const blocked = !cellViewer.isNull && validation.error !== null;
+                  return (
+                    <Button
+                      disabled={blocked}
+                      title={blocked ? validation.error ?? undefined : undefined}
+                      onClick={() => {
+                        const { rowIndex, columnName, content, isNull } = cellViewer;
+                        if (rowIndex === undefined || !columnName) return;
 
-                      let newValue: unknown;
-                      if (isNull) {
-                        newValue = null;
-                      } else {
-                        const raw = typeof editedValue === "string" ? editedValue : stringifyCellValue(editedValue);
-                        if (
-                          (cellViewer.dataType?.toLowerCase() ?? "").includes("json") ||
-                          (raw.trim().startsWith("{") && raw.trim().endsWith("}")) ||
-                          (raw.trim().startsWith("[") && raw.trim().endsWith("]"))
-                        ) {
-                          try {
-                            newValue = JSON.parse(raw);
-                          } catch {
-                            newValue = raw;
-                          }
+                        let newValue: unknown;
+                        if (isNull) {
+                          newValue = null;
                         } else {
-                          newValue = raw;
+                          // Use the coerced typed value (number/boolean/etc) when validation passed.
+                          // Falls back to the raw string for text/datetime where coerce returns the string.
+                          newValue = validation.value;
                         }
-                      }
 
-                      const pkValues = getPrimaryKeyValues(rowIndex);
-                      editCell(rowIndex, columnName, content, newValue, pkValues);
-                      setCellViewer((prev) => ({ ...prev, open: false }));
-                    }}
-                  >
-                    Save
-                  </Button>
-                )}
+                        const pkValues = getPrimaryKeyValues(rowIndex);
+                        editCell(rowIndex, columnName, content, newValue, pkValues);
+                        setCellViewer((prev) => ({ ...prev, open: false }));
+                      }}
+                    >
+                      Save
+                    </Button>
+                  );
+                })()}
               </DialogFooter>
             </DialogContent>
           </Dialog>
         </>
+      )}
+
+      {selectedTable && (
+        <InsertRowDialog
+          open={showInsertRow}
+          table={selectedTable}
+          onSubmit={(values) => {
+            setShowInsertRow(false);
+            const fqn = `${selectedTable.namespace}.${selectedTable.name}`;
+            const sql = generateInsertSql(selectedTable.namespace, selectedTable.name, values);
+            openSqlPreview({
+              sql,
+              title: `Insert row into ${fqn}`,
+              description: "Review the INSERT statement before committing.",
+              onExecute: executeSqlPreviewStatement,
+              onComplete: () => {
+                notify({ title: `Inserted row into ${fqn}`, variant: "success" });
+                onRefreshAfterCommit();
+              },
+            });
+          }}
+          onClose={() => setShowInsertRow(false)}
+        />
       )}
     </div>
   );
