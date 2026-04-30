@@ -208,4 +208,12 @@ ensure_test_auth_ready
     cd "$ROOT_DIR/link/sdks/typescript/consumer"
     npm install --no-audit --no-fund
     npm test
+
+    echo "Running @kalamdb/orm tests..."
+    cd "$ROOT_DIR/link/sdks/typescript/orm"
+    npm install --no-audit --no-fund
+    KALAMDB_TEST_URL="$SERVER_URL" \
+    KALAMDB_TEST_USER="$SERVER_USER" \
+    KALAMDB_TEST_PASSWORD="$SERVER_PASSWORD" \
+    npm test
 ) 2>&1 | tee "$TEST_OUTPUT"

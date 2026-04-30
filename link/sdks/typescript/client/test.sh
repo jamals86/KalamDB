@@ -20,6 +20,9 @@ fi
 echo "📦 Building SDK..."
 npm run build
 
+echo "🔎 Type-checking SDK test surface..."
+npm run test:types
+
 # ── Unit tests (offline, no server required) ───────────────────────────
 echo ""
 echo "🔬 Running unit tests (no server)..."
