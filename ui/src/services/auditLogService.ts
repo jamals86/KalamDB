@@ -1,8 +1,9 @@
 import { getDb } from "@/lib/db";
+import type { SystemAuditLogRow } from "@/lib/models";
 import { system_audit_log } from "@/lib/schema";
-import { like, eq, gte, lte, asc, desc, and, type SQL, type InferSelectModel } from "drizzle-orm";
+import { like, eq, gte, lte, asc, desc, and, type SQL } from "drizzle-orm";
 
-export type AuditLog = InferSelectModel<typeof system_audit_log>;
+export type AuditLog = SystemAuditLogRow;
 
 export type AuditLogSortKey = "timestamp" | "actor_user_id" | "action" | "target" | "ip_address";
 

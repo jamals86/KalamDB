@@ -47,15 +47,13 @@ export default defineConfig(({ mode }) => {
     // Base path for production build (embedded in server at /ui/)
     base: "/ui/",
     resolve: {
+      preserveSymlinks: true,
+      dedupe: ["drizzle-orm", "@kalamdb/client"],
       alias: {
         "@": path.resolve(__dirname, "./src"),
         "@kalamdb/client": path.resolve(
           __dirname,
           "../link/sdks/typescript/client/dist/src/index.js",
-        ),
-        "@kalamdb/orm": path.resolve(
-          __dirname,
-          "../link/sdks/typescript/orm/dist/index.js",
         ),
       },
     },

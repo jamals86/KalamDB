@@ -2,6 +2,15 @@ import { config as loadEnv } from 'dotenv';
 import { fileURLToPath } from 'node:url';
 import { Auth } from '@kalamdb/client';
 import { createConsumerClient, runAgent } from '@kalamdb/consumer';
+import { executeAsUser, kalamDriver } from '@kalamdb/orm';
+import { drizzle } from 'drizzle-orm/pg-proxy';
+import {
+  chat_demo_agent_events as agentEvents,
+  chat_demo_agent_eventsConfig as agentEventsConfig,
+  chat_demo_messages as chatMessages,
+  chat_demo_messagesConfig as chatMessagesConfig,
+  type ChatDemoMessages as ChatMessageRow,
+} from './schema.generated.js';
 
 loadEnv({ path: '.env.local', quiet: true });
 loadEnv({ quiet: true });
@@ -23,14 +32,6 @@ type StartAgentOptions = {
 
 type AgentEventStage = 'thinking' | 'typing' | 'message_saved' | 'complete' | 'log';
 
-type ChatRow = Record<string, unknown> & {
-  id: string;
-  room: string;
-  sender_username: string;
-  content: string;
-  role: string;
-};
-
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -41,41 +42,6 @@ function assertValidUser(user: string): string {
   }
 
   return user;
-}
-
-function sqlLiteral(value: string): string {
-  return `'${value.replace(/'/g, "''")}'`;
-}
-
-async function emitEvent(
-  client: ReturnType<typeof createConsumerClient>,
-  room: string,
-  senderUsername: string,
-  responseId: string,
-  stage: AgentEventStage,
-  preview: string,
-  message: string,
-): Promise<void> {
-  const statement = [
-    'INSERT INTO chat_demo.agent_events (response_id, room, sender_username, stage, preview, message)',
-    `VALUES (${sqlLiteral(responseId)}, ${sqlLiteral(room)}, ${sqlLiteral(senderUsername)}, ${sqlLiteral(stage)}, ${sqlLiteral(preview)}, ${sqlLiteral(message)})`,
-  ].join(' ');
-
-  await client.executeAsUser(statement, assertValidUser(senderUsername));
-}
-
-async function insertAssistantMessage(
-  client: ReturnType<typeof createConsumerClient>,
-  room: string,
-  senderUsername: string,
-  reply: string,
-): Promise<void> {
-  const statement = [
-    'INSERT INTO chat_demo.messages (room, role, author, sender_username, content)',
-    `VALUES (${sqlLiteral(room)}, 'assistant', 'KalamDB Copilot', ${sqlLiteral(senderUsername)}, ${sqlLiteral(reply)})`,
-  ].join(' ');
-
-  await client.executeAsUser(statement, assertValidUser(senderUsername));
 }
 
 export function buildReply(content: string): string {
@@ -99,11 +65,54 @@ export async function startChatAgent(options: StartAgentOptions = {}): Promise<v
     url: KALAMDB_URL,
     authProvider: async () => Auth.basic(KALAMDB_USER, KALAMDB_PASSWORD),
   });
+  const db = drizzle(kalamDriver(client));
+  const canReadMessageSeq = chatMessagesConfig.systemColumns.includes('_seq');
+
+  const emitEvent = async (
+    room: string,
+    senderUsername: string,
+    responseId: string,
+    stage: AgentEventStage,
+    preview: string,
+    message: string,
+  ): Promise<void> => {
+    await executeAsUser(
+      client,
+      db.insert(agentEvents).values({
+        response_id: responseId,
+        room,
+        sender_username: senderUsername,
+        stage,
+        preview,
+        message,
+      }),
+      assertValidUser(senderUsername),
+    );
+  };
+
+  const insertAssistantMessage = async (
+    room: string,
+    senderUsername: string,
+    reply: string,
+  ): Promise<void> => {
+    await executeAsUser(
+      client,
+      db.insert(chatMessages).values({
+        room,
+        role: 'assistant',
+        author: 'KalamDB Copilot',
+        sender_username: senderUsername,
+        content: reply,
+      }),
+      assertValidUser(senderUsername),
+    );
+  };
 
   console.log(`chat-demo-agent ready (user=${KALAMDB_USER}, mode=topic-consumer via runAgent)`);
   console.log(`  topic=${TOPIC_NAME}  group=${CONSUMER_GROUP}`);
+  console.log(`  messages=${chatMessagesConfig.tableType} events=${agentEventsConfig.tableType} seq=${canReadMessageSeq ? 'enabled' : 'disabled'}`);
 
-  await runAgent<ChatRow>({
+  await runAgent<ChatMessageRow>({
     client,
     name: 'chat-ai-agent',
     topic: TOPIC_NAME,
@@ -113,27 +122,6 @@ export async function startChatAgent(options: StartAgentOptions = {}): Promise<v
     timeoutSeconds: 30,
     stopSignal: options.stopSignal,
 
-    rowParser: (message) => {
-      const payload = message.value as Record<string, unknown> | undefined;
-      if (!payload) {
-        return null;
-      }
-
-      // Topic CDC envelope: { row: { ... }, op: "INSERT", ... }
-      const raw = (payload.row ?? payload) as Record<string, unknown>;
-      const id = String(raw.id ?? '');
-      const room = String(raw.room ?? 'main');
-      const role = String(raw.role ?? '').trim();
-      const senderUsername = String(raw.sender_username ?? '').trim();
-      const content = String(raw.content ?? '').trim();
-
-      if (!id || !senderUsername || !content || !role) {
-        return null;
-      }
-
-      return { id, room, sender_username: senderUsername, content, role };
-    },
-
     onRow: async (_ctx, row) => {
       if (row.role !== 'user') {
         console.log(`[agent] skipping non-user message id=${row.id} role=${row.role}`);
@@ -142,9 +130,10 @@ export async function startChatAgent(options: StartAgentOptions = {}): Promise<v
 
       const responseId = `reply-${row.id}`;
 
-      console.log(`[agent] received user message id=${row.id} user=${row.sender_username} room=${row.room}`);
-      await emitEvent(client, row.room, row.sender_username, responseId, 'log', '', `Picked up user message ${row.id}`);
-      await emitEvent(client, row.room, row.sender_username, responseId, 'thinking', '', 'Planning assistant reply');
+      const seqLabel = canReadMessageSeq && row._seq ? ` seq=${row._seq}` : '';
+      console.log(`[agent] received user message id=${row.id}${seqLabel} user=${row.sender_username} room=${row.room}`);
+      await emitEvent(row.room, row.sender_username, responseId, 'log', '', `Picked up user message ${row.id}`);
+      await emitEvent(row.room, row.sender_username, responseId, 'thinking', '', 'Planning assistant reply');
       await sleep(THINKING_DELAY_MS);
 
       const reply = buildReply(row.content);
@@ -152,16 +141,16 @@ export async function startChatAgent(options: StartAgentOptions = {}): Promise<v
 
       for (let index = 0; index < reply.length; index += STREAM_CHUNK_SIZE) {
         streamedReply += reply.slice(index, index + STREAM_CHUNK_SIZE);
-        await emitEvent(client, row.room, row.sender_username, responseId, 'typing', streamedReply, `Streamed ${streamedReply.length}/${reply.length} characters`);
+        await emitEvent(row.room, row.sender_username, responseId, 'typing', streamedReply, `Streamed ${streamedReply.length}/${reply.length} characters`);
         await sleep(STREAM_DELAY_MS);
       }
 
       console.log(`[agent] committing assistant reply for user=${row.sender_username} message=${row.id}`);
-      await emitEvent(client, row.room, row.sender_username, responseId, 'log', streamedReply, 'Persisting final assistant reply');
-      await insertAssistantMessage(client, row.room, row.sender_username, reply);
-      await emitEvent(client, row.room, row.sender_username, responseId, 'message_saved', reply, 'Assistant reply committed');
+      await emitEvent(row.room, row.sender_username, responseId, 'log', streamedReply, 'Persisting final assistant reply');
+      await insertAssistantMessage(row.room, row.sender_username, reply);
+      await emitEvent(row.room, row.sender_username, responseId, 'message_saved', reply, 'Assistant reply committed');
       await sleep(STREAM_DELAY_MS);
-      await emitEvent(client, row.room, row.sender_username, responseId, 'complete', reply, 'Live stream finished');
+      await emitEvent(row.room, row.sender_username, responseId, 'complete', reply, 'Live stream finished');
       console.log(`[agent] completed reply for user=${row.sender_username} message=${row.id}`);
     },
 

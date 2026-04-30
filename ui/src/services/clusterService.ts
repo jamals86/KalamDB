@@ -1,8 +1,8 @@
 import { getDb } from "@/lib/db";
+import type { SystemClusterNodeRow } from "@/lib/models";
 import { system_cluster } from "@/lib/schema";
-import type { InferSelectModel } from "drizzle-orm";
 
-export type ClusterNode = InferSelectModel<typeof system_cluster>;
+export type ClusterNode = SystemClusterNodeRow;
 
 export interface ClusterHealth {
   healthy: boolean;

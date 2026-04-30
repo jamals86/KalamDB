@@ -37,7 +37,7 @@ export function UsersList() {
         if (!searchQuery.trim()) return true;
         const query = searchQuery.toLowerCase();
         return (
-          user.username.toLowerCase().includes(query) ||
+          user.user_id.toLowerCase().includes(query) ||
           user.email?.toLowerCase().includes(query) ||
           user.role.toLowerCase().includes(query)
         );
@@ -120,7 +120,7 @@ export function UsersList() {
               ) : (
                 filteredUsers.map((user, index) => (
                   <TableRow key={user.user_id || `user-${index}`}>
-                    <TableCell className="font-medium">{user.username}</TableCell>
+                    <TableCell className="font-medium">{user.user_id}</TableCell>
                     <TableCell>
                       <span className={`px-2 py-1 rounded-full text-xs font-medium ${getRoleBadgeColor(user.role)}`}>
                         {user.role}
@@ -142,8 +142,8 @@ export function UsersList() {
                           variant="ghost"
                           size="icon"
                           onClick={() => setEditingUser(user)}
-                          aria-label={`Edit ${user.username}`}
-                          title={`Edit ${user.username}`}
+                          aria-label={`Edit ${user.user_id}`}
+                          title={`Edit ${user.user_id}`}
                         >
                           <Pencil className="h-4 w-4" />
                         </Button>
@@ -151,9 +151,9 @@ export function UsersList() {
                           variant="ghost"
                           size="icon"
                           onClick={() => setDeletingUser(user)}
-                          disabled={currentUser?.username === user.username}
-                          aria-label={`Delete ${user.username}`}
-                          title={`Delete ${user.username}`}
+                          disabled={currentUser?.username === user.user_id}
+                          aria-label={`Delete ${user.user_id}`}
+                          title={`Delete ${user.user_id}`}
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
@@ -197,10 +197,10 @@ export function UsersList() {
           onOpenChange={() => setDeletingUser(null)}
           user={deletingUser}
           onConfirm={async () => {
-            if (currentUser?.username === deletingUser.username) {
+            if (currentUser?.username === deletingUser.user_id) {
               throw new Error("Cannot delete your own account");
             }
-            await deleteUserMutation({ username: deletingUser.username }).unwrap();
+            await deleteUserMutation({ username: deletingUser.user_id }).unwrap();
             setDeletingUser(null);
             void refetch();
           }}

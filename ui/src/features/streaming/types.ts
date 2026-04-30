@@ -1,3 +1,11 @@
+import type { SystemTopicOffsetRow, SystemTopicRow } from "@/lib/models";
+
+export type StreamingTopicRow = SystemTopicRow;
+export type StreamingTopicOffsetRow = SystemTopicOffsetRow;
+export type StreamingTopicId = StreamingTopicRow["topic_id"];
+export type StreamingGroupId = StreamingTopicOffsetRow["group_id"];
+export type StreamingPartitionId = StreamingTopicOffsetRow["partition_id"];
+
 export interface StreamingTopicRoute {
   tableId: string;
   op: string;
@@ -7,39 +15,39 @@ export interface StreamingTopicRoute {
 }
 
 export interface StreamingTopic {
-  topicId: string;
-  name: string;
-  partitions: number;
+  topicId: StreamingTopicId;
+  name: StreamingTopicRow["name"];
+  partitions: StreamingTopicRow["partitions"];
   retentionSeconds: number | null;
   retentionMaxBytes: number | null;
   routeCount: number;
   routes: StreamingTopicRoute[];
-  createdAt: string | null;
-  updatedAt: string | null;
+  createdAt: StreamingTopicRow["created_at"] | null;
+  updatedAt: StreamingTopicRow["updated_at"] | null;
 }
 
 export interface StreamingConsumerGroup {
-  groupId: string;
+  groupId: StreamingGroupId;
   topicCount: number;
   partitionCount: number;
-  lastUpdatedAt: string | null;
+  lastUpdatedAt: StreamingTopicOffsetRow["updated_at"] | null;
 }
 
 export interface StreamingOffset {
-  topicId: string;
-  groupId: string;
-  partitionId: number;
+  topicId: StreamingTopicOffsetRow["topic_id"];
+  groupId: StreamingTopicOffsetRow["group_id"];
+  partitionId: StreamingTopicOffsetRow["partition_id"];
   lastAckedOffset: number;
   nextOffset: number;
-  updatedAt: string | null;
+  updatedAt: StreamingTopicOffsetRow["updated_at"] | null;
 }
 
 export type ConsumeStartMode = "Latest" | "Earliest" | "Offset";
 
 export interface ConsumeMessagesInput {
-  topicId: string;
-  groupId: string;
-  partitionId: number;
+  topicId: StreamingTopicId;
+  groupId: StreamingGroupId;
+  partitionId: StreamingPartitionId;
   startMode: ConsumeStartMode;
   offset?: number;
   limit: number;
@@ -47,8 +55,8 @@ export interface ConsumeMessagesInput {
 }
 
 export interface ConsumeApiMessage {
-  topic_id: string;
-  partition_id: number;
+  topic_id: StreamingTopicId;
+  partition_id: StreamingPartitionId;
   offset: number;
   payload: string;
   key: string | null;
@@ -64,8 +72,8 @@ export interface ConsumeApiResponse {
 }
 
 export interface StreamingMessage {
-  topicId: string;
-  partitionId: number;
+  topicId: StreamingTopicId;
+  partitionId: StreamingPartitionId;
   offset: number;
   payloadBase64: string;
   key: string | null;

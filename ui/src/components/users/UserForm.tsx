@@ -131,7 +131,7 @@ export function UserForm({ open, onOpenChange, user, onSuccess }: UserFormProps)
     }
 
     setFormData({
-      username: user?.username ?? "",
+      username: user?.user_id ?? "",
       password: "",
       role: user?.role ?? "user",
       email: user?.email ?? "",
@@ -190,7 +190,7 @@ export function UserForm({ open, onOpenChange, user, onSuccess }: UserFormProps)
           updateInput.storage_id = normalizedStorageId;
         }
 
-        await updateUserMutation({ username: user.username, input: updateInput }).unwrap();
+        await updateUserMutation({ username: user.user_id, input: updateInput }).unwrap();
       } else {
         await createUserMutation({
           username: formData.username.trim(),

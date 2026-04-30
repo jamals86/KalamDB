@@ -46,6 +46,71 @@ import { FileRef } from './file_ref.js';
 import { SeqId } from './seq_id.js';
 import type { JsonValue } from './types.js';
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const TIME_PATTERN = /^\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?$/;
+const MILLIS_PER_DAY = 86_400_000;
+const MICROS_PER_DAY = 86_400_000_000n;
+
+function toByteArray(value: unknown): number[] | null {
+  if (value instanceof Uint8Array) return Array.from(value);
+  if (!Array.isArray(value)) return null;
+
+  const bytes: number[] = [];
+  for (const item of value) {
+    if (typeof item !== 'number' || !Number.isInteger(item) || item < 0 || item > 255) {
+      return null;
+    }
+    bytes.push(item);
+  }
+  return bytes;
+}
+
+function tryDecodeBase64(value: string): Uint8Array | null {
+  const normalized = value.trim();
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(normalized) || normalized.length % 4 !== 0) {
+    return null;
+  }
+
+  try {
+    if (typeof atob !== 'function') return null;
+    const decoded = atob(normalized);
+    const bytes = new Uint8Array(decoded.length);
+    for (let index = 0; index < decoded.length; index += 1) {
+      bytes[index] = decoded.charCodeAt(index);
+    }
+    return bytes;
+  } catch {
+    return null;
+  }
+}
+
+function dateFromEpochDays(days: number): Date | null {
+  if (!Number.isFinite(days)) return null;
+  const date = new Date(Math.trunc(days) * MILLIS_PER_DAY);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatTimeFromMicros(value: number | bigint): string | null {
+  let micros = typeof value === 'bigint' ? value : BigInt(Math.trunc(value));
+  micros %= MICROS_PER_DAY;
+  if (micros < 0n) micros += MICROS_PER_DAY;
+
+  const hours = micros / 3_600_000_000n;
+  micros %= 3_600_000_000n;
+  const minutes = micros / 60_000_000n;
+  micros %= 60_000_000n;
+  const seconds = micros / 1_000_000n;
+  const fractionalMicros = micros % 1_000_000n;
+
+  const base = [hours, minutes, seconds]
+    .map((part) => part.toString().padStart(2, '0'))
+    .join(':');
+  if (fractionalMicros === 0n) return base;
+
+  return `${base}.${fractionalMicros.toString().padStart(6, '0')}`;
+}
+
 /* ================================================================== */
 /*  KalamCellValue class                                              */
 /* ================================================================== */
@@ -261,6 +326,81 @@ export class KalamCellValue {
   }
 
   /**
+   * Return a UUID string, or `null` for SQL NULL / invalid UUID values.
+   *
+   * KalamDB serializes UUID columns as canonical RFC 4122 strings in query
+   * results, even though they are stored as 16-byte Arrow values internally.
+   */
+  asUuid(): string | null {
+    if (this.isNull()) return null;
+    const value = this.asString();
+    if (!value) return null;
+    const trimmed = value.trim();
+    return UUID_PATTERN.test(trimmed) ? trimmed.toLowerCase() : null;
+  }
+
+  /**
+   * Return a DECIMAL value as a string, preserving exact scale and precision.
+   *
+   * Use this instead of converting to `number` for money or other fixed-point
+   * values where JavaScript floating-point rounding would be lossy.
+   */
+  asDecimal(): string | null {
+    if (this.isNull()) return null;
+    if (typeof this.#raw === 'string') {
+      const trimmed = this.#raw.trim();
+      return /^[-+]?\d+(?:\.\d+)?$/.test(trimmed) ? trimmed : null;
+    }
+    if (typeof this.#raw === 'number' && Number.isFinite(this.#raw)) return String(this.#raw);
+    if (typeof this.#raw === 'bigint') return this.#raw.toString();
+    return null;
+  }
+
+  /**
+   * Return a BYTES/BINARY value as `Uint8Array`, or `null` when unavailable.
+   *
+   * KalamDB query results currently serialize binary values as arrays of byte
+   * numbers. Base64 strings are accepted as a convenience for integrations that
+   * use a base64 transport outside the SQL API.
+   */
+  asBytes(): Uint8Array | null {
+    if (this.isNull()) return null;
+    const bytes = toByteArray(this.#raw);
+    if (bytes) return Uint8Array.from(bytes);
+    if (typeof this.#raw === 'string') return tryDecodeBase64(this.#raw);
+    return null;
+  }
+
+  /**
+   * Return an EMBEDDING vector as `number[]`, or `null` for invalid values.
+   *
+   * The backend emits embeddings as JSON arrays. Stringified JSON arrays are
+   * also accepted so rows can be passed through generic JSON tooling first.
+   */
+  asEmbedding(): number[] | null {
+    if (this.isNull()) return null;
+
+    const raw = typeof this.#raw === 'string'
+      ? (() => {
+          try {
+            return JSON.parse(this.#raw) as unknown;
+          } catch {
+            return null;
+          }
+        })()
+      : this.#raw;
+
+    if (!Array.isArray(raw)) return null;
+    const values: number[] = [];
+    for (const item of raw) {
+      const value = typeof item === 'number' ? item : Number(item);
+      if (!Number.isFinite(value)) return null;
+      values.push(value);
+    }
+    return values;
+  }
+
+  /**
    * Return the value as a `Date`, or `null` for SQL NULL / unparseable values.
    *
    * Handles:
@@ -292,6 +432,46 @@ export class KalamCellValue {
       }
       const d = new Date(this.#raw);
       return isNaN(d.getTime()) ? null : d;
+    }
+    return null;
+  }
+
+  /**
+   * Return a KalamDB DATE value as a UTC `Date` at midnight.
+   *
+   * DATE columns are serialized as Arrow Date32 day offsets. This accessor
+   * intentionally treats numeric values as days since 1970-01-01, unlike
+   * `asDate()`, which treats numeric values as timestamps.
+   */
+  asDateOnly(): Date | null {
+    if (this.isNull()) return null;
+    if (typeof this.#raw === 'number') return dateFromEpochDays(this.#raw);
+    if (typeof this.#raw === 'string') {
+      const trimmed = this.#raw.trim();
+      if (/^-?\d+$/.test(trimmed)) return dateFromEpochDays(Number(trimmed));
+      if (ISO_DATE_PATTERN.test(trimmed)) {
+        const parsed = new Date(`${trimmed}T00:00:00.000Z`);
+        return Number.isNaN(parsed.getTime()) ? null : parsed;
+      }
+      const parsed = new Date(trimmed);
+      return Number.isNaN(parsed.getTime()) ? null : parsed;
+    }
+    return null;
+  }
+
+  /**
+   * Return a KalamDB TIME value as `HH:mm:ss[.ffffff]`.
+   *
+   * TIME columns are serialized as microseconds since midnight by the backend.
+   */
+  asTimeString(): string | null {
+    if (this.isNull()) return null;
+    if (typeof this.#raw === 'number') return formatTimeFromMicros(this.#raw);
+    if (typeof this.#raw === 'bigint') return formatTimeFromMicros(this.#raw);
+    if (typeof this.#raw === 'string') {
+      const trimmed = this.#raw.trim();
+      if (TIME_PATTERN.test(trimmed)) return trimmed;
+      if (/^-?\d+$/.test(trimmed)) return formatTimeFromMicros(BigInt(trimmed));
     }
     return null;
   }

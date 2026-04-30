@@ -1,6 +1,12 @@
+import type {
+  ConsumeStartMode,
+  StreamingGroupId,
+  StreamingTopicId,
+} from "@/features/streaming/types";
+
 export interface StreamingOffsetsFilter {
-  topicId?: string;
-  groupId?: string;
+  topicId?: StreamingTopicId;
+  groupId?: StreamingGroupId;
   limit?: number;
 }
 
@@ -8,50 +14,7 @@ function escapeSqlLiteral(value: string): string {
   return value.replace(/'/g, "''");
 }
 
-export function buildStreamingTopicsQuery(): string {
-  return `
-    SELECT topic_id, name, partitions, retention_seconds, retention_max_bytes, routes, created_at, updated_at
-    FROM system.topics
-    ORDER BY topic_id
-  `;
-}
-
-export function buildStreamingConsumerGroupsQuery(): string {
-  return `
-    SELECT
-      group_id,
-      COUNT(*) AS partition_count,
-      COUNT(DISTINCT topic_id) AS topic_count,
-      MAX(updated_at) AS last_updated_at
-    FROM system.topic_offsets
-    GROUP BY group_id
-    ORDER BY last_updated_at DESC, group_id ASC
-    LIMIT 500
-  `;
-}
-
-export function buildStreamingOffsetsQuery(filters: StreamingOffsetsFilter = {}): string {
-  const conditions: string[] = [];
-  const limit = Math.min(Math.max(filters.limit ?? 1000, 1), 5000);
-
-  if (filters.topicId) {
-    conditions.push(`topic_id = '${escapeSqlLiteral(filters.topicId)}'`);
-  }
-  if (filters.groupId) {
-    conditions.push(`group_id = '${escapeSqlLiteral(filters.groupId)}'`);
-  }
-
-  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-  return `
-    SELECT topic_id, group_id, partition_id, last_acked_offset, updated_at
-    FROM system.topic_offsets
-    ${whereClause}
-    ORDER BY updated_at DESC, topic_id ASC, group_id ASC, partition_id ASC
-    LIMIT ${limit}
-  `;
-}
-
-export function buildTopicSqlSnippet(topicId: string): string {
+export function buildTopicSqlSnippet(topicId: StreamingTopicId): string {
   const escapedTopicId = escapeSqlLiteral(topicId);
   return [
     `SELECT * FROM system.topics WHERE topic_id = '${escapedTopicId}';`,
@@ -61,7 +24,7 @@ export function buildTopicSqlSnippet(topicId: string): string {
   ].join("\n");
 }
 
-export function buildGroupSqlSnippet(groupId: string): string {
+export function buildGroupSqlSnippet(groupId: StreamingGroupId): string {
   const escapedGroupId = escapeSqlLiteral(groupId);
   return [
     `SELECT topic_id, group_id, partition_id, last_acked_offset, updated_at`,
@@ -71,9 +34,9 @@ export function buildGroupSqlSnippet(groupId: string): string {
 }
 
 export function buildConsumeSqlSnippet(
-  topicId: string,
-  groupId: string,
-  startMode: "Latest" | "Earliest" | "Offset",
+  topicId: StreamingTopicId,
+  groupId: StreamingGroupId,
+  startMode: ConsumeStartMode,
   offset?: number,
   limit: number = 100,
 ): string {

@@ -4,6 +4,7 @@
     "skipLibCheck": true,
     "module": "ESNext",
     "moduleResolution": "bundler",
+    "preserveSymlinks": true,
     "allowSyntheticDefaultImports": true,
     "strict": true
   },

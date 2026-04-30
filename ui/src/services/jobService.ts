@@ -1,8 +1,9 @@
 import { getDb } from "@/lib/db";
+import type { SystemJobRow } from "@/lib/models";
 import { system_jobs } from "@/lib/schema";
-import { eq, asc, desc, and, type SQL, type InferSelectModel } from "drizzle-orm";
+import { eq, asc, desc, and, type SQL } from "drizzle-orm";
 
-export type Job = InferSelectModel<typeof system_jobs>;
+export type Job = SystemJobRow;
 
 export type JobSortKey = "created_at" | "job_type" | "status" | "started_at" | "finished_at" | "node_id";
 

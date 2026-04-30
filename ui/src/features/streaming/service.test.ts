@@ -1,4 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("@/lib/schema", () => ({
+  system_topic_offsets: {},
+  system_topics: {},
+}));
+
+vi.mock("@kalamdb/orm", () => ({
+  kTable: () => ({}),
+}));
+
 import {
   buildConsumeRequestBody,
   decodeTopicPayload,
@@ -29,7 +39,10 @@ describe("streaming service helpers", () => {
       {
         topic_id: "default.events",
         name: "default.events",
-        partitions: "3",
+        alias: null,
+        partitions: 3,
+        retention_seconds: null,
+        retention_max_bytes: null,
         routes: '[{"table_id":{"namespace_id":"default","table_name":"events"},"op":"Insert","payload_mode":"Key"}]',
         created_at: "2026-02-17T10:00:00Z",
         updated_at: "2026-02-17T10:10:00Z",
@@ -48,7 +61,7 @@ describe("streaming service helpers", () => {
         topic_id: "default.events",
         group_id: "worker-a",
         partition_id: 0,
-        last_acked_offset: 41,
+        last_acked_offset: "41",
         updated_at: "2026-02-17T12:00:00Z",
       },
     ]);

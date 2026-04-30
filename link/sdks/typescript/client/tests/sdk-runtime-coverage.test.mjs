@@ -9,10 +9,11 @@ import {
 } from '../dist/src/index.js';
 import { KalamClient as WasmKalamClient } from '../dist/wasm/kalam_client.js';
 
-function createRuntimeCoverageWasmClient() {
+function createRuntimeCoverageWasmClient({ failOnConcurrentQuery = false } = {}) {
   let connected = false;
   let nextSubscriptionId = 0;
   let reconnectAttempts = 0;
+  let queryInFlight = false;
   const subscriptionCallbacks = new Map();
   const liveCallbacks = new Map();
   const subscriptions = [];
@@ -49,33 +50,55 @@ function createRuntimeCoverageWasmClient() {
       connected = false;
     },
     async query(sql) {
-      this.queryCalls.push(sql);
-      return JSON.stringify({ status: 'success', results: [] });
+      if (failOnConcurrentQuery && queryInFlight) {
+        throw new Error('Concurrent query');
+      }
+      queryInFlight = true;
+      try {
+        this.queryCalls.push(sql);
+        if (failOnConcurrentQuery) {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        return JSON.stringify({ status: 'success', results: [] });
+      } finally {
+        queryInFlight = false;
+      }
     },
     async queryWithParams(sql, paramsJson) {
-      this.queryWithParamsCalls.push({ sql, paramsJson });
-      return JSON.stringify({
-        status: 'success',
-        results: [{
-          row_count: 2,
-          named_rows: [
-            {
-              id: 1,
-              title: 'alpha',
-              done: true,
-              score: 9.5,
-              created_at: '2026-03-08T10:00:00.000Z',
-            },
-            {
-              id: 2,
-              title: 'beta',
-              done: false,
-              score: 7.25,
-              created_at: '2026-03-08T11:00:00.000Z',
-            },
-          ],
-        }],
-      });
+      if (failOnConcurrentQuery && queryInFlight) {
+        throw new Error('Concurrent query');
+      }
+      queryInFlight = true;
+      try {
+        this.queryWithParamsCalls.push({ sql, paramsJson });
+        if (failOnConcurrentQuery) {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        return JSON.stringify({
+          status: 'success',
+          results: [{
+            row_count: 2,
+            named_rows: [
+              {
+                id: 1,
+                title: 'alpha',
+                done: true,
+                score: 9.5,
+                created_at: '2026-03-08T10:00:00.000Z',
+              },
+              {
+                id: 2,
+                title: 'beta',
+                done: false,
+                score: 7.25,
+                created_at: '2026-03-08T11:00:00.000Z',
+              },
+            ],
+          }],
+        });
+      } finally {
+        queryInFlight = false;
+      }
     },
     async insert(tableName, dataJson) {
       this.insertCalls.push({ tableName, dataJson });
@@ -220,6 +243,25 @@ test('queryRows wraps named_rows into KalamRow with typed cell access', async ()
   assert.equal(rows[0].cell('done').asBool(), true);
   assert.equal(rows[0].cell('score').asFloat(), 9.5);
   assert.equal(rows[0].cell('created_at').asDate().toISOString(), '2026-03-08T10:00:00.000Z');
+});
+
+test('query serializes concurrent WASM calls per client', async () => {
+  const client = createClient({
+    url: 'http://127.0.0.1:8080',
+    authProvider: async () => Auth.jwt('coverage-token'),
+  });
+  const fakeWasmClient = createRuntimeCoverageWasmClient({ failOnConcurrentQuery: true });
+  client.initialized = true;
+  client.wasmClient = fakeWasmClient;
+
+  const [first, second] = await Promise.all([
+    client.query('SELECT 1'),
+    client.query('SELECT 2'),
+  ]);
+
+  assert.equal(first.status, 'success');
+  assert.equal(second.status, 'success');
+  assert.deepEqual(fakeWasmClient.queryCalls, ['SELECT 1', 'SELECT 2']);
 });
 
 test('subscribeRows wraps change rows and oldValues as KalamRow instances', async () => {

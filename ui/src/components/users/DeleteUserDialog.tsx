@@ -50,7 +50,7 @@ export function DeleteUserDialog({
           </DialogTitle>
           <DialogDescription>
             Are you sure you want to delete the user{' '}
-            <strong className="text-foreground">{user.username}</strong>?
+            <strong className="text-foreground">{user.user_id}</strong>?
             This action cannot be undone.
           </DialogDescription>
         </DialogHeader>

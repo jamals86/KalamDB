@@ -7,6 +7,7 @@
 //   cargo test --test usecases test_batch_streaming
 //   cargo test --test usecases test_chat_simulation
 //   cargo test --test usecases test_datatypes_json
+//   cargo test --test usecases test_reactive_transaction_workflow
 //   cargo test --test usecases test_update_all_types
 
 mod common;
@@ -25,3 +26,6 @@ mod test_update_all_types;
 
 #[path = "usecases/test_update_null_values.rs"]
 mod test_update_null_values;
+
+#[path = "usecases/test_reactive_transaction_workflow.rs"]
+mod test_reactive_transaction_workflow;

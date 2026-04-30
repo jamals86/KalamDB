@@ -19,7 +19,7 @@ describe('CLI', () => {
     execSync(`node ${cliPath} --url ${URL} --password ${PASS} --out ${outFile} --include-system`);
     assert.ok(existsSync(outFile));
     const content = readFileSync(outFile, 'utf-8');
-    assert.ok(content.includes('pgTable'));
+    assert.ok(content.includes('kTable'));
     assert.ok(content.includes('system_users'));
   });
 
@@ -41,7 +41,7 @@ describe('CLI', () => {
       env: { ...process.env, KALAMDB_PASSWORD: PASS },
     });
     const content = readFileSync(outFile, 'utf-8');
-    assert.ok(content.includes('pgTable'));
+    assert.ok(content.includes('kTable'));
     assert.ok(content.includes('system_users'));
   });
 });

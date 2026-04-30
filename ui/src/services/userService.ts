@@ -1,7 +1,8 @@
 import { executeSql } from "@/lib/kalam-client";
 import { getDb } from "@/lib/db";
+import type { SystemUserListRow } from "@/lib/models";
 import { system_users } from "@/lib/schema";
-import { isNull, asc, type InferSelectModel } from "drizzle-orm";
+import { isNull, asc } from "drizzle-orm";
 import {
   buildCreateUserSql,
   buildDeleteUserSql,
@@ -13,27 +14,13 @@ import {
   type UpdateUserInput,
 } from "@/services/sql/queries/userQueries";
 
-type UserModel = InferSelectModel<typeof system_users>;
-export type User = Omit<UserModel, "password_hash"> & { username: string };
-
-type UserWithoutPasswordHash = User;
-
-type UserWithOptionalUsername = Omit<UserWithoutPasswordHash, "username"> & {
-  username?: string | null;
-};
+export type User = SystemUserListRow;
 
 export type { CreateUserInput, UpdateUserInput };
 
-export function mapUsers<T extends UserWithOptionalUsername>(rows: T[]): Array<T & { username: string }> {
-  return rows.map((row) => ({
-    ...row,
-    username: row.username ?? row.user_id,
-  }));
-}
-
-export async function fetchUsers() {
+export async function fetchUsers(): Promise<User[]> {
   const db = getDb();
-  const rows = await db
+  return db
     .select({
       user_id: system_users.user_id,
       role: system_users.role,
@@ -53,8 +40,6 @@ export async function fetchUsers() {
     .from(system_users)
     .where(isNull(system_users.deleted_at))
     .orderBy(asc(system_users.user_id));
-
-  return mapUsers(rows);
 }
 
 export async function createUser(input: CreateUserInput): Promise<void> {

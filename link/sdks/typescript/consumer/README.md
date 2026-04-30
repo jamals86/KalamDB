@@ -61,6 +61,8 @@ await runAgent({
 });
 ```
 
+For standard KalamDB topic sources, `runAgent()` does not need a `rowParser`. The runtime uses the already decoded `message.payload`, unwraps legacy `{ row: ... }` envelopes when present, and passes the row to `onRow`. Add `rowParser` only when you intentionally publish a custom payload shape.
+
 ## Lower-Level Consumer
 
 ```ts
@@ -168,6 +170,7 @@ Notes:
 
 - `payload` is already decoded from the HTTP API's base64 `payload` field.
 - For `WITH (payload = 'full')`, `payload` is usually the changed row JSON plus `_table` metadata.
+- `runAgent()` automatically treats that decoded row payload as the handler row.
 - `value` is still present as a deprecated alias for `payload` while older callers migrate.
 - `key` is the backend topic key string. It is not a separate message id.
 
