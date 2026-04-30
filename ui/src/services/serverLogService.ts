@@ -1,8 +1,9 @@
 import { getDb } from "@/lib/db";
+import type { SystemServerLogRow } from "@/lib/models";
 import { system_server_logs } from "@/lib/schema";
-import { eq, like, desc, and, type SQL, type InferSelectModel } from "drizzle-orm";
+import { eq, like, desc, and, type SQL } from "drizzle-orm";
 
-export type ServerLog = InferSelectModel<typeof system_server_logs>;
+export type ServerLog = SystemServerLogRow;
 
 export interface ServerLogFilters {
   level?: string;

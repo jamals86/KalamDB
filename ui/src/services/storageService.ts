@@ -1,7 +1,7 @@
 import { executeSql } from "@/lib/kalam-client";
 import { getDb } from "@/lib/db";
+import type { SystemStorageRow } from "@/lib/models";
 import { system_storages } from "@/lib/schema";
-import type { InferSelectModel } from "drizzle-orm";
 import {
   buildCreateStorageSql,
   buildStorageHealthCheckSql,
@@ -10,7 +10,7 @@ import {
   type UpdateStorageInput,
 } from "@/services/sql/queries/storageQueries";
 
-export type Storage = InferSelectModel<typeof system_storages>;
+export type Storage = SystemStorageRow;
 
 export interface StorageHealthResult {
   storage_id: string;

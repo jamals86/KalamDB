@@ -188,6 +188,11 @@ export interface RunAgentOptions<
   llm?: AgentLLMAdapter;
   retry?: AgentRetryPolicy;
   runKeyFactory?: AgentRunKeyFactory;
+  /**
+   * Optional custom row decoder. When omitted, `runAgent()` uses KalamDB's
+   * default topic decoder and unwraps either `{ row: ... }` CDC envelopes or
+   * direct row payloads, so generated ORM row types can be used directly.
+   */
   rowParser?: AgentRowParser<TRow, TPayload>;
   onRow: (ctx: AgentContext<TRow, TPayload>, row: TRow) => Promise<void>;
   onFailed?: AgentFailureHandler<TRow, TPayload>;

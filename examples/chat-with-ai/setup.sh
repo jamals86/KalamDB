@@ -217,6 +217,9 @@ KALAMDB_USER=$ADMIN_USER
 KALAMDB_PASSWORD=$ADMIN_PASSWORD
 EOF
 
+log "Regenerating typed schema"
+bash "$SCRIPT_DIR/scripts/generate-schema.sh"
+
 log "Chat demo is ready"
 echo
-echo "Next: npm install && npm run agent && npm run dev"
+echo "Next: npm run agent && npm run dev"

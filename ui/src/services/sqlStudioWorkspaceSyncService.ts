@@ -3,8 +3,13 @@ import type {
   SqlStudioPersistedQueryTab,
   SqlStudioPersistedSavedQuery,
 } from "@/components/sql-studio-v2/shared/workspaceState";
-import { subscribeRows, executeSql, type Unsubscribe } from "@/lib/kalam-client";
+import { subscribeTable, type TableSubscriptionEvent } from "@kalamdb/orm";
+import { executeSql, getClient, type Unsubscribe } from "@/lib/kalam-client";
+import { getDb } from "@/lib/db";
+import type { DbaFavoriteRow } from "@/lib/models";
+import { dba_favorites } from "@/lib/schema";
 import { toPersistedTab } from "@/features/sql-studio/utils/workspaceHelpers";
+import { eq } from "drizzle-orm";
 
 const SQL_STUDIO_WORKSPACE_TABLE = "dba.favorites";
 const LEGACY_SQL_STUDIO_WORKSPACE_ROW_ID = "sql-studio-workspace";
@@ -151,10 +156,6 @@ function normalizeWorkspacePayload(value: unknown): SqlStudioSyncedWorkspaceStat
   };
 }
 
-function escapeSqlStringLiteral(value: string): string {
-  return value.replace(/'/g, "''");
-}
-
 function buildWorkspaceRowId(username?: string | null): string {
   const normalizedUsername = username?.trim();
   if (!normalizedUsername) {
@@ -162,16 +163,6 @@ function buildWorkspaceRowId(username?: string | null): string {
   }
 
   return `sql-studio-state:${normalizedUsername}:${SQL_STUDIO_WORKSPACE_STATE_KEY}`;
-}
-
-function buildWorkspaceSelectSql(rowId: string): string {
-  const escapedRowId = escapeSqlStringLiteral(rowId);
-  return `SELECT id, payload FROM ${SQL_STUDIO_WORKSPACE_TABLE} WHERE id = '${escapedRowId}' LIMIT 1`;
-}
-
-function buildWorkspaceSubscriptionSql(rowId: string): string {
-  const escapedRowId = escapeSqlStringLiteral(rowId);
-  return `SELECT id, payload FROM ${SQL_STUDIO_WORKSPACE_TABLE} WHERE id = '${escapedRowId}'`;
 }
 
 async function ensureWorkspaceTable(): Promise<void> {
@@ -187,12 +178,20 @@ async function ensureWorkspaceTable(): Promise<void> {
   await ensureWorkspaceTablePromise;
 }
 
-async function workspaceRowExists(rowId: string): Promise<boolean> {
-  const rows = await executeSql(buildWorkspaceSelectSql(rowId));
-  return rows.length > 0;
+type WorkspaceRow = DbaFavoriteRow;
+
+async function getWorkspaceRow(rowId: string): Promise<WorkspaceRow | null> {
+  const db = getDb();
+  const rows = await db
+    .select()
+    .from(dba_favorites)
+    .where(eq(dba_favorites.id, rowId))
+    .limit(1);
+
+  return rows[0] ?? null;
 }
 
-function parseWorkspaceRow(row: Record<string, unknown> | undefined): SqlStudioSyncedWorkspaceState | null {
+function parseWorkspaceRow(row: Pick<WorkspaceRow, "payload"> | Record<string, unknown> | undefined | null): SqlStudioSyncedWorkspaceState | null {
   if (!row) {
     return null;
   }
@@ -266,8 +265,7 @@ export async function loadSyncedSqlStudioWorkspaceState(
   try {
     await ensureWorkspaceTable();
     const scopedRowId = buildWorkspaceRowId(username);
-    const scopedRows = await executeSql(buildWorkspaceSelectSql(scopedRowId));
-    const scopedWorkspace = parseWorkspaceRow(scopedRows[0]);
+    const scopedWorkspace = parseWorkspaceRow(await getWorkspaceRow(scopedRowId));
     if (scopedWorkspace) {
       return scopedWorkspace;
     }
@@ -276,8 +274,7 @@ export async function loadSyncedSqlStudioWorkspaceState(
       return null;
     }
 
-    const legacyRows = await executeSql(buildWorkspaceSelectSql(LEGACY_SQL_STUDIO_WORKSPACE_ROW_ID));
-    const legacyWorkspace = parseWorkspaceRow(legacyRows[0]);
+    const legacyWorkspace = parseWorkspaceRow(await getWorkspaceRow(LEGACY_SQL_STUDIO_WORKSPACE_ROW_ID));
     if (!legacyWorkspace) {
       return null;
     }
@@ -294,22 +291,20 @@ export async function saveSyncedSqlStudioWorkspaceState(
   state: SqlStudioSyncedWorkspaceState,
   username?: string | null,
 ): Promise<void> {
-  const payload = escapeSqlStringLiteral(JSON.stringify(state));
   const rowId = buildWorkspaceRowId(username);
-  const escapedRowId = escapeSqlStringLiteral(rowId);
+  const db = getDb();
 
   await ensureWorkspaceTable();
 
-  if (await workspaceRowExists(rowId)) {
-    await executeSql(
-      `UPDATE ${SQL_STUDIO_WORKSPACE_TABLE} SET payload = '${payload}' WHERE id = '${escapedRowId}'`,
-    );
+  if (await getWorkspaceRow(rowId)) {
+    await db
+      .update(dba_favorites)
+      .set({ payload: state })
+      .where(eq(dba_favorites.id, rowId));
     return;
   }
 
-  await executeSql(
-    `INSERT INTO ${SQL_STUDIO_WORKSPACE_TABLE} (id, payload) VALUES ('${escapedRowId}', '${payload}')`,
-  );
+  await db.insert(dba_favorites).values({ id: rowId, payload: state });
 }
 
 export async function subscribeToSyncedSqlStudioWorkspaceState(
@@ -320,11 +315,18 @@ export async function subscribeToSyncedSqlStudioWorkspaceState(
   onChange(initialWorkspace);
 
   const rowId = buildWorkspaceRowId(username);
-  return subscribeRows<Record<string, unknown>>(
-    buildWorkspaceSubscriptionSql(rowId),
-    (rows) => {
-      onChange(parseWorkspaceRow(rows[0]));
+  const client = getClient();
+  if (!client) {
+    throw new Error("KalamDB client not initialized");
+  }
+
+  return subscribeTable(
+    client,
+    dba_favorites,
+    (event: TableSubscriptionEvent<typeof dba_favorites>) => {
+      onChange(parseWorkspaceRow(event.rows?.[0] ?? null));
     },
+    { where: eq(dba_favorites.id, rowId) },
   );
 }
 

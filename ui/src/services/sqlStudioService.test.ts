@@ -2,78 +2,78 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/kalam-client", () => ({
   executeQuery: vi.fn(),
-  executeSql: vi.fn(),
 }));
 
-import { executeQuery, executeSql } from "@/lib/kalam-client";
+const mockDb = {
+  select: vi.fn(),
+};
+
+vi.mock("@/lib/db", () => ({
+  getDb: () => mockDb,
+}));
+
+import { executeQuery } from "@/lib/kalam-client";
 import { executeSqlStudioQuery, fetchSqlStudioSchemaTree } from "@/services/sqlStudioService";
 
 const executeQueryMock = vi.mocked(executeQuery);
-const executeSqlMock = vi.mocked(executeSql);
 
 describe("fetchSqlStudioSchemaTree", () => {
   beforeEach(() => {
-    executeSqlMock.mockReset();
+    mockDb.select.mockReset();
   });
 
-  it("includes queryable system tables even when persisted metadata omits the system namespace", async () => {
-    executeSqlMock.mockImplementation(async (sql: string) => {
-      if (sql.includes("FROM system.namespaces")) {
-        return [{ namespace_id: "default" }];
-      }
-
-      if (sql.includes("FROM system.tables t")) {
-        return [
+  it("includes system tables even when persisted namespaces omit the system namespace", async () => {
+    mockDb.select.mockReturnValueOnce({
+      from: vi.fn().mockResolvedValue([{ namespace_id: "default" }]),
+    });
+    mockDb.select.mockReturnValueOnce({
+      from: vi.fn().mockReturnValue({
+        where: vi.fn().mockResolvedValue([
+      {
+        namespace_id: "default",
+        table_name: "events",
+        table_type: "shared",
+        schema_version: 1,
+        columns: [
           {
-            namespace_id: "default",
-            table_name: "events",
-            table_type: "shared",
             column_name: "id",
             data_type: "BigInt",
-            nullable: false,
-            primary_key: true,
-            ordinal: 1,
-          },
-        ];
-      }
-
-      if (sql.includes("FROM information_schema.tables")) {
-        return [
-          {
-            namespace_id: "system",
-            table_name: "users",
-            table_type: "BASE TABLE",
-          },
-          {
-            namespace_id: "system",
-            table_name: "jobs",
-            table_type: "BASE TABLE",
-          },
-        ];
-      }
-
-      if (sql.includes("FROM information_schema.columns")) {
-        return [
-          {
-            namespace_id: "system",
-            table_name: "users",
-            column_name: "user_id",
-            data_type: "Utf8",
-            is_nullable: "NO",
+            is_nullable: false,
+            is_primary_key: true,
             ordinal_position: 1,
           },
+        ],
+      },
+      {
+        namespace_id: "system",
+        table_name: "jobs",
+        table_type: "system",
+        schema_version: 1,
+        columns: [
           {
-            namespace_id: "system",
-            table_name: "jobs",
             column_name: "job_id",
             data_type: "Utf8",
-            is_nullable: "NO",
+            is_nullable: false,
             ordinal_position: 1,
           },
-        ];
-      }
-
-      throw new Error(`Unexpected SQL: ${sql}`);
+        ],
+      },
+      {
+        namespace_id: "system",
+        table_name: "users",
+        table_type: "system",
+        schema_version: 1,
+        columns: [
+          {
+            column_name: "user_id",
+            data_type: "Utf8",
+            is_nullable: false,
+            ordinal_position: 1,
+          },
+        ],
+      },
+        ]),
+      }),
     });
 
     const schema = await fetchSqlStudioSchemaTree();
@@ -114,47 +114,40 @@ describe("fetchSqlStudioSchemaTree", () => {
     });
   });
 
-  it("parses table metadata and options from system.tables", async () => {
-    executeSqlMock.mockImplementation(async (sql: string) => {
-      if (sql.includes("FROM system.namespaces")) {
-        return [{ namespace_id: "default" }];
-      }
-
-      if (sql.includes("FROM system.tables t")) {
-        return [
+  it("parses table metadata and options from system.schemas", async () => {
+    mockDb.select.mockReturnValueOnce({
+      from: vi.fn().mockResolvedValue([{ namespace_id: "default" }]),
+    });
+    mockDb.select.mockReturnValueOnce({
+      from: vi.fn().mockReturnValue({
+        where: vi.fn().mockResolvedValue([
+      {
+        namespace_id: "default",
+        table_name: "events",
+        table_type: "stream",
+        storage_id: "archive",
+        schema_version: 7,
+        options: {
+          table_type: "STREAM",
+          ttl_seconds: 3600,
+          compression: "zstd",
+          max_stream_size_bytes: 1024,
+        },
+        table_comment: "Operational event stream",
+        updated_at: "2026-04-21T10:00:00Z",
+        created_at: "2026-04-20T09:00:00Z",
+        columns: [
           {
-            namespace_id: "default",
-            table_name: "events",
-            table_type: "stream",
-            storage_id: "archive",
-            version: 7,
-            options: JSON.stringify({
-              table_type: "STREAM",
-              ttl_seconds: 3600,
-              compression: "zstd",
-              max_stream_size_bytes: 1024,
-            }),
-            comment: "Operational event stream",
-            updated_at: "2026-04-21T10:00:00Z",
-            created_at: "2026-04-20T09:00:00Z",
             column_name: "id",
             data_type: "BigInt",
-            nullable: false,
-            primary_key: true,
-            ordinal: 1,
+            is_nullable: false,
+            is_primary_key: true,
+            ordinal_position: 1,
           },
-        ];
-      }
-
-      if (sql.includes("FROM information_schema.tables")) {
-        return [];
-      }
-
-      if (sql.includes("FROM information_schema.columns")) {
-        return [];
-      }
-
-      throw new Error(`Unexpected SQL: ${sql}`);
+        ],
+      },
+        ]),
+      }),
     });
 
     const schema = await fetchSqlStudioSchemaTree();

@@ -1,6 +1,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { toMilliseconds, normalizeTemporalValue } from '../dist/driver.js';
+import {
+  toMilliseconds,
+  normalizeDateValue,
+  normalizeTemporalValue,
+  normalizeTimeValue,
+} from '../dist/driver.js';
 
 describe('toMilliseconds', () => {
   it('passes through millisecond values unchanged', () => {
@@ -29,32 +34,32 @@ describe('normalizeTemporalValue', () => {
 
   it('converts Date object to ISO string', () => {
     const date = new Date('2026-04-25T10:00:00.000Z');
-    assert.equal(normalizeTemporalValue(date), '2026-04-25T10:00:00.000Z');
+    assert.equal(normalizeTemporalValue(date), '2026-04-25T10:00:00.000');
   });
 
   it('converts millisecond number to ISO string', () => {
     const result = normalizeTemporalValue(1777018016782);
-    assert.equal(result, '2026-04-24T08:06:56.782Z');
+    assert.equal(result, '2026-04-24T08:06:56.782');
   });
 
   it('converts microsecond number to ISO string', () => {
     const result = normalizeTemporalValue(1777018016782000);
-    assert.equal(result, '2026-04-24T08:06:56.782Z');
+    assert.equal(result, '2026-04-24T08:06:56.782');
   });
 
   it('converts second number to ISO string', () => {
     const result = normalizeTemporalValue(1777018016);
-    assert.equal(result, '2026-04-24T08:06:56.000Z');
+    assert.equal(result, '2026-04-24T08:06:56.000');
   });
 
   it('converts numeric string to ISO string', () => {
     const result = normalizeTemporalValue('1777018016782');
-    assert.equal(result, '2026-04-24T08:06:56.782Z');
+    assert.equal(result, '2026-04-24T08:06:56.782');
   });
 
   it('passes through non-numeric strings unchanged', () => {
     assert.equal(normalizeTemporalValue('hello'), 'hello');
-    assert.equal(normalizeTemporalValue('2026-04-24T08:06:56.782Z'), '2026-04-24T08:06:56.782Z');
+    assert.equal(normalizeTemporalValue('2026-04-24T08:06:56.782Z'), '2026-04-24T08:06:56.782');
   });
 
   it('passes through other types unchanged', () => {
@@ -65,6 +70,26 @@ describe('normalizeTemporalValue', () => {
 
   it('handles trimmed numeric strings', () => {
     const result = normalizeTemporalValue('  1777018016782  ');
-    assert.equal(result, '2026-04-24T08:06:56.782Z');
+    assert.equal(result, '2026-04-24T08:06:56.782');
+  });
+});
+
+describe('normalizeDateValue', () => {
+  it('converts Date32 day offsets to ISO dates', () => {
+    assert.equal(normalizeDateValue(20573), '2026-04-30');
+  });
+
+  it('passes through ISO date strings as dates', () => {
+    assert.equal(normalizeDateValue('2026-04-30T12:34:56Z'), '2026-04-30');
+  });
+});
+
+describe('normalizeTimeValue', () => {
+  it('converts microseconds since midnight to HH:mm:ss', () => {
+    assert.equal(normalizeTimeValue(45_296_123_456), '12:34:56.123456');
+  });
+
+  it('passes through time strings', () => {
+    assert.equal(normalizeTimeValue('12:34:56'), '12:34:56');
   });
 });

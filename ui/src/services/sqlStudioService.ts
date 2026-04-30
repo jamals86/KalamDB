@@ -1,4 +1,7 @@
-import { executeQuery, executeSql } from "@/lib/kalam-client";
+import { executeQuery } from "@/lib/kalam-client";
+import { getDb } from "@/lib/db";
+import type { SystemNamespaceRow, SystemSchemaRow } from "@/lib/models";
+import { system_namespaces, system_schemas } from "@/lib/schema";
 import type { SchemaField } from "@kalamdb/client";
 import type {
   QueryLogEntry,
@@ -7,6 +10,7 @@ import type {
   StudioNamespace,
   StudioTable,
 } from "@/components/sql-studio-v2/shared/types";
+import { eq } from "drizzle-orm";
 
 const MAX_SQL_STUDIO_RENDER_ROWS = 1000;
 
@@ -341,16 +345,61 @@ function normalizeTimestampValue(value: unknown): string | number | null {
   return null;
 }
 
-function applyTableMetadata(table: StudioTable, row: Record<string, unknown>): void {
+function applyTableMetadata(
+  table: StudioTable,
+  row: Pick<SystemSchemaRow, "storage_id" | "schema_version" | "options" | "table_comment" | "updated_at" | "created_at">,
+): void {
   table.storageId = normalizeTextValue(row.storage_id);
-  table.version = normalizeNumericValue(row.version);
+  table.version = normalizeNumericValue(row.schema_version);
   table.options = normalizeTableOptions(row.options);
-  table.comment = normalizeTextValue(row.comment);
+  table.comment = normalizeTextValue(row.table_comment);
   table.updatedAt = normalizeTimestampValue(row.updated_at);
   table.createdAt = normalizeTimestampValue(row.created_at);
 }
 
-function inferExplorerTableType(namespaceName: string, tableType: unknown): string {
+function normalizeSchemaColumns(value: SystemSchemaRow["columns"]): StudioTable["columns"] {
+  const parsedValue = typeof value === "string"
+    ? (() => {
+      try {
+        return JSON.parse(value) as unknown;
+      } catch {
+        return null;
+      }
+    })()
+    : value;
+
+  if (!Array.isArray(parsedValue)) {
+    return [];
+  }
+
+  return parsedValue
+    .map((item, index) => {
+      if (!item || typeof item !== "object") {
+        return null;
+      }
+
+      const record = item as Record<string, unknown>;
+      const name = normalizeTextValue(record.column_name ?? record.name);
+      if (!name) {
+        return null;
+      }
+
+      return {
+        name,
+        dataType: normalizeTextValue(record.data_type) ?? "unknown",
+        isNullable: normalizeNullable(record.is_nullable ?? record.nullable),
+        isPrimaryKey: Boolean(record.is_primary_key ?? record.primary_key),
+        ordinal: normalizeNumericValue(record.ordinal_position ?? record.ordinal) ?? index + 1,
+      };
+    })
+    .filter((column): column is StudioTable["columns"][number] => column !== null)
+    .sort((left, right) => left.ordinal - right.ordinal);
+}
+
+function inferExplorerTableType(
+  namespaceName: SystemNamespaceRow["namespace_id"],
+  tableType: SystemSchemaRow["table_type"],
+): string {
   const normalizedNamespace = namespaceName.trim().toLowerCase();
   if (
     normalizedNamespace === "system" ||
@@ -374,17 +423,15 @@ function inferExplorerTableType(namespaceName: string, tableType: unknown): stri
 
 export async function fetchSqlStudioSchemaTree(): Promise<StudioNamespace[]> {
   const databaseName = "database";
-
-  const namespacesResult = await executeSql(`
-    SELECT namespace_id
-    FROM system.namespaces
-    ORDER BY namespace_id
-    LIMIT 100000
-  `);
+  const db = getDb();
+  const [namespaceRows, schemaRows] = await Promise.all([
+    db.select().from(system_namespaces),
+    db.select().from(system_schemas).where(eq(system_schemas.is_latest, true)),
+  ]);
 
   const namespaces = new Map<string, StudioNamespace>();
 
-  namespacesResult.forEach((row) => {
+  namespaceRows.forEach((row) => {
     const namespaceName = String(row.namespace_id ?? "");
     if (!namespaceName) {
       return;
@@ -393,33 +440,9 @@ export async function fetchSqlStudioSchemaTree(): Promise<StudioNamespace[]> {
     ensureNamespace(namespaces, databaseName, namespaceName);
   });
 
-  const tableAndColumnsResult = await executeSql(`
-    SELECT
-      t.namespace_id,
-      t.table_name,
-      t.table_type,
-      t.storage_id,
-      t.version,
-      t.options,
-      t.comment,
-      t.updated_at,
-      t.created_at,
-      c.column_name,
-      c.data_type,
-      c.nullable,
-      c.primary_key,
-      c.ordinal
-    FROM system.tables t
-    LEFT JOIN system.columns c
-      ON t.namespace_id = c.namespace_id
-      AND t.table_name = c.table_name
-    ORDER BY t.namespace_id, t.table_name, c.ordinal
-    LIMIT 100000
-  `);
-
   const tableMap = new Map<string, StudioTable>();
 
-  tableAndColumnsResult.forEach((row) => {
+  schemaRows.forEach((row) => {
     const namespaceName = String(row.namespace_id ?? "");
     const tableName = String(row.table_name ?? "");
     if (!namespaceName || !tableName) {
@@ -436,92 +459,7 @@ export async function fetchSqlStudioSchemaTree(): Promise<StudioNamespace[]> {
     );
 
     applyTableMetadata(table, row);
-
-    if (row.column_name) {
-      table.columns.push({
-        name: String(row.column_name),
-        dataType: String(row.data_type ?? "unknown"),
-        isNullable: normalizeNullable(row.nullable),
-        isPrimaryKey: Boolean(row.primary_key),
-        ordinal: Number(row.ordinal ?? table.columns.length),
-      });
-    }
-  });
-
-  const infoSchemaTablesResult = await executeSql(`
-    SELECT
-      table_schema AS namespace_id,
-      table_name,
-      table_type
-    FROM information_schema.tables
-    ORDER BY table_schema, table_name
-    LIMIT 100000
-  `);
-
-  const infoSchemaColumnsResult = await executeSql(`
-    SELECT
-      table_schema AS namespace_id,
-      table_name,
-      column_name,
-      data_type,
-      is_nullable,
-      CAST(ordinal_position AS BIGINT) AS ordinal_position
-    FROM information_schema.columns
-    ORDER BY table_schema, table_name, ordinal_position
-    LIMIT 100000
-  `);
-
-  const infoColumnsByTable = new Map<string, Record<string, unknown>[]>();
-
-  infoSchemaColumnsResult.forEach((row) => {
-    const namespaceName = String(row.namespace_id ?? "");
-    const tableName = String(row.table_name ?? "");
-    if (!namespaceName || !tableName || !row.column_name) {
-      return;
-    }
-
-    const tableKey = `${namespaceName}.${tableName}`;
-    const tableColumns = infoColumnsByTable.get(tableKey);
-    if (tableColumns) {
-      tableColumns.push(row);
-      return;
-    }
-    infoColumnsByTable.set(tableKey, [row]);
-  });
-
-  infoSchemaTablesResult.forEach((row) => {
-    const namespaceName = String(row.namespace_id ?? "");
-    const tableName = String(row.table_name ?? "");
-    if (!namespaceName || !tableName) {
-      return;
-    }
-
-    const table = ensureTable(
-      namespaces,
-      tableMap,
-      databaseName,
-      namespaceName,
-      tableName,
-      inferExplorerTableType(namespaceName, row.table_type),
-    );
-
-    const existingColumns = new Set(table.columns.map((column) => column.name));
-    const infoColumns = infoColumnsByTable.get(`${namespaceName}.${tableName}`) ?? [];
-    infoColumns.forEach((column) => {
-      const columnName = String(column.column_name ?? "");
-      if (!columnName || existingColumns.has(columnName)) {
-        return;
-      }
-
-      table.columns.push({
-        name: columnName,
-        dataType: String(column.data_type ?? "unknown"),
-        isNullable: normalizeNullable(column.is_nullable),
-        isPrimaryKey: false,
-        ordinal: Number(column.ordinal_position ?? table.columns.length + 1),
-      });
-      existingColumns.add(columnName);
-    });
+    table.columns = normalizeSchemaColumns(row.columns);
   });
 
   const sortedNamespaces = Array.from(namespaces.values())

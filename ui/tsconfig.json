@@ -6,6 +6,7 @@
     "module": "ESNext",
     "skipLibCheck": true,
     "moduleResolution": "bundler",
+    "preserveSymlinks": true,
     "allowImportingTsExtensions": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
@@ -18,7 +19,8 @@
     "paths": {
       "@/*": ["./src/*"],
       "@kalamdb/client": ["../link/sdks/typescript/client/dist/src/index.d.ts"],
-      "@kalamdb/orm": ["../link/sdks/typescript/orm/dist/index.d.ts"]
+      "drizzle-orm": ["./node_modules/drizzle-orm"],
+      "drizzle-orm/*": ["./node_modules/drizzle-orm/*"]
     }
   },
   "include": ["src"],

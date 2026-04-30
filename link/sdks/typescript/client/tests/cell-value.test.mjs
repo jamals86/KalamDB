@@ -159,6 +159,41 @@ describe('KalamCellValue.asBool()', () => {
   });
 });
 
+describe('KalamCellValue datatype-specific accessors', () => {
+  it('parses UUID values', () => {
+    assert.equal(
+      KalamCellValue.from('A0EBC999-9C0B-4EF8-BB6D-6BB9BD380A11').asUuid(),
+      'a0ebc999-9c0b-4ef8-bb6d-6bb9bd380a11',
+    );
+    assert.equal(KalamCellValue.from('not-a-uuid').asUuid(), null);
+  });
+
+  it('returns decimals as exact strings', () => {
+    assert.equal(KalamCellValue.from('1234.5600').asDecimal(), '1234.5600');
+    assert.equal(KalamCellValue.from(42.5).asDecimal(), '42.5');
+    assert.equal(KalamCellValue.from('nan-ish').asDecimal(), null);
+  });
+
+  it('parses BYTES arrays and base64 strings', () => {
+    assert.deepEqual(Array.from(KalamCellValue.from([1, 2, 255]).asBytes()), [1, 2, 255]);
+    assert.deepEqual(Array.from(KalamCellValue.from('AQID').asBytes()), [1, 2, 3]);
+    assert.equal(KalamCellValue.from([1, 999]).asBytes(), null);
+  });
+
+  it('parses EMBEDDING vectors', () => {
+    assert.deepEqual(KalamCellValue.from([0.1, 0.2, 0.3]).asEmbedding(), [0.1, 0.2, 0.3]);
+    assert.deepEqual(KalamCellValue.from('[1,2,3]').asEmbedding(), [1, 2, 3]);
+    assert.equal(KalamCellValue.from(['bad']).asEmbedding(), null);
+  });
+
+  it('parses DATE day offsets and TIME microseconds', () => {
+    assert.equal(KalamCellValue.from(20573).asDateOnly().toISOString(), '2026-04-30T00:00:00.000Z');
+    assert.equal(KalamCellValue.from('2026-04-30').asDateOnly().toISOString(), '2026-04-30T00:00:00.000Z');
+    assert.equal(KalamCellValue.from(45_296_123_456).asTimeString(), '12:34:56.123456');
+    assert.equal(KalamCellValue.from('12:34:56').asTimeString(), '12:34:56');
+  });
+});
+
 describe('KalamCellValue.asDate()', () => {
   it('converts unix millis', () => {
     const d = KalamCellValue.from(1704067200000).asDate();

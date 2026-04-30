@@ -60,10 +60,9 @@ function debugLog(...args: unknown[]): void {
 }
 
 /**
- * Query queue to prevent concurrent WASM calls which cause "recursive borrow" errors.
- * WASM clients use RefCell internally which doesn't support concurrent access.
+ * Serialize token rotation and client init/teardown across the UI-managed client instances.
+ * The SDK itself now serializes direct WASM calls per client instance.
  */
-let queryQueue: Promise<unknown> = Promise.resolve();
 let lifecycleQueue: Promise<unknown> = Promise.resolve();
 function requireToken(): string {
   if (!currentToken) {
@@ -71,50 +70,6 @@ function requireToken(): string {
   }
 
   return currentToken;
-}
-/**
- * Serializes concurrent live()/subscribe() setups so they never overlap.
- * React StrictMode double-mounts fire two subscription effects nearly simultaneously;
- * without this lock both would call live() concurrently and crash the WASM RefCell.
- */
-let subscriptionSetupLock: Promise<unknown> = Promise.resolve();
-
-/**
- * Queue a query to ensure sequential execution and prevent WASM borrow errors.
- * @param fn The async function to execute
- * @returns Promise that resolves with the function result
- */
-async function queueQuery<T>(fn: () => Promise<T>): Promise<T> {
-  // Chain the new query after the current queue
-  const result = queryQueue.then(
-    () => fn(),
-    () => fn() // Even if previous fails, try this one
-  );
-  // Update the queue to wait for this query (ignore errors to not block next queries)
-  queryQueue = result.catch(() => {});
-  return result;
-}
-
-/**
- * Serialize live()/subscribe() setup on the dedicated subscription client.
- *
- * Query execution uses a separate WASM client instance, so we no longer need to block
- * the query queue here. We only need to ensure we do not start two subscription setup
- * calls concurrently on the same subscription client.
- */
-async function serializedSubscriptionCall<T>(fn: () => Promise<T>): Promise<T> {
-  const runSetup = async (): Promise<T> => {
-    try {
-      return await fn();
-    } catch (err) {
-      console.error('[kalam-client] Subscription setup failed:', err);
-      throw err;
-    }
-  };
-
-  const result = subscriptionSetupLock.then(runSetup, runSetup);
-  subscriptionSetupLock = result.catch(() => {});
-  return result;
 }
 
 function createSdkClient(jwtToken: string, eagerWebSocket = false): KalamDBClient {
@@ -333,41 +288,35 @@ export function getCurrentToken(): string | null {
 }
 
 /**
- * Execute SQL query using the WASM SDK
- * Returns the full QueryResponse
- * 
- * Uses a query queue to prevent concurrent WASM calls which cause borrow errors.
+ * Execute SQL query using the WASM SDK.
+ * Returns the full QueryResponse.
  */
 export async function executeQuery(sql: string): Promise<QueryResponse> {
   const queryClient = await ensureQueryClient();
   
   debugLog("[kalam-client] Executing query via SDK:", sql.substring(0, 120) + (sql.length > 120 ? "..." : ""));
   
-  // Queue the query to prevent concurrent WASM access
-  return queueQuery(async () => {
-    try {
-      const response = await queryClient.query(sql);
-      if (response.status === "error") {
-        console.warn("[kalam-client] Query failed:", response.error?.message ?? "Unknown error");
-      } else {
-        const first = response.results?.[0];
-        const resultCount = response.results?.length ?? 0;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const rowCount = first?.row_count ?? (first as any)?.named_rows?.length ?? first?.rows?.length ?? 0;
-        const columnCount = first?.schema?.length ?? 0;
-        debugLog(
-          "[kalam-client] Query success:",
-          `${resultCount} result set(s), ${rowCount} row(s), ${columnCount} column(s), took ${response.took ?? 0}ms`,
-        );
-      }
-      return response;
-    } catch (err) {
-      console.error('[kalam-client] Query execution error:', err);
-      // Convert WASM errors to a proper error response
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      throw new Error(errorMessage);
+  try {
+    const response = await queryClient.query(sql);
+    if (response.status === "error") {
+      console.warn("[kalam-client] Query failed:", response.error?.message ?? "Unknown error");
+    } else {
+      const first = response.results?.[0];
+      const resultCount = response.results?.length ?? 0;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const rowCount = first?.row_count ?? (first as any)?.named_rows?.length ?? first?.rows?.length ?? 0;
+      const columnCount = first?.schema?.length ?? 0;
+      debugLog(
+        "[kalam-client] Query success:",
+        `${resultCount} result set(s), ${rowCount} row(s), ${columnCount} column(s), took ${response.took ?? 0}ms`,
+      );
     }
-  });
+    return response;
+  } catch (err) {
+    console.error('[kalam-client] Query execution error:', err);
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    throw new Error(errorMessage);
+  }
 }
 
 function unwrapRowData(rows: RowData[]): Record<string, unknown>[] {
@@ -390,7 +339,7 @@ function unwrapRowData(rows: RowData[]): Record<string, unknown>[] {
 export async function executeSql(sql: string): Promise<Record<string, unknown>[]> {
   try {
     const queryClient = await ensureQueryClient();
-    const rows = await queueQuery(() => queryClient.queryAll(sql));
+    const rows = await queryClient.queryAll(sql);
     if (!rows.length) {
       return [];
     }
@@ -407,7 +356,7 @@ export async function executeSql(sql: string): Promise<Record<string, unknown>[]
  */
 export async function insert(tableName: string, data: Record<string, unknown>): Promise<QueryResponse> {
   const queryClient = await ensureQueryClient();
-  return queueQuery(() => queryClient.insert(tableName, data));
+  return queryClient.insert(tableName, data);
 }
 
 /**
@@ -415,7 +364,7 @@ export async function insert(tableName: string, data: Record<string, unknown>): 
  */
 export async function deleteRow(tableName: string, rowId: string | number): Promise<void> {
   const queryClient = await ensureQueryClient();
-  return queueQuery(() => queryClient.delete(tableName, rowId));
+  return queryClient.delete(tableName, rowId);
 }
 
 /**
@@ -534,25 +483,18 @@ export async function subscribe(
   const { cleanSql, subscribeOptions, isSqlQuery } = normalizeSubscriptionTarget(tableOrQuery, options);
   
   debugLog('[kalam-client] Subscribing to:', cleanSql, 'with options:', subscribeOptions);
-  
-  let unsubscribe: Unsubscribe;
-  if (isSqlQuery) {
-    // Full SQL query - use subscribeWithSql
-    debugLog('[kalam-client] Detected SQL query, using subscribeWithSql');
-    unsubscribe = await serializedSubscriptionCall(
-      () => liveClient.subscribeWithSql(cleanSql, callback, subscribeOptions),
-    );
-  } else {
-    // Just a table name - use subscribe (which wraps in SELECT * FROM)
-    debugLog('[kalam-client] Detected table name, using subscribe');
-    unsubscribe = await serializedSubscriptionCall(
-      () => liveClient.subscribe(cleanSql, callback, subscribeOptions),
-    );
+
+  try {
+    const unsubscribe = isSqlQuery
+      ? await liveClient.subscribeWithSql(cleanSql, callback, subscribeOptions)
+      : await liveClient.subscribe(cleanSql, callback, subscribeOptions);
+
+    debugLog('[kalam-client] Subscription registered successfully');
+    return unsubscribe;
+  } catch (err) {
+    console.error('[kalam-client] Subscription setup failed:', err);
+    throw err;
   }
-  
-  debugLog('[kalam-client] Subscription registered successfully');
-  
-  return unsubscribe;
 }
 
 /**
@@ -568,13 +510,18 @@ export async function subscribeRows<T = RowData>(
   const liveClient = await ensureSubscriptionClient();
   const { cleanSql, isSqlQuery } = normalizeSubscriptionTarget(tableOrQuery);
 
-  if (isSqlQuery) {
-    debugLog('[kalam-client] Detected SQL query, using live');
-    return serializedSubscriptionCall(() => liveClient.live(cleanSql, callback, options));
-  }
+  try {
+    if (isSqlQuery) {
+      debugLog('[kalam-client] Detected SQL query, using live');
+      return await liveClient.live(cleanSql, callback, options);
+    }
 
-  debugLog('[kalam-client] Detected table name, using liveTableRows');
-  return serializedSubscriptionCall(() => liveClient.liveTableRows(cleanSql, callback, options));
+    debugLog('[kalam-client] Detected table name, using liveTableRows');
+    return await liveClient.liveTableRows(cleanSql, callback, options);
+  } catch (err) {
+    console.error('[kalam-client] Subscription setup failed:', err);
+    throw err;
+  }
 }
 
 /**

@@ -1,9 +1,7 @@
 import { api } from "@/lib/api";
-import { executeSql } from "@/lib/kalam-client";
+import { getDb } from "@/lib/db";
+import { system_topic_offsets, system_topics } from "@/lib/schema";
 import {
-  buildStreamingConsumerGroupsQuery,
-  buildStreamingOffsetsQuery,
-  buildStreamingTopicsQuery,
   type StreamingOffsetsFilter,
 } from "@/features/streaming/sql";
 import type {
@@ -16,8 +14,11 @@ import type {
   StreamingMessage,
   StreamingOffset,
   StreamingTopic,
+  StreamingTopicOffsetRow,
   StreamingTopicRoute,
+  StreamingTopicRow,
 } from "@/features/streaming/types";
+import { and, asc, desc, eq, type SQL } from "drizzle-orm";
 
 function asString(value: unknown): string {
   if (value === null || value === undefined) {
@@ -104,58 +105,127 @@ export function parseTopicRoutes(value: unknown): StreamingTopicRoute[] {
   return [];
 }
 
-export function mapTopicRows(rows: Record<string, unknown>[]): StreamingTopic[] {
+export function mapTopicRows(rows: StreamingTopicRow[]): StreamingTopic[] {
   return rows.map((row) => {
     const routes = parseTopicRoutes(row.routes);
     return {
-      topicId: asString(row.topic_id),
-      name: asString(row.name || row.topic_id),
-      partitions: Math.max(1, asNumber(row.partitions)),
+      topicId: row.topic_id,
+      name: row.name || row.topic_id,
+      partitions: Math.max(1, row.partitions),
       retentionSeconds: asNullableNumber(row.retention_seconds),
       retentionMaxBytes: asNullableNumber(row.retention_max_bytes),
       routeCount: routes.length,
       routes,
-      createdAt: asNullableString(row.created_at),
-      updatedAt: asNullableString(row.updated_at),
+      createdAt: row.created_at ?? null,
+      updatedAt: row.updated_at ?? null,
     };
   });
 }
 
-export function mapConsumerGroupRows(rows: Record<string, unknown>[]): StreamingConsumerGroup[] {
-  return rows.map((row) => ({
-    groupId: asString(row.group_id),
-    topicCount: asNumber(row.topic_count),
-    partitionCount: asNumber(row.partition_count),
-    lastUpdatedAt: asNullableString(row.last_updated_at),
-  }));
-}
-
-export function mapOffsetRows(rows: Record<string, unknown>[]): StreamingOffset[] {
+export function mapOffsetRows(rows: StreamingTopicOffsetRow[]): StreamingOffset[] {
   return rows.map((row) => {
     const lastAckedOffset = asNumber(row.last_acked_offset);
     return {
-      topicId: asString(row.topic_id),
-      groupId: asString(row.group_id),
-      partitionId: asNumber(row.partition_id),
+      topicId: row.topic_id,
+      groupId: row.group_id,
+      partitionId: row.partition_id,
       lastAckedOffset,
       nextOffset: lastAckedOffset + 1,
-      updatedAt: asNullableString(row.updated_at),
+      updatedAt: row.updated_at ?? null,
     };
   });
 }
 
 export async function fetchStreamingTopics(): Promise<StreamingTopic[]> {
-  const rows = await executeSql(buildStreamingTopicsQuery());
+  const db = getDb();
+  const rows = await db
+    .select()
+    .from(system_topics)
+    .orderBy(asc(system_topics.topic_id));
+
   return mapTopicRows(rows);
 }
 
 export async function fetchStreamingConsumerGroups(): Promise<StreamingConsumerGroup[]> {
-  const rows = await executeSql(buildStreamingConsumerGroupsQuery());
-  return mapConsumerGroupRows(rows);
+  const db = getDb();
+  const rows = await db
+    .select()
+    .from(system_topic_offsets)
+    .orderBy(
+      desc(system_topic_offsets.updated_at),
+      asc(system_topic_offsets.group_id),
+      asc(system_topic_offsets.topic_id),
+      asc(system_topic_offsets.partition_id),
+    );
+
+  const groups = new Map<string, StreamingConsumerGroup & { topics: Set<StreamingTopicOffsetRow["topic_id"]> }>();
+
+  rows.forEach((row) => {
+    const groupId = row.group_id;
+    if (!groupId) {
+      return;
+    }
+
+    const existing = groups.get(groupId) ?? {
+      groupId,
+      topicCount: 0,
+      partitionCount: 0,
+      lastUpdatedAt: null,
+      topics: new Set<string>(),
+    };
+
+    existing.partitionCount += 1;
+    existing.topics.add(row.topic_id);
+
+    const updatedAt = row.updated_at ?? null;
+    if (updatedAt && (!existing.lastUpdatedAt || updatedAt > existing.lastUpdatedAt)) {
+      existing.lastUpdatedAt = updatedAt;
+    }
+
+    groups.set(groupId, existing);
+  });
+
+  return Array.from(groups.values())
+    .map(({ topics, ...group }) => ({
+      ...group,
+      topicCount: topics.size,
+    }))
+    .sort((left, right) => {
+      const leftUpdated = left.lastUpdatedAt ?? "";
+      const rightUpdated = right.lastUpdatedAt ?? "";
+
+      if (leftUpdated === rightUpdated) {
+        return left.groupId.localeCompare(right.groupId);
+      }
+
+      return rightUpdated.localeCompare(leftUpdated);
+    })
+    .slice(0, 500);
 }
 
 export async function fetchStreamingOffsets(filters?: StreamingOffsetsFilter): Promise<StreamingOffset[]> {
-  const rows = await executeSql(buildStreamingOffsetsQuery(filters));
+  const db = getDb();
+  const conditions: SQL[] = [];
+
+  if (filters?.topicId) {
+    conditions.push(eq(system_topic_offsets.topic_id, filters.topicId));
+  }
+  if (filters?.groupId) {
+    conditions.push(eq(system_topic_offsets.group_id, filters.groupId));
+  }
+
+  const rows = await db
+    .select()
+    .from(system_topic_offsets)
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(
+      desc(system_topic_offsets.updated_at),
+      asc(system_topic_offsets.topic_id),
+      asc(system_topic_offsets.group_id),
+      asc(system_topic_offsets.partition_id),
+    )
+    .limit(Math.min(Math.max(filters?.limit ?? 1000, 1), 5000));
+
   return mapOffsetRows(rows);
 }
 

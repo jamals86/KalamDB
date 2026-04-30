@@ -1,10 +1,11 @@
 import { executeSql } from "@/lib/kalam-client";
 import { getDb } from "@/lib/db";
+import type { SystemLiveQueryRow } from "@/lib/models";
 import { system_live } from "@/lib/schema";
-import { eq, desc, and, type SQL, type InferSelectModel } from "drizzle-orm";
+import { eq, desc, and, type SQL } from "drizzle-orm";
 import { buildKillLiveQuerySql } from "@/services/sql/queries/liveQueryQueries";
 
-export type LiveQuery = InferSelectModel<typeof system_live>;
+export type LiveQuery = SystemLiveQueryRow;
 
 export interface LiveQueryFilters {
   user_id?: string;

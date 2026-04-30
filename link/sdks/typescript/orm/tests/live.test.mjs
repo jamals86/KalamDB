@@ -1,7 +1,8 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { pgTable, text, bigint } from 'drizzle-orm/pg-core';
-import { liveTable, file } from '../dist/index.js';
+import { eq } from 'drizzle-orm';
+import { text, bigint, timestamp } from 'drizzle-orm/pg-core';
+import { liveTable, subscribeTable, file, kTable } from '../dist/index.js';
 import { requirePassword, createTestClient } from './helpers.mjs';
 
 requirePassword();
@@ -15,27 +16,43 @@ before(async () => {
 
   await client.query('CREATE NAMESPACE IF NOT EXISTS test_live');
   await client.query('DROP TABLE IF EXISTS test_live.items');
+  await client.query('DROP TABLE IF EXISTS test_live.timeline');
   await client.query(`
     CREATE TABLE test_live.items (
       id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
       name TEXT NOT NULL
     )
   `);
+  await client.query(`
+    CREATE TABLE test_live.timeline (
+      id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
+      label TEXT NOT NULL,
+      created_at TIMESTAMP DEFAULT NOW()
+    )
+  `);
   await client.query("INSERT INTO test_live.items (name) VALUES ('existing')");
+  await client.query("INSERT INTO test_live.timeline (label) VALUES ('existing-timestamp')");
 });
 
 after(async () => {
   await client.query('DROP TABLE IF EXISTS test_live.items');
+  await client.query('DROP TABLE IF EXISTS test_live.timeline');
   await client.query('DROP NAMESPACE IF EXISTS test_live');
   await client?.disconnect();
 });
 
-const test_live_items = pgTable('test_live.items', {
+const test_live_items = kTable('test_live.items', {
   id: bigint('id', { mode: 'number' }),
   name: text('name'),
 });
 
-async function waitForRows(client, table, predicate, timeoutMs = 10000) {
+const test_live_timeline = kTable('test_live.timeline', {
+  id: bigint('id', { mode: 'number' }),
+  label: text('label'),
+  created_at: timestamp('created_at', { mode: 'date' }),
+});
+
+async function waitForRows(client, table, predicate, timeoutMs = 10000, options = undefined) {
   let resolvePromise;
   let rejectPromise;
   const resultPromise = new Promise((resolve, reject) => {
@@ -49,7 +66,7 @@ async function waitForRows(client, table, predicate, timeoutMs = 10000) {
       clearTimeout(timeout);
       resolvePromise([...rows]);
     }
-  });
+  }, options);
 
   const result = await resultPromise;
   await unsub();
@@ -95,6 +112,32 @@ describe('liveTable', () => {
     assert.ok(!rows.some((r) => r.name === 'updated-name'));
   });
 
+  it('supports WHERE clauses without raw SQL strings', async () => {
+    const rows = await waitForRows(
+      client,
+      test_live_items,
+      (currentRows) => currentRows.length === 1 && currentRows[0].name === 'existing',
+      10000,
+      { where: eq(test_live_items.name, 'existing') },
+    );
+
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].name, 'existing');
+  });
+
+  it('maps timestamp columns through Drizzle date mode for live rows', async () => {
+    const rows = await waitForRows(
+      client,
+      test_live_timeline,
+      (currentRows) => currentRows.some((row) => row.label === 'existing-timestamp'),
+    );
+
+    const row = rows.find((currentRow) => currentRow.label === 'existing-timestamp');
+    assert.ok(row);
+    assert.ok(row.created_at instanceof Date);
+    assert.ok(!Number.isNaN(row.created_at.getTime()));
+  });
+
   it('unsubscribe stops receiving updates', async () => {
     let callCount = 0;
     const unsub = await liveTable(client, test_live_items, () => {
@@ -112,6 +155,39 @@ describe('liveTable', () => {
     await client.query("DELETE FROM test_live.items WHERE name = 'after-unsub'");
   });
 
+  it('maps typed change rows for subscribeTable', async () => {
+    let resolvePromise;
+    let rejectPromise;
+    const resultPromise = new Promise((resolve, reject) => {
+      resolvePromise = resolve;
+      rejectPromise = reject;
+    });
+
+    const timeout = setTimeout(() => rejectPromise(new Error('Timed out waiting for typed subscription event')), 10000);
+    const unsub = await subscribeTable(
+      client,
+      test_live_items,
+      (event) => {
+        if (event.type !== 'change' || !event.rows?.some((row) => row.name === 'typed-subscribe')) {
+          return;
+        }
+
+        clearTimeout(timeout);
+        resolvePromise(event.rows.find((row) => row.name === 'typed-subscribe'));
+      },
+      { where: eq(test_live_items.name, 'typed-subscribe') },
+    );
+
+    await client.query("INSERT INTO test_live.items (name) VALUES ('typed-subscribe')");
+
+    const row = await resultPromise;
+    assert.equal(row.name, 'typed-subscribe');
+    assert.ok(typeof row.id === 'number');
+
+    await unsub();
+    await client.query("DELETE FROM test_live.items WHERE name = 'typed-subscribe'");
+  });
+
   it('handles FILE column type in live rows', async () => {
     await client.query('DROP TABLE IF EXISTS test_live.docs');
     await client.query(`
@@ -127,7 +203,7 @@ describe('liveTable', () => {
     });
     await client.query(`INSERT INTO test_live.docs (title, attachment) VALUES ('live-test', '${fakeFile}')`);
 
-    const test_live_docs = pgTable('test_live.docs', {
+    const test_live_docs = kTable('test_live.docs', {
       id: bigint('id', { mode: 'number' }),
       title: text('title'),
       attachment: file('attachment'),

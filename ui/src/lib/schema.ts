@@ -1,12 +1,13 @@
-import { boolean, doublePrecision, integer, jsonb, pgTable, text, timestamp } from 'drizzle-orm/pg-core';
+import { kTable } from '@kalamdb/orm';
+import { boolean, doublePrecision, integer, jsonb, text, timestamp } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 
-export const dba_favorites = pgTable('dba.favorites', {
+export const dba_favorites = kTable('dba.favorites', {
   id: text('id').notNull(),
   payload: jsonb('payload'),
 });
 
-export const dba_notifications = pgTable('dba.notifications', {
+export const dba_notifications = kTable('dba.notifications', {
   id: text('id').notNull(),
   user_id: text('user_id').notNull(),
   title: text('title').notNull(),
@@ -16,7 +17,7 @@ export const dba_notifications = pgTable('dba.notifications', {
   updated_at: timestamp('updated_at', { mode: 'string' }).notNull(),
 });
 
-export const dba_stats = pgTable('dba.stats', {
+export const dba_stats = kTable('dba.stats', {
   id: text('id').notNull(),
   node_id: text('node_id').notNull(),
   metric_name: text('metric_name').notNull(),
@@ -25,73 +26,7 @@ export const dba_stats = pgTable('dba.stats', {
   sampled_at: timestamp('sampled_at', { mode: 'string' }).notNull(),
 });
 
-export const dt_ns_mo64yit3_ia9_0_table1_mo64yit3_ia9_0 = pgTable('dt_ns_mo64yit3_ia9_0.table1_mo64yit3_ia9_0', {
-  id: text('id').notNull(),
-  name: text('name'),
-});
-
-export const dt_ns_mo64yit3_ia9_0_table2_mo64yit3_ia9_1 = pgTable('dt_ns_mo64yit3_ia9_0.table2_mo64yit3_ia9_1', {
-  id: text('id').notNull(),
-  name: text('name'),
-});
-
-export const flush_error_ns_mo64yext_i5e_0_stream_no_flush_mo64yext_i5e_0 = pgTable('flush_error_ns_mo64yext_i5e_0.stream_no_flush_mo64yext_i5e_0', {
-  event_id: text('event_id').default(sql``).notNull(),
-  event_type: text('event_type'),
-});
-
-export const flush_manifest_ns_mo64yexv_i5f_0_double_flush_test_mo64yexv_i5f_0 = pgTable('flush_manifest_ns_mo64yexv_i5f_0.double_flush_test_mo64yexv_i5f_0', {
-  id: text('id').default(sql``).notNull(),
-  data: text('data').notNull(),
-});
-
-export const flush_manifest_ns_mo64yexw_i5g_0_shared_flush_test_mo64yexw_i5g_0 = pgTable('flush_manifest_ns_mo64yexw_i5g_0.shared_flush_test_mo64yexw_i5g_0', {
-  id: text('id').default(sql``).notNull(),
-  config_key: text('config_key').notNull(),
-  config_value: text('config_value'),
-});
-
-export const flush_manifest_ns_mo64yf1x_i5h_0_user_flush_test_mo64yf1x_i5h_0 = pgTable('flush_manifest_ns_mo64yf1x_i5h_0.user_flush_test_mo64yf1x_i5h_0', {
-  id: text('id').default(sql``).notNull(),
-  content: text('content').notNull(),
-  created_at: timestamp('created_at', { mode: 'string' }).default(sql``),
-});
-
-export const live_ns_mo64yipj_ia8_0_messages_mo64yipj_ia8_0 = pgTable('live_ns_mo64yipj_ia8_0.messages_mo64yipj_ia8_0', {
-  id: text('id').default(sql``).notNull(),
-  content: text('content').notNull(),
-});
-
-export const repro_dupe_ns_mo64yb1x_hy1_0_dupe_table_mo64yb1x_hy1_0 = pgTable('repro_dupe_ns_mo64yb1x_hy1_0.dupe_table_mo64yb1x_hy1_0', {
-  id: text('id').notNull(),
-  name: text('name'),
-  col1: text('col1'),
-});
-
-export const snowflake_ns_mo64yddc_i3m_0_snowflake_test_mo64yddc_i3m_0 = pgTable('snowflake_ns_mo64yddc_i3m_0.snowflake_test_mo64yddc_i3m_0', {
-  id: text('id').default(sql``).notNull(),
-  content: text('content').notNull(),
-  created_at: timestamp('created_at', { mode: 'string' }).default(sql``),
-});
-
-export const sys_tables_ns_mo64yit8_iab_0_shared_tbl_mo64yit8_iab_1 = pgTable('sys_tables_ns_mo64yit8_iab_0.shared_tbl_mo64yit8_iab_1', {
-  id: text('id').default(sql``).notNull(),
-  config_key: text('config_key').notNull(),
-  config_value: text('config_value'),
-});
-
-export const sys_tables_ns_mo64yit8_iab_0_stream_tbl_mo64yit8_iab_2 = pgTable('sys_tables_ns_mo64yit8_iab_0.stream_tbl_mo64yit8_iab_2', {
-  event_id: text('event_id').default(sql``).notNull(),
-  event_type: text('event_type'),
-  payload: text('payload'),
-});
-
-export const sys_tables_ns_mo64yit8_iab_0_user_tbl_mo64yit8_iab_0 = pgTable('sys_tables_ns_mo64yit8_iab_0.user_tbl_mo64yit8_iab_0', {
-  id: text('id').default(sql``).notNull(),
-  name: text('name').notNull(),
-});
-
-export const system_audit_log = pgTable('system.audit_log', {
+export const system_audit_log = kTable('system.audit_log', {
   audit_id: text('audit_id').notNull(),
   timestamp: timestamp('timestamp', { mode: 'string' }).notNull(),
   actor_user_id: text('actor_user_id').notNull(),
@@ -102,7 +37,7 @@ export const system_audit_log = pgTable('system.audit_log', {
   subject_user_id: text('subject_user_id'),
 });
 
-export const system_job_nodes = pgTable('system.job_nodes', {
+export const system_job_nodes = kTable('system.job_nodes', {
   job_id: text('job_id').notNull(),
   node_id: text('node_id').notNull(),
   status: text('status').notNull(),
@@ -113,7 +48,7 @@ export const system_job_nodes = pgTable('system.job_nodes', {
   updated_at: timestamp('updated_at', { mode: 'string' }).default(sql``).notNull(),
 });
 
-export const system_jobs = pgTable('system.jobs', {
+export const system_jobs = kTable('system.jobs', {
   job_id: text('job_id').notNull(),
   job_type: text('job_type').notNull(),
   status: text('status').notNull(),
@@ -136,7 +71,7 @@ export const system_jobs = pgTable('system.jobs', {
   leader_node_id: text('leader_node_id'),
 });
 
-export const system_manifest = pgTable('system.manifest', {
+export const system_manifest = kTable('system.manifest', {
   cache_key: text('cache_key').notNull(),
   namespace_id: text('namespace_id').notNull(),
   table_name: text('table_name').notNull(),
@@ -149,7 +84,7 @@ export const system_manifest = pgTable('system.manifest', {
   manifest_json: jsonb('manifest_json').notNull(),
 });
 
-export const system_namespaces = pgTable('system.namespaces', {
+export const system_namespaces = kTable('system.namespaces', {
   namespace_id: text('namespace_id').notNull(),
   name: text('name').notNull(),
   created_at: timestamp('created_at', { mode: 'string' }).notNull(),
@@ -157,7 +92,7 @@ export const system_namespaces = pgTable('system.namespaces', {
   table_count: integer('table_count').notNull(),
 });
 
-export const system_schemas = pgTable('system.schemas', {
+export const system_schemas = kTable('system.schemas', {
   table_id: text('table_id').notNull(),
   table_name: text('table_name').notNull(),
   namespace_id: text('namespace_id').notNull(),
@@ -174,7 +109,7 @@ export const system_schemas = pgTable('system.schemas', {
   use_user_storage: boolean('use_user_storage'),
 });
 
-export const system_storages = pgTable('system.storages', {
+export const system_storages = kTable('system.storages', {
   storage_id: text('storage_id').notNull(),
   storage_name: text('storage_name').notNull(),
   description: text('description'),
@@ -188,7 +123,7 @@ export const system_storages = pgTable('system.storages', {
   updated_at: timestamp('updated_at', { mode: 'string' }).notNull(),
 });
 
-export const system_topic_offsets = pgTable('system.topic_offsets', {
+export const system_topic_offsets = kTable('system.topic_offsets', {
   topic_id: text('topic_id').notNull(),
   group_id: text('group_id').notNull(),
   partition_id: integer('partition_id').notNull(),
@@ -196,7 +131,7 @@ export const system_topic_offsets = pgTable('system.topic_offsets', {
   updated_at: timestamp('updated_at', { mode: 'string' }).notNull(),
 });
 
-export const system_topics = pgTable('system.topics', {
+export const system_topics = kTable('system.topics', {
   topic_id: text('topic_id').notNull(),
   name: text('name').notNull(),
   alias: text('alias'),
@@ -208,7 +143,7 @@ export const system_topics = pgTable('system.topics', {
   updated_at: timestamp('updated_at', { mode: 'string' }).notNull(),
 });
 
-export const system_users = pgTable('system.users', {
+export const system_users = kTable('system.users', {
   user_id: text('user_id').notNull(),
   password_hash: text('password_hash').notNull(),
   role: text('role').notNull(),
@@ -226,22 +161,7 @@ export const system_users = pgTable('system.users', {
   deleted_at: timestamp('deleted_at', { mode: 'string' }),
 });
 
-export const ulid_ns_mo64ydh9_i3n_0_ulid_test_mo64ydh9_i3n_0 = pgTable('ulid_ns_mo64ydh9_i3n_0.ulid_test_mo64ydh9_i3n_0', {
-  event_id: text('event_id').default(sql``).notNull(),
-  event_type: text('event_type').notNull(),
-  user_id: text('user_id'),
-  payload: text('payload'),
-  created_at: timestamp('created_at', { mode: 'string' }).default(sql``),
-});
-
-export const uuid_ns_mo64ydkv_i3o_0_uuid_test_mo64ydkv_i3o_0 = pgTable('uuid_ns_mo64ydkv_i3o_0.uuid_test_mo64ydkv_i3o_0', {
-  session_id: text('session_id').default(sql``).notNull(),
-  user_id: text('user_id').notNull(),
-  ip_address: text('ip_address'),
-  created_at: timestamp('created_at', { mode: 'string' }).default(sql``),
-});
-
-export const system_live = pgTable('system.live', {
+export const system_live = kTable('system.live', {
   live_id: text('live_id').notNull(),
   connection_id: text('connection_id').notNull(),
   subscription_id: text('subscription_id').notNull(),
@@ -258,7 +178,7 @@ export const system_live = pgTable('system.live', {
   last_ping_at: timestamp('last_ping_at', { mode: 'string' }).notNull(),
 });
 
-export const system_server_logs = pgTable('system.server_logs', {
+export const system_server_logs = kTable('system.server_logs', {
   timestamp: text('timestamp').notNull(),
   level: text('level').notNull(),
   thread: text('thread'),
@@ -267,7 +187,7 @@ export const system_server_logs = pgTable('system.server_logs', {
   message: text('message').notNull(),
 });
 
-export const system_cluster = pgTable('system.cluster', {
+export const system_cluster = kTable('system.cluster', {
   cluster_id: text('cluster_id').notNull(),
   node_id: text('node_id').notNull(),
   role: text('role').notNull(),
@@ -295,14 +215,14 @@ export const system_cluster = pgTable('system.cluster', {
   arch: text('arch'),
 });
 
-export const system_settings = pgTable('system.settings', {
+export const system_settings = kTable('system.settings', {
   name: text('name').notNull(),
   value: text('value').notNull(),
   description: text('description').notNull(),
   category: text('category').notNull(),
 });
 
-export const system_stats = pgTable('system.stats', {
+export const system_stats = kTable('system.stats', {
   metric_name: text('metric_name').notNull(),
   metric_value: text('metric_value').notNull(),
 });

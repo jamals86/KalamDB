@@ -29,10 +29,10 @@ after(async () => {
 });
 
 describe('generateSchema', () => {
-  it('generates valid TypeScript with pgTable imports', () => {
+  it('generates valid TypeScript with kTable imports', () => {
     assert.ok(fullSchema.includes("import {"));
-    assert.ok(fullSchema.includes("from 'drizzle-orm/pg-core'"));
-    assert.ok(fullSchema.includes("pgTable"));
+    assert.ok(fullSchema.includes("from '@kalamdb/orm'"));
+    assert.ok(fullSchema.includes("kTable"));
   });
 
   it('includes system tables', () => {
@@ -61,8 +61,8 @@ describe('generateSchema', () => {
     assert.ok(!fullSchema.includes("actorUserId:"));
   });
 
-  it('maps timestamps to timestamp with mode string', () => {
-    assert.ok(fullSchema.includes("timestamp('created_at', { mode: 'string' })"));
+  it('maps timestamps to timestamp with mode date', () => {
+    assert.ok(fullSchema.includes('timestamp("created_at", { mode: \'date\' })'));
   });
 
   it('marks non-nullable columns with notNull()', () => {
@@ -75,7 +75,7 @@ describe('generateSchema', () => {
   });
 
   it('maps FILE columns to file() with @kalamdb/orm import', () => {
-    assert.ok(fullSchema.includes("file('doc')"));
+    assert.ok(fullSchema.includes('file("doc")'));
     assert.ok(fullSchema.includes("from '@kalamdb/orm'"));
   });
 
@@ -105,16 +105,16 @@ describe('generateSchema', () => {
     const tableStart = lines.findIndex((l) => l.includes('test_gen_with_defaults'));
     const tableLines = lines.slice(tableStart, tableStart + 6);
     const idDef = tableLines.find((l) => l.trim().startsWith('id:'));
-    assert.ok(idDef.includes("text('id')"), 'BIGINT should be text');
+    assert.ok(idDef.includes('text("id")'), 'BIGINT should be text');
     assert.ok(!idDef.includes("bigint("), 'BIGINT should not use bigint type');
   });
 
-  it('keeps TIMESTAMP as drizzle timestamp with mode string', () => {
+  it('keeps TIMESTAMP as drizzle timestamp with mode date', () => {
     const lines = fullSchema.split('\n');
     const tableStart = lines.findIndex((l) => l.includes('test_gen_with_defaults'));
     const tableLines = lines.slice(tableStart, tableStart + 6);
     const createdDef = tableLines.find((l) => l.trim().startsWith('created_at:'));
-    assert.ok(createdDef.includes("timestamp('created_at', { mode: 'string' })"), 'timestamp should use drizzle timestamp');
+    assert.ok(createdDef.includes('timestamp("created_at", { mode: \'date\' })'), 'timestamp should use drizzle timestamp');
   });
 
   it('marks literal default columns', () => {
@@ -127,7 +127,7 @@ describe('generateSchema', () => {
   });
 
   it('does not add .default() to columns without server defaults', () => {
-    const uploadLines = fullSchema.split('\n').filter((l) => l.includes("file('doc')"));
+    const uploadLines = fullSchema.split('\n').filter((l) => l.includes('file("doc")'));
     assert.equal(uploadLines.length, 1);
     assert.ok(!uploadLines[0].includes('.default('));
   });
@@ -149,6 +149,15 @@ describe('generateSchema', () => {
     assert.ok(schema.includes("system_audit_log"));
     assert.ok(schema.includes("dba_"));
     assert.ok(schema.includes("test_gen_uploads"));
+  });
+
+  it('filters to explicit namespaces when requested', async () => {
+    await new Promise((r) => setTimeout(r, 1000));
+    const schema = await generateSchema(client, { namespaces: ['system', 'dba'] });
+    assert.ok(schema.includes('system_users'));
+    assert.ok(schema.includes('dba_'));
+    assert.ok(!schema.includes('test_gen_uploads'));
+    assert.ok(!schema.includes('test_gen_with_defaults'));
   });
 
   it('deduplicates tables (no duplicate exports)', () => {

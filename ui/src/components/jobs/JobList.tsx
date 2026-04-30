@@ -1,6 +1,5 @@
 import { useState } from 'react';
-import type { Job } from '@/services/jobService';
-import type { JobFilters, JobSortKey } from '@/services/sql/queries/jobQueries';
+import type { Job, JobFilters, JobSortKey } from '@/services/jobService';
 import { useGetJobsFilteredQuery } from '@/store/apiSlice';
 import {
   Table,

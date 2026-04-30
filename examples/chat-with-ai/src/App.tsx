@@ -5,29 +5,19 @@ import {
   ChangeType,
   MessageType,
   createClient,
-  type RowData,
-  type ServerMessage,
+  type SubscriptionErrorEvent,
 } from '@kalamdb/client';
+import { eq } from 'drizzle-orm';
+import { kalamDriver, liveTable, subscribeTable, type TableSubscriptionEvent } from '@kalamdb/orm';
+import { drizzle } from 'drizzle-orm/pg-proxy';
+import {
+  chat_demo_agent_events as agentEvents,
+  chat_demo_agent_eventsConfig as agentEventsConfig,
+  chat_demo_messages as chatMessages,
+  type ChatDemoAgentEvents as AgentEventRow,
+  type ChatDemoMessages as ChatMessageRow,
+} from './schema.generated';
 import './styles.css';
-
-type ChatMessage = {
-  id: string;
-  role: string;
-  author: string;
-  content: string;
-  createdAt: string;
-  sortKey: number;
-};
-
-type AgentEvent = {
-  id: string;
-  responseId: string;
-  stage: string;
-  preview: string;
-  message: string;
-  createdAt: string;
-  sortKey: number;
-};
 
 type LiveDraft = {
   stage: 'thinking' | 'typing' | 'saving';
@@ -36,21 +26,16 @@ type LiveDraft = {
 };
 
 const MAX_CHAT_MESSAGES = 80;
-const MAX_AGENT_EVENTS = 40;
+const MAX_AGENT_EVENTS = agentEventsConfig.tableType === 'stream' ? 40 : 20;
+const canSortEventsBySeq = agentEventsConfig.systemColumns.includes('_seq');
 
 const ROOM = import.meta.env.VITE_CHAT_ROOM ?? 'main';
-const ROOM_SQL = ROOM.replace(/'/g, "''");
 const CHAT_USERNAME = import.meta.env.VITE_KALAMDB_USER ?? 'admin';
-const CHAT_SQL = [
-  'SELECT id, role, author, content, created_at',
-  'FROM chat_demo.messages',
-  `WHERE room = '${ROOM_SQL}'`,
-].join(' ');
-const EVENTS_SQL = [
-  'SELECT id, response_id, stage, preview, message, created_at',
-  'FROM chat_demo.agent_events',
-  `WHERE room = '${ROOM_SQL}'`,
-].join(' ');
+const timeFormatter = new Intl.DateTimeFormat(undefined, {
+  hour: 'numeric',
+  minute: '2-digit',
+  second: '2-digit',
+});
 
 function createAuthedClient() {
   return createClient({
@@ -64,69 +49,31 @@ function createAuthedClient() {
 }
 
 const client = createAuthedClient();
+const db = drizzle(kalamDriver(client));
 
-function text(row: RowData, key: string): string {
-  return row[key]?.asString() ?? '';
+function formatCreatedAt(createdAt: Date): string {
+  return Number.isNaN(createdAt.getTime()) ? 'Invalid date' : timeFormatter.format(createdAt);
 }
 
-function formatTimestamp(rawValue: string): string {
-  const numericValue = Number(rawValue);
-  if (!Number.isFinite(numericValue) || numericValue <= 0) {
-    return rawValue;
-  }
-
-  const epochMs = numericValue > 1_000_000_000_000_000 ? Math.floor(numericValue / 1000) : numericValue;
-  const timestamp = new Date(epochMs);
-  if (Number.isNaN(timestamp.getTime())) {
-    return rawValue;
-  }
-
-  return new Intl.DateTimeFormat(undefined, {
-    hour: 'numeric',
-    minute: '2-digit',
-    second: '2-digit',
-  }).format(timestamp);
+function eventTimelineKey(row: { id: string; _seq?: string | null; created_at: Date }): string {
+  return canSortEventsBySeq && row._seq ? row._seq : `${row.created_at.toISOString()}:${row.id}`;
 }
 
-function toMessage(row: RowData): ChatMessage {
-  const sortKey = row['created_at']?.asDate()?.getTime() ?? row['_seq']?.asSeqId()?.timestampMillis() ?? 0;
-  return {
-    id: text(row, 'id'),
-    role: text(row, 'role'),
-    author: text(row, 'author'),
-    content: text(row, 'content'),
-    createdAt: formatTimestamp(text(row, 'created_at')),
-    sortKey,
-  };
+function sortEvents(rows: AgentEventRow[]): AgentEventRow[] {
+  return [...rows].sort(
+    (left, right) => left.created_at.getTime() - right.created_at.getTime()
+      || eventTimelineKey(left).localeCompare(eventTimelineKey(right))
+      || left.id.localeCompare(right.id),
+  );
 }
 
-function toAgentEvent(row: RowData): AgentEvent {
-  const sortKey = row['created_at']?.asDate()?.getTime() ?? row['_seq']?.asSeqId()?.timestampMillis() ?? 0;
-  return {
-    id: text(row, 'id'),
-    responseId: text(row, 'response_id'),
-    stage: text(row, 'stage'),
-    preview: text(row, 'preview'),
-    message: text(row, 'message'),
-    createdAt: formatTimestamp(text(row, 'created_at')),
-    sortKey,
-  };
-}
-
-function sortMessages(rows: ChatMessage[]): ChatMessage[] {
-  return [...rows].sort((left, right) => left.sortKey - right.sortKey || left.id.localeCompare(right.id));
-}
-
-function sortEvents(rows: AgentEvent[]): AgentEvent[] {
-  return [...rows].sort((left, right) => left.sortKey - right.sortKey || left.id.localeCompare(right.id));
-}
-
-function limitEvents(rows: AgentEvent[]): AgentEvent[] {
+function limitEvents(rows: AgentEventRow[]): AgentEventRow[] {
+  // Change frames are merged locally, so keep a deterministic order after upserts/removals.
   const sorted = sortEvents(rows);
   return sorted.length > MAX_AGENT_EVENTS ? sorted.slice(-MAX_AGENT_EVENTS) : sorted;
 }
 
-function upsertEvents(current: AgentEvent[], incoming: AgentEvent[]): AgentEvent[] {
+function upsertEvents(current: AgentEventRow[], incoming: AgentEventRow[]): AgentEventRow[] {
   const next = new Map(current.map((event) => [event.id, event]));
   for (const event of incoming) {
     next.set(event.id, event);
@@ -134,20 +81,20 @@ function upsertEvents(current: AgentEvent[], incoming: AgentEvent[]): AgentEvent
   return limitEvents(Array.from(next.values()));
 }
 
-function removeEvents(current: AgentEvent[], removed: AgentEvent[]): AgentEvent[] {
+function removeEvents(current: AgentEventRow[], removed: AgentEventRow[]): AgentEventRow[] {
   const removedIds = new Set(removed.map((event) => event.id));
   return limitEvents(current.filter((event) => !removedIds.has(event.id)));
 }
 
-function deriveLiveDraft(events: AgentEvent[]): LiveDraft | null {
-  let activeEvent: AgentEvent | null = null;
+function deriveLiveDraft(events: AgentEventRow[]): LiveDraft | null {
+  let activeEvent: AgentEventRow | null = null;
 
   for (const event of events) {
     if (event.stage === 'thinking' || event.stage === 'typing' || event.stage === 'message_saved') {
       activeEvent = event;
     }
 
-    if (event.stage === 'complete' && activeEvent?.responseId === event.responseId) {
+    if (event.stage === 'complete' && activeEvent?.response_id === event.response_id) {
       activeEvent = null;
     }
   }
@@ -179,7 +126,7 @@ function deriveLiveDraft(events: AgentEvent[]): LiveDraft | null {
   };
 }
 
-function deriveFallbackDraft(messages: ChatMessage[]): LiveDraft | null {
+function deriveFallbackDraft(messages: ChatMessageRow[]): LiveDraft | null {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
     if (message.role === 'assistant') {
@@ -199,8 +146,8 @@ function deriveFallbackDraft(messages: ChatMessage[]): LiveDraft | null {
 }
 
 export function App() {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [events, setEvents] = useState<AgentEvent[]>([]);
+  const [messages, setMessages] = useState<ChatMessageRow[]>([]);
+  const [events, setEvents] = useState<AgentEventRow[]>([]);
   const [draft, setDraft] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [status, setStatus] = useState<'connecting' | 'live' | 'error'>('connecting');
@@ -210,17 +157,17 @@ export function App() {
 
   useEffect(() => {
     let active = true;
-    let bufferedEvents: AgentEvent[] = [];
+    let bufferedEvents: AgentEventRow[] = [];
     const unsubscribers: Array<() => Promise<void>> = [];
 
-    const publishEvents = (nextEvents: AgentEvent[]): void => {
+    const publishEvents = (nextEvents: AgentEventRow[]): void => {
       bufferedEvents = nextEvents;
       flushSync(() => {
         setEvents(nextEvents);
       });
     };
 
-    const handleEventSubscription = (event: ServerMessage): void => {
+    const handleEventSubscription = (event: TableSubscriptionEvent<typeof agentEvents>): void => {
       if (!active) {
         return;
       }
@@ -236,7 +183,7 @@ export function App() {
       }
 
       if (event.type === MessageType.InitialDataBatch) {
-        publishEvents(upsertEvents(bufferedEvents, (event.rows ?? []).map(toAgentEvent)));
+        publishEvents(upsertEvents(bufferedEvents, event.rows ?? []));
         return;
       }
 
@@ -245,35 +192,37 @@ export function App() {
       }
 
       if (event.change_type === ChangeType.Delete) {
-        publishEvents(removeEvents(bufferedEvents, (event.old_values ?? []).map(toAgentEvent)));
+        publishEvents(removeEvents(bufferedEvents, event.old_values ?? []));
         return;
       }
 
       let nextEvents = bufferedEvents;
       if (event.change_type === ChangeType.Update) {
-        nextEvents = removeEvents(nextEvents, (event.old_values ?? []).map(toAgentEvent));
+        nextEvents = removeEvents(nextEvents, event.old_values ?? []);
       }
 
-      publishEvents(upsertEvents(nextEvents, (event.rows ?? []).map(toAgentEvent)));
+      publishEvents(upsertEvents(nextEvents, event.rows ?? []));
     };
 
     const start = async (): Promise<void> => {
       try {
-        const messagesUnsubscribe = await client.live(
-          CHAT_SQL,
+        const messagesUnsubscribe = await liveTable(
+          client,
+          chatMessages,
           (nextMessages) => {
             if (active) {
-              setMessages(sortMessages(nextMessages));
+              // Keep the materialized live query in server order.
+              setMessages(nextMessages);
             }
           },
           {
+            where: eq(chatMessages.room, ROOM),
             // `last_rows` asks the server for a rewind window at subscribe time.
             // `limit` keeps the materialized client-side live state bounded
             // after that rewind and across later live changes.
             limit: MAX_CHAT_MESSAGES,
-            mapRow: toMessage,
             subscriptionOptions: { last_rows: MAX_CHAT_MESSAGES },
-            onError: (event) => {
+            onError: (event: SubscriptionErrorEvent) => {
               if (!active) {
                 return;
               }
@@ -286,10 +235,14 @@ export function App() {
 
         // The draft rail keeps raw protocol frames so rapid typing bursts can
         // be reconciled locally instead of waiting for a full live-row view.
-        const eventsUnsubscribe = await client.subscribeWithSql(
-          EVENTS_SQL,
+        const eventsUnsubscribe = await subscribeTable(
+          client,
+          agentEvents,
           handleEventSubscription,
-          { last_rows: MAX_AGENT_EVENTS },
+          {
+            where: eq(agentEvents.room, ROOM),
+            last_rows: MAX_AGENT_EVENTS,
+          },
         );
         unsubscribers.push(eventsUnsubscribe);
 
@@ -335,10 +288,13 @@ export function App() {
     try {
       setIsSubmitting(true);
       setError(null);
-      await client.query(
-        'INSERT INTO chat_demo.messages (room, role, author, sender_username, content) VALUES ($1, $2, $3, $4, $5)',
-        [ROOM, 'user', CHAT_USERNAME, CHAT_USERNAME, content],
-      );
+      await db.insert(chatMessages).values({
+        room: ROOM,
+        role: 'user',
+        author: CHAT_USERNAME,
+        sender_username: CHAT_USERNAME,
+        content,
+      });
       setDraft('');
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : String(caughtError));
@@ -371,7 +327,7 @@ export function App() {
                 <article className={`bubble bubble-${message.role}`} key={message.id}>
                   <header>
                     <strong>{message.author}</strong>
-                    <span>{message.createdAt}</span>
+                    <span>{formatCreatedAt(message.created_at)}</span>
                   </header>
                   <p>{message.content}</p>
                 </article>
@@ -431,12 +387,12 @@ export function App() {
             </header>
             <ul className="event-list" data-testid="agent-events">
               {events.slice(-8).reverse().map((event) => (
-                <li className="event-item" key={`${event.id}-${event.responseId}`}>
+                <li className="event-item" key={`${event.id}-${event.response_id}`}>
                   <div>
                     <strong>{event.stage}</strong>
                     <p>{event.message}</p>
                   </div>
-                  <span>{event.createdAt}</span>
+                  <span>{formatCreatedAt(event.created_at)}</span>
                 </li>
               ))}
             </ul>

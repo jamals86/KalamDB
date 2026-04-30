@@ -1,8 +1,9 @@
 import { getDb } from "@/lib/db";
+import type { DbaStatRow as DbaStatRecord, SystemSettingRow } from "@/lib/models";
 import { system_settings, system_stats, dba_stats } from "@/lib/schema";
-import { asc, type InferSelectModel } from "drizzle-orm";
+import { asc } from "drizzle-orm";
 
-export type Setting = InferSelectModel<typeof system_settings>;
+export type Setting = SystemSettingRow;
 export type SystemStatsMap = Record<string, string>;
 
 export interface DbaStatRow {
@@ -11,19 +12,20 @@ export interface DbaStatRow {
   metric_value: number;
 }
 
-export async function fetchSystemSettings() {
+export async function fetchSystemSettings(): Promise<Setting[]> {
   const db = getDb();
   return db.select().from(system_settings);
 }
 
 export function mapSettingsRows(rows: Setting[]): Setting[] {
   if (rows.length === 0) {
-    return [
-      { name: "server.version", value: "0.1.0", description: "KalamDB server version" },
-      { name: "storage.default_backend", value: "rocksdb", description: "Default storage backend for write operations" },
-      { name: "query.max_rows", value: "10000", description: "Maximum rows returned per query" },
-      { name: "auth.jwt_expiry", value: "3600", description: "JWT token expiry in seconds" },
-    ] as Setting[];
+    const fallbackRows: Setting[] = [
+      { name: "server.version", value: "0.1.0", description: "KalamDB server version", category: "server" },
+      { name: "storage.default_backend", value: "rocksdb", description: "Default storage backend for write operations", category: "storage" },
+      { name: "query.max_rows", value: "10000", description: "Maximum rows returned per query", category: "query" },
+      { name: "auth.jwt_expiry", value: "3600", description: "JWT token expiry in seconds", category: "auth" },
+    ];
+    return fallbackRows;
   }
   return rows;
 }
@@ -92,7 +94,7 @@ function getTimeRangeCutoff(timeRange: string): number {
 
 export async function fetchDbaStats(timeRange: string = "24 HOURS"): Promise<DbaStatRow[]> {
   const db = getDb();
-  const rows = await db.select().from(dba_stats).orderBy(asc(dba_stats.sampled_at));
+  const rows: DbaStatRecord[] = await db.select().from(dba_stats).orderBy(asc(dba_stats.sampled_at));
   const cutoff = getTimeRangeCutoff(timeRange);
 
   return rows

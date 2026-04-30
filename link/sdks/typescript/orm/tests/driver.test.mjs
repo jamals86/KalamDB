@@ -1,9 +1,9 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { drizzle } from 'drizzle-orm/pg-proxy';
-import { pgTable, text, bigint, timestamp } from 'drizzle-orm/pg-core';
+import { text, bigint, timestamp } from 'drizzle-orm/pg-core';
 import { eq, desc } from 'drizzle-orm';
-import { kalamDriver, file } from '../dist/index.js';
+import { kalamDriver, executeAsUser, file, kTable } from '../dist/index.js';
 import { requirePassword, createTestClient } from './helpers.mjs';
 
 requirePassword();
@@ -11,13 +11,13 @@ requirePassword();
 let client;
 let db;
 
-const system_users = pgTable('system.users', {
+const system_users = kTable('system.users', {
   user_id: text('user_id'),
   role: text('role'),
   email: text('email'),
 });
 
-const system_audit_log = pgTable('system.audit_log', {
+const system_audit_log = kTable('system.audit_log', {
   audit_id: text('audit_id'),
   actor_user_id: text('actor_user_id'),
   action: text('action'),
@@ -99,7 +99,7 @@ describe('kalamDriver', () => {
       )
     `);
 
-    const items = pgTable('test_orm_insert.items', {
+    const items = kTable('test_orm_insert.items', {
       id: bigint('id', { mode: 'number' }),
       name: text('name'),
     });
@@ -126,7 +126,7 @@ describe('kalamDriver', () => {
       )
     `);
 
-    const table = pgTable('test_orm_insert.multi_defaults', {
+    const table = kTable('test_orm_insert.multi_defaults', {
       id: bigint('id', { mode: 'number' }),
       label: text('label'),
       created_at: timestamp('created_at', { mode: 'string' }),
@@ -144,6 +144,34 @@ describe('kalamDriver', () => {
     await client.query('DROP NAMESPACE IF EXISTS test_orm_insert');
   });
 
+  it('maps TIMESTAMP columns to Date when the schema uses date mode', async () => {
+    await client.query('CREATE NAMESPACE IF NOT EXISTS test_orm_insert');
+    await client.query('DROP TABLE IF EXISTS test_orm_insert.date_defaults');
+    await client.query(`
+      CREATE TABLE test_orm_insert.date_defaults (
+        id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
+        label TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
+    const table = kTable('test_orm_insert.date_defaults', {
+      id: bigint('id', { mode: 'number' }),
+      label: text('label'),
+      created_at: timestamp('created_at', { mode: 'date' }),
+    });
+
+    await db.insert(table).values({ label: 'date-mode-test' });
+    const rows = await db.select().from(table);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].label, 'date-mode-test');
+    assert.ok(rows[0].created_at instanceof Date);
+    assert.ok(!Number.isNaN(rows[0].created_at.getTime()));
+
+    await client.query('DROP TABLE IF EXISTS test_orm_insert.date_defaults');
+    await client.query('DROP NAMESPACE IF EXISTS test_orm_insert');
+  });
+
   it('INSERT with explicit id still works alongside DEFAULT columns', async () => {
     await client.query('CREATE NAMESPACE IF NOT EXISTS test_orm_insert');
     await client.query('DROP TABLE IF EXISTS test_orm_insert.explicit_id');
@@ -154,7 +182,7 @@ describe('kalamDriver', () => {
       )
     `);
 
-    const table = pgTable('test_orm_insert.explicit_id', {
+    const table = kTable('test_orm_insert.explicit_id', {
       id: bigint('id', { mode: 'number' }),
       name: text('name'),
     });
@@ -179,7 +207,7 @@ describe('kalamDriver', () => {
       )
     `);
 
-    const table = pgTable('test_orm_insert.multi_row', {
+    const table = kTable('test_orm_insert.multi_row', {
       id: text('id'),
       name: text('name'),
     });
@@ -207,7 +235,7 @@ describe('kalamDriver', () => {
       )
     `);
 
-    const table = pgTable('test_orm_insert.updatable', {
+    const table = kTable('test_orm_insert.updatable', {
       id: bigint('id', { mode: 'number' }),
       name: text('name'),
       status: text('status'),
@@ -235,7 +263,7 @@ describe('kalamDriver', () => {
       )
     `);
 
-    const table = pgTable('test_orm_insert.deletable', {
+    const table = kTable('test_orm_insert.deletable', {
       id: bigint('id', { mode: 'number' }),
       name: text('name'),
     });
@@ -263,7 +291,7 @@ describe('kalamDriver', () => {
       )
     `);
 
-    const table = pgTable('test_orm_insert.precision', {
+    const table = kTable('test_orm_insert.precision', {
       id: text('id'),
       name: text('name'),
     });
@@ -283,7 +311,7 @@ describe('kalamDriver', () => {
   });
 
   it('throws when querying a non-existent table', async () => {
-    const fake = pgTable('nonexistent.fake_table', {
+    const fake = kTable('nonexistent.fake_table', {
       id: bigint('id', { mode: 'number' }),
     });
 
@@ -302,7 +330,7 @@ describe('kalamDriver', () => {
     `);
     await client.query("INSERT INTO test_orm.nullable_files (id) VALUES (1)");
 
-    const table = pgTable('test_orm.nullable_files', {
+    const table = kTable('test_orm.nullable_files', {
       id: bigint('id', { mode: 'number' }),
       doc: file('doc'),
     });
@@ -331,7 +359,7 @@ describe('kalamDriver', () => {
     });
     await client.query(`INSERT INTO test_orm.docs (title, attachment) VALUES ('quarterly', '${fakeFile}')`);
 
-    const test_docs = pgTable('test_orm.docs', {
+    const test_docs = kTable('test_orm.docs', {
       id: bigint('id', { mode: 'number' }),
       title: text('title'),
       attachment: file('attachment'),
@@ -348,5 +376,29 @@ describe('kalamDriver', () => {
 
     await client.query('DROP TABLE IF EXISTS test_orm.docs');
     await client.query('DROP NAMESPACE IF EXISTS test_orm');
+  });
+
+  it('executes Drizzle builders via executeAsUser', async () => {
+    await client.query('CREATE NAMESPACE IF NOT EXISTS test_orm_insert');
+    await client.query('DROP TABLE IF EXISTS test_orm_insert.as_user');
+    await client.query(`
+      CREATE TABLE test_orm_insert.as_user (
+        id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
+        name TEXT NOT NULL
+      ) WITH (TYPE = 'USER')
+    `);
+
+    const table = kTable('test_orm_insert.as_user', {
+      id: bigint('id', { mode: 'number' }),
+      name: text('name'),
+    });
+
+    await executeAsUser(client, db.insert(table).values({ name: 'executed-as-user' }), 'admin');
+    const rows = await db.select().from(table);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].name, 'executed-as-user');
+
+    await client.query('DROP TABLE IF EXISTS test_orm_insert.as_user');
+    await client.query('DROP NAMESPACE IF EXISTS test_orm_insert');
   });
 });

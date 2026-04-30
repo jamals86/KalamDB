@@ -1,4 +1,16 @@
 export { kalamDriver } from './driver.js';
+export { parseKalamDataType, type KalamDataTypeDescriptor, type KalamDataTypeKind } from './data-types.js';
 export { generateSchema, type GenerateOptions } from './generate.js';
-export { file } from './file-column.js';
-export { liveTable } from './live.js';
+export { bytes, embedding, file } from './file-column.js';
+export { executeAsUser } from './sql.js';
+export { liveTable, subscribeTable, type TableSubscriptionEvent } from './live.js';
+export {
+	getKalamTableConfig,
+	kSystemColumns,
+	kTable,
+	kalamTableConfigSymbol,
+	type KalamSystemColumnName,
+	type KalamTableConfig,
+	type KalamTableOptions,
+	type KalamTableType,
+} from './ktable.js';

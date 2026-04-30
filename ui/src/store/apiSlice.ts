@@ -66,7 +66,7 @@ import type {
   StreamingOffset,
   StreamingTopic,
 } from "@/features/streaming/types";
-import type { JobFilters } from "@/services/sql/queries/jobQueries";
+import type { JobFilters } from "@/services/jobService";
 
 interface CustomQueryError {
   status: "CUSTOM_ERROR";

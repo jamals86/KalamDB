@@ -3,9 +3,10 @@ import test from 'node:test';
 
 import { Auth, createClient } from '../dist/src/index.js';
 
-function createFakeWasmClient({ subscribeError, disconnectError } = {}) {
+function createFakeWasmClient({ subscribeError, disconnectError, failOnConcurrentSubscribe = false } = {}) {
   let connected = false;
   let nextSubscriptionId = 0;
+  let subscribeInFlight = false;
   const callbacks = new Map();
   const subscriptions = [];
 
@@ -34,25 +35,43 @@ function createFakeWasmClient({ subscribeError, disconnectError } = {}) {
     },
     async subscribeWithSql(_sql, _optionsJson, callback) {
       this.subscribeCalls += 1;
-      if (subscribeError) {
-        throw new Error(subscribeError);
+      if (failOnConcurrentSubscribe && subscribeInFlight) {
+        throw new Error('Concurrent subscription registration');
       }
-      nextSubscriptionId += 1;
-      const subscriptionId = `sub-${nextSubscriptionId}`;
-      callbacks.set(subscriptionId, callback);
-      subscriptions.push({ id: subscriptionId, query: _sql });
-      return subscriptionId;
+      subscribeInFlight = true;
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        if (subscribeError) {
+          throw new Error(subscribeError);
+        }
+        nextSubscriptionId += 1;
+        const subscriptionId = `sub-${nextSubscriptionId}`;
+        callbacks.set(subscriptionId, callback);
+        subscriptions.push({ id: subscriptionId, query: _sql });
+        return subscriptionId;
+      } finally {
+        subscribeInFlight = false;
+      }
     },
     async liveQueryRowsWithSql(_sql, _optionsJson, callback) {
       this.subscribeCalls += 1;
-      if (subscribeError) {
-        throw new Error(subscribeError);
+      if (failOnConcurrentSubscribe && subscribeInFlight) {
+        throw new Error('Concurrent subscription registration');
       }
-      nextSubscriptionId += 1;
-      const subscriptionId = `sub-${nextSubscriptionId}`;
-      callbacks.set(subscriptionId, callback);
-      subscriptions.push({ id: subscriptionId, query: _sql });
-      return subscriptionId;
+      subscribeInFlight = true;
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        if (subscribeError) {
+          throw new Error(subscribeError);
+        }
+        nextSubscriptionId += 1;
+        const subscriptionId = `sub-${nextSubscriptionId}`;
+        callbacks.set(subscriptionId, callback);
+        subscriptions.push({ id: subscriptionId, query: _sql });
+        return subscriptionId;
+      } finally {
+        subscribeInFlight = false;
+      }
     },
     async unsubscribe(subscriptionId) {
       callbacks.delete(subscriptionId);
@@ -111,6 +130,30 @@ test('multiple subscriptions on one client share one websocket connection', asyn
   await unsubscribeEvents();
 
   assert.equal(client.getSubscriptionCount(), 0);
+});
+
+test('concurrent subscription registration is serialized per client', async () => {
+  const client = createClient({
+    url: 'http://127.0.0.1:8080',
+    authProvider: async () => Auth.jwt('fixture-token'),
+  });
+
+  const fakeWasmClient = createFakeWasmClient({ failOnConcurrentSubscribe: true });
+
+  client.initialized = true;
+  client.wasmClient = fakeWasmClient;
+
+  const [unsubscribeMessages, unsubscribeEvents] = await Promise.all([
+    client.subscribeWithSql('SELECT * FROM chat_demo.messages', () => {}),
+    client.subscribeWithSql('SELECT * FROM chat_demo.agent_events', () => {}),
+  ]);
+
+  assert.equal(fakeWasmClient.connectCalls, 1);
+  assert.equal(fakeWasmClient.subscribeCalls, 2);
+  assert.equal(client.getSubscriptionCount(), 2);
+
+  await unsubscribeMessages();
+  await unsubscribeEvents();
 });
 
 test('failed subscriptions do not leak local subscription state', async () => {

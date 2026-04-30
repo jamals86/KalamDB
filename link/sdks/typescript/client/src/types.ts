@@ -77,6 +77,15 @@ export function UserId(value: string): UserId {
   return value as UserId;
 }
 
+/**
+ * Canonical KalamDB column data types as exposed in schema metadata.
+ *
+ * Parameterized variants mirror the Rust `KalamDataType` enum: `Embedding(n)`
+ * for fixed-size Float32 vectors and `Decimal { precision, scale }` for exact
+ * fixed-point values. Query rows still use JSON-safe transport values: Int64 and
+ * DECIMAL values are strings, BYTES values are byte arrays, and FILE values are
+ * FileRef JSON objects.
+ */
 export type KalamDataType =
   | 'Boolean'
   | 'Int'

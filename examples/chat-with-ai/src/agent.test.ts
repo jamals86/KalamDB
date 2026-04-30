@@ -109,30 +109,6 @@ async function stopAgent(controller, task) {
   ]);
 }
 
-function parseChatRow(message) {
-  const payload = message.value;
-  if (!payload || typeof payload !== 'object') {
-    return null;
-  }
-
-  const raw = (payload.row ?? payload);
-  if (!raw || typeof raw !== 'object') {
-    return null;
-  }
-
-  const id = String(raw.id ?? '').trim();
-  const room = String(raw.room ?? '').trim();
-  const role = String(raw.role ?? '').trim();
-  const sender_username = String(raw.sender_username ?? '').trim();
-  const content = String(raw.content ?? '').trim();
-
-  if (!id || !room || !role || !sender_username || !content) {
-    return null;
-  }
-
-  return { id, room, role, sender_username, content };
-}
-
 async function insertUserMessage(client, tableName, room, messageId, content) {
   const sql = [
     `INSERT INTO ${tableName} (id, room, role, sender_username, content)`,
@@ -205,7 +181,6 @@ test('two agents in the same group avoid duplicates and fail over to the standby
     batchSize: 1,
     timeoutSeconds: 2,
     stopSignal,
-    rowParser: parseChatRow,
     onRow: async (_ctx, row) => {
       if (row.role !== 'user' || row.room !== room) {
         return;

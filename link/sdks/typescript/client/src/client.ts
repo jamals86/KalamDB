@@ -154,6 +154,8 @@ export class KalamDBClient {
   private wsLazyConnect: boolean;
   private pingIntervalMs: number;
   private autoReconnectEnabled = true;
+  /** Serialize direct WASM calls because the underlying bindings are not re-entrant. */
+  private wasmCallQueue: Promise<unknown> = Promise.resolve();
 
   /** Current minimum log level. */
   private _logLevel: LogLevel;
@@ -208,6 +210,12 @@ export class KalamDBClient {
     this._onError = options.onError;
     this._onReceive = options.onReceive;
     this._onSend = options.onSend;
+  }
+
+  private serializeWasmCall<T>(fn: () => Promise<T>): Promise<T> {
+    const result = this.wasmCallQueue.then(fn, fn);
+    this.wasmCallQueue = result.catch(() => {});
+    return result;
   }
 
   /* ---------------------------------------------------------------- */
@@ -365,8 +373,9 @@ export class KalamDBClient {
       try {
         this.log(LogLevel.Info, 'connection', `Connecting to ${this.url}...`);
         await this.initialize();
-        if (!this.wasmClient) throw new Error('WASM client not initialized');
-        this.wasmClient.setAutoReconnect(this.autoReconnectEnabled);
+        const wasmClient = this.wasmClient;
+        if (!wasmClient) throw new Error('WASM client not initialized');
+        wasmClient.setAutoReconnect(this.autoReconnectEnabled);
 
         // Auto-login: exchange Basic credentials for JWT before WebSocket connect.
         if (this.auth?.type === 'basic') {
@@ -378,9 +387,9 @@ export class KalamDBClient {
         // Always forward the effective ping interval so the TS and WASM
         // defaults cannot silently drift apart.
         this.log(LogLevel.Debug, 'connection', `Setting ping interval to ${this.pingIntervalMs}ms`);
-        this.wasmClient.setPingInterval?.(this.pingIntervalMs);
+        wasmClient.setPingInterval?.(this.pingIntervalMs);
 
-        await this.wasmClient.connect();
+        await this.serializeWasmCall(() => wasmClient.connect());
         this.log(LogLevel.Info, 'connection', `Connected to ${this.url} successfully`);
       } finally {
         this.connecting = null;
@@ -416,13 +425,14 @@ export class KalamDBClient {
   async disconnect(): Promise<void> {
     this.log(LogLevel.Info, 'connection', 'Disconnecting...');
     this.clearSubscriptionMetadata();
-    if (!this.wasmClient) {
+    const wasmClient = this.wasmClient;
+    if (!wasmClient) {
       return;
     }
 
-    this.wasmClient.setAutoReconnect(false);
+    wasmClient.setAutoReconnect(false);
     try {
-      await this.wasmClient.disconnect();
+      await this.serializeWasmCall(() => wasmClient.disconnect());
       await new Promise((resolve) => setTimeout(resolve, 0));
     } finally {
       this.log(LogLevel.Debug, 'connection', 'Disconnected and subscriptions cleared');
@@ -453,7 +463,7 @@ export class KalamDBClient {
 
     try {
       wasmClient.setAutoReconnect(false);
-      await wasmClient.disconnect();
+      await this.serializeWasmCall(() => wasmClient.disconnect());
       await new Promise((resolve) => setTimeout(resolve, 0));
     } finally {
       if (typeof wasmClient.free === 'function') {
@@ -659,11 +669,14 @@ export class KalamDBClient {
   async query(sql: string, params?: unknown[]): Promise<QueryResponse> {
     await this.initialize();
     await this.ensureJwtForBasicAuth();
-    if (!this.wasmClient) throw new Error('WASM client not initialized');
+    const wasmClient = this.wasmClient;
+    if (!wasmClient) throw new Error('WASM client not initialized');
 
-    const resultStr = params?.length
-      ? await this.wasmClient.queryWithParams(sql, JSON.stringify(params))
-      : await this.wasmClient.query(sql);
+    const resultStr = await this.serializeWasmCall(() => (
+      params?.length
+        ? wasmClient.queryWithParams(sql, JSON.stringify(params))
+        : wasmClient.query(sql)
+    ));
 
     return JSON.parse(resultStr) as QueryResponse;
   }
@@ -827,8 +840,11 @@ export class KalamDBClient {
   async insert(tableName: string, data: Record<string, unknown>): Promise<QueryResponse> {
     await this.initialize();
     await this.ensureJwtForBasicAuth();
-    this.requireInit();
-    const resultStr = await this.wasmClient!.insert(tableName, JSON.stringify(data));
+    const wasmClient = this.wasmClient;
+    if (!wasmClient) throw new Error('WASM client not initialized');
+    const resultStr = await this.serializeWasmCall(
+      () => wasmClient.insert(tableName, JSON.stringify(data)),
+    );
     return JSON.parse(resultStr) as QueryResponse;
   }
 
@@ -843,8 +859,9 @@ export class KalamDBClient {
   async delete(tableName: string, rowId: string | number): Promise<void> {
     await this.initialize();
     await this.ensureJwtForBasicAuth();
-    this.requireInit();
-    await this.wasmClient!.delete(tableName, String(rowId));
+    const wasmClient = this.wasmClient;
+    if (!wasmClient) throw new Error('WASM client not initialized');
+    await this.serializeWasmCall(() => wasmClient.delete(tableName, String(rowId)));
   }
 
   /**
@@ -1107,9 +1124,12 @@ export class KalamDBClient {
   async refreshToken(refreshToken: string): Promise<LoginResponse> {
     this.log(LogLevel.Debug, 'auth', 'Refreshing access token...');
     await this.initialize();
-    if (!this.wasmClient) throw new Error('WASM client not initialized');
+    const wasmClient = this.wasmClient;
+    if (!wasmClient) throw new Error('WASM client not initialized');
 
-    const response = (await this.wasmClient.refresh_access_token(refreshToken)) as LoginResponse;
+    const response = (await this.serializeWasmCall(
+      () => wasmClient.refresh_access_token(refreshToken),
+    )) as LoginResponse;
 
     // Update TypeScript client's auth state with new access token
     this.auth = { type: 'jwt', token: response.access_token };
@@ -1268,10 +1288,11 @@ export class KalamDBClient {
   /** Unsubscribe by subscription ID */
   async unsubscribe(subscriptionId: string): Promise<void> {
     this.log(LogLevel.Debug, 'subscription', `Unsubscribing: id=${subscriptionId}`);
-    if (!this.wasmClient) throw new Error('WASM client not initialized');
+    const wasmClient = this.wasmClient;
+    if (!wasmClient) throw new Error('WASM client not initialized');
     this.forgetSubscriptionMetadata(subscriptionId);
     try {
-      await this.wasmClient.unsubscribe(subscriptionId);
+      await this.serializeWasmCall(() => wasmClient.unsubscribe(subscriptionId));
       this.log(LogLevel.Info, 'subscription', `Unsubscribed: id=${subscriptionId}`);
     } catch (error) {
       this.log(LogLevel.Warn, 'subscription', `Unsubscribe failed for ${subscriptionId}: ${error}`);
@@ -1321,11 +1342,22 @@ export class KalamDBClient {
     register: (wasmClient: WasmClient) => Promise<string>,
   ): Promise<string> {
     await this.ensureConnected();
-    if (!this.wasmClient) {
+    const wasmClient = this.wasmClient;
+    if (!wasmClient) {
       throw new Error('WASM client not initialized');
     }
 
-    const subscriptionId = await register(this.wasmClient);
+    let subscriptionId: string;
+    try {
+      subscriptionId = await this.serializeWasmCall(() => register(wasmClient));
+    } catch (error) {
+      if (!String(error).includes('Not connected to server')) {
+        throw error;
+      }
+
+      await this.connectInternal();
+      subscriptionId = await this.serializeWasmCall(() => register(wasmClient));
+    }
     this.trackSubscriptionMetadata(subscriptionId, tableName);
     this.log(LogLevel.Info, 'subscription', `Subscribed: id=${subscriptionId}`);
     return subscriptionId;
