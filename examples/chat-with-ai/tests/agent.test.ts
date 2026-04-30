@@ -1,29 +1,33 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { buildReply } from './agent.js';
-import { Auth, createClient } from '@kalamdb/client';
-import { createConsumerClient, runAgent } from '@kalamdb/consumer';
+import { Auth, createClient, type KalamDBClient } from '@kalamdb/client';
+import { createConsumerClient, runAgent, type ConsumerClientLike } from '@kalamdb/consumer';
+import { buildReply } from '../src/agent.js';
 
 const serverUrl = process.env.KALAMDB_URL ?? 'http://127.0.0.1:8080';
 const user = process.env.KALAMDB_USER ?? 'admin';
 const password = process.env.KALAMDB_PASSWORD ?? 'kalamdb123';
 
-function createAuthedClient() {
+type WorkerClient = ConsumerClientLike & {
+  disconnect: () => Promise<void>;
+};
+
+function createAuthedClient(): KalamDBClient {
   return createClient({
     url: serverUrl,
     authProvider: async () => Auth.basic(user, password),
   });
 }
 
-function createWorkerClient() {
+function createWorkerClient(): WorkerClient {
   return createConsumerClient({
     url: serverUrl,
     authProvider: async () => Auth.basic(user, password),
   });
 }
 
-async function isServerAvailable() {
+async function isServerAvailable(): Promise<boolean> {
   try {
     const response = await fetch(`${serverUrl}/health`);
     return response.ok;
@@ -32,7 +36,11 @@ async function isServerAvailable() {
   }
 }
 
-async function waitFor(condition, timeoutMs = 15_000, intervalMs = 50) {
+async function waitFor<T>(
+  condition: () => T | null | false | Promise<T | null | false>,
+  timeoutMs = 15_000,
+  intervalMs = 50,
+): Promise<T> {
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {
@@ -46,7 +54,7 @@ async function waitFor(condition, timeoutMs = 15_000, intervalMs = 50) {
   throw new Error(`Timed out after ${timeoutMs}ms`);
 }
 
-async function getAccessToken() {
+async function getAccessToken(): Promise<string> {
   const response = await fetch(`${serverUrl}/v1/api/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -65,7 +73,7 @@ async function getAccessToken() {
   return body.access_token;
 }
 
-async function waitForTopicReady(client, topicId) {
+async function waitForTopicReady(client: Pick<KalamDBClient, 'query'>, topicId: string): Promise<void> {
   const accessToken = await getAccessToken();
 
   await waitFor(async () => {
@@ -101,7 +109,7 @@ async function waitForTopicReady(client, topicId) {
   await new Promise((resolve) => setTimeout(resolve, 100));
 }
 
-async function stopAgent(controller, task) {
+async function stopAgent(controller: AbortController, task: Promise<void>): Promise<void> {
   controller.abort();
   await Promise.race([
     task,
@@ -109,12 +117,26 @@ async function stopAgent(controller, task) {
   ]);
 }
 
-async function insertUserMessage(client, tableName, room, messageId, content) {
+async function insertUserMessage(
+  client: Pick<KalamDBClient, 'query'>,
+  tableName: string,
+  room: string,
+  messageId: string,
+  content: string,
+): Promise<void> {
   const sql = [
     `INSERT INTO ${tableName} (id, room, role, sender_username, content)`,
     `VALUES ('${messageId}', '${room}', 'user', '${user}', '${content.replace(/'/g, "''")}')`,
   ].join(' ');
   await client.query(sql);
+}
+
+function processedFor(processed: Map<string, string[]>, name: string): string[] {
+  const values = processed.get(name);
+  if (!values) {
+    throw new Error(`Unknown test agent: ${name}`);
+  }
+  return values;
 }
 
 test('buildReply generates a contextual assistant response', () => {
@@ -162,7 +184,7 @@ test('two agents in the same group avoid duplicates and fail over to the standby
   await adminClient.query(`ALTER TOPIC ${topicName} ADD SOURCE ${tableName} ON INSERT`);
   await waitForTopicReady(adminClient, topicName);
 
-  const processed = new Map([
+  const processed = new Map<string, string[]>([
     ['agent-a', []],
     ['agent-b', []],
   ]);
@@ -172,7 +194,7 @@ test('two agents in the same group avoid duplicates and fail over to the standby
   const controllerA = new AbortController();
   const controllerB = new AbortController();
 
-  const startAgent = (name, client, stopSignal) => runAgent({
+  const startAgent = (name: string, client: WorkerClient, stopSignal: AbortSignal): Promise<void> => runAgent({
     client,
     name,
     topic: topicName,
@@ -185,7 +207,7 @@ test('two agents in the same group avoid duplicates and fail over to the standby
       if (row.role !== 'user' || row.room !== room) {
         return;
       }
-      processed.get(name).push(row.id);
+      processedFor(processed, name).push(String(row.id));
     },
   });
 
@@ -198,18 +220,18 @@ test('two agents in the same group avoid duplicates and fail over to the standby
     await insertUserMessage(adminClient, tableName, room, firstMessageId, 'first failover message');
 
     const firstProcessor = await waitFor(() => {
-      if (processed.get('agent-a').includes(firstMessageId)) {
+      if (processedFor(processed, 'agent-a').includes(firstMessageId)) {
         return 'agent-a';
       }
-      if (processed.get('agent-b').includes(firstMessageId)) {
+      if (processedFor(processed, 'agent-b').includes(firstMessageId)) {
         return 'agent-b';
       }
       return null;
     });
 
     const standbyProcessor = firstProcessor === 'agent-a' ? 'agent-b' : 'agent-a';
-    const firstCount = processed.get('agent-a').filter((id) => id === firstMessageId).length
-      + processed.get('agent-b').filter((id) => id === firstMessageId).length;
+    const firstCount = processedFor(processed, 'agent-a').filter((id) => id === firstMessageId).length
+      + processedFor(processed, 'agent-b').filter((id) => id === firstMessageId).length;
     assert.equal(firstCount, 1, 'the first message should be processed exactly once across the group');
 
     if (firstProcessor === 'agent-a') {
@@ -221,17 +243,17 @@ test('two agents in the same group avoid duplicates and fail over to the standby
     await new Promise((resolve) => setTimeout(resolve, 250));
     await insertUserMessage(adminClient, tableName, room, secondMessageId, 'second failover message');
 
-    await waitFor(() => processed.get(standbyProcessor).includes(secondMessageId));
+    await waitFor(() => processedFor(processed, standbyProcessor).includes(secondMessageId));
 
-    const secondCount = processed.get('agent-a').filter((id) => id === secondMessageId).length
-      + processed.get('agent-b').filter((id) => id === secondMessageId).length;
+    const secondCount = processedFor(processed, 'agent-a').filter((id) => id === secondMessageId).length
+      + processedFor(processed, 'agent-b').filter((id) => id === secondMessageId).length;
     assert.equal(secondCount, 1, 'the second message should be processed exactly once across the group');
     assert.ok(
-      processed.get(standbyProcessor).includes(secondMessageId),
+      processedFor(processed, standbyProcessor).includes(secondMessageId),
       'the standby agent should take over after the active agent stops',
     );
     assert.ok(
-      !processed.get(firstProcessor).includes(secondMessageId),
+      !processedFor(processed, firstProcessor).includes(secondMessageId),
       'the stopped agent must not process new messages after failover',
     );
   } finally {

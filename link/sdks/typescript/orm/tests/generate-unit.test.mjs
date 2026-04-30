@@ -115,4 +115,134 @@ describe('generateSchema unit behavior', () => {
     assert.ok(schema.includes('time("scheduled_for")'));
     assert.ok(schema.includes('select: text("select")'));
   });
+
+  it('uses DESCRIBE fallback and renders complex real-world schemas with options', async () => {
+    const queries = [];
+    const client = {
+      async query(sql) {
+        queries.push(sql);
+        if (sql === 'SHOW TABLES') {
+          return {
+            results: [{
+              named_rows: [
+                {
+                  table_id: 'commerce:orders',
+                  table_name: 'orders',
+                  namespace_id: 'commerce',
+                  table_type: 'User',
+                  columns: JSON.stringify([
+                    { column_name: 'id', data_type: 'BigInt', is_nullable: false },
+                    { column_name: 'select', data_type: 'Text', is_nullable: false },
+                  ]),
+                },
+                {
+                  table_id: 'commerce:events',
+                  table_name: 'events',
+                  namespace_id: 'commerce',
+                  table_type: 'Stream',
+                  columns: JSON.stringify([
+                    { column_name: 'event_id', ordinal_position: 1, data_type: 'Text', is_nullable: false, is_primary_key: true, default_value: 'None' },
+                    { column_name: 'received_at', ordinal_position: 2, data_type: 'Timestamp(Microsecond)', is_nullable: false, is_primary_key: false, default_value: 'FunctionCall' },
+                  ]),
+                },
+                {
+                  table_id: 'archive:orders',
+                  table_name: 'orders',
+                  namespace_id: 'archive',
+                  table_type: 'Shared',
+                  columns: columnsJson,
+                },
+              ],
+            }],
+          };
+        }
+
+        if (sql === 'DESCRIBE commerce.orders') {
+          return {
+            results: [{
+              named_rows: [
+                { column_name: 'id', ordinal_position: 1, data_type: 'BigInt', is_nullable: false, is_primary_key: true, default_value: 'FunctionCall', column_comment: 'server generated id' },
+                { column_name: 'tenant_id', ordinal_position: 2, data_type: 'Uuid', is_nullable: false, is_primary_key: false, default_value: 'None' },
+                { column_name: 'status', ordinal_position: 3, data_type: 'Text', is_nullable: false, is_primary_key: false, default_value: "'pending'" },
+                { column_name: 'total', ordinal_position: 4, data_type: { Decimal: { precision: 18, scale: 4 } }, is_nullable: false, is_primary_key: false, default_value: 'None' },
+                { column_name: 'embedding', ordinal_position: 5, data_type: { Embedding: 8 }, is_nullable: true, is_primary_key: false, default_value: 'None' },
+                { column_name: 'metadata', ordinal_position: 6, data_type: 'JSONB', is_nullable: true, is_primary_key: false, default_value: 'None' },
+                { column_name: 'raw_blob', ordinal_position: 7, data_type: 'LargeBinary', is_nullable: true, is_primary_key: false, default_value: 'None' },
+                { column_name: 'created_at', ordinal_position: 8, data_type: 'Timestamp(Nanosecond)', is_nullable: false, is_primary_key: false, default_value: 'FunctionCall' },
+                { column_name: 'ship_date', ordinal_position: 9, data_type: 'Date32', is_nullable: true, is_primary_key: false, default_value: 'None' },
+                { column_name: 'delivery_window', ordinal_position: 10, data_type: 'Time64(Microsecond)', is_nullable: true, is_primary_key: false, default_value: 'None' },
+                { column_name: 'class', ordinal_position: 11, data_type: 'Text', is_nullable: true, is_primary_key: false, default_value: 'None' },
+                { column_name: '_seq', ordinal_position: 12, data_type: 'BigInt', is_nullable: false, is_primary_key: false, default_value: 'None' },
+              ],
+            }],
+          };
+        }
+
+        throw new Error(`unexpected query: ${sql}`);
+      },
+    };
+
+    const schema = await generateSchema(client, {
+      namespaces: ['commerce'],
+      includeSystemColumns: 'all',
+      bigIntMode: 'bigint',
+    });
+
+    assert.equal(queries[0], 'SHOW TABLES');
+    assert.equal(queries.filter((query) => query === 'DESCRIBE commerce.orders').length, 1);
+    assert.ok(schema.includes('export const commerce_orders = kTable.user("commerce.orders"'));
+    assert.ok(schema.includes('export const commerce_events = kTable.stream("commerce.events"'));
+    assert.ok(!schema.includes('archive_orders'));
+    assert.ok(schema.includes('/** server generated id */'));
+    assert.ok(schema.includes('id: bigint("id", { mode: "bigint" }).default(sql``).primaryKey()'));
+    assert.ok(schema.includes('tenant_id: uuid("tenant_id").notNull()'));
+    assert.ok(schema.includes('status: text("status").default(sql``).notNull()'));
+    assert.ok(schema.includes('total: numeric("total", { precision: 18, scale: 4 }).notNull()'));
+    assert.ok(schema.includes('embedding: embedding("embedding", 8)'));
+    assert.ok(schema.includes('metadata: jsonb("metadata")'));
+    assert.ok(schema.includes('raw_blob: bytes("raw_blob")'));
+    assert.ok(schema.includes('created_at: timestamp("created_at", { mode: \'date\' }).default(sql``).notNull()'));
+    assert.ok(schema.includes('ship_date: date("ship_date", { mode: \'date\' })'));
+    assert.ok(schema.includes('delivery_window: time("delivery_window")'));
+    assert.ok(schema.includes('class: text("class")'));
+    assert.ok(schema.includes('...kSystemColumns(["_seq","_deleted","_commit_seq"] as const),'));
+    assert.ok(schema.includes('}, { systemColumns: "all" });'));
+    assert.ok(schema.includes('export const commerce_ordersConfig = getKalamTableConfig(commerce_orders)!;'));
+    assert.ok(schema.includes('export type CommerceOrders = typeof commerce_orders.$inferSelect;'));
+  });
+
+  it('honors explicit system columns, bigint number mode, and disabled type aliases', async () => {
+    const client = {
+      async query(sql) {
+        assert.equal(sql, 'SHOW TABLES');
+        return {
+          results: [{
+            named_rows: [{
+              table_id: 'metrics:samples',
+              table_name: 'samples',
+              namespace_id: 'metrics',
+              table_type: 'Shared',
+              columns: JSON.stringify([
+                { column_name: 'id', ordinal_position: 1, data_type: 'BigInt', is_nullable: false, is_primary_key: true, default_value: 'None' },
+                { column_name: 'value', ordinal_position: 2, data_type: 'Double', is_nullable: false, is_primary_key: false, default_value: 'None' },
+              ]),
+            }],
+          }],
+        };
+      },
+    };
+
+    const schema = await generateSchema(client, {
+      includeSystemColumns: ['_seq'],
+      bigIntMode: 'number',
+      includeTypeAliases: false,
+    });
+
+    assert.ok(schema.includes('...kSystemColumns(["_seq"] as const),'));
+    assert.ok(schema.includes('}, { systemColumns: ["_seq"] });'));
+    assert.ok(schema.includes('id: bigint("id", { mode: "number" }).primaryKey()'));
+    assert.ok(schema.includes('value: doublePrecision("value").notNull()'));
+    assert.ok(!schema.includes('export type MetricsSamples'));
+    assert.ok(!schema.includes('export type NewMetricsSamples'));
+  });
 });

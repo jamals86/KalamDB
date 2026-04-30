@@ -41,7 +41,8 @@
     "build:ts": "tsc",
     "build:copy-wasm": "node ../scripts/copy-wasm.mjs .",
     "build": "npm run clean && npm run build:wasm && npm run build:prepare-wasm-dts && npm run build:ts && npm run build:copy-wasm",
-    "test": "npm run build && NO_SERVER=true node --test tests/basic.test.mjs tests/normalize.test.mjs tests/auth-provider-retry.test.mjs tests/cell-value.test.mjs tests/single-socket-subscriptions.test.mjs tests/readme-examples.test.mjs tests/sdk-runtime-coverage.test.mjs",
+    "test:types": "tsc -p tsconfig.test.json",
+    "test": "npm run build && npm run test:types && NO_SERVER=true node --test tests/basic.test.mjs tests/normalize.test.mjs tests/auth-provider-retry.test.mjs tests/cell-value.test.mjs tests/single-socket-subscriptions.test.mjs tests/readme-examples.test.mjs tests/sdk-runtime-coverage.test.mjs",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {

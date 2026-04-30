@@ -1,27 +1,32 @@
 # Custom cross-compilation image for x86_64-pc-windows-gnu
 # Includes LLVM 16 for RocksDB bindgen compatibility and Node.js for UI build
-FROM ghcr.io/cross-rs/x86_64-pc-windows-gnu:edge
+ARG CROSS_BASE_IMAGE=ghcr.io/cross-rs/x86_64-pc-windows-gnu:edge
+FROM ${CROSS_BASE_IMAGE}
 
 # Install LLVM 16 for bindgen (RocksDB requires clang_Type_getValueType)
 # The build script runs on Linux host, so we need Linux libclang
-RUN apt-get update && \
-    apt-get remove -y --purge llvm-10* libclang-10* clang-10* || true && \
-    apt-get autoremove -y && \
-    apt-get install -y \
+RUN set -eux; \
+    export DEBIAN_FRONTEND=noninteractive; \
+    printf 'Acquire::Retries "10";\nAcquire::http::Timeout "60";\nAcquire::https::Timeout "60";\n' > /etc/apt/apt.conf.d/80-kalamdb-retries; \
+    apt-get update; \
+    apt-get remove -y --purge llvm-10* libclang-10* clang-10* || true; \
+    apt-get autoremove -y; \
+    apt-get install --fix-missing -y --no-install-recommends \
         wget \
         lsb-release \
         software-properties-common \
         gnupg \
         curl \
-        ca-certificates && \
-    wget https://apt.llvm.org/llvm.sh && \
-    chmod +x llvm.sh && \
-    ./llvm.sh 16 all && \
-    apt-get install -y libclang-16-dev llvm-16-dev && \
-    update-alternatives --install /usr/bin/clang clang /usr/bin/clang-16 100 && \
-    update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-16 100 && \
-    update-alternatives --install /usr/bin/llvm-config llvm-config /usr/bin/llvm-config-16 100 && \
-    rm -rf llvm.sh
+        ca-certificates; \
+    wget -nv https://apt.llvm.org/llvm.sh; \
+    chmod +x llvm.sh; \
+    ./llvm.sh 16 all; \
+    apt-get update; \
+    apt-get install --fix-missing -y --no-install-recommends libclang-16-dev llvm-16-dev; \
+    update-alternatives --install /usr/bin/clang clang /usr/bin/clang-16 100; \
+    update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-16 100; \
+    update-alternatives --install /usr/bin/llvm-config llvm-config /usr/bin/llvm-config-16 100; \
+    rm -rf llvm.sh /var/lib/apt/lists/*
 
 # Register clang-16 (already installed above) as the default host cc/c++ compiler.
 # usearch 2.x bundles simsimd which generates AVX-512 FP16 intrinsics (_mm512_mask3_fmadd_ph etc.)

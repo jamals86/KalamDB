@@ -561,7 +561,7 @@ jobs:
     needs:
       - sdk_tests_typescript
       - sdk_tests_dart
-    if: ${{ always() && needs.sdk_tests_typescript.result != 'cancelled' && needs.sdk_tests_dart.result != 'cancelled' }}
+    if: ${{ always() && github.ref == 'refs/heads/main' && needs.sdk_tests_typescript.result != 'cancelled' && needs.sdk_tests_dart.result != 'cancelled' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -571,12 +571,13 @@ jobs:
         run: |
           set -euo pipefail
 
-          git fetch origin main
-          git checkout main
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          mkdir -p .github/badges
+          render_badges() {
+            mkdir -p .github/badges
 
-          cat > .github/badges/sdk-typescript-tests.json <<EOF
+            cat > .github/badges/sdk-typescript-tests.json <<EOF
           {
             "schemaVersion": 1,
             "label": "typescript sdk tests (${{ needs.sdk_tests_typescript.outputs.total }})",
@@ -585,7 +586,7 @@ jobs:
           }
           EOF
 
-          cat > .github/badges/sdk-dart-tests.json <<EOF
+            cat > .github/badges/sdk-dart-tests.json <<EOF
           {
             "schemaVersion": 1,
             "label": "dart sdk tests (${{ needs.sdk_tests_dart.outputs.total }})",
@@ -593,17 +594,31 @@ jobs:
             "color": "${{ needs.sdk_tests_dart.outputs.color }}"
           }
           EOF
+          }
 
-          if git diff --quiet -- .github/badges/sdk-typescript-tests.json .github/badges/sdk-dart-tests.json; then
-            echo "SDK badge files already up to date"
-            exit 0
-          fi
+          for attempt in 1 2 3; do
+            git fetch origin main
+            git checkout -B sdk-badge-update origin/main
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .github/badges/sdk-typescript-tests.json .github/badges/sdk-dart-tests.json
-          git commit -m "docs: update sdk test badges"
-          git push origin main
+            render_badges
+
+            if git diff --quiet -- .github/badges/sdk-typescript-tests.json .github/badges/sdk-dart-tests.json; then
+              echo "SDK badge files already up to date"
+              exit 0
+            fi
+
+            git add .github/badges/sdk-typescript-tests.json .github/badges/sdk-dart-tests.json
+            git commit -m "docs: update sdk test badges"
+            if git push origin HEAD:main; then
+              exit 0
+            fi
+
+            echo "SDK badge push was not a fast-forward; retrying from latest origin/main (attempt ${attempt}/3)."
+            sleep 2
+          done
+
+          echo "Failed to push SDK badge update after retries" >&2
+          exit 1
 
   publish_npm:
     name: Publish TypeScript SDK packages to npm
@@ -659,6 +674,21 @@ jobs:
       - name: Publish @kalamdb/consumer to npm
         shell: bash
         working-directory: link/sdks/typescript/consumer
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.resolve_versions.outputs.ts_version }}"
+          FORCE_FLAG=""
+          if [[ "${{ github.event.inputs.force_npm_publish }}" == "true" ]]; then
+            FORCE_FLAG="--force"
+          fi
+          chmod +x ./publish.sh
+          ./publish.sh --version "$VERSION" $FORCE_FLAG
+
+      - name: Publish @kalamdb/orm to npm
+        shell: bash
+        working-directory: link/sdks/typescript/orm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
