@@ -8,7 +8,8 @@
  * - Basic Auth: `new KalamClient(url, username, password)`
  * - JWT Token: `KalamClient.withJwt(url, token)`
  * - Anonymous: `KalamClient.anonymous(url)`
- * - Dynamic Auth: `KalamClient.anonymous(url)` + `setAuthProvider(async () => ({ jwt: { token } }))`
+ * - Dynamic Auth: `KalamClient.anonymous(url)` + `setAuthProvider(async () => ({ jwt: { token }
+ *   }))`
  *
  * # Example (JavaScript)
  * ```js
@@ -82,7 +83,6 @@ export class KalamClient {
      */
     clearAuthProvider(): void;
     /**
-     *
      * # Returns
      * Promise that resolves when connection is established and authenticated
      */
@@ -382,7 +382,7 @@ export class KalamClient {
      *
      * Browser WebSocket APIs do not expose protocol-level Ping frames, so
      * the WASM client sends a JSON `{"type":"ping"}` message at this
-     * interval. Set to `0` to disable. Default: 30 000 ms.
+     * interval. Set to `0` to disable. Default: 5 000 ms.
      *
      * The change takes effect on the next `connect()` or reconnect.
      *
@@ -524,7 +524,8 @@ export class WasmTimestampFormatter {
      * Create a formatter with a specific format
      *
      * # Arguments
-     * * `format` - One of: "iso8601", "iso8601-date", "iso8601-datetime", "unix-ms", "unix-sec", "relative", "rfc2822", "rfc3339"
+     * * `format` - One of: "iso8601", "iso8601-date", "iso8601-datetime", "unix-ms", "unix-sec",
+     *   "relative", "rfc2822", "rfc3339"
      */
     static withFormat(format: string): WasmTimestampFormatter;
 }
@@ -610,12 +611,12 @@ export interface InitOutput {
     readonly wasmtimestampformatter_new: () => number;
     readonly wasmtimestampformatter_withFormat: (a: number, b: number, c: number) => void;
     readonly timestampNow: () => number;
-    readonly __wasm_bindgen_func_elem_716: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_738: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_3555: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_3555_2: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_3555_3: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_3554: (a: number, b: number) => void;
+    readonly __wasm_bindgen_func_elem_713: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_724: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_3552: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_3552_2: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_3552_3: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_3551: (a: number, b: number) => void;
     readonly __wbindgen_export: (a: number, b: number) => number;
     readonly __wbindgen_export2: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_export3: (a: number) => void;
