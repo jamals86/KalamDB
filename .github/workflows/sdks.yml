@@ -191,45 +191,6 @@ jobs:
           chmod +x ./kalamdb-server
           echo "SDK test source: release-binary"
 
-      - name: Start TypeScript SDK server
-        shell: bash
-        run: |
-          set -euo pipefail
-          cp backend/server.example.toml ts-sdk-server.toml
-          sed -i 's|data_path = "./data"|data_path = "./ts-test-data"|g' ts-sdk-server.toml
-          sed -i 's|logs_path = "./logs"|logs_path = "./ts-test-data/logs"|g' ts-sdk-server.toml
-          sed -i 's|jwt_secret = ".*"|jwt_secret = "sdk-test-secret-key-minimum-32-characters-long"|g' ts-sdk-server.toml
-          mkdir -p ts-test-data/rocksdb ts-test-data/storage ts-test-data/logs
-          : > ts-sdk-server.log
-          ./kalamdb-server ts-sdk-server.toml > ts-sdk-server.log 2>&1 &
-          SERVER_PID=$!
-          echo "SERVER_PID=$SERVER_PID" >> "$GITHUB_ENV"
-          for i in {1..60}; do
-            if curl -sf http://localhost:8080/health > /dev/null 2>&1 || curl -sf http://localhost:8080/v1/api/healthcheck > /dev/null 2>&1; then
-              echo "✅ TypeScript SDK test server ready (${i}s)"
-              if [[ -s ts-sdk-server.log ]]; then
-                echo "Recent server log output:"
-                tail -n 40 ts-sdk-server.log || true
-              fi
-              exit 0
-            fi
-            kill -0 "$SERVER_PID" 2>/dev/null || { echo "❌ Server died"; cat ts-sdk-server.log; exit 1; }
-            echo "  Waiting... ($i/60)"
-            sleep 1
-          done
-          echo "❌ Timed out waiting for TypeScript SDK test server"
-          cat ts-sdk-server.log || true
-          exit 1
-
-      - name: Bootstrap TypeScript SDK test admin user
-        shell: bash
-        run: |
-          set -euo pipefail
-          curl -fsS http://localhost:8080/v1/api/auth/setup \
-            -H "Content-Type: application/json" \
-            -d '{"username":"admin","password":"kalamdb123","root_password":"kalamdb123"}' \
-            >/dev/null
-
       - name: Run TypeScript SDK tests
         id: run_typescript_tests
         continue-on-error: true
@@ -238,10 +199,10 @@ jobs:
           KALAMDB_URL: "http://localhost:8080"
           KALAMDB_USER: "admin"
           KALAMDB_PASSWORD: "kalamdb123"
+          KALAMDB_ROOT_PASSWORD: "kalamdb123"
           KALAMDB_SERVER_BIN: ${{ github.workspace }}/kalamdb-server
-          KALAMDB_SKIP_SERVER_START: "true"
-          KALAMDB_SKIP_AUTH_SETUP: "true"
           TS_SDK_SERVER_LOG: ${{ github.workspace }}/ts-sdk-server.log
+          TS_SDK_TEST_OUTPUT: ${{ github.workspace }}/ts-sdk-test-output.txt
         run: |
           set -euo pipefail
           ./scripts/test-typescript-sdk-release.sh
@@ -262,9 +223,9 @@ jobs:
           output_path = Path("ts-sdk-test-output.txt")
           text = output_path.read_text(encoding="utf-8", errors="replace") if output_path.exists() else ""
 
-          total = sum(int(value) for value in re.findall(r"^# tests (\d+)$", text, flags=re.MULTILINE))
-          passed = sum(int(value) for value in re.findall(r"^# pass (\d+)$", text, flags=re.MULTILINE))
-          failed = sum(int(value) for value in re.findall(r"^# fail (\d+)$", text, flags=re.MULTILINE))
+          total = sum(int(value) for value in re.findall(r"^(?:#|ℹ) tests (\d+)$", text, flags=re.MULTILINE))
+          passed = sum(int(value) for value in re.findall(r"^(?:#|ℹ) pass (\d+)$", text, flags=re.MULTILINE))
+          failed = sum(int(value) for value in re.findall(r"^(?:#|ℹ) fail (\d+)$", text, flags=re.MULTILINE))
           outcome = os.environ.get("STEP_OUTCOME", "failure")
 
           if total == 0 and outcome == "success":
@@ -291,12 +252,6 @@ jobs:
         run: |
           echo "=== TypeScript SDK server log ==="
           cat ts-sdk-server.log || true
-
-      - name: Stop TypeScript SDK server
-        if: always()
-        shell: bash
-        run: |
-          [[ -n "${SERVER_PID:-}" ]] && kill "$SERVER_PID" 2>/dev/null || true
 
       - name: Upload server log
         if: always()
@@ -404,46 +359,21 @@ jobs:
           cat dart-sdk-server.log || true
           exit 1
 
-      - name: Bootstrap SDK test admin user
-        shell: bash
-        run: |
-          set -euo pipefail
-          curl -fsS http://localhost:8080/v1/api/auth/setup \
-            -H "Content-Type: application/json" \
-            -d '{"username":"admin","password":"kalamdb123","root_password":"kalamdb123"}' \
-            >/dev/null
-
       - name: Run Dart SDK tests
         id: run_dart_tests
         continue-on-error: true
         shell: bash
         working-directory: link/sdks/dart
         env:
-          KALAM_URL: "http://localhost:8080"
-          KALAM_USER: "admin"
-          KALAM_PASS: "kalamdb123"
+          KALAMDB_URL: "http://localhost:8080"
+          KALAMDB_USER: "admin"
+          KALAMDB_PASSWORD: "kalamdb123"
+          KALAMDB_ROOT_PASSWORD: "kalamdb123"
+          DART_SDK_MODELS_MACHINE_OUTPUT: ${{ github.workspace }}/dart-sdk-models-machine.jsonl
+          DART_SDK_E2E_MACHINE_OUTPUT: ${{ github.workspace }}/dart-sdk-e2e-machine.jsonl
         run: |
           set -euo pipefail
-          flutter pub get
-
-          BRIDGE_DIR="$PWD/../../kalam-link-dart"
-          (
-            cd "$BRIDGE_DIR"
-            CARGO_TARGET_DIR="$BRIDGE_DIR/target" cargo build --release
-          )
-
-          flutter analyze
-
-          flutter test --machine test/models_test.dart | tee ../../../dart-sdk-models-machine.jsonl
-
-          export KALAM_INTEGRATION_TEST=1
-          flutter test --machine \
-            test/e2e/auth/auth_test.dart \
-            test/e2e/query/query_test.dart \
-            test/e2e/ddl/ddl_test.dart \
-            test/e2e/lifecycle/lifecycle_test.dart \
-            test/e2e/health/health_test.dart \
-            test/e2e/subscription/subscription_test.dart | tee ../../../dart-sdk-e2e-machine.jsonl
+          bash ./test.sh
 
       - name: Parse Dart SDK test counts
         if: always()

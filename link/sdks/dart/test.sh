@@ -15,9 +15,23 @@ export KALAM_URL="${KALAM_URL:-$KALAMDB_URL}"
 export KALAM_USER="${KALAM_USER:-$KALAMDB_USER}"
 export KALAM_PASS="${KALAM_PASS:-$KALAMDB_PASSWORD}"
 export KALAM_ROOT_PASSWORD="${KALAM_ROOT_PASSWORD:-$KALAMDB_ROOT_PASSWORD}"
+DART_SDK_MODELS_MACHINE_OUTPUT="${DART_SDK_MODELS_MACHINE_OUTPUT:-}"
+DART_SDK_E2E_MACHINE_OUTPUT="${DART_SDK_E2E_MACHINE_OUTPUT:-}"
 
 warn() {
   echo "⚠️  $*"
+}
+
+run_flutter_test() {
+  local output_path="$1"
+  shift
+
+  if [[ -n "$output_path" ]]; then
+    mkdir -p "$(dirname "$output_path")"
+    flutter test --machine "$@" | tee "$output_path"
+  else
+    flutter test "$@"
+  fi
 }
 
 make_json() {
@@ -210,7 +224,7 @@ flutter analyze
 # ── Unit tests (offline, no server required) ─────────────────────────
 echo ""
 echo "🔬 Running unit tests (no server)..."
-flutter test test/models_test.dart
+run_flutter_test "$DART_SDK_MODELS_MACHINE_OUTPUT" test/models_test.dart
 
 # ── E2E tests (require running KalamDB server) ──────────────────────
 echo ""
@@ -222,7 +236,7 @@ if curl -sf "$KALAMDB_URL/health" > /dev/null 2>&1 \
   echo ""
   echo "🧪 Running e2e tests..."
   export KALAM_INTEGRATION_TEST=1
-  flutter test test/e2e
+  run_flutter_test "$DART_SDK_E2E_MACHINE_OUTPUT" test/e2e
   echo ""
   echo "✅ All Dart SDK tests passed!"
 else

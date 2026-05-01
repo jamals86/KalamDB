@@ -198,22 +198,25 @@ ensure_test_auth_ready
 (
     echo "Running @kalamdb/client tests..."
     cd "$ROOT_DIR/link/sdks/typescript/client"
-    chmod +x ./test.sh
     KALAMDB_URL="$SERVER_URL" \
     KALAMDB_USER="$SERVER_USER" \
     KALAMDB_PASSWORD="$SERVER_PASSWORD" \
-    ./test.sh
+    bash ./test.sh
 
     echo "Running @kalamdb/consumer tests..."
     cd "$ROOT_DIR/link/sdks/typescript/consumer"
-    npm install --no-audit --no-fund
-    npm test
+    KALAMDB_URL="$SERVER_URL" \
+    KALAMDB_USER="$SERVER_USER" \
+    KALAMDB_PASSWORD="$SERVER_PASSWORD" \
+    bash ./test.sh
 
     echo "Running @kalamdb/orm tests..."
     cd "$ROOT_DIR/link/sdks/typescript/orm"
-    npm install --no-audit --no-fund
+    KALAMDB_URL="$SERVER_URL" \
+    KALAMDB_USER="$SERVER_USER" \
+    KALAMDB_PASSWORD="$SERVER_PASSWORD" \
     KALAMDB_TEST_URL="$SERVER_URL" \
     KALAMDB_TEST_USER="$SERVER_USER" \
     KALAMDB_TEST_PASSWORD="$SERVER_PASSWORD" \
-    npm test
+    bash ./test.sh
 ) 2>&1 | tee "$TEST_OUTPUT"
