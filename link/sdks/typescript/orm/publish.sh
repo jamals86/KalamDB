@@ -131,13 +131,14 @@ else
   fi
 fi
 
-# ─── Determine npm dist-tag for pre-release versions ─────────────────────────
-NPM_TAG_FLAG=""
+# ─── Determine npm dist-tags for pre-release versions ────────────────────────
+NPM_TAG_FLAG="--tag latest"
+PRERELEASE_TAG=""
 if [[ "$VERSION" == *"-"* ]]; then
   PRERELEASE_LABEL="$(echo "$VERSION" | sed 's/^[^-]*-//' | sed 's/[.0-9]*$//' | tr -d '[:digit:]')"
   PRERELEASE_LABEL="${PRERELEASE_LABEL:-next}"
-  NPM_TAG_FLAG="--tag $PRERELEASE_LABEL"
-  echo "🏷️  Pre-release version detected — using dist-tag: $PRERELEASE_LABEL"
+  PRERELEASE_TAG="$PRERELEASE_LABEL"
+  echo "🏷️  Pre-release version detected — publishing to latest and adding dist-tag: $PRERELEASE_TAG"
 fi
 
 # ─── Check peer dependency is already published ───────────────────────────────
@@ -154,6 +155,9 @@ if [[ "$DRY_RUN" == "true" ]]; then
   echo ""
   echo "🔍 Dry-run mode: skipping actual publish."
   echo "   Would publish: $PACKAGE_NAME@$VERSION${NPM_TAG_FLAG:+ ($NPM_TAG_FLAG)}"
+  if [[ -n "$PRERELEASE_TAG" ]]; then
+    echo "   Would also add dist-tag: $PRERELEASE_TAG"
+  fi
   # shellcheck disable=SC2086
   npm publish --access public $NPM_TAG_FLAG --dry-run --ignore-scripts
   exit 0
@@ -187,6 +191,20 @@ if [[ -n "$OTP_CODE" ]]; then
   OTP_FLAG="--otp $OTP_CODE"
 fi
 
+add_prerelease_dist_tag() {
+  if [[ -n "$PRERELEASE_TAG" ]]; then
+    # shellcheck disable=SC2086
+    npm dist-tag add "$PACKAGE_NAME@$VERSION" "$PRERELEASE_TAG" $OTP_FLAG
+    echo "✅ Added dist-tag '$PRERELEASE_TAG' for $PACKAGE_NAME@$VERSION"
+  fi
+}
+
+add_latest_dist_tag() {
+  # shellcheck disable=SC2086
+  npm dist-tag add "$PACKAGE_NAME@$VERSION" latest $OTP_FLAG
+  echo "✅ Set dist-tag 'latest' for $PACKAGE_NAME@$VERSION"
+}
+
 if npm view "$PACKAGE_NAME@$VERSION" version --silent >/dev/null 2>&1; then
   if [[ "$FORCE_PUBLISH" == "true" ]]; then
     echo "⚠️  Version $VERSION exists. Force publish enabled — attempting to unpublish..."
@@ -194,6 +212,7 @@ if npm view "$PACKAGE_NAME@$VERSION" version --silent >/dev/null 2>&1; then
       echo "✅ Successfully unpublished $PACKAGE_NAME@$VERSION"
       # shellcheck disable=SC2086
       npm publish --access public $NPM_TAG_FLAG $PUBLISH_SCRIPTS_FLAG $OTP_FLAG
+      add_prerelease_dist_tag
       echo "✅ Successfully republished $PACKAGE_NAME@$VERSION to npm!"
     else
       echo "❌ Failed to unpublish (version may be >72 hours old)"
@@ -202,13 +221,15 @@ if npm view "$PACKAGE_NAME@$VERSION" version --silent >/dev/null 2>&1; then
       exit 1
     fi
   else
-    echo "⚠️  Version $VERSION already exists on npm — skipping publish."
-    echo "💡 To force republish, run with: --force"
+    echo "ℹ️  Version $VERSION already exists on npm — updating dist-tags instead of republishing."
+    add_latest_dist_tag
+    add_prerelease_dist_tag
     exit 0
   fi
 else
   # shellcheck disable=SC2086
   if npm publish --access public $NPM_TAG_FLAG $PUBLISH_SCRIPTS_FLAG $OTP_FLAG 2>&1; then
+    add_prerelease_dist_tag
     echo "✅ Successfully published $PACKAGE_NAME@$VERSION to npm!"
     echo "   npm page    : $PACKAGE_NPM_PAGE_URL"
     echo "   registry API: $PACKAGE_REGISTRY_URL"
