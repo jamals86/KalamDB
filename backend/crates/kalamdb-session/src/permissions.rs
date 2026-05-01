@@ -118,17 +118,22 @@ pub fn can_downgrade_shared_to_user(role: Role) -> bool {
 /// Check if a role can access a user table.
 ///
 /// # Access Rules
-/// - **System/Dba**: Full access
-/// - **Service/User**: Allowed (row-level security restricts data visibility)
+/// - **System/Dba/Service/User**: Allowed
+/// - Reads remain scoped to the session subject for all roles.
+/// - Cross-user access must use an explicit impersonation flow.
 #[inline]
 pub fn can_access_user_table(role: Role) -> bool {
     matches!(role, Role::System | Role::Dba | Role::Service | Role::User)
 }
 
-/// Check if a role can read all user rows (RLS bypass).
+/// User tables never bypass subject scoping implicitly.
+///
+/// Cross-user reads must be explicit via impersonation so independently
+/// authenticated users can never share the same user-table view by role alone.
 #[inline]
 pub fn can_read_all_users(role: Role) -> bool {
-    matches!(role, Role::System | Role::Dba | Role::Service)
+    let _ = role;
+    false
 }
 
 /// Check if a role can execute DML statements.
@@ -323,5 +328,13 @@ mod tests {
         assert!(can_write_shared_table(TableAccess::Public, Role::Dba));
         assert!(can_write_shared_table(TableAccess::Public, Role::Service));
         assert!(!can_write_shared_table(TableAccess::Public, Role::User));
+    }
+
+    #[test]
+    fn test_user_table_reads_never_bypass_subject_scope() {
+        assert!(!can_read_all_users(Role::System));
+        assert!(!can_read_all_users(Role::Dba));
+        assert!(!can_read_all_users(Role::Service));
+        assert!(!can_read_all_users(Role::User));
     }
 }

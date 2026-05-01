@@ -8,7 +8,7 @@ use std::{
 
 use async_trait::async_trait;
 use datafusion::{
-    arrow::{datatypes::SchemaRef, record_batch::RecordBatch},
+    arrow::{array::StringArray, datatypes::SchemaRef, record_batch::RecordBatch},
     datasource::TableProvider,
     execution::context::SessionContext,
     physical_plan::collect,
@@ -294,14 +294,18 @@ struct OwnedServices {
     _temp_dir: TempDir,
 }
 
-fn session_with_user(user_id: &UserId) -> SessionContext {
+fn session_with_role(user_id: &UserId, role: Role) -> SessionContext {
     let mut state = SessionContext::new().state().clone();
     state.config_mut().options_mut().extensions.insert(SessionUserContext::new(
         user_id.clone(),
-        Role::Dba,
+        role,
         ReadContext::Internal,
     ));
     SessionContext::new_with_state(state)
+}
+
+fn session_with_user(user_id: &UserId) -> SessionContext {
+    session_with_role(user_id, Role::Dba)
 }
 
 fn session_with_transaction(
@@ -587,6 +591,166 @@ async fn user_provider_scan_uses_deferred_batch_exec_and_returns_rows() {
 
     let batches = collect(plan, state.task_ctx()).await.expect("collect user plan");
     assert_eq!(total_rows(&batches), 1);
+}
+
+#[tokio::test]
+async fn user_provider_dba_session_reads_only_subject_rows() {
+    let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
+    let table_id = TableId::new(NamespaceId::new("app"), TableName::new("users_exec_scoped"));
+    let table_def = build_user_table_definition(&table_id);
+    let services = build_services(Arc::clone(&table_def), Arc::clone(&backend));
+    let store = Arc::new(new_indexed_user_table_store(Arc::clone(&backend), &table_id, "id"));
+    let provider = UserTableProvider::new(
+        Arc::new(TableProviderCore::new(
+            table_def,
+            Arc::clone(&services.services),
+            "id".to_string(),
+            Arc::clone(&services.schema),
+            HashMap::new(),
+        )),
+        Arc::clone(&store),
+    );
+
+    let root_user = UserId::new("root");
+    let dba_user = UserId::new("jamal-dba");
+
+    store
+        .insert(
+            &kalamdb_commons::ids::UserTableRowId::new(root_user.clone(), 1.into()),
+            &UserTableRow {
+                user_id: root_user.clone(),
+                _seq: 1.into(),
+                _commit_seq: 1,
+                _deleted: false,
+                fields: row(vec![
+                    ("id", ScalarValue::Int64(Some(1))),
+                    ("name", ScalarValue::Utf8(Some("root-row".to_string()))),
+                ]),
+            },
+        )
+        .expect("seed root row");
+    store
+        .insert(
+            &kalamdb_commons::ids::UserTableRowId::new(dba_user.clone(), 2.into()),
+            &UserTableRow {
+                user_id: dba_user.clone(),
+                _seq: 2.into(),
+                _commit_seq: 2,
+                _deleted: false,
+                fields: row(vec![
+                    ("id", ScalarValue::Int64(Some(2))),
+                    ("name", ScalarValue::Utf8(Some("jamal-row".to_string()))),
+                ]),
+            },
+        )
+        .expect("seed dba row");
+
+    let ctx = session_with_role(&dba_user, Role::Dba);
+    let state = ctx.state();
+    let plan = provider.scan(&state, None, &[], None).await.expect("build user plan");
+    let batches = collect(plan, state.task_ctx()).await.expect("collect user plan");
+
+    assert_eq!(total_rows(&batches), 1);
+
+    let batch = batches.first().expect("one batch");
+    let names = batch
+        .column_by_name("name")
+        .expect("name column")
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .expect("utf8 name array");
+    assert_eq!(names.value(0), "jamal-row");
+}
+
+#[tokio::test]
+async fn user_provider_delete_only_tombstones_subject_row() {
+    let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
+    let table_id = TableId::new(NamespaceId::new("app"), TableName::new("users_exec_delete_scoped"));
+    let table_def = build_user_table_definition(&table_id);
+    let services = build_services(Arc::clone(&table_def), Arc::clone(&backend));
+    let store = Arc::new(new_indexed_user_table_store(Arc::clone(&backend), &table_id, "id"));
+    let provider = UserTableProvider::new(
+        Arc::new(TableProviderCore::new(
+            table_def,
+            Arc::clone(&services.services),
+            "id".to_string(),
+            Arc::clone(&services.schema),
+            HashMap::new(),
+        )),
+        Arc::clone(&store),
+    );
+
+    let root_user = UserId::new("root");
+    let dba_user = UserId::new("jamal-dba");
+
+    store
+        .insert(
+            &kalamdb_commons::ids::UserTableRowId::new(root_user.clone(), 1.into()),
+            &UserTableRow {
+                user_id: root_user.clone(),
+                _seq: 1.into(),
+                _commit_seq: 1,
+                _deleted: false,
+                fields: row(vec![
+                    ("id", ScalarValue::Int64(Some(1))),
+                    ("name", ScalarValue::Utf8(Some("root-row".to_string()))),
+                ]),
+            },
+        )
+        .expect("seed root row");
+    store
+        .insert(
+            &kalamdb_commons::ids::UserTableRowId::new(dba_user.clone(), 2.into()),
+            &UserTableRow {
+                user_id: dba_user.clone(),
+                _seq: 2.into(),
+                _commit_seq: 2,
+                _deleted: false,
+                fields: row(vec![
+                    ("id", ScalarValue::Int64(Some(1))),
+                    ("name", ScalarValue::Utf8(Some("jamal-row".to_string()))),
+                ]),
+            },
+        )
+        .expect("seed dba row");
+
+    let (deleted_row_key, _) = provider
+        .delete_by_pk_value_deferred(&dba_user, "1", 3)
+        .await
+        .expect("delete dba row")
+        .expect("delete produced tombstone");
+    assert_eq!(deleted_row_key.user_id, dba_user);
+
+    let root_ctx = session_with_role(&root_user, Role::System);
+    let root_state = root_ctx.state();
+    let root_plan = provider
+        .scan(&root_state, None, &[], None)
+        .await
+        .expect("build root scan");
+    let root_batches = collect(root_plan, root_state.task_ctx())
+        .await
+        .expect("collect root rows");
+
+    assert_eq!(total_rows(&root_batches), 1);
+    let root_names = root_batches[0]
+        .column_by_name("name")
+        .expect("root name column")
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .expect("root utf8 name array");
+    assert_eq!(root_names.value(0), "root-row");
+
+    let dba_ctx = session_with_role(&dba_user, Role::Dba);
+    let dba_state = dba_ctx.state();
+    let dba_plan = provider
+        .scan(&dba_state, None, &[], None)
+        .await
+        .expect("build dba scan");
+    let dba_batches = collect(dba_plan, dba_state.task_ctx())
+        .await
+        .expect("collect dba rows");
+
+    assert_eq!(total_rows(&dba_batches), 0);
 }
 
 #[tokio::test]
