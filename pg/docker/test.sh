@@ -159,17 +159,18 @@ PAGER=cat "$PSQL_BIN" -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" \
 echo ""
 echo "Cross-verifying FDW writes via KalamDB REST API ..."
 
-# Insert a verification row via PG FDW
+# Insert a verification row via PG FDW into the shared table so the REST
+# query checks write visibility rather than user-table scoping.
 PAGER=cat "$PSQL_BIN" -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" \
     -v ON_ERROR_STOP=1 \
     -P pager=off \
-    -c "SET kalam.user_id = 'cross-verify-user'; INSERT INTO rmtest.profiles (id, name, age) VALUES ('xv1', 'CrossVerify', 99);"
+    -c "INSERT INTO rmtest.shared_items (id, title, value) VALUES ('xv1', 'CrossVerify', 99);"
 
 # Query the same row via KalamDB HTTP API
 API_RESULT=$(curl -s "$KALAMDB_API_URL/v1/api/sql" \
     -H "Authorization: Bearer $BEARER_TOKEN" \
     -H "Content-Type: application/json" \
-    -d '{"sql": "SELECT id, name, age FROM rmtest.profiles WHERE id = '\''xv1'\''"}')
+    -d '{"sql": "SELECT id, title, value FROM rmtest.shared_items WHERE id = '\''xv1'\''"}')
 
 if echo "$API_RESULT" | grep -q '"xv1"'; then
     echo "  PASS: FDW-inserted row 'xv1' is visible via KalamDB REST API."
@@ -183,7 +184,7 @@ fi
 PAGER=cat "$PSQL_BIN" -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" \
     -v ON_ERROR_STOP=1 \
     -P pager=off \
-    -c "SET kalam.user_id = 'cross-verify-user'; DELETE FROM rmtest.profiles WHERE id = 'xv1';"
+    -c "DELETE FROM rmtest.shared_items WHERE id = 'xv1';"
 
 # ── Concurrent Clients Test ──
 echo ""
