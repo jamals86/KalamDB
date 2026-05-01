@@ -299,8 +299,7 @@ mod tests {
             session_id: "session-1".to_string(),
             user_id: None,
             pk_value: "row-1".to_string(),
-            updates_json: r#"{"name":{"Utf8":"updated"},"value":{"Int32":110}}"#
-                .to_string(),
+            updates_json: r#"{"name":{"Utf8":"updated"},"value":{"Int32":110}}"#.to_string(),
         };
 
         let parsed =

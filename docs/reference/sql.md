@@ -193,9 +193,11 @@ FROM [<namespace>.]<table_name>
 [LIMIT <n>];
 ```
 
-## Impersonation Execution
+## Execute As User
 
-Impersonation syntax is wrapper-only.
+`EXECUTE AS USER` syntax is wrapper-only. It switches USER-table execution to a
+target user ID only when the authenticated actor role is allowed to target that
+ID's cached role class.
 
 ```sql
 EXECUTE AS USER '<username>' (
@@ -206,13 +208,8 @@ EXECUTE AS USER '<username>' (
 Examples:
 
 ```sql
-EXECUTE AS USER 'admin' (
+EXECUTE AS USER 'alice' (
   SELECT * FROM app.messages WHERE conversation_id = 42
-);
-
-EXECUTE AS USER 'service_bot' (
-  INSERT INTO app.messages (conversation_id, sender, role, content)
-  VALUES (42, 'service_bot', 'assistant', 'Processing complete')
 );
 ```
 
@@ -220,7 +217,13 @@ Rules:
 
 1. The wrapper must contain exactly one SQL statement.
 2. Username must be single-quoted.
-3. Legacy inline `... AS USER 'name'` syntax is not supported.
+3. System users may target system, dba, service, and user accounts.
+4. DBA users may target dba, service, and user accounts.
+5. Service users may target service and user accounts.
+6. Regular users may only use self-targeted `EXECUTE AS USER` as a no-op identity boundary.
+7. The wrapper is valid only for USER tables; shared tables use their table policy directly.
+8. Target role checks are hot-path cached: service, DBA, and system user IDs are tracked in memory from `system.users`; soft-deleted privileged IDs stay classified by their persisted role, and target IDs not present in that privileged cache are treated as regular users.
+9. Legacy inline `... AS USER 'name'` syntax is not supported.
 
 ## User Management
 

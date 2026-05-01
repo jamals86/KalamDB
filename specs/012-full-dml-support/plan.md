@@ -7,7 +7,7 @@
 
 ## Summary
 
-Deliver append-only UPDATE/DELETE support across fast and persisted storage, add manifest-driven query acceleration with Bloom filters and caching, formalize AS USER impersonation, centralize system column management, and introduce typed job executor parameters and unified configuration access within KalamDB's Rust backend.
+Deliver append-only UPDATE/DELETE support across fast and persisted storage, add manifest-driven query acceleration with Bloom filters and caching, keep ordinary USER-table access subject-scoped per ADR-019, centralize system column management, and introduce typed job executor parameters and unified configuration access within KalamDB's Rust backend.
 
 ## Technical Context
 
@@ -18,7 +18,7 @@ Deliver append-only UPDATE/DELETE support across fast and persisted storage, add
 **Target Platform**: Linux/macOS servers hosting the KalamDB engine (Actix runtime)  
 **Project Type**: Distributed database engine (backend services + CLI)  
 **Performance Goals**: Maintain ≤2× baseline query latency with 10+ versions, manifest pruning decisions <5 ms, Bloom filter lookups <1 ms per file, UPDATE (<10 ms) and DELETE (<50 ms) on persisted records  
-**Constraints**: Append-only mutation model, nanosecond `_updated` monotonicity, manifest/cache consistency, AS USER restricted to service/admin roles, configuration single source via AppContext  
+**Constraints**: Append-only mutation model, nanosecond `_updated` monotonicity, manifest/cache consistency, ordinary USER-table subject scoping with role-matrix AS USER, configuration single source via AppContext
 **Scale/Scope**: Tables with 100+ Parquet batches, millions of record versions, manifest cache up to 50 000 entries, concurrent job execution with typed params
 
 ## Constitution Check

@@ -6,7 +6,7 @@ use actix_web::{get, web, HttpResponse, Responder};
 use kalamdb_auth::AuthSessionExtractor;
 use kalamdb_commons::{models::TableId, schemas::TableType, TableAccess};
 use kalamdb_core::app_context::AppContext;
-use kalamdb_session::{can_access_shared_table, can_impersonate_role, AuthSession};
+use kalamdb_session::{can_access_shared_table, can_impersonate_target_user, AuthSession};
 use kalamdb_system::FileRef;
 
 use super::models::DownloadQuery;
@@ -15,7 +15,8 @@ use crate::http::sql::models::{ErrorCode, SqlResponse};
 /// GET /v1/files/{namespace}/{table_name}/{subfolder}/{file_id} - Download a file
 ///
 /// Requires Bearer token (JWT) authorization and table access permissions.
-/// For user tables, downloads from current user's table unless ?user_id is specified.
+/// For user tables, downloads default to the authenticated user's table scope.
+/// Higher roles may supply `user_id` when the impersonation role matrix allows it.
 #[get("/files/{namespace}/{table_name}/{subfolder}/{file_id}")]
 pub async fn download_file(
     extractor: AuthSessionExtractor,
@@ -43,68 +44,39 @@ pub async fn download_file(
     let storage_id = table_entry.storage_id.clone();
     let table_type = table_entry.table_type;
 
-    // Check impersonation permissions
-    if let Some(ref requested_user_id) = query.user_id {
-        if requested_user_id != session.user_id() {
-            // Offload sync RocksDB read to blocking thread
-            let app_ctx = app_context.get_ref().clone();
-            let req_uid = requested_user_id.clone();
-            let target_user_result = tokio::task::spawn_blocking(move || {
-                app_ctx.system_tables().users().get_user_by_id(&req_uid)
-            })
-            .await;
+    let user_id = match table_type {
+        TableType::User => {
+            let effective_user_id = if let Some(requested_user_id) = query.user_id.as_ref() {
+                if requested_user_id == session.user_id() {
+                    requested_user_id.clone()
+                } else {
+                    let requested_user_id = requested_user_id.clone();
+                    let target_role = app_context
+                        .system_tables()
+                        .users()
+                        .role_for_impersonation_target(&requested_user_id);
 
-            let target_user = match target_user_result {
-                Ok(Ok(Some(user))) if user.deleted_at.is_none() => user,
-                Ok(Ok(_)) => {
-                    return HttpResponse::NotFound().json(SqlResponse::error(
-                        ErrorCode::InvalidInput,
-                        "Requested user was not found",
-                        0.0,
-                    ));
-                },
-                Ok(Err(e)) => {
-                    log::warn!(
-                        "Failed to resolve impersonation target for file download: user_id={}, \
-                         error={}",
-                        requested_user_id,
-                        e
-                    );
-                    return HttpResponse::InternalServerError().json(SqlResponse::error(
-                        ErrorCode::InternalError,
-                        "Failed to validate impersonation target",
-                        0.0,
-                    ));
-                },
-                Err(e) => {
-                    log::warn!(
-                        "Failed to resolve impersonation target for file download: user_id={}, \
-                         error={}",
-                        requested_user_id,
-                        e
-                    );
-                    return HttpResponse::InternalServerError().json(SqlResponse::error(
-                        ErrorCode::InternalError,
-                        "Failed to validate impersonation target",
-                        0.0,
-                    ));
-                },
+                    if !can_impersonate_target_user(
+                        session.user_id(),
+                        session.role(),
+                        &requested_user_id,
+                        target_role,
+                    ) {
+                        return HttpResponse::Forbidden().json(SqlResponse::error(
+                            ErrorCode::PermissionDenied,
+                            "Requested user is not allowed for the current role",
+                            0.0,
+                        ));
+                    }
+
+                    requested_user_id
+                }
+            } else {
+                session.user_id().clone()
             };
 
-            if !can_impersonate_role(session.role(), target_user.role) {
-                return HttpResponse::Forbidden().json(SqlResponse::error(
-                    ErrorCode::PermissionDenied,
-                    "Impersonation target is not allowed for the current role",
-                    0.0,
-                ));
-            }
-        }
-    }
-
-    let effective_user_id = query.user_id.clone().unwrap_or_else(|| session.user_id().clone());
-
-    let user_id = match table_type {
-        TableType::User => Some(effective_user_id),
+            Some(effective_user_id)
+        },
         TableType::Shared => {
             let access_level = table_entry.access_level.unwrap_or(TableAccess::Private);
             if !can_access_shared_table(access_level, session.role()) {
@@ -195,18 +167,20 @@ fn guess_content_type(file_id: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use kalamdb_commons::models::UserId;
     use kalamdb_commons::Role;
 
     use super::*;
 
     #[test]
-    fn download_impersonation_respects_target_role_matrix() {
-        assert!(can_impersonate_role(Role::System, Role::System));
-        assert!(can_impersonate_role(Role::Dba, Role::Service));
-        assert!(can_impersonate_role(Role::Service, Role::User));
+    fn download_user_id_query_uses_shared_impersonation_authorization() {
+        let actor = UserId::new("svc");
+        let same_user = UserId::new("svc");
+        let regular_target = UserId::new("alice");
+        let dba_target = UserId::new("dba-target");
 
-        assert!(!can_impersonate_role(Role::Dba, Role::System));
-        assert!(!can_impersonate_role(Role::Service, Role::Dba));
-        assert!(!can_impersonate_role(Role::User, Role::User));
+        assert!(can_impersonate_target_user(&actor, Role::Service, &same_user, Role::Service));
+        assert!(can_impersonate_target_user(&actor, Role::Service, &regular_target, Role::User));
+        assert!(!can_impersonate_target_user(&actor, Role::Service, &dba_target, Role::Dba));
     }
 }

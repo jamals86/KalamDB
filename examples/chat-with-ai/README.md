@@ -124,7 +124,7 @@ You should see your user row, live agent progress, and then a final `AI reply:` 
 - user: `admin`
 - password: `kalamdb123`
 
-The browser and the worker both use that account for the local demo. The worker uses `EXECUTE AS USER` when it writes agent events and assistant replies for the message sender.
+The browser and the worker both use that account for the local demo. The worker uses `EXECUTE AS USER` when it writes agent events and assistant replies for the message sender. In production, a service account can do the same when its role is authorized for that target user.
 
 ## Test
 

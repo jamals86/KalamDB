@@ -698,7 +698,10 @@ export class KalamDBClient {
   }
 
   /**
-   * Execute a single SQL statement as another user.
+  * Execute a single SQL statement with an AS USER wrapper.
+  *
+  * KalamDB authorizes cross-user targets with its EXECUTE AS USER role matrix.
+  * Regular users can only target themselves.
    *
    * Wraps the SQL using:
    * `EXECUTE AS USER 'user' ( <single statement> )`

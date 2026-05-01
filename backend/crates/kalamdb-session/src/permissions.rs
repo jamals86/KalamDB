@@ -5,7 +5,7 @@
 //! `kalamdb-session-datafusion`.
 
 use kalamdb_commons::{
-    models::{NamespaceId, Role, TableName},
+    models::{NamespaceId, Role, TableName, UserId},
     schemas::{TableDefinition, TableOptions, TableType},
     TableAccess,
 };
@@ -120,7 +120,7 @@ pub fn can_downgrade_shared_to_user(role: Role) -> bool {
 /// # Access Rules
 /// - **System/Dba/Service/User**: Allowed
 /// - Reads remain scoped to the session subject for all roles.
-/// - Cross-user access must use an explicit impersonation flow.
+/// - Cross-user access requires explicit authorized `EXECUTE AS USER`.
 #[inline]
 pub fn can_access_user_table(role: Role) -> bool {
     matches!(role, Role::System | Role::Dba | Role::Service | Role::User)
@@ -128,8 +128,8 @@ pub fn can_access_user_table(role: Role) -> bool {
 
 /// User tables never bypass subject scoping implicitly.
 ///
-/// Cross-user reads must be explicit via impersonation so independently
-/// authenticated users can never share the same user-table view by role alone.
+/// Independently authenticated users can never share the same user-table view
+/// by role alone.
 #[inline]
 pub fn can_read_all_users(role: Role) -> bool {
     let _ = role;
@@ -187,27 +187,48 @@ pub fn check_stream_table_write_access_level(
     check_user_table_write_access_level(role, namespace_id, table_name)
 }
 
-/// Check if a role can impersonate another user (EXECUTE AS USER).
+/// Check if a role can impersonate another user.
+///
+/// This is the broad gate for explicit `EXECUTE AS USER`; target-role checks
+/// are enforced by `can_impersonate_role` after resolving the target user.
 #[inline]
 pub fn can_impersonate_user(role: Role) -> bool {
-    matches!(role, Role::Service | Role::Dba | Role::System)
+    matches!(role, Role::System | Role::Dba | Role::Service)
 }
 
 /// Check whether `actor_role` is allowed to impersonate `target_role`.
 ///
 /// Policy:
-/// - System can impersonate any role.
-/// - Dba can impersonate Service/User/Anonymous.
-/// - Service can impersonate User/Anonymous.
-/// - User/Anonymous cannot impersonate.
+/// - System can impersonate System, Dba, Service, and User.
+/// - Dba can impersonate Dba, Service, and User.
+/// - Service can impersonate Service and User.
+/// - User and Anonymous cannot impersonate another user.
+/// Self-targeted `EXECUTE AS USER` is allowed by identity before this role
+/// matrix is consulted.
 #[inline]
 pub fn can_impersonate_role(actor_role: Role, target_role: Role) -> bool {
     match actor_role {
-        Role::System => true,
-        Role::Dba => matches!(target_role, Role::Service | Role::User | Role::Anonymous),
-        Role::Service => matches!(target_role, Role::User | Role::Anonymous),
+        Role::System => {
+            matches!(target_role, Role::System | Role::Dba | Role::Service | Role::User)
+        },
+        Role::Dba => matches!(target_role, Role::Dba | Role::Service | Role::User),
+        Role::Service => matches!(target_role, Role::Service | Role::User),
         Role::User | Role::Anonymous => false,
     }
+}
+
+/// Check whether an actor identity may target another user identity.
+///
+/// This is the shared lightweight authorization helper for cross-user flows.
+/// Self-targeted operations are always allowed as a no-op identity boundary.
+#[inline]
+pub fn can_impersonate_target_user(
+    actor_user_id: &UserId,
+    actor_role: Role,
+    target_user_id: &UserId,
+    target_role: Role,
+) -> bool {
+    actor_user_id == target_user_id || can_impersonate_role(actor_role, target_role)
 }
 
 /// Determine the access level for a shared table definition.
@@ -281,19 +302,35 @@ mod tests {
         assert!(can_impersonate_role(Role::System, Role::Dba));
         assert!(can_impersonate_role(Role::System, Role::Service));
         assert!(can_impersonate_role(Role::System, Role::User));
-
         assert!(!can_impersonate_role(Role::Dba, Role::System));
-        assert!(!can_impersonate_role(Role::Dba, Role::Dba));
+        assert!(can_impersonate_role(Role::Dba, Role::Dba));
         assert!(can_impersonate_role(Role::Dba, Role::Service));
         assert!(can_impersonate_role(Role::Dba, Role::User));
-
         assert!(!can_impersonate_role(Role::Service, Role::System));
         assert!(!can_impersonate_role(Role::Service, Role::Dba));
-        assert!(!can_impersonate_role(Role::Service, Role::Service));
+        assert!(can_impersonate_role(Role::Service, Role::Service));
         assert!(can_impersonate_role(Role::Service, Role::User));
-
         assert!(!can_impersonate_role(Role::User, Role::User));
         assert!(!can_impersonate_role(Role::Anonymous, Role::User));
+    }
+
+    #[test]
+    fn test_privileged_roles_can_use_execute_as_user() {
+        assert!(can_impersonate_user(Role::System));
+        assert!(can_impersonate_user(Role::Dba));
+        assert!(can_impersonate_user(Role::Service));
+        assert!(!can_impersonate_user(Role::User));
+        assert!(!can_impersonate_user(Role::Anonymous));
+    }
+
+    #[test]
+    fn test_can_impersonate_target_user_allows_self_target_and_role_matrix() {
+        let actor = UserId::new("actor");
+        let target = UserId::new("target");
+
+        assert!(can_impersonate_target_user(&actor, Role::User, &actor, Role::User));
+        assert!(can_impersonate_target_user(&actor, Role::Service, &target, Role::User));
+        assert!(!can_impersonate_target_user(&actor, Role::User, &target, Role::User));
     }
 
     #[test]

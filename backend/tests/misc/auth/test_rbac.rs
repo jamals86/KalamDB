@@ -53,7 +53,7 @@ async fn test_user_role_own_tables_access_and_isolation() {
 }
 
 #[actix_web::test]
-async fn test_service_role_cross_user_access() {
+async fn test_service_role_user_table_reads_are_subject_scoped() {
     let server = TestServer::new_shared().await;
     let ns = "rbac_service";
     let svc = insert_user(&server, "svc", Role::Service).await;
@@ -79,14 +79,11 @@ async fn test_service_role_cross_user_access() {
     assert_eq!(resp.status, ResponseStatus::Success, "service select should succeed");
 
     let rows = resp.rows_as_maps();
-    let contents: std::collections::HashSet<_> = rows
-        .iter()
-        .filter_map(|row| row.get("content").and_then(|v| v.as_str()))
-        .collect();
-
-    assert!(contents.contains("alice note"), "should include alice data");
-    assert!(contents.contains("bob note"), "should include bob data");
-    assert_eq!(rows.len(), 2, "service should see all user rows");
+    assert!(
+        rows.is_empty(),
+        "service direct reads should not include other users' rows: {:?}",
+        rows
+    );
 }
 
 #[actix_web::test]

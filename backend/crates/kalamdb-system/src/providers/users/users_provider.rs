@@ -11,11 +11,15 @@
 //!    - Key: `{role}:{user_id}`
 //!    - Enables: "All users with role 'admin'"
 
-use std::sync::{Arc, OnceLock};
+use std::{
+    collections::HashMap,
+    sync::{Arc, OnceLock},
+};
 
 use datafusion::arrow::{array::RecordBatch, datatypes::SchemaRef};
-use kalamdb_commons::{models::rows::SystemTableRow, UserId};
+use kalamdb_commons::{models::rows::SystemTableRow, Role, UserId};
 use kalamdb_store::{entity_store::EntityStore, IndexedEntityStore, StorageBackend};
+use parking_lot::RwLock;
 
 use super::users_indexes::create_users_indexes;
 use crate::{
@@ -31,6 +35,9 @@ use crate::{
 /// Type alias for the indexed users store
 pub type UsersStore = IndexedEntityStore<UserId, SystemTableRow>;
 
+const USER_ROLE_INDEX: usize = 0;
+const PRIVILEGED_ROLE_CACHE_INITIAL_CAPACITY: usize = 32;
+
 /// System.users table provider using IndexedEntityStore for automatic index management.
 ///
 /// All insert/update/delete operations automatically maintain secondary indexes
@@ -38,6 +45,7 @@ pub type UsersStore = IndexedEntityStore<UserId, SystemTableRow>;
 #[derive(Clone)]
 pub struct UsersTableProvider {
     store: UsersStore,
+    privileged_roles: Arc<RwLock<HashMap<UserId, Role>>>,
 }
 
 impl UsersTableProvider {
@@ -54,7 +62,16 @@ impl UsersTableProvider {
             SystemTable::Users.column_family_name().expect("Users is a table, not a view"),
             create_users_indexes(),
         );
-        Self { store }
+        let provider = Self {
+            store,
+            privileged_roles: Arc::new(RwLock::new(HashMap::with_capacity(
+                PRIVILEGED_ROLE_CACHE_INITIAL_CAPACITY,
+            ))),
+        };
+        provider
+            .refresh_privileged_role_cache()
+            .expect("failed to initialize system.users privileged role cache from the role index");
+        provider
     }
 
     /// Create a new user.
@@ -69,7 +86,9 @@ impl UsersTableProvider {
     pub fn create_user(&self, user: User) -> Result<(), SystemError> {
         // Insert user - indexes are managed automatically
         let row = Self::encode_user_row(&user)?;
-        self.store.insert(&user.user_id, &row).into_system_error("insert user error")
+        self.store.insert(&user.user_id, &row).into_system_error("insert user error")?;
+        self.update_privileged_role_cache_for_user(&user);
+        Ok(())
     }
 
     /// Update an existing user.
@@ -95,7 +114,9 @@ impl UsersTableProvider {
         let new_row = Self::encode_user_row(&user)?;
         self.store
             .update_with_old(&user.user_id, Some(&existing_row), &new_row)
-            .into_system_error("update user error")
+            .into_system_error("update user error")?;
+        self.update_privileged_role_cache_for_user(&user);
+        Ok(())
     }
 
     /// Soft delete a user (sets deleted_at timestamp).
@@ -119,7 +140,9 @@ impl UsersTableProvider {
 
         // Update user with deleted_at
         let row = Self::encode_user_row(&user)?;
-        self.store.update(user_id, &row).into_system_error("update user error")
+        self.store.update(user_id, &row).into_system_error("update user error")?;
+        self.update_privileged_role_cache_for_user(&user);
+        Ok(())
     }
 
     /// Get a user by ID.
@@ -132,6 +155,18 @@ impl UsersTableProvider {
     pub fn get_user_by_id(&self, user_id: &UserId) -> Result<Option<User>, SystemError> {
         let row = self.store.get(user_id)?;
         row.map(|value| Self::decode_user_row(&value)).transpose()
+    }
+
+    /// Return the target role used by hot-path impersonation checks.
+    ///
+    /// Service, DBA, and system user IDs are tracked in a small in-memory map.
+    /// Soft-deleted privileged IDs stay classified by their persisted role so
+    /// deletion cannot downgrade a privileged ID into regular-user permissions.
+    /// User IDs absent from that map are treated as regular users, avoiding a
+    /// per-request lookup against `system.users` for high-cardinality users.
+    #[inline]
+    pub fn role_for_impersonation_target(&self, user_id: &UserId) -> Role {
+        self.privileged_roles.read().get(user_id).copied().unwrap_or(Role::User)
     }
 
     /// Helper to create RecordBatch from users
@@ -149,6 +184,47 @@ impl UsersTableProvider {
         self.create_batch(users)
     }
 
+    fn refresh_privileged_role_cache(&self) -> Result<(), SystemError> {
+        let mut roles = HashMap::with_capacity(PRIVILEGED_ROLE_CACHE_INITIAL_CAPACITY);
+        for role in [Role::Service, Role::Dba, Role::System] {
+            self.load_privileged_role(role, &mut roles)?;
+        }
+        *self.privileged_roles.write() = roles;
+        Ok(())
+    }
+
+    fn load_privileged_role(
+        &self,
+        role: Role,
+        roles: &mut HashMap<UserId, Role>,
+    ) -> Result<(), SystemError> {
+        let prefix = role_index_prefix(role);
+        let users = self
+            .store
+            .scan_index_keys_iter(USER_ROLE_INDEX, Some(prefix.as_slice()), None)
+            .into_system_error("scan user role index error")?;
+
+        for user_id in users {
+            let user_id = user_id.into_system_error("decode user role index key error")?;
+            if let Some(user) = self.get_user_by_id(&user_id)? {
+                if is_impersonation_privileged_role(user.role) {
+                    roles.insert(user.user_id, user.role);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn update_privileged_role_cache_for_user(&self, user: &User) {
+        let mut roles = self.privileged_roles.write();
+        if is_impersonation_privileged_role(user.role) {
+            roles.insert(user.user_id.clone(), user.role);
+        } else {
+            roles.remove(&user.user_id);
+        }
+    }
+
     fn encode_user_row(user: &User) -> Result<SystemTableRow, SystemError> {
         model_to_system_row(user, &User::definition())
     }
@@ -156,6 +232,15 @@ impl UsersTableProvider {
     fn decode_user_row(row: &SystemTableRow) -> Result<User, SystemError> {
         system_row_to_model(row, &User::definition())
     }
+}
+
+#[inline]
+fn is_impersonation_privileged_role(role: Role) -> bool {
+    matches!(role, Role::Service | Role::Dba | Role::System)
+}
+
+fn role_index_prefix(role: Role) -> Vec<u8> {
+    format!("{}:", role.as_str()).into_bytes()
 }
 
 crate::impl_system_table_provider_metadata!(
@@ -256,6 +341,69 @@ mod tests {
         // Verify deleted_at is set
         let retrieved = provider.get_user_by_id(&UserId::new("user1")).unwrap().unwrap();
         assert!(retrieved.deleted_at.is_some());
+    }
+
+    #[test]
+    fn test_impersonation_role_cache_tracks_privileged_users() {
+        let provider = create_test_provider();
+        let user_id = UserId::new("service1");
+        let mut user = create_test_user(user_id.as_str());
+
+        assert_eq!(provider.role_for_impersonation_target(&user_id), Role::User);
+
+        user.role = Role::Service;
+        provider.create_user(user.clone()).unwrap();
+        assert_eq!(provider.role_for_impersonation_target(&user_id), Role::Service);
+
+        user.role = Role::Dba;
+        provider.update_user(user.clone()).unwrap();
+        assert_eq!(provider.role_for_impersonation_target(&user_id), Role::Dba);
+
+        user.role = Role::User;
+        provider.update_user(user).unwrap();
+        assert_eq!(provider.role_for_impersonation_target(&user_id), Role::User);
+    }
+
+    #[test]
+    fn test_impersonation_role_cache_keeps_deleted_privileged_users_classified() {
+        let provider = create_test_provider();
+        let user_id = UserId::new("dba1");
+        let mut user = create_test_user(user_id.as_str());
+        user.role = Role::Dba;
+
+        provider.create_user(user).unwrap();
+        assert_eq!(provider.role_for_impersonation_target(&user_id), Role::Dba);
+
+        provider.delete_user(&user_id).unwrap();
+        assert_eq!(provider.role_for_impersonation_target(&user_id), Role::Dba);
+    }
+
+    #[test]
+    fn test_impersonation_role_cache_loads_from_role_index_on_startup() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
+        let provider = UsersTableProvider::new(backend.clone());
+
+        let mut service = create_test_user("service_cached");
+        service.role = Role::Service;
+        provider.create_user(service).unwrap();
+
+        let mut dba = create_test_user("dba_cached");
+        dba.role = Role::Dba;
+        provider.create_user(dba).unwrap();
+
+        let user = create_test_user("regular_cached");
+        provider.create_user(user).unwrap();
+
+        let reloaded = UsersTableProvider::new(backend);
+        assert_eq!(
+            reloaded.role_for_impersonation_target(&UserId::new("service_cached")),
+            Role::Service
+        );
+        assert_eq!(reloaded.role_for_impersonation_target(&UserId::new("dba_cached")), Role::Dba);
+        assert_eq!(
+            reloaded.role_for_impersonation_target(&UserId::new("regular_cached")),
+            Role::User
+        );
     }
 
     #[test]

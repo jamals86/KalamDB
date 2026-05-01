@@ -1,6 +1,7 @@
 use super::common::{
     await_user_shard_leader, count_rows, create_shared_kalam_table, create_user_kalam_table,
-    delete_all, retry_transient_user_leader_error, set_user_id, unique_name, TestEnv,
+    delete_all, postgres_error_text, retry_transient_user_leader_error, set_user_id,
+    unique_name, TestEnv,
 };
 
 struct KalamTestUser {
@@ -381,12 +382,13 @@ async fn e2e_user_tables_can_join_each_other_in_postgres() {
 
 #[tokio::test]
 #[ntest::timeout(2500)]
-async fn e2e_user_table_explicit_userid_routes_to_target_user() {
+async fn e2e_user_table_explicit_userid_must_match_session_user() {
     let env = TestEnv::global().await;
     let pg = env.pg_connect().await;
     let table = unique_name("userid_route");
     let qualified_table = format!("e2e.{table}");
-    let row_id = unique_name("uid_row");
+    let rejected_row_id = unique_name("uid_rejected_row");
+    let accepted_row_id = unique_name("uid_accepted_row");
     let writer = create_kalam_test_user(env, "pg_writer_user").await;
     let target = create_kalam_test_user(env, "pg_target_user").await;
 
@@ -396,30 +398,58 @@ async fn e2e_user_table_explicit_userid_routes_to_target_user() {
     await_user_shard_leader(&target.user_id).await;
 
     set_user_id(&pg, &writer.user_id).await;
-    let insert_sql = format!(
+    let rejected_insert_sql = format!(
         "INSERT INTO {qualified_table} (id, body, _userid) VALUES ('{row_id}', \
-         'routed-via-explicit-userid', '{}')",
-        target.user_id
+         'cross-user-explicit-userid', '{}')",
+        target.user_id,
+        row_id = rejected_row_id
     );
 
-    retry_transient_user_leader_error("explicit _userid insert", || pg.batch_execute(&insert_sql))
-        .await;
+    let err = pg
+        .batch_execute(&rejected_insert_sql)
+        .await
+        .expect_err("explicit _userid must not route to another user");
+    let err_text = postgres_error_text(&err);
+    assert!(
+        err_text.contains("_userid") || err_text.contains("kalam.user_id"),
+        "expected explicit _userid mismatch error, got: {err_text}"
+    );
 
-    let writer_count = count_rows(&pg, &qualified_table, Some(&format!("id = '{row_id}'"))).await;
-    assert_eq!(writer_count, 0, "writer session should not see row routed to explicit _userid");
+    let writer_count =
+        count_rows(&pg, &qualified_table, Some(&format!("id = '{rejected_row_id}'"))).await;
+    assert_eq!(writer_count, 0, "rejected _userid mismatch must not write writer row");
 
     set_user_id(&pg, &target.user_id).await;
-    let target_count = count_rows(&pg, &qualified_table, Some(&format!("id = '{row_id}'"))).await;
-    assert_eq!(target_count, 1, "target session should see explicitly routed row");
+    let target_count =
+        count_rows(&pg, &qualified_table, Some(&format!("id = '{rejected_row_id}'"))).await;
+    assert_eq!(target_count, 0, "rejected _userid mismatch must not write target row");
 
-    wait_for_execute_as_user_count(env, &target.user_id, &qualified_table, &row_id, 1).await;
-    wait_for_execute_as_user_count(env, &writer.user_id, &qualified_table, &row_id, 0).await;
-
-    let root_result = env
-        .kalamdb_sql(&format!("SELECT COUNT(*) FROM {qualified_table} WHERE id = '{row_id}'"))
+    wait_for_execute_as_user_count(env, &target.user_id, &qualified_table, &rejected_row_id, 0)
         .await;
-    let root_count = sql_first_cell_i64(&root_result).unwrap_or_default();
-    assert_eq!(root_count, 1, "root query should confirm the routed row exists");
+    wait_for_execute_as_user_count(env, &writer.user_id, &qualified_table, &rejected_row_id, 0)
+        .await;
+
+    set_user_id(&pg, &writer.user_id).await;
+    let accepted_insert_sql = format!(
+        "INSERT INTO {qualified_table} (id, body, _userid) VALUES ('{row_id}', \
+         'self-explicit-userid', '{}')",
+        writer.user_id,
+        row_id = accepted_row_id
+    );
+
+    retry_transient_user_leader_error("matching explicit _userid insert", || {
+        pg.batch_execute(&accepted_insert_sql)
+    })
+    .await;
+
+    let writer_self_count =
+        count_rows(&pg, &qualified_table, Some(&format!("id = '{accepted_row_id}'"))).await;
+    assert_eq!(writer_self_count, 1, "matching explicit _userid should write writer row");
+
+    wait_for_execute_as_user_count(env, &writer.user_id, &qualified_table, &accepted_row_id, 1)
+        .await;
+    wait_for_execute_as_user_count(env, &target.user_id, &qualified_table, &accepted_row_id, 0)
+        .await;
 
     env.kalamdb_sql(&format!("DROP USER IF EXISTS '{}'", writer.username)).await;
     env.kalamdb_sql(&format!("DROP USER IF EXISTS '{}'", target.username)).await;

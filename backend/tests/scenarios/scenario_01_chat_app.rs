@@ -317,7 +317,7 @@ async fn test_scenario_01_chat_app_core() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Test service writes AS USER
+/// Test service writes AS USER.
 #[tokio::test]
 async fn test_scenario_01_service_writes_as_user() -> anyhow::Result<()> {
     let server = crate::test_support::http_server::get_global_server().await;
@@ -357,32 +357,29 @@ async fn test_scenario_01_service_writes_as_user() -> anyhow::Result<()> {
         .await?;
     assert!(resp.success(), "u1 insert");
 
-    // Service user (root) inserts AS USER 'u1' using SQL comment or header
-    // Note: The actual AS USER mechanism depends on server implementation
-    // For now, we test that service can write to the messages table
+    // Service user writes into u1's partition through the explicit delegation boundary.
     let service_client = server.link_client("root");
 
-    // Insert as service (this goes to service's own partition by default)
-    let _resp = service_client
+    let resp = service_client
         .execute_query(
             &format!(
-                "INSERT INTO {}.messages (id, role_id, content) VALUES (2, 'assistant', 'AI \
-                 Response')",
-                ns
+                "EXECUTE AS USER '{}' (INSERT INTO {}.messages (id, role_id, content) VALUES \
+                 (2, 'assistant', 'AI Response'))",
+                u1_name, ns
             ),
             None,
             None,
             None,
         )
         .await?;
-    // This might succeed or fail depending on AS USER support
+    assert!(resp.success(), "service AS USER insert should succeed");
 
-    // Verify u1 can see their own message
+    // Verify u1 can see both their own row and the delegated assistant row.
     let resp = u1_client
         .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.messages", ns), None, None, None)
         .await?;
     let u1_count: i64 = resp.get_i64("cnt").unwrap_or(0);
-    assert!(u1_count >= 1, "u1 should see at least their own message");
+    assert_eq!(u1_count, 2, "u1 should see both direct and delegated rows");
 
     // Cleanup
     let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;

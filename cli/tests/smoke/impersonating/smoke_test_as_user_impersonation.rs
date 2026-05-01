@@ -1,18 +1,11 @@
-//! Smoke tests for AS USER impersonation functionality
+//! Smoke tests for EXECUTE AS USER subject isolation and role hierarchy.
 //!
-//! Tests cover against a running server:
-//! - Authorization: Regular users cannot use AS USER
-//! - Service/DBA roles can use AS USER
-//! - INSERT AS USER creates records owned by impersonated user
-//! - UPDATE AS USER modifies records as impersonated user
-//! - DELETE AS USER removes records as impersonated user
-//! - AS USER rejected on SHARED tables
-
-use std::time::Duration;
+//! Ordinary USER-table reads remain subject-scoped. Explicit EXECUTE AS USER can
+//! switch subject only when the actor role is allowed to target the resolved
+//! user's role.
 
 use crate::common::*;
 
-/// Helper to create a unique namespace for this test
 fn create_test_namespace(suffix: &str) -> String {
     generate_unique_namespace(&format!("smoke_as_user_{}", suffix))
 }
@@ -32,7 +25,9 @@ fn create_user_with_retry(username: &str, password: &str, role: &str) {
                 }
                 if msg.contains("Serialization error") || msg.contains("UnexpectedEnd") {
                     last_err = Some(msg);
-                    std::thread::sleep(Duration::from_millis(200 * (attempt + 1) as u64));
+                    std::thread::sleep(std::time::Duration::from_millis(
+                        200 * (attempt + 1) as u64,
+                    ));
                     continue;
                 }
                 panic!("Failed to create user {}: {}", username, msg);
@@ -46,729 +41,344 @@ fn create_user_with_retry(username: &str, password: &str, role: &str) {
     );
 }
 
-/// Helper to confirm a user_id exists in system.users.
-/// AS USER requires the user_id, not a legacy username field.
-fn get_user_id(user_id: &str) -> Option<String> {
-    let query = format!("SELECT user_id FROM system.users WHERE user_id = '{}'", user_id);
-    let result = execute_sql_as_root_via_client_json(&query).ok()?;
-
-    // Parse JSON response
-    let json: serde_json::Value = serde_json::from_str(&result).ok()?;
-    let rows = get_rows_as_hashmaps(&json)?;
-
-    if let Some(row) = rows.first() {
-        let user_id_value = row.get("user_id").map(extract_typed_value)?;
-        return user_id_value.as_str().map(|s| s.to_string());
-    }
-    None
+fn expect_execute_as_denied(result: Result<String, Box<dyn std::error::Error>>, context: &str) {
+    assert!(result.is_err(), "{} should fail", context);
+    let msg = result.unwrap_err().to_string().to_lowercase();
+    assert!(
+        msg.contains("not authorized")
+            || msg.contains("unauthorized")
+            || msg.contains("permission")
+            || msg.contains("not allowed"),
+        "{} should mention EXECUTE AS USER denial: {}",
+        context,
+        msg
+    );
 }
 
-fn wait_for_query_success_with<F>(
-    sql: &str,
-    timeout: Duration,
-    execute: F,
-) -> Result<String, Box<dyn std::error::Error>>
-where
-    F: Fn(&str) -> Result<String, Box<dyn std::error::Error>>,
-{
-    let start = std::time::Instant::now();
-    let mut last_error = None;
-
-    while start.elapsed() < timeout {
-        match execute(sql) {
-            Ok(output) => return Ok(output),
-            Err(err) => {
-                last_error = Some(err.to_string());
-                std::thread::sleep(Duration::from_millis(120));
-            },
-        }
-    }
-
-    Err(format!(
-        "Timed out waiting for query to succeed. Last error: {}",
-        last_error.unwrap_or_else(|| "<none>".to_string())
-    )
-    .into())
-}
-
-/// Smoke Test: Regular user CANNOT use AS USER (authorization check)
 #[ntest::timeout(120000)]
 #[test]
-fn smoke_as_user_blocked_for_regular_user() {
+fn smoke_as_user_role_matrix_allows_privileged_roles_and_denies_user() {
     if !is_server_running() {
-        eprintln!("Skipping smoke_as_user_blocked_for_regular_user: server not running");
+        eprintln!(
+            "Skipping smoke_as_user_role_matrix_allows_privileged_roles_and_denies_user: server not running"
+        );
         return;
     }
 
-    let namespace = create_test_namespace("blocked");
+    let namespace = create_test_namespace("role_matrix");
     let table = generate_unique_table("items");
     let full_table = format!("{}.{}", namespace, table);
-
-    // Create a regular user and a target user
-    let regular_user = generate_unique_namespace("regular");
-    let target_user = generate_unique_namespace("target");
     let password = "test_pass_123";
 
-    // Setup: create namespace, table, and users as root
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
         .expect("Failed to create namespace");
-
     execute_sql_as_root_via_client(&format!(
-        "CREATE TABLE {} (id BIGINT PRIMARY KEY, name VARCHAR) WITH (TYPE='USER')",
+        "CREATE TABLE {} (id VARCHAR PRIMARY KEY, value VARCHAR) WITH (TYPE='USER')",
         full_table
     ))
-    .expect("Failed to create table");
+    .expect("Failed to create user table");
 
-    create_user_with_retry(&regular_user, password, "user");
+    let target_user = generate_unique_namespace("target");
     create_user_with_retry(&target_user, password, "user");
 
-    // Get the target user's user_id (UUID)
-    let target_user_id = get_user_id(&target_user).expect("Failed to get target user_id");
+    let allowed_actors = [
+        (generate_unique_namespace("system_actor"), "system"),
+        (generate_unique_namespace("dba_actor"), "dba"),
+        (generate_unique_namespace("service_actor"), "service"),
+    ];
 
-    // Attempt INSERT AS USER as regular user - should FAIL
-    let insert_sql = format!(
-        "EXECUTE AS USER '{}' (INSERT INTO {} (id, name) VALUES (1, 'Test'))",
-        target_user_id, full_table
-    );
-    let result = execute_sql_via_client_as(&regular_user, password, &insert_sql);
-
-    assert!(
-        result.is_err(),
-        "Regular user should NOT be able to use AS USER, but got: {:?}",
-        result
-    );
-
-    let error_msg = result.unwrap_err().to_string().to_lowercase();
-    assert!(
-        error_msg.contains("not authorized")
-            || error_msg.contains("unauthorized")
-            || error_msg.contains("permission"),
-        "Error should mention authorization: {}",
-        error_msg
-    );
-
-    // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", regular_user));
-    let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", target_user));
-    let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
-
-    println!("✅ smoke_as_user_blocked_for_regular_user passed!");
-}
-
-/// Smoke Test: Service role CAN use AS USER for INSERT
-#[ntest::timeout(120000)]
-#[test]
-fn smoke_as_user_insert_with_service_role() {
-    if !is_server_running() {
-        eprintln!("Skipping smoke_as_user_insert_with_service_role: server not running");
-        return;
+    for (actor, role) in &allowed_actors {
+        create_user_with_retry(actor, password, role);
+        let sql = format!(
+            "EXECUTE AS USER '{}' (INSERT INTO {} (id, value) VALUES ('{}', 'allowed'))",
+            target_user, full_table, actor
+        );
+        execute_sql_via_client_as(actor, password, &sql)
+            .unwrap_or_else(|err| panic!("{} cross-user insert should succeed: {}", role, err));
     }
 
-    let namespace = create_test_namespace("svc_insert");
-    let table = generate_unique_table("orders");
-    let full_table = format!("{}.{}", namespace, table);
-
-    // Create a service user and a target user
-    let service_user = generate_unique_namespace("service");
-    let target_user = generate_unique_namespace("target");
-    let password = "test_pass_123";
-
-    // Setup
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
-        .expect("Failed to create namespace");
-
-    execute_sql_as_root_via_client(&format!(
-        "CREATE TABLE {} (id BIGINT PRIMARY KEY, amount VARCHAR) WITH (TYPE='USER')",
-        full_table
-    ))
-    .expect("Failed to create table");
-
-    create_user_with_retry(&service_user, password, "service");
-    create_user_with_retry(&target_user, password, "user");
-
-    // Get user_ids
-    let target_user_id = get_user_id(&target_user).expect("Failed to get target user_id");
-
-    // INSERT AS USER target_user (executed by service user)
-    let insert_sql = format!(
-        "EXECUTE AS USER '{}' (INSERT INTO {} (id, amount) VALUES (100, '99.99'))",
-        target_user_id, full_table
+    let denied_actor = generate_unique_namespace("user_actor");
+    create_user_with_retry(&denied_actor, password, "user");
+    expect_execute_as_denied(
+        execute_sql_via_client_as(
+            &denied_actor,
+            password,
+            &format!(
+                "EXECUTE AS USER '{}' (INSERT INTO {} (id, value) VALUES ('denied-user', 'blocked'))",
+                target_user, full_table
+            ),
+        ),
+        "regular user cross-user insert",
     );
-    let result = execute_sql_via_client_as(&service_user, password, &insert_sql);
-    assert!(result.is_ok(), "Service role should be able to use AS USER: {:?}", result);
 
-    // Verify: target_user can see the record (RLS)
-    let select_result =
+    let target_rows =
         execute_sql_via_client_as(&target_user, password, &format!("SELECT * FROM {}", full_table))
-            .expect("Failed to select as target user");
-
+            .expect("Failed to select as target");
     assert!(
-        select_result.contains("99.99"),
-        "Target user should see the inserted record: {}",
-        select_result
+        target_rows.contains("allowed") && !target_rows.contains("blocked"),
+        "Role matrix inserts did not isolate target rows correctly: {}",
+        target_rows
     );
 
-    // Verify: service user can see the record (service role can access all users)
-    let service_select = execute_sql_via_client_as(
-        &service_user,
+    let direct_dba = execute_sql_via_client_as(
+        &allowed_actors[1].0,
         password,
         &format!("SELECT * FROM {}", full_table),
     )
-    .expect("Failed to select as service user");
-
+    .expect("DBA direct select should succeed");
     assert!(
-        service_select.contains("99.99"),
-        "Service user should see target user's data when querying normally"
+        !direct_dba.contains("allowed"),
+        "DBA direct select leaked target rows: {}",
+        direct_dba
     );
 
-    // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", service_user));
+    for (actor, _) in allowed_actors {
+        let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", actor));
+    }
+    let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", denied_actor));
     let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", target_user));
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
     let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
-
-    println!("✅ smoke_as_user_insert_with_service_role passed!");
 }
 
-/// Smoke Test: DBA can use AS USER for UPDATE
 #[ntest::timeout(120000)]
 #[test]
-fn smoke_as_user_update_with_dba_role() {
+fn smoke_as_user_self_target_dml_stays_under_actor_user_id() {
     if !is_server_running() {
-        eprintln!("Skipping smoke_as_user_update_with_dba_role: server not running");
+        eprintln!(
+            "Skipping smoke_as_user_self_target_dml_stays_under_actor_user_id: server not running"
+        );
         return;
     }
 
-    let namespace = create_test_namespace("dba_update");
-    let table = generate_unique_table("profiles");
+    let namespace = create_test_namespace("self_dml");
+    let table = generate_unique_table("notes");
     let full_table = format!("{}.{}", namespace, table);
-
-    let dba_user = generate_unique_namespace("dba");
-    let target_user = generate_unique_namespace("target");
     let password = "test_pass_123";
+    let actor = generate_unique_namespace("service_self");
+    let other = generate_unique_namespace("other_user");
 
-    // Setup
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
         .expect("Failed to create namespace");
-
     execute_sql_as_root_via_client(&format!(
-        "CREATE TABLE {} (id BIGINT PRIMARY KEY, status VARCHAR) WITH (TYPE='USER')",
+        "CREATE TABLE {} (id VARCHAR PRIMARY KEY, value VARCHAR) WITH (TYPE='USER')",
         full_table
     ))
-    .expect("Failed to create table");
+    .expect("Failed to create user table");
+    create_user_with_retry(&actor, password, "service");
+    create_user_with_retry(&other, password, "user");
 
-    create_user_with_retry(&dba_user, password, "dba");
-    create_user_with_retry(&target_user, password, "user");
-
-    // Get user_id
-    let target_user_id = get_user_id(&target_user).expect("Failed to get target user_id");
-
-    // INSERT AS USER first
-    let insert_sql = format!(
-        "EXECUTE AS USER '{}' (INSERT INTO {} (id, status) VALUES (1, 'active'))",
-        target_user_id, full_table
-    );
-    execute_sql_via_client_as(&dba_user, password, &insert_sql).expect("Failed to INSERT AS USER");
-
-    // UPDATE AS USER
-    let update_sql = format!(
-        "EXECUTE AS USER '{}' (UPDATE {} SET status = 'inactive' WHERE id = 1)",
-        target_user_id, full_table
-    );
-    let result = execute_sql_via_client_as(&dba_user, password, &update_sql);
-    assert!(result.is_ok(), "DBA should be able to UPDATE AS USER: {:?}", result);
-
-    // Verify: target_user sees the updated record
-    let select_result = execute_sql_via_client_as(
-        &target_user,
+    execute_sql_via_client_as(
+        &actor,
         password,
-        &format!("SELECT * FROM {} WHERE id = 1", full_table),
+        &format!(
+            "EXECUTE AS USER '{}' (INSERT INTO {} (id, value) VALUES ('n1', 'actor-row'))",
+            actor, full_table
+        ),
     )
-    .expect("Failed to select as target user");
+    .expect("Self-targeted insert should succeed");
 
-    assert!(
-        select_result.contains("inactive"),
-        "Status should be updated to 'inactive': {}",
-        select_result
-    );
+    let actor_view = execute_sql_via_client_as(
+        &actor,
+        password,
+        &format!("SELECT value FROM {} WHERE id = 'n1'", full_table),
+    )
+    .expect("Actor select failed");
+    assert!(actor_view.contains("actor-row"), "Actor should see own row: {}", actor_view);
 
-    // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", dba_user));
-    let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", target_user));
-    let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+    let other_view =
+        execute_sql_via_client_as(&other, password, &format!("SELECT * FROM {}", full_table))
+            .expect("Other select failed");
+    assert!(!other_view.contains("actor-row"), "Other user saw actor row: {}", other_view);
 
-    println!("✅ smoke_as_user_update_with_dba_role passed!");
-}
+    execute_sql_via_client_as(
+        &actor,
+        password,
+        &format!(
+            "EXECUTE AS USER '{}' (UPDATE {} SET value = 'actor-updated' WHERE id = 'n1')",
+            actor, full_table
+        ),
+    )
+    .expect("Self-targeted update should succeed");
 
-/// Smoke Test: DBA can use AS USER for DELETE
-#[ntest::timeout(120000)]
-#[test]
-fn smoke_as_user_delete_with_dba_role() {
-    if !is_server_running() {
-        eprintln!("Skipping smoke_as_user_delete_with_dba_role: server not running");
-        return;
-    }
+    let updated = execute_sql_via_client_as(
+        &actor,
+        password,
+        &format!("SELECT value FROM {} WHERE id = 'n1'", full_table),
+    )
+    .expect("Actor select after update failed");
+    assert!(updated.contains("actor-updated"), "Self update did not apply: {}", updated);
 
-    let namespace = create_test_namespace("dba_delete");
-    let table = generate_unique_table("sessions");
-    let full_table = format!("{}.{}", namespace, table);
+    execute_sql_via_client_as(
+        &actor,
+        password,
+        &format!("EXECUTE AS USER '{}' (DELETE FROM {} WHERE id = 'n1')", actor, full_table),
+    )
+    .expect("Self-targeted delete should succeed");
 
-    let dba_user = generate_unique_namespace("dba");
-    let target_user = generate_unique_namespace("target");
-    let password = "test_pass_123";
-
-    // Setup
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
-        .expect("Failed to create namespace");
-
-    execute_sql_as_root_via_client(&format!(
-        "CREATE TABLE {} (id BIGINT PRIMARY KEY, active BOOLEAN) WITH (TYPE='USER')",
-        full_table
-    ))
-    .expect("Failed to create table");
-
-    create_user_with_retry(&dba_user, password, "dba");
-    create_user_with_retry(&target_user, password, "user");
-
-    // INSERT AS USER first
-    let insert_sql = format!(
-        "EXECUTE AS USER '{}' (INSERT INTO {} (id, active) VALUES (1, true))",
-        target_user, full_table
-    );
-    execute_sql_via_client_as(&dba_user, password, &insert_sql).expect("Failed to INSERT AS USER");
-
-    // Verify record exists
-    let before_delete =
-        execute_sql_via_client_as(&target_user, password, &format!("SELECT * FROM {}", full_table))
-            .expect("Failed to select before delete");
-    assert!(
-        before_delete.contains("true") || before_delete.contains("1"),
-        "Record should exist before delete: {}",
-        before_delete
-    );
-
-    // DELETE AS USER
-    let delete_sql =
-        format!("EXECUTE AS USER '{}' (DELETE FROM {} WHERE id = 1)", target_user, full_table);
-    let result = execute_sql_via_client_as(&dba_user, password, &delete_sql);
-    assert!(result.is_ok(), "DBA should be able to DELETE AS USER: {:?}", result);
-
-    // Verify: record is deleted
     let after_delete =
-        execute_sql_via_client_as(&target_user, password, &format!("SELECT * FROM {}", full_table))
-            .expect("Failed to select after delete");
-
+        execute_sql_via_client_as(&actor, password, &format!("SELECT * FROM {}", full_table))
+            .expect("Actor select after delete failed");
     assert!(
-        after_delete.contains("0 rows") || !after_delete.contains("true"),
-        "Record should be deleted: {}",
+        !after_delete.contains("actor-updated"),
+        "Self delete did not remove row: {}",
         after_delete
     );
 
-    // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", dba_user));
-    let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", target_user));
+    let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", actor));
+    let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", other));
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
     let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
-
-    println!("✅ smoke_as_user_delete_with_dba_role passed!");
 }
 
-/// Smoke Test: AS USER rejected on SHARED tables
 #[ntest::timeout(120000)]
 #[test]
-fn smoke_as_user_rejected_on_shared_table() {
+fn smoke_as_user_allowed_select_update_delete_runs_in_target_scope() {
     if !is_server_running() {
-        eprintln!("Skipping smoke_as_user_rejected_on_shared_table: server not running");
+        eprintln!(
+            "Skipping smoke_as_user_allowed_select_update_delete_runs_in_target_scope: server not running"
+        );
         return;
     }
 
-    let namespace = create_test_namespace("shared_reject");
+    let namespace = create_test_namespace("dml_allowed");
+    let table = generate_unique_table("profiles");
+    let full_table = format!("{}.{}", namespace, table);
+    let password = "test_pass_123";
+    let actor = generate_unique_namespace("dba_actor");
+    let target = generate_unique_namespace("target_user");
+
+    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+        .expect("Failed to create namespace");
+    execute_sql_as_root_via_client(&format!(
+        "CREATE TABLE {} (id VARCHAR PRIMARY KEY, value VARCHAR) WITH (TYPE='USER')",
+        full_table
+    ))
+    .expect("Failed to create user table");
+    create_user_with_retry(&actor, password, "dba");
+    create_user_with_retry(&target, password, "user");
+
+    execute_sql_via_client_as(
+        &target,
+        password,
+        &format!("INSERT INTO {} (id, value) VALUES ('p1', 'original')", full_table),
+    )
+    .expect("Target insert failed");
+
+    let selected = execute_sql_via_client_as(
+        &actor,
+        password,
+        &format!("EXECUTE AS USER '{}' (SELECT * FROM {} WHERE id = 'p1')", target, full_table),
+    )
+    .expect("DBA should select target row through EXECUTE AS USER");
+    assert!(selected.contains("original"), "Expected target row, got: {}", selected);
+
+    execute_sql_via_client_as(
+        &actor,
+        password,
+        &format!(
+            "EXECUTE AS USER '{}' (UPDATE {} SET value = 'changed' WHERE id = 'p1')",
+            target, full_table
+        ),
+    )
+    .expect("DBA should update target row through EXECUTE AS USER");
+
+    let after_update = execute_sql_via_client_as(
+        &target,
+        password,
+        &format!("SELECT value FROM {} WHERE id = 'p1'", full_table),
+    )
+    .expect("Target select after update failed");
+    assert!(after_update.contains("changed"), "Target row was not updated: {}", after_update);
+
+    let actor_direct =
+        execute_sql_via_client_as(&actor, password, &format!("SELECT * FROM {}", full_table))
+            .expect("Actor direct select failed");
+    assert!(
+        !actor_direct.contains("changed"),
+        "Actor saw target row directly: {}",
+        actor_direct
+    );
+
+    execute_sql_via_client_as(
+        &actor,
+        password,
+        &format!("EXECUTE AS USER '{}' (DELETE FROM {} WHERE id = 'p1')", target, full_table),
+    )
+    .expect("DBA should delete target row through EXECUTE AS USER");
+
+    let target_after = execute_sql_via_client_as(
+        &target,
+        password,
+        &format!("SELECT value FROM {} WHERE id = 'p1'", full_table),
+    )
+    .expect("Target select after delete failed");
+    assert!(
+        !target_after.contains("changed") && !target_after.contains("original"),
+        "Target row should be deleted: {}",
+        target_after
+    );
+
+    let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", actor));
+    let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", target));
+    let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+}
+
+#[ntest::timeout(120000)]
+#[test]
+fn smoke_as_user_shared_table_denied_without_mutation() {
+    if !is_server_running() {
+        eprintln!(
+            "Skipping smoke_as_user_shared_table_denied_without_mutation: server not running"
+        );
+        return;
+    }
+
+    let namespace = create_test_namespace("shared_denied");
     let table = generate_unique_table("config");
     let full_table = format!("{}.{}", namespace, table);
-
-    let dba_user = generate_unique_namespace("dba");
-    let target_user = generate_unique_namespace("target");
     let password = "test_pass_123";
-
-    // Setup
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
-        .expect("Failed to create namespace");
-
-    // Create SHARED table (not USER table)
-    execute_sql_as_root_via_client(&format!(
-        "CREATE TABLE {} (config_key VARCHAR PRIMARY KEY, config_value VARCHAR) WITH \
-         (TYPE='SHARED')",
-        full_table
-    ))
-    .expect("Failed to create SHARED table");
-
-    create_user_with_retry(&dba_user, password, "dba");
-    create_user_with_retry(&target_user, password, "user");
-
-    // Get user_id
-    let target_user_id = get_user_id(&target_user).expect("Failed to get target user_id");
-
-    // Attempt INSERT AS USER on SHARED table - should FAIL
-    let insert_sql = format!(
-        "EXECUTE AS USER '{}' (INSERT INTO {} (config_key, config_value) VALUES ('k1', 'v1'))",
-        target_user_id, full_table
-    );
-    let result = execute_sql_via_client_as(&dba_user, password, &insert_sql);
-
-    assert!(
-        result.is_err(),
-        "AS USER should be rejected on SHARED tables, but got: {:?}",
-        result
-    );
-
-    let error_msg = result.unwrap_err().to_string().to_lowercase();
-    assert!(
-        error_msg.contains("shared") || error_msg.contains("as user"),
-        "Error should mention SHARED tables or AS USER restriction: {}",
-        error_msg
-    );
-
-    // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", dba_user));
-    let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", target_user));
-    let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
-
-    println!("✅ smoke_as_user_rejected_on_shared_table passed!");
-}
-
-/// Smoke Test: Full AS USER workflow - INSERT, UPDATE, DELETE with ownership verification
-#[ntest::timeout(120000)]
-#[test]
-fn smoke_as_user_full_workflow() {
-    if !is_server_running() {
-        eprintln!("Skipping smoke_as_user_full_workflow: server not running");
-        return;
-    }
-
-    let namespace = create_test_namespace("full_workflow");
-    let table = generate_unique_table("tasks");
-    let full_table = format!("{}.{}", namespace, table);
-
-    let service_user = generate_unique_namespace("service");
-    let user_alice = generate_unique_namespace("alice");
-    let user_bob = generate_unique_namespace("bob");
-    let password = "test_pass_123";
-
-    // Setup
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
-        .expect("Failed to create namespace");
-
-    execute_sql_as_root_via_client(&format!(
-        "CREATE TABLE {} (id BIGINT PRIMARY KEY, title VARCHAR, done BOOLEAN) WITH (TYPE='USER')",
-        full_table
-    ))
-    .expect("Failed to create table");
-
-    create_user_with_retry(&service_user, password, "service");
-    create_user_with_retry(&user_alice, password, "user");
-    create_user_with_retry(&user_bob, password, "user");
-
-    // Get user_ids
-    let alice_user_id = get_user_id(&user_alice).expect("Failed to get alice user_id");
-    let bob_user_id = get_user_id(&user_bob).expect("Failed to get bob user_id");
-
-    // 1. INSERT AS USER alice (service user acting on behalf of alice)
-    execute_sql_via_client_as(
-        &service_user,
-        password,
-        &format!(
-            "EXECUTE AS USER '{}' (INSERT INTO {} (id, title, done) VALUES (1, 'Alice Task 1', \
-             false))",
-            alice_user_id, full_table
-        ),
-    )
-    .expect("Failed to INSERT AS USER alice");
-
-    execute_sql_via_client_as(
-        &service_user,
-        password,
-        &format!(
-            "EXECUTE AS USER '{}' (INSERT INTO {} (id, title, done) VALUES (2, 'Alice Task 2', \
-             false))",
-            alice_user_id, full_table
-        ),
-    )
-    .expect("Failed to INSERT second task AS USER alice");
-
-    // 2. INSERT AS USER bob
-    execute_sql_via_client_as(
-        &service_user,
-        password,
-        &format!(
-            "EXECUTE AS USER '{}' (INSERT INTO {} (id, title, done) VALUES (10, 'Bob Task 1', \
-             false))",
-            bob_user_id, full_table
-        ),
-    )
-    .expect("Failed to INSERT AS USER bob");
-
-    // 3. Verify RLS: Alice sees only her tasks
-    let alice_select = execute_sql_via_client_as(
-        &user_alice,
-        password,
-        &format!("SELECT * FROM {} ORDER BY id", full_table),
-    )
-    .expect("Failed to select as alice");
-
-    assert!(
-        alice_select.contains("Alice Task 1") && alice_select.contains("Alice Task 2"),
-        "Alice should see her tasks: {}",
-        alice_select
-    );
-    assert!(
-        !alice_select.contains("Bob Task"),
-        "Alice should NOT see Bob's tasks: {}",
-        alice_select
-    );
-
-    // 4. Verify RLS: Bob sees only his tasks
-    let bob_select = execute_sql_via_client_as(
-        &user_bob,
-        password,
-        &format!("SELECT * FROM {} ORDER BY id", full_table),
-    )
-    .expect("Failed to select as bob");
-
-    assert!(bob_select.contains("Bob Task 1"), "Bob should see his task: {}", bob_select);
-    assert!(
-        !bob_select.contains("Alice Task"),
-        "Bob should NOT see Alice's tasks: {}",
-        bob_select
-    );
-
-    // 5. UPDATE AS USER alice (mark task 1 as done)
-    execute_sql_via_client_as(
-        &service_user,
-        password,
-        &format!(
-            "EXECUTE AS USER '{}' (UPDATE {} SET done = true WHERE id = 1)",
-            alice_user_id, full_table
-        ),
-    )
-    .expect("Failed to UPDATE AS USER alice");
-
-    // 6. Verify update
-    let alice_after_update = execute_sql_via_client_as(
-        &user_alice,
-        password,
-        &format!("SELECT * FROM {} WHERE id = 1", full_table),
-    )
-    .expect("Failed to select after update");
-
-    assert!(
-        alice_after_update.contains("true") || alice_after_update.contains("1"),
-        "Task 1 should be marked as done: {}",
-        alice_after_update
-    );
-
-    // 7. DELETE AS USER alice (remove task 2)
-    execute_sql_via_client_as(
-        &service_user,
-        password,
-        &format!("EXECUTE AS USER '{}' (DELETE FROM {} WHERE id = 2)", alice_user_id, full_table),
-    )
-    .expect("Failed to DELETE AS USER alice");
-
-    // 8. Verify delete
-    let alice_after_delete =
-        execute_sql_via_client_as(&user_alice, password, &format!("SELECT * FROM {}", full_table))
-            .expect("Failed to select after delete");
-
-    assert!(
-        !alice_after_delete.contains("Alice Task 2"),
-        "Task 2 should be deleted: {}",
-        alice_after_delete
-    );
-    assert!(
-        alice_after_delete.contains("Alice Task 1"),
-        "Task 1 should still exist: {}",
-        alice_after_delete
-    );
-
-    // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", service_user));
-    let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", user_alice));
-    let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", user_bob));
-    let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
-
-    println!("✅ smoke_as_user_full_workflow passed!");
-}
-
-/// Smoke Test: SELECT AS USER scopes reads to the impersonated subject on USER tables
-#[ntest::timeout(120000)]
-#[test]
-fn smoke_as_user_select_scopes_reads_for_user_tables() {
-    if !is_server_running() {
-        eprintln!("Skipping smoke_as_user_select_scopes_reads_for_user_tables: server not running");
-        return;
-    }
-
-    let namespace = create_test_namespace("select_scope_user");
-    let table = generate_unique_table("messages");
-    let full_table = format!("{}.{}", namespace, table);
-
-    let service_user = generate_unique_namespace("service");
-    let user1 = generate_unique_namespace("user1");
-    let user2 = generate_unique_namespace("user2");
-    let password = "test_pass_123";
+    let actor = generate_unique_namespace("dba_actor");
+    let target = generate_unique_namespace("target_user");
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
         .expect("Failed to create namespace");
-
     execute_sql_as_root_via_client(&format!(
-        "CREATE TABLE {} (id BIGINT PRIMARY KEY, body VARCHAR) WITH (TYPE='USER')",
+        "CREATE TABLE {} (id VARCHAR PRIMARY KEY, value VARCHAR) WITH (TYPE='SHARED')",
         full_table
     ))
-    .expect("Failed to create table");
+    .expect("Failed to create shared table");
+    create_user_with_retry(&actor, password, "dba");
+    create_user_with_retry(&target, password, "user");
 
-    create_user_with_retry(&service_user, password, "service");
-    create_user_with_retry(&user1, password, "user");
-    create_user_with_retry(&user2, password, "user");
-
-    let user1_id = get_user_id(&user1).expect("Failed to get user1 user_id");
-    let user2_id = get_user_id(&user2).expect("Failed to get user2 user_id");
-
-    execute_sql_via_client_as(
-        &service_user,
+    let result = execute_sql_via_client_as(
+        &actor,
         password,
         &format!(
-            "EXECUTE AS USER '{}' (INSERT INTO {} (id, body) VALUES (1, 'u1-only'))",
-            user1_id, full_table
+            "EXECUTE AS USER '{}' (INSERT INTO {} (id, value) VALUES ('s1', 'blocked'))",
+            target, full_table
         ),
-    )
-    .expect("Failed to insert row for user1");
+    );
+    assert!(result.is_err(), "AS USER on shared table should fail");
+    let msg = result.unwrap_err().to_string().to_lowercase();
+    assert!(
+        msg.contains("shared") || msg.contains("user tables") || msg.contains("table type"),
+        "Shared table AS USER should mention table-type denial: {}",
+        msg
+    );
 
-    execute_sql_via_client_as(
-        &service_user,
-        password,
-        &format!(
-            "EXECUTE AS USER '{}' (INSERT INTO {} (id, body) VALUES (2, 'u2-only'))",
-            user2_id, full_table
-        ),
-    )
-    .expect("Failed to insert row for user2");
+    let shared_rows =
+        execute_sql_via_client_as(&actor, password, &format!("SELECT * FROM {}", full_table))
+            .expect("Shared table select failed");
+    assert!(
+        !shared_rows.contains("blocked"),
+        "Denied shared insert created a row: {}",
+        shared_rows
+    );
 
-    let service_all = execute_sql_via_client_as(
-        &service_user,
-        password,
-        &format!("SELECT * FROM {} ORDER BY id", full_table),
-    )
-    .expect("Service select failed");
-    assert!(service_all.contains("u1-only") && service_all.contains("u2-only"));
-
-    let service_as_user1 = execute_sql_via_client_as(
-        &service_user,
-        password,
-        &format!("EXECUTE AS USER '{}' (SELECT * FROM {} ORDER BY id)", user1_id, full_table),
-    )
-    .expect("Service SELECT AS USER user1 failed");
-    assert!(service_as_user1.contains("u1-only"));
-    assert!(!service_as_user1.contains("u2-only"));
-
-    let user2_view = execute_sql_via_client_as(
-        &user2,
-        password,
-        &format!("SELECT * FROM {} ORDER BY id", full_table),
-    )
-    .expect("User2 select failed");
-    assert!(user2_view.contains("u2-only"));
-    assert!(!user2_view.contains("u1-only"));
-
-    let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", service_user));
-    let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", user1));
-    let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", user2));
+    let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", actor));
+    let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", target));
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
     let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
-
-    println!("✅ smoke_as_user_select_scopes_reads_for_user_tables passed!");
-}
-
-/// Smoke Test: USER isolation also holds for STREAM tables (direct and AS USER reads)
-#[ntest::timeout(120000)]
-#[test]
-fn smoke_as_user_stream_table_isolation() {
-    if !is_server_running() {
-        eprintln!("Skipping smoke_as_user_stream_table_isolation: server not running");
-        return;
-    }
-
-    let namespace = create_test_namespace("select_scope_stream");
-    let table = generate_unique_table("events");
-    let full_table = format!("{}.{}", namespace, table);
-
-    let service_user = generate_unique_namespace("service");
-    let user1 = generate_unique_namespace("user1");
-    let user2 = generate_unique_namespace("user2");
-    let password = "test_pass_123";
-
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
-        .expect("Failed to create namespace");
-
-    execute_sql_as_root_via_client(&format!(
-        "CREATE TABLE {} (id BIGINT PRIMARY KEY, payload VARCHAR) WITH (TYPE='STREAM', \
-         TTL_SECONDS=3600)",
-        full_table
-    ))
-    .expect("Failed to create stream table");
-    wait_for_table_ready(&full_table, Duration::from_secs(10)).expect("stream table not ready");
-
-    create_user_with_retry(&service_user, password, "service");
-    create_user_with_retry(&user1, password, "user");
-    create_user_with_retry(&user2, password, "user");
-
-    let user1_id = get_user_id(&user1).expect("Failed to get user1 user_id");
-    let user2_id = get_user_id(&user2).expect("Failed to get user2 user_id");
-
-    execute_sql_via_client_as(
-        &service_user,
-        password,
-        &format!(
-            "EXECUTE AS USER '{}' (INSERT INTO {} (id, payload) VALUES (1, 'stream-u1'))",
-            user1_id, full_table
-        ),
-    )
-    .expect("Failed to insert stream row for user1");
-
-    let user2_direct = wait_for_query_success_with(
-        &format!("SELECT * FROM {}", full_table),
-        Duration::from_secs(30),
-        |sql| execute_sql_via_client_as(&user2, password, sql),
-    )
-    .expect("User2 stream select failed");
-    assert!(!user2_direct.contains("stream-u1"));
-
-    let user1_select_sql = format!("EXECUTE AS USER '{}' (SELECT * FROM {})", user1_id, full_table);
-    let service_as_user1 = wait_for_query_contains_with(
-        &user1_select_sql,
-        "stream-u1",
-        Duration::from_secs(30),
-        |sql| execute_sql_via_client_as(&service_user, password, sql),
-    )
-    .expect("Service SELECT AS USER user1 on stream failed");
-    assert!(service_as_user1.contains("stream-u1"));
-
-    let service_as_user2 = wait_for_query_success_with(
-        &format!("EXECUTE AS USER '{}' (SELECT * FROM {})", user2_id, full_table),
-        Duration::from_secs(30),
-        |sql| execute_sql_via_client_as(&service_user, password, sql),
-    )
-    .expect("Service SELECT AS USER user2 on stream failed");
-    assert!(!service_as_user2.contains("stream-u1"));
-
-    let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", service_user));
-    let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", user1));
-    let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", user2));
-    let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
-
-    println!("✅ smoke_as_user_stream_table_isolation passed!");
 }

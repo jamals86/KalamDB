@@ -6,7 +6,8 @@ use serde::Deserialize;
 /// Query parameters for file download
 #[derive(Debug, Deserialize)]
 pub struct DownloadQuery {
-    /// Optional user_id for admin impersonation (type-safe)
+    /// Optional user_id for user-table downloads.
+    /// Cross-user requests are authorized through the impersonation role matrix.
     #[serde(default, deserialize_with = "deserialize_optional_user_id")]
     pub user_id: Option<UserId>,
 }

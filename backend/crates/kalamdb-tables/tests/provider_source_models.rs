@@ -665,7 +665,8 @@ async fn user_provider_dba_session_reads_only_subject_rows() {
 #[tokio::test]
 async fn user_provider_delete_only_tombstones_subject_row() {
     let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
-    let table_id = TableId::new(NamespaceId::new("app"), TableName::new("users_exec_delete_scoped"));
+    let table_id =
+        TableId::new(NamespaceId::new("app"), TableName::new("users_exec_delete_scoped"));
     let table_def = build_user_table_definition(&table_id);
     let services = build_services(Arc::clone(&table_def), Arc::clone(&backend));
     let store = Arc::new(new_indexed_user_table_store(Arc::clone(&backend), &table_id, "id"));
@@ -723,13 +724,8 @@ async fn user_provider_delete_only_tombstones_subject_row() {
 
     let root_ctx = session_with_role(&root_user, Role::System);
     let root_state = root_ctx.state();
-    let root_plan = provider
-        .scan(&root_state, None, &[], None)
-        .await
-        .expect("build root scan");
-    let root_batches = collect(root_plan, root_state.task_ctx())
-        .await
-        .expect("collect root rows");
+    let root_plan = provider.scan(&root_state, None, &[], None).await.expect("build root scan");
+    let root_batches = collect(root_plan, root_state.task_ctx()).await.expect("collect root rows");
 
     assert_eq!(total_rows(&root_batches), 1);
     let root_names = root_batches[0]
@@ -742,13 +738,8 @@ async fn user_provider_delete_only_tombstones_subject_row() {
 
     let dba_ctx = session_with_role(&dba_user, Role::Dba);
     let dba_state = dba_ctx.state();
-    let dba_plan = provider
-        .scan(&dba_state, None, &[], None)
-        .await
-        .expect("build dba scan");
-    let dba_batches = collect(dba_plan, dba_state.task_ctx())
-        .await
-        .expect("collect dba rows");
+    let dba_plan = provider.scan(&dba_state, None, &[], None).await.expect("build dba scan");
+    let dba_batches = collect(dba_plan, dba_state.task_ctx()).await.expect("collect dba rows");
 
     assert_eq!(total_rows(&dba_batches), 0);
 }

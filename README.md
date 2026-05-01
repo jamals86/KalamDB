@@ -42,7 +42,7 @@ KalamDB is designed for both frontend and backend SQL execution.
 - Agents and workers use one SQL tool plus the current schema instead of dozens of narrow CRUD tools.
 - Frontends run the same backend directly for user-scoped reads, writes, and live row updates.
 - Queries and writes go through the HTTP SQL API; realtime subscriptions reuse the shared WebSocket connection.
-- Service code can act on behalf of a user with `EXECUTE AS USER` when a workflow needs a trusted handoff.
+- Ordinary USER-table reads stay subject-scoped; privileged service, DBA, and system accounts may use explicit `EXECUTE AS USER` only through the role hierarchy.
 
 This is what lets chat UIs, support agents, approval flows, and other product workflows share one data plane without separate polling, sync, or fanout infrastructure.
 
@@ -64,7 +64,7 @@ This is what lets chat UIs, support agents, approval flows, and other product wo
 - Read current app state with `SELECT` from the same backend your product already uses.
 - Write drafts, tasks, approvals, or replies into normal app tables with SQL.
 - Subscribe the frontend to pending rows live over WebSocket.
-- Commit final writes through the same backend path, including `EXECUTE AS USER` when a trusted service acts for a user.
+- Commit final writes through the same backend path, including authorized `EXECUTE AS USER` when a trusted service acts for a user.
 - Let the UI update from row changes instead of a second sync system.
 
 See [examples/chat-with-ai](examples/chat-with-ai/README.md) for the base live agent loop already in the repo.

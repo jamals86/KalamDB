@@ -1817,12 +1817,12 @@ async fn wait_for_topic_ready(client: &KalamClient, topic_name: &str) -> Result<
     }
 }
 
-fn execute_as_user_sql(user: &str, inner_sql: &str) -> String {
-    format!("EXECUTE AS USER {} ({})", sql_literal(user), inner_sql)
-}
-
 fn sql_literal(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
+}
+
+fn execute_as_user_sql(user: &str, inner_sql: &str) -> String {
+    format!("EXECUTE AS USER {} ({})", sql_literal(user), inner_sql)
 }
 
 fn json_string_field(row: &JsonValue, key: &str) -> Result<String, String> {

@@ -34,11 +34,12 @@ This document outlines the test scenarios for authentication, authorization, and
 - **Step 4**: Verify SELECT by User A *never* returns User B's rows, even without a WHERE clause.
 - **Agent Friendly**: Check `backend/tests/testserver/tables/test_user_tables_http.rs`.
 
-## 4. Service Impersonation (AS USER)
-**Goal**: Backend services writing data on behalf of users.
-- **Step 1**: Authenticate as a `service` role user.
-- **Step 2**: Execute INSERT/UPDATE with `X-Kalam-As-User: <user_id>` header.
-- **Step 3**: Verify data is correctly partitioned into target user's storage.
+## 4. EXECUTE AS USER Role Matrix
+**Goal**: Direct USER-table access stays subject-scoped, while explicit `EXECUTE AS USER` follows the role hierarchy.
+- **Step 1**: Authenticate as `user`, `service`, `dba`, and `system` role users.
+- **Step 2**: Attempt allowed and denied cross-user `EXECUTE AS USER` SELECT/INSERT/UPDATE/DELETE.
+- **Step 3**: Verify allowed role edges operate under the target user ID and denied edges leave target rows unchanged.
+- **Step 4**: Verify self-targeted `EXECUTE AS USER` is a no-op and remains scoped to the actor.
 - **Agent Friendly**: Check `backend/tests/misc/auth/test_as_user_impersonation.rs`.
 
 ## 5. Security Policies
