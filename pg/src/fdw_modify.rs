@@ -6,7 +6,10 @@ use std::{collections::BTreeMap, ffi::CStr};
 
 use kalam_pg_api::{DeleteRequest, InsertRequest, TenantContext, UpdateRequest};
 use kalam_pg_common::{KalamPgError, DELETED_COLUMN, SEQ_COLUMN, USER_ID_COLUMN};
-use kalamdb_commons::models::{rows::Row, UserId};
+use kalamdb_commons::{
+    models::{rows::Row, UserId},
+    TableType,
+};
 use pgrx::{pg_guard, pg_sys};
 
 use crate::{
@@ -271,7 +274,8 @@ unsafe fn exec_foreign_insert_impl(
 
     let session_user_id = crate::current_kalam_user_id().map(UserId::new);
     let explicit_user_id = explicit_userid.map(UserId::new);
-    let effective = explicit_user_id.or(session_user_id);
+    let effective =
+        resolve_insert_user_id(state.table_options.table_type, session_user_id, explicit_user_id)?;
 
     if crate::fdw_xact::is_explicit_transaction_block_active() {
         let request = InsertRequest::new(
@@ -311,7 +315,11 @@ unsafe fn exec_foreign_batch_insert_impl(
         let slot = *slots.add(0);
         let (row, explicit_userid) = slot_to_row(slot, &state.column_names)?;
         let explicit_user_id = explicit_userid.map(UserId::new);
-        let effective = explicit_user_id.or(session_user_id);
+        let effective = resolve_insert_user_id(
+            state.table_options.table_type,
+            session_user_id,
+            explicit_user_id,
+        )?;
 
         if crate::fdw_xact::is_explicit_transaction_block_active() {
             let request = InsertRequest::new(
@@ -366,7 +374,11 @@ unsafe fn exec_foreign_batch_insert_impl(
         rows.push(row);
     }
 
-    let effective = batch_explicit_userid.or(session_user_id);
+    let effective = resolve_insert_user_id(
+        state.table_options.table_type,
+        session_user_id,
+        batch_explicit_userid,
+    )?;
 
     let request = InsertRequest::new(
         state.table_options.table_id.clone(),
@@ -488,6 +500,33 @@ unsafe fn slot_to_row(
     }
 
     Ok((Row::new(values), explicit_userid))
+}
+
+fn resolve_insert_user_id(
+    table_type: TableType,
+    session_user_id: Option<UserId>,
+    explicit_user_id: Option<UserId>,
+) -> Result<Option<UserId>, KalamPgError> {
+    if table_type != TableType::User {
+        return Ok(explicit_user_id.or(session_user_id));
+    }
+
+    let session_user_id = session_user_id.ok_or_else(|| {
+        KalamPgError::Validation(
+            "USER table INSERT requires kalam.user_id to be set before writing".to_string(),
+        )
+    })?;
+
+    if let Some(explicit_user_id) = explicit_user_id {
+        if explicit_user_id != session_user_id {
+            return Err(KalamPgError::Validation(
+                "explicit _userid must match the current kalam.user_id for USER table INSERT"
+                    .to_string(),
+            ));
+        }
+    }
+
+    Ok(Some(session_user_id))
 }
 
 /// Extract the primary key value from the plan slot (junk attribute).

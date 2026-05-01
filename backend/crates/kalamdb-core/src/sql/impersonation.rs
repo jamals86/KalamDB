@@ -5,7 +5,7 @@ use kalamdb_commons::{
     models::{AuditLogId, UserId},
     Role,
 };
-use kalamdb_session::can_impersonate_role;
+use kalamdb_session::can_impersonate_target_user;
 use kalamdb_system::AuditLogEntry;
 use serde_json::json;
 use uuid::Uuid;
@@ -73,106 +73,48 @@ impl SqlImpersonationService {
     /// Resolve a target user identifier and authorize actor -> target impersonation.
     ///
     /// Returns the canonical target user_id on success.
-    /// Offloads sync RocksDB user lookups to a blocking thread.
     pub async fn resolve_execute_as_user(
         &self,
         actor_user_id: &UserId,
         actor_role: Role,
         target_user: &str,
     ) -> Result<UserId, KalamDbError> {
-        let app_ctx = self.app_context.clone();
-        let target_name = target_user.to_string();
-        let unresolved_target = target_name.clone();
+        let target_user_id = UserId::from(target_user);
+        let target_role = self
+            .app_context
+            .system_tables()
+            .users()
+            .role_for_impersonation_target(&target_user_id);
 
-        let resolved_user = match tokio::task::spawn_blocking(move || {
-            let users_provider = app_ctx.system_tables().users();
-            let target_user_id = UserId::from(target_name.clone());
-            let user = users_provider
-                .get_user_by_id(&target_user_id)
-                .map_err(|e| {
-                    KalamDbError::InvalidOperation(format!(
-                        "Failed to resolve EXECUTE AS USER target '{}': {}",
-                        target_name, e
-                    ))
-                })?
-                .ok_or_else(|| {
-                    KalamDbError::NotFound(format!(
-                        "EXECUTE AS USER target '{}' was not found",
-                        target_name
-                    ))
-                })?;
-            Ok::<_, KalamDbError>(user)
-        })
-        .await
-        .map_err(|e| KalamDbError::ExecutionError(format!("Task join error: {}", e)))
-        {
-            Ok(Ok(user)) => user,
-            Ok(Err(error)) => {
-                self.audit_impersonation_event(
-                    actor_user_id,
-                    actor_role,
-                    &unresolved_target,
-                    None,
-                    false,
-                    Some("resolution_failed"),
-                )
-                .await;
-                return Err(error);
-            },
-            Err(error) => {
-                self.audit_impersonation_event(
-                    actor_user_id,
-                    actor_role,
-                    &unresolved_target,
-                    None,
-                    false,
-                    Some("resolution_failed"),
-                )
-                .await;
-                return Err(error);
-            },
-        };
-
-        // No-op impersonation is always allowed.
-        if &resolved_user.user_id == actor_user_id {
+        if can_impersonate_target_user(actor_user_id, actor_role, &target_user_id, target_role) {
             self.audit_impersonation_event(
                 actor_user_id,
                 actor_role,
-                resolved_user.user_id.as_str(),
-                Some(&resolved_user.user_id),
+                target_user_id.as_str(),
+                Some(&target_user_id),
                 true,
                 None,
             )
             .await;
-            return Ok(resolved_user.user_id);
-        }
-
-        if !can_impersonate_role(actor_role, resolved_user.role) {
-            self.audit_impersonation_event(
-                actor_user_id,
-                actor_role,
-                resolved_user.user_id.as_str(),
-                Some(&resolved_user.user_id),
-                false,
-                Some("unauthorized"),
-            )
-            .await;
-            return Err(KalamDbError::Unauthorized(format!(
-                "Role {:?} is not authorized to use AS USER for '{}' with role {:?}",
-                actor_role, target_user, resolved_user.role
-            )));
+            return Ok(target_user_id);
         }
 
         self.audit_impersonation_event(
             actor_user_id,
             actor_role,
-            resolved_user.user_id.as_str(),
-            Some(&resolved_user.user_id),
-            true,
-            None,
+            target_user_id.as_str(),
+            Some(&target_user_id),
+            false,
+            Some("role_not_allowed"),
         )
         .await;
 
-        Ok(resolved_user.user_id)
+        Err(KalamDbError::Unauthorized(format!(
+            "EXECUTE AS USER is not authorized: actor '{}' with role {:?} cannot target '{}' with role {:?}",
+            actor_user_id.as_str(),
+            actor_role,
+            target_user,
+            target_role
+        )))
     }
 }

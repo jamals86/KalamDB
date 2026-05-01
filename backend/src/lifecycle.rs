@@ -19,9 +19,7 @@ use kalamdb_core::sql::{
     datafusion_session::DataFusionSessionFactory,
     executor::{handler_registry::HandlerRegistry, SqlExecutor},
 };
-use kalamdb_dba::{
-    initialize_dba_namespace, start_startup_stats_snapshot, start_stats_recorder,
-};
+use kalamdb_dba::{initialize_dba_namespace, start_startup_stats_snapshot, start_stats_recorder};
 use kalamdb_jobs::AppContextJobsExt;
 use kalamdb_live::{ConnectionsManager, LiveQueryManager};
 use kalamdb_store::open_storage_backend;

@@ -93,7 +93,7 @@ Notes:
   - `INSERT INTO chat.messages (...) VALUES (..., FILE("avatar"), FILE("invoice_pdf"))`
 - During SQL request parsing, extract required file part names (e.g., `avatar`, `invoice_pdf`).
 - Also sql arguments/parameters should work for this.
-- AS USER which is impersonation should also work as normal, and the files should be in the impersonated users table.
+- File writes stay under the effective USER-table subject chosen by the request. SQL `EXECUTE AS USER` and file API `user_id` parameters both follow the explicit impersonation role hierarchy, using the in-memory privileged-user role cache for target role classification.
 
 ### Upload SQL Endpoint (multipart)
 - Endpoint: existing SQL endpoint supports multipart/form-data.
@@ -110,7 +110,7 @@ Notes:
 - Requires JWT authorization and permissions for that table.
 - Doesnt need to read the row itself the file will be directly accessible if you have table access.
 - This will work for both users tables and shared tables.
-- For impersonation we can pass ?user_id=... as a query param to access user tables instead of the current user.
+- `?user_id=...` is authorized through the same impersonation role hierarchy used by `EXECUTE AS USER`. Service, DBA, and system targets are classified from the privileged-user cache; other target IDs are treated as regular users.
 
 ## End-to-End Flow (Insert/Update with Files)
 1. Parse SQL, extract required file names: `avatar`, `invoice_pdf`, …

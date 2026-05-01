@@ -127,8 +127,11 @@ impl ExecutionContext {
         self
     }
 
-    /// Clone this context with a different effective identity while preserving
+    /// Clone this context with an explicit effective identity while preserving
     /// namespace and request metadata.
+    ///
+    /// Cross-user callers must be authorized by SqlImpersonationService before
+    /// reaching this method.
     pub fn with_effective_identity(&self, user_id: UserId, role: Role) -> Self {
         let mut auth_session = self.auth_session.clone();
         auth_session.user_context.user_id = user_id;
@@ -248,8 +251,8 @@ impl ExecutionContext {
 
     /// Create a per-request SessionContext using an explicit effective identity.
     ///
-    /// This bypasses the cached session and is used for impersonation reads where
-    /// user_id/role must differ from the actor's authenticated session.
+    /// This bypasses the cached session for explicit identity construction.
+    /// Cross-user impersonation must be authorized before this boundary.
     pub fn create_session_with_effective_user(
         &self,
         user_id: &UserId,

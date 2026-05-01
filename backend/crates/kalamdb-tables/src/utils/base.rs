@@ -491,7 +491,7 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     /// # Architecture Note
     /// Providers are stateless. The user_id is passed per-operation by the SQL executor
     /// from ExecutionContext, enabling:
-    /// - AS USER impersonation (executor passes subject_user_id)
+    /// - Strict subject scoping from the effective execution context
     /// - Per-request user scoping without per-user provider instances
     /// - Clean separation: executor handles auth/context, provider handles storage
     async fn insert(&self, user_id: &UserId, row_data: Row) -> Result<K, KalamDbError>;

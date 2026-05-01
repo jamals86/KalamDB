@@ -5,6 +5,8 @@
 **Updated**: 2025-11-14 (Status Review)  
 **Status**: In Progress - Core MVCC Complete, Manifest & AS USER Pending
 
+> Security update (2026-05-01): cross-user AS USER requirements in this historical spec are superseded by ADR-019. Current behavior keeps ordinary USER-table access subject-scoped and permits explicit `EXECUTE AS USER` only through the system/DBA/service role hierarchy.
+
 ---
 
 ## 📊 IMPLEMENTATION STATUS (2025-11-14)

@@ -16,8 +16,8 @@
 - Alternatives considered: External inverted indexes (rejected due to maintenance overhead); custom hash tables (rejected because Parquet already provides compact bloom filters).
 
 ## AS USER Impersonation Controls
-- Decision: Extend SQL grammar to accept `AS USER 'user_id'` for INSERT/UPDATE/DELETE on User/Stream tables, enforcing service/admin role checks, user existence validation (active only), and dual audit logging.
-- Rationale: Satisfies FR-062–FR-069 and clarifications; enables service impersonation without session switching while preserving RLS semantics and auditability.
+- Decision: Superseded by ADR-019. `EXECUTE AS USER` remains wrapper syntax and cross-user targets are authorized by the system/DBA/service role hierarchy.
+- Rationale: USER-table isolation is subject-scoped to the authenticated user and must not widen through service/admin roles.
 - Alternatives considered: Separate impersonation API (rejected to keep SQL-first interface); unrestricted AS USER (rejected for security reasons).
 
 ## SystemColumnsService Centralization

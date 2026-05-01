@@ -6,7 +6,7 @@
 //! - Ephemeral streams with TTL (STREAM tables)
 //! - Hot + cold tiers (RocksDB + Parquet) with flush jobs
 //! - Live SQL subscriptions with initial snapshot batching
-//! - RBAC and service-role AS USER writes
+//! - RBAC, direct subject scoping, and role-matrix EXECUTE AS USER writes
 //! - Parallel usage under realistic workloads
 
 pub mod helpers;

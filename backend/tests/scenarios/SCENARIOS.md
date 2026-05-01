@@ -7,7 +7,7 @@ This document defines **end-to-end (E2E) scenarios** for KalamDB using the share
 * **Ephemeral streams with TTL (STREAM tables)**
 * **Hot + cold tiers (RocksDB + Parquet)** with **flush jobs**
 * **Live SQL subscriptions** with **initial snapshot batching**
-* **RBAC** and **service-role AS USER** writes
+* **RBAC**, direct subject scoping, and role-matrix `EXECUTE AS USER` writes
 * **Parallel usage** (threads/processes) under realistic workloads
 
 > Keep scenarios **real-world** and **assertion-heavy**. Each scenario must prove correctness **before / during / after flush**, verify **cold artifacts**, and validate **subscription lifecycle**.
@@ -104,9 +104,10 @@ Suggested columns:
 
    * `u1`: 2 conversations, 50 messages
    * `u2`: 1 conversation, 20 messages
-4. **Service writes as user**:
+4. **Service write boundaries**:
 
-   * `ai_service` inserts 10 assistant messages **AS USER 'u1'**.
+   * Direct `ai_service` writes stay under the service user's own subject.
+   * Authorized `EXECUTE AS USER 'u1' (...)` writes can place assistant messages in `u1`'s partition.
 5. Start subscriptions:
 
    * messages subscription filtered by `conversation_id` with initial snapshot.
@@ -127,7 +128,8 @@ Suggested columns:
 ### Checklist (Assertions)
 
 * [ ] USER isolation: u1 never sees u2 messages.
-* [ ] Service `AS USER` inserts appear only in that user’s partition.
+* [ ] Service direct inserts never appear in another user’s partition.
+* [ ] Authorized service `EXECUTE AS USER` inserts appear only in the target user's partition.
 * [ ] Subscription ACK received.
 * [ ] Initial snapshot correctness (count + ordering rule).
 * [ ] Live INSERT arrives; UPDATE arrives; DELETE arrives (and reflects `_deleted`).

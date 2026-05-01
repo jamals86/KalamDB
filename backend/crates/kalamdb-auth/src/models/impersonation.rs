@@ -1,13 +1,14 @@
 //! AS USER Impersonation Context (Phase 7)
 //!
-//! Provides secure impersonation capabilities for service and admin accounts
-//! to execute DML operations on behalf of other users.
+//! Captures AS USER operations for auditing while preserving explicit role
+//! hierarchy checks.
 //!
 //! ## Security Model
-//! - Only Service, Dba, and System roles can use AS USER
-//! - Authorization checked in DML handler check_authorization methods
-//! - All impersonation operations are audited with both actor and subject
-//! - RLS policies applied as if subject_user_id executed the operation
+//! - Self-targeted AS USER is a no-op identity boundary
+//! - System can target any role
+//! - Dba can target Dba, Service, and User
+//! - Service can target Service and User
+//! - User and Anonymous cannot target another user
 //!
 //! ## Usage
 //! ```ignore
@@ -23,6 +24,7 @@
 //! ```
 
 use kalamdb_commons::{models::UserId, Role};
+use kalamdb_session::can_impersonate_target_user;
 
 /// Origin of the impersonation request
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,20 +85,35 @@ impl ImpersonationContext {
         }
     }
 
-    /// Check if actor role is authorized to use AS USER
+    /// Check if this context is authorized.
     ///
-    /// Only Service, Dba, and System roles are permitted.
-    /// This is a lightweight check for authorization.
+    /// Self-targeted AS USER is always authorized as a no-op identity boundary.
+    /// Cross-user authorization follows the role hierarchy.
     pub fn is_authorized(&self) -> bool {
-        matches!(self.actor_role, Role::Service | Role::Dba | Role::System)
+        can_impersonate_target_user(
+            &self.actor_user_id,
+            self.actor_role,
+            &self.subject_user_id,
+            self.subject_role(),
+        )
     }
 
     /// Get the effective user ID for operation execution
-    ///
-    /// Returns the subject_user_id since operations should be executed
-    /// as if the subject performed them.
     pub fn effective_user_id(&self) -> &UserId {
-        &self.subject_user_id
+        if self.is_authorized() {
+            &self.subject_user_id
+        } else {
+            &self.actor_user_id
+        }
+    }
+
+    fn subject_role(&self) -> Role {
+        // This context model stores only the subject identity. Runtime SQL
+        // and API paths classify privileged target roles from the system.users
+        // privileged-role cache before execution.
+        // The model-level helper keeps historical unit tests useful for the
+        // broad actor gate without doing storage lookups.
+        Role::User
     }
 }
 
@@ -122,7 +139,7 @@ mod tests {
     }
 
     #[test]
-    fn test_is_authorized_service() {
+    fn test_cross_user_service_is_authorized_for_user_subject() {
         let ctx = ImpersonationContext::new(
             UserId::from("actor"),
             Role::Service,
@@ -134,7 +151,7 @@ mod tests {
     }
 
     #[test]
-    fn test_is_authorized_dba() {
+    fn test_cross_user_dba_is_authorized_for_user_subject() {
         let ctx = ImpersonationContext::new(
             UserId::from("actor"),
             Role::Dba,
@@ -146,7 +163,7 @@ mod tests {
     }
 
     #[test]
-    fn test_is_authorized_system() {
+    fn test_cross_user_system_is_authorized_for_user_subject() {
         let ctx = ImpersonationContext::new(
             UserId::from("actor"),
             Role::System,
@@ -158,7 +175,7 @@ mod tests {
     }
 
     #[test]
-    fn test_is_not_authorized_user() {
+    fn test_cross_user_regular_user_is_not_authorized() {
         let ctx = ImpersonationContext::new(
             UserId::from("actor"),
             Role::User,
@@ -167,6 +184,18 @@ mod tests {
             ImpersonationOrigin::SQL,
         );
         assert!(!ctx.is_authorized());
+    }
+
+    #[test]
+    fn test_self_target_is_authorized() {
+        let ctx = ImpersonationContext::new(
+            UserId::from("actor"),
+            Role::Service,
+            UserId::from("actor"),
+            "session".to_string(),
+            ImpersonationOrigin::SQL,
+        );
+        assert!(ctx.is_authorized());
     }
 
     #[test]

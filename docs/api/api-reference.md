@@ -222,11 +222,11 @@ Download previously stored file bytes.
 
 - `user_id` (optional)
   - Only meaningful for **user tables**
-  - Requires impersonation-capable role when different from caller
+  - Cross-user downloads are allowed only when the authenticated actor is authorized for the target ID's cached role class
 
 ### Behavior by table type
 
-- `User` table: downloads from effective user scope
+- `User` table: downloads from the authenticated user scope by default, or from an authorized target user scope when `user_id` is allowed by the role matrix. Service, DBA, and system target IDs are checked from the in-memory privileged-user role cache; other target IDs are treated as regular users.
 - `Shared` table: allowed only if shared access policy permits; `user_id` query is rejected
 - `Stream`/`System` table: rejected (`file storage not supported`)
 

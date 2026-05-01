@@ -22,6 +22,7 @@ fn expect_unauthorized(result: Result<String, Box<dyn std::error::Error>>, conte
             msg.contains("unauthorized")
                 || msg.contains("not authorized")
                 || msg.contains("permission")
+                || msg.contains("not allowed")
                 || msg.contains("privilege")
                 || msg.contains("access denied"),
             "Expected authorization error for {}: {}",
@@ -31,13 +32,13 @@ fn expect_unauthorized(result: Result<String, Box<dyn std::error::Error>>, conte
     }
 }
 
-// Regular users cannot impersonate service/DBA/system users via AS USER (including batch)
+// Disallowed role-matrix edges are rejected before executing the wrapped batch.
 #[ntest::timeout(180000)]
 #[test]
-fn smoke_security_regular_user_cannot_impersonate_privileged_users_in_batch() {
+fn smoke_security_disallowed_roles_cannot_impersonate_in_batch() {
     if !is_server_running() {
         eprintln!(
-            "Skipping smoke_security_regular_user_cannot_impersonate_privileged_users_in_batch: \
+            "Skipping smoke_security_disallowed_roles_cannot_impersonate_in_batch: \
              server not running at {}",
             server_url()
         );
@@ -49,6 +50,7 @@ fn smoke_security_regular_user_cannot_impersonate_privileged_users_in_batch() {
     let full_table = format!("{}.{}", namespace, table);
 
     let regular_user = generate_unique_namespace("smoke_regular");
+    let target_user = generate_unique_namespace("smoke_target_user");
     let service_user = generate_unique_namespace("smoke_service");
     let dba_user = generate_unique_namespace("smoke_dba");
     let password = "smoke_pass_123";
@@ -69,6 +71,12 @@ fn smoke_security_regular_user_cannot_impersonate_privileged_users_in_batch() {
     .expect("Failed to create regular user");
 
     execute_sql_as_root_via_client(&format!(
+        "CREATE USER {} WITH PASSWORD '{}' ROLE 'user'",
+        target_user, password
+    ))
+    .expect("Failed to create target user");
+
+    execute_sql_as_root_via_client(&format!(
         "CREATE USER {} WITH PASSWORD '{}' ROLE 'service'",
         service_user, password
     ))
@@ -80,28 +88,36 @@ fn smoke_security_regular_user_cannot_impersonate_privileged_users_in_batch() {
     ))
     .expect("Failed to create dba user");
 
+    let target_user_id = get_user_id(&target_user).expect("Failed to get target user_id");
     let service_user_id = get_user_id(&service_user).expect("Failed to get service user_id");
     let dba_user_id = get_user_id(&dba_user).expect("Failed to get dba user_id");
     let system_user_id = get_user_id("root")
         .or_else(|| get_user_id("system"))
         .expect("Failed to get system user_id");
 
-    let attempts = vec![
-        (service_user_id, "service"),
-        (dba_user_id, "dba"),
-        (system_user_id, "system"),
+    let attempts = [
+        (&regular_user, target_user_id.as_str(), "regular user -> user"),
+        (&regular_user, service_user_id.as_str(), "regular user -> service"),
+        (&regular_user, dba_user_id.as_str(), "regular user -> dba"),
+        (&regular_user, system_user_id.as_str(), "regular user -> system"),
+        (&service_user, dba_user_id.as_str(), "service -> dba"),
+        (&service_user, system_user_id.as_str(), "service -> system"),
+        (&dba_user, system_user_id.as_str(), "dba -> system"),
     ];
 
-    for (target_user_id, label) in attempts {
+    for (idx, (actor, target_user_id, label)) in attempts.iter().enumerate() {
         let batch_sql = format!(
-            "EXECUTE AS USER '{}' (INSERT INTO {} (id, name) VALUES (1, 'x')); SELECT 1;",
-            target_user_id, full_table
+            "EXECUTE AS USER '{}' (INSERT INTO {} (id, name) VALUES ({}, 'x')); SELECT 1;",
+            target_user_id,
+            full_table,
+            idx + 1
         );
-        let result = execute_sql_via_client_as(&regular_user, password, &batch_sql);
+        let result = execute_sql_via_client_as(actor.as_str(), password, &batch_sql);
         expect_unauthorized(result, &format!("AS USER batch for {}", label));
     }
 
     let _ = execute_sql_as_root_via_client(&format!("DROP USER {}", regular_user));
+    let _ = execute_sql_as_root_via_client(&format!("DROP USER {}", target_user));
     let _ = execute_sql_as_root_via_client(&format!("DROP USER {}", service_user));
     let _ = execute_sql_as_root_via_client(&format!("DROP USER {}", dba_user));
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
