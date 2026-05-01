@@ -164,15 +164,45 @@ pub fn get_remote_extension_state_for_session(
 pub fn ensure_remote_extension_state(
     config: RemoteServerConfig,
 ) -> Result<Arc<RemoteExtensionState>, KalamPgError> {
-    let mut registry = remote_state_registry().lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(state) = registry.get_by_config(&config) {
-        return Ok(state);
+    {
+        let registry = remote_state_registry().lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(state) = registry.get_by_config(&config) {
+            return Ok(state);
+        }
     }
 
     let state = Arc::new(build_remote_extension_state(&config)?);
+
+    let mut registry = remote_state_registry().lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(existing) = registry.get_by_config(&config) {
+        drop(registry);
+        close_remote_session(&state, "duplicate session");
+        return Ok(existing);
+    }
+
     registry.insert(config, Arc::clone(&state));
     register_exit_handler_once(&mut registry);
     Ok(state)
+}
+
+fn close_remote_session(state: &RemoteExtensionState, context: &str) {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        state
+            .runtime
+            .block_on(async { state.client.close_session(&state.session_id).await })
+    }));
+
+    match result {
+        Ok(Ok(())) => {
+            eprintln!("pg_kalam: {context} {} closed", state.session_id);
+        },
+        Ok(Err(e)) => {
+            eprintln!("pg_kalam: failed to close {context} {}: {}", state.session_id, e);
+        },
+        Err(_panic) => {
+            eprintln!("pg_kalam: panic closing {context} {}", state.session_id);
+        },
+    }
 }
 
 /// PostgreSQL process-exit callback that closes all KalamDB sessions opened by this backend.
@@ -187,23 +217,7 @@ unsafe extern "C-unwind" fn on_proc_exit_close_sessions(_code: i32, _arg: pg_sys
     };
 
     for state in states {
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            state
-                .runtime
-                .block_on(async { state.client.close_session(&state.session_id).await })
-        }));
-
-        match result {
-            Ok(Ok(())) => {
-                eprintln!("pg_kalam: session {} closed", state.session_id);
-            },
-            Ok(Err(e)) => {
-                eprintln!("pg_kalam: failed to close session {}: {}", state.session_id, e);
-            },
-            Err(_panic) => {
-                eprintln!("pg_kalam: panic closing session {}", state.session_id);
-            },
-        }
+        close_remote_session(&state, "session");
     }
 }
 
@@ -213,7 +227,7 @@ mod tests {
         net::SocketAddr,
         sync::{
             atomic::{AtomicUsize, Ordering},
-            mpsc, Mutex,
+            mpsc, Barrier, Mutex,
         },
         time::Duration,
     };
@@ -238,6 +252,7 @@ mod tests {
     #[derive(Default)]
     struct CountingState {
         open_session_calls: AtomicUsize,
+        close_session_calls: AtomicUsize,
         recorded_session_ids: Mutex<Vec<String>>,
     }
 
@@ -296,8 +311,10 @@ mod tests {
 
         async fn close_session(
             &self,
-            _request: Request<CloseSessionRequest>,
+            request: Request<CloseSessionRequest>,
         ) -> Result<Response<CloseSessionResponse>, Status> {
+            self.state.close_session_calls.fetch_add(1, Ordering::Relaxed);
+            self.state.record_session_id(request.into_inner().session_id);
             Ok(Response::new(CloseSessionResponse {}))
         }
 
@@ -477,5 +494,36 @@ mod tests {
         assert!(!Arc::ptr_eq(&first, &second));
         assert_ne!(first.session_id(), second.session_id());
         assert_eq!(service.open_session_calls.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn concurrent_same_config_reuses_registered_state_and_closes_duplicate_session() {
+        clear_registry();
+        let (config, service) = start_counting_server();
+        let barrier = Arc::new(Barrier::new(2));
+
+        let handles = (0..2)
+            .map(|_| {
+                let config = config.clone();
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    ensure_remote_extension_state(config).expect("concurrent state")
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let states = handles
+            .into_iter()
+            .map(|handle| handle.join().expect("join state thread"))
+            .collect::<Vec<_>>();
+
+        assert!(Arc::ptr_eq(&states[0], &states[1]));
+        assert_eq!(states[0].session_id(), states[1].session_id());
+
+        let open_count = service.open_session_calls.load(Ordering::Relaxed);
+        let close_count = service.close_session_calls.load(Ordering::Relaxed);
+        assert!(open_count <= 2, "at most one duplicate session should be opened");
+        assert_eq!(close_count, open_count.saturating_sub(1));
     }
 }
