@@ -100,7 +100,6 @@ COPY backend/crates/kalamdb-plan-cache/Cargo.toml    backend/crates/kalamdb-plan
 COPY backend/crates/kalamdb-dialect/Cargo.toml       backend/crates/kalamdb-dialect/Cargo.toml
 COPY link/link-common/Cargo.toml       link/link-common/Cargo.toml
 COPY link/kalam-client/Cargo.toml      link/kalam-client/Cargo.toml
-COPY link/kalam-consumer/Cargo.toml    link/kalam-consumer/Cargo.toml
 COPY link/kalam-consumer-wasm/Cargo.toml link/kalam-consumer-wasm/Cargo.toml
 COPY link/kalam-link-dart/Cargo.toml link/kalam-link-dart/Cargo.toml
 COPY cli/Cargo.toml               cli/Cargo.toml
@@ -113,7 +112,6 @@ RUN set -e \
     && echo 'fn main(){}' > cli/build.rs \
     && mkdir -p link/link-common/src && touch link/link-common/src/lib.rs \
     && mkdir -p link/kalam-client/src && touch link/kalam-client/src/lib.rs \
-    && mkdir -p link/kalam-consumer/src && touch link/kalam-consumer/src/lib.rs \
     && mkdir -p link/kalam-consumer-wasm/src && touch link/kalam-consumer-wasm/src/lib.rs \
     && mkdir -p link/kalam-link-dart/src && touch link/kalam-link-dart/src/lib.rs \
     && for c in kalamdb-configs kalamdb-store kalamdb-system kalamdb-filestore \

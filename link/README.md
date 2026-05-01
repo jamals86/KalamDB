@@ -6,7 +6,6 @@ This directory contains:
 
 - the shared Rust implementation crate `link-common`
 - the app-facing Rust/WASM entry crate `kalam-client`
-- the worker-focused Rust crate `kalam-consumer`
 - the consumer-only WebAssembly wrapper crate `kalam-consumer-wasm`
 - the publishable TypeScript app-facing package in [sdks/typescript/client](sdks/typescript/client/README.md) as `@kalamdb/client`
 - the publishable TypeScript worker package in [sdks/typescript/consumer](sdks/typescript/consumer/README.md) as `@kalamdb/consumer`
@@ -46,7 +45,6 @@ Older constructor-based examples, manual `connect()` walkthroughs, and raw WASM 
 link/
 |-- link-common/          # shared Rust implementation
 |-- kalam-client/         # app-facing Rust/WASM entry crate
-|-- kalam-consumer/       # worker-focused Rust crate
 |-- kalam-consumer-wasm/  # wasm-bindgen wrapper for @kalamdb/consumer
 `-- sdks/
     |-- typescript/

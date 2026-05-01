@@ -3869,13 +3869,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "kalam-consumer"
-version = "0.4.3-rc.4"
-dependencies = [
- "kalam-client",
-]
-
-[[package]]
 name = "kalam-consumer-wasm"
 version = "0.4.3-rc.4"
 dependencies = [

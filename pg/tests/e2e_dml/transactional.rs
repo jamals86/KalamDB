@@ -35,10 +35,6 @@ fn i64_cell(row: &[Value], index: usize) -> Option<i64> {
     })
 }
 
-async fn fetch_session_rows(env: &TestEnv, backend_pid: u32) -> Vec<Vec<Value>> {
-    fetch_session_rows_at(env, &kalamdb_shared_leader_base_url().await, backend_pid).await
-}
-
 async fn fetch_session_rows_at(env: &TestEnv, base_url: &str, backend_pid: u32) -> Vec<Vec<Value>> {
     sql_rows(
         &env.kalamdb_sql_at(
@@ -50,10 +46,6 @@ async fn fetch_session_rows_at(env: &TestEnv, base_url: &str, backend_pid: u32) 
         )
         .await,
     )
-}
-
-async fn fetch_transaction_rows(env: &TestEnv, transaction_id: &str) -> Vec<Vec<Value>> {
-    fetch_transaction_rows_at(env, &kalamdb_shared_leader_base_url().await, transaction_id).await
 }
 
 async fn fetch_transaction_rows_at(

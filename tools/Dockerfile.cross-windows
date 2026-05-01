@@ -1,7 +1,8 @@
 # Custom cross-compilation image for x86_64-pc-windows-gnu
-# Includes LLVM 16 for RocksDB bindgen compatibility and Node.js for UI build
-ARG CROSS_BASE_IMAGE=ghcr.io/cross-rs/x86_64-pc-windows-gnu:edge
-FROM ${CROSS_BASE_IMAGE}
+# Includes LLVM 16 for RocksDB bindgen compatibility and Node.js for UI build.
+# Intentionally pin a supported cross-rs base here: released cross still injects
+# an older Xenial image via CROSS_BASE_IMAGE, and apt.llvm.org no longer serves LLVM 16 for Xenial.
+FROM ghcr.io/cross-rs/x86_64-pc-windows-gnu:edge
 
 # Install LLVM 16 for bindgen (RocksDB requires clang_Type_getValueType)
 # The build script runs on Linux host, so we need Linux libclang

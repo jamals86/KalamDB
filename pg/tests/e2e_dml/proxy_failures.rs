@@ -171,84 +171,12 @@ async fn create_proxy_shared_foreign_table(
     TestEnv::global().await.wait_for_kalamdb_table_exists("e2e", table).await;
 }
 
-async fn update_proxy_foreign_server(
-    client: &tokio_postgres::Client,
-    server_name: &str,
-    host: &str,
-    port: u16,
-) {
-    client
-        .batch_execute(&format!(
-            "ALTER SERVER {server_name} OPTIONS (SET host '{}', SET port '{}');",
-            sql_escape_literal(host),
-            port
-        ))
-        .await
-        .expect("retarget proxy foreign server");
-}
-
-fn leader_grpc_target_from_message(message: &str) -> Option<(String, u16)> {
-    let marker = "Leader:";
-    let leader_hint = message.split_once(marker)?.1.trim();
-    let leader_hint = leader_hint
-        .strip_prefix("Some(")
-        .and_then(|value| value.strip_suffix(')'))
-        .unwrap_or(leader_hint)
-        .trim()
-        .trim_matches('"');
-
-    if leader_hint.is_empty() || leader_hint.contains("Leader unknown") {
-        return None;
-    }
-
-    let authority = leader_hint
-        .trim_start_matches("http://")
-        .trim_start_matches("https://")
-        .split('/')
-        .next()
-        .unwrap_or(leader_hint);
-
-    let (host, http_port) = authority.rsplit_once(':')?;
-    let http_port = http_port.parse::<u16>().ok()?;
-    let grpc_port = match http_port {
-        8080 => 9188,
-        _ => http_port.checked_add(1000)?,
-    };
-
-    Some((host.to_string(), grpc_port))
-}
-
 fn grpc_http_base_url(host: &str, grpc_port: u16) -> String {
     let http_port = match grpc_port {
         9188 => 8080,
         _ => grpc_port.saturating_sub(1000),
     };
     format!("http://{host}:{http_port}")
-}
-
-async fn probe_proxy_transaction_insert(
-    client: &tokio_postgres::Client,
-    qualified_table: &str,
-    probe_id: &str,
-) -> Result<(), String> {
-    client
-        .batch_execute("BEGIN")
-        .await
-        .expect("begin proxy leader probe transaction");
-
-    let insert_result = client
-        .execute(
-            &format!("INSERT INTO {qualified_table} (id, title, value) VALUES ($1, $2, $3)"),
-            &[&probe_id, &"proxy leader probe", &0_i32],
-        )
-        .await;
-
-    let _ = client.batch_execute("ROLLBACK").await;
-
-    match insert_result {
-        Ok(_) => Ok(()),
-        Err(error) => Err(postgres_error_text(&error)),
-    }
 }
 
 async fn provision_proxy_shared_foreign_table(

@@ -44,7 +44,6 @@ members = [
     "backend",
     "link/link-common",
     "link/kalam-client",
-    "link/kalam-consumer",
     "link/kalam-consumer-wasm",
     "link/kalam-link-dart",
     "cli"
