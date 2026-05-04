@@ -95,7 +95,7 @@ This is the path used by the release workflow. Build the Rust binaries once, the
 
 That script will:
 
-1. Build `kalamdb-server` and `kalam` in release mode
+1. Build Linux-targeted `kalamdb-server` and `kalam` binaries for your local Docker platform
 2. Stage them as a Docker build context
 3. Build `docker/build/Dockerfile.prebuilt`
 4. Run smoke tests against the resulting image
@@ -104,12 +104,29 @@ That script will:
 
 ```bash
 cd /path/to/KalamDB
-mkdir -p binaries-amd64
-cp backend/target/release/kalamdb-server binaries-amd64/
-cp backend/target/release/kalam binaries-amd64/
+
+case "$(uname -m)" in
+  x86_64)
+    export LOCAL_TARGET=x86_64-unknown-linux-gnu
+    export LOCAL_PLATFORM=linux/amd64
+    export BIN_DIR=binaries-amd64
+    SKIP_UI_BUILD=1 cargo build --release --target "$LOCAL_TARGET" --features mimalloc -p kalamdb-server -p kalam-cli --bin kalamdb-server --bin kalam
+    ;;
+  arm64)
+    export LOCAL_TARGET=aarch64-unknown-linux-gnu
+    export LOCAL_PLATFORM=linux/arm64
+    export BIN_DIR=binaries-arm64
+    SKIP_UI_BUILD=1 cross build --release --target "$LOCAL_TARGET" --features mimalloc -p kalamdb-server -p kalam-cli --bin kalamdb-server --bin kalam
+    ;;
+esac
+
+mkdir -p "$BIN_DIR"
+cp "target/$LOCAL_TARGET/release/kalamdb-server" "$BIN_DIR/"
+cp "target/$LOCAL_TARGET/release/kalam" "$BIN_DIR/"
 
 docker build \
-  --build-context binaries=binaries-amd64 \
+  --platform "$LOCAL_PLATFORM" \
+  --build-context binaries="$BIN_DIR" \
   -f docker/build/Dockerfile.prebuilt \
   -t kalamdb:local \
   .

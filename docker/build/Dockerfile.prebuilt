@@ -1,27 +1,19 @@
-# Lightweight Docker image for KalamDB using pre-built binaries
-#
-# Option 1: Build with local binaries (after `cargo build --release`):
-#   docker build -f docker/build/Dockerfile.prebuilt -t jamals86/kalamdb:latest .
-#
-# Option 2: Used in release workflow with pre-compiled binaries:
-#   docker build --build-context binaries=binaries-amd64 -f docker/build/Dockerfile.prebuilt -t jamals86/kalamdb:latest .
-
-# Prepare runtime assets without pulling a full distro into the final image.
+# ---------- Stage 1: runtime prep ----------
 FROM busybox:1.36.1-musl AS runtime-prep
 
 RUN mkdir -p /runtime/usr/local/bin /runtime/data/rocksdb /runtime/data/storage /runtime/data/logs /runtime/config && \
     cp /bin/busybox /runtime/usr/local/bin/busybox
 
-# Copy default server configuration and normalize the data path before the final stage.
 COPY backend/server.example.toml /runtime/config/server.toml
 RUN sed -i 's|data_path = "\./data"|data_path = "/data"|g' /runtime/config/server.toml
 
-# Prepare release-built Linux binaries for the runtime image.
-# Strip debug/symbol data when possible to keep the final image smaller.
-FROM ubuntu:24.04 AS binary-prep
 
-RUN apt-get update && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends binutils && \
+# ---------- Stage 2: binary prep ----------
+FROM debian:bookworm-slim AS binary-prep
+
+RUN apt-get update -o Acquire::Retries=3 && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        binutils ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /staged/usr/local/bin
@@ -29,72 +21,43 @@ RUN mkdir -p /staged/usr/local/bin
 COPY --from=binaries kalamdb-server /staged/usr/local/bin/kalamdb-server
 COPY --from=binaries kalam /staged/usr/local/bin/kalam-cli
 
-RUN chmod 755 /staged/usr/local/bin/kalamdb-server /staged/usr/local/bin/kalam-cli && \
-    strip --strip-unneeded /staged/usr/local/bin/kalamdb-server /staged/usr/local/bin/kalam-cli || true
+RUN chmod 755 /staged/usr/local/bin/* && \
+    strip --strip-unneeded /staged/usr/local/bin/* || true
 
-# Ubuntu 24.04 is the current LTS release. The base image already includes bash,
-# so only install CA certificates to keep the runtime as small as possible while
-# preserving HTTPS support for CLI and runtime tooling.
-FROM ubuntu:24.04
 
-RUN apt-get update && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates && \
+# ---------- Stage 3: final runtime ----------
+FROM debian:bookworm-slim
+
+RUN apt-get update -o Acquire::Retries=3 && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        ca-certificates bash busybox-static && \
     rm -rf /var/lib/apt/lists/*
 
-ARG OCI_IMAGE_TITLE="KalamDB"
-ARG OCI_IMAGE_DESCRIPTION="SQL-first realtime state database for AI agents, chat products, and multi-tenant SaaS"
-ARG OCI_IMAGE_URL="https://kalamdb.org"
-ARG OCI_IMAGE_SOURCE="https://github.com/kalamstack/KalamDB"
-ARG OCI_IMAGE_DOCUMENTATION="https://kalamdb.org/docs"
-ARG OCI_IMAGE_VENDOR="KalamDB"
-ARG OCI_IMAGE_AUTHORS="Jamal Saad"
-ARG OCI_IMAGE_LICENSES="Apache-2.0"
-ARG OCI_IMAGE_VERSION="dev"
-ARG OCI_IMAGE_REVISION="unknown"
-ARG OCI_IMAGE_CREATED="unknown"
+# create user
+RUN groupadd -g 65532 kalamdb && \
+    useradd -u 65532 -g kalamdb -d /data -s /bin/bash kalamdb
 
-LABEL org.opencontainers.image.title="${OCI_IMAGE_TITLE}" \
-    org.opencontainers.image.description="${OCI_IMAGE_DESCRIPTION}" \
-    org.opencontainers.image.url="${OCI_IMAGE_URL}" \
-    org.opencontainers.image.source="${OCI_IMAGE_SOURCE}" \
-    org.opencontainers.image.documentation="${OCI_IMAGE_DOCUMENTATION}" \
-    org.opencontainers.image.vendor="${OCI_IMAGE_VENDOR}" \
-    org.opencontainers.image.authors="${OCI_IMAGE_AUTHORS}" \
-    org.opencontainers.image.licenses="${OCI_IMAGE_LICENSES}" \
-    org.opencontainers.image.version="${OCI_IMAGE_VERSION}" \
-    org.opencontainers.image.revision="${OCI_IMAGE_REVISION}" \
-    org.opencontainers.image.created="${OCI_IMAGE_CREATED}"
-
-# Copy pre-built binaries from the prepared binary stage.
-COPY --from=runtime-prep --chmod=755 /runtime/usr/local/bin/busybox /usr/local/bin/busybox
-COPY --from=binary-prep --chmod=755 /staged/usr/local/bin/kalamdb-server /usr/local/bin/kalamdb-server
-COPY --from=binary-prep --chmod=755 /staged/usr/local/bin/kalam-cli /usr/local/bin/kalam-cli
+# copy binaries
+COPY --from=binary-prep --chmod=755 /staged/usr/local/bin/kalamdb-server /usr/local/bin/
+COPY --from=binary-prep --chmod=755 /staged/usr/local/bin/kalam-cli /usr/local/bin/
 RUN ln -sf /usr/local/bin/kalam-cli /usr/local/bin/kalam
 
-# Copy writable runtime paths and the normalized config with non-root ownership.
+# copy runtime assets
 COPY --from=runtime-prep --chown=65532:65532 /runtime/data /data
 COPY --from=runtime-prep --chown=65532:65532 /runtime/config /config
 
-# Add a named runtime user/group entry and a writable HOME for the numeric UID.
-RUN printf 'kalamdb:x:65532:65532:KalamDB:/data:/bin/bash\n' >> /etc/passwd && \
-    printf 'kalamdb:x:65532:\n' >> /etc/group && \
-    mkdir -p /data/.kalam && \
+RUN mkdir -p /data/.kalam && \
     chown -R 65532:65532 /data /config
 
 ENV HOME=/data
-
-# Run as the same non-root uid/gid used by the previous distroless image.
 USER 65532:65532
-
-# Set working directory (server looks for server.toml here)
 WORKDIR /data
 
-# Expose default port
+VOLUME ["/data"]
+
 EXPOSE 8080
 
-# Health check: use wget GET to /dev/null (--spider sends HEAD which is incompatible with h2c auto-detect).
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD ["/usr/local/bin/busybox", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
+    CMD ["/bin/busybox", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
 
-# Default command: run server (looks for server.toml in current directory)
 CMD ["/usr/local/bin/kalamdb-server", "/config/server.toml"]

@@ -21,6 +21,16 @@ EXPECTED_OCI_VERSION="${EXPECTED_OCI_VERSION:-}"
 EXPECTED_OCI_SOURCE="${EXPECTED_OCI_SOURCE:-}"
 EXPECTED_RUNTIME_UID="${EXPECTED_RUNTIME_UID:-65532}"
 
+if [[ -z "${KALAMDB_JWT_SECRET:-}" ]]; then
+    if command -v openssl >/dev/null 2>&1; then
+        KALAMDB_JWT_SECRET="$(openssl rand -base64 32 | tr -d '\n')"
+        export KALAMDB_JWT_SECRET
+    else
+        KALAMDB_JWT_SECRET="local-test-jwt-secret-0123456789abcdef0123456789abcdef"
+        export KALAMDB_JWT_SECRET
+    fi
+fi
+
 log_info() {
     echo -e "${GREEN}[INFO]${NC} $1"
 }
@@ -35,7 +45,7 @@ log_warn() {
 
 container_get() {
     local path="$1"
-    docker exec "$CONTAINER_NAME" /usr/local/bin/busybox wget -qO- "http://127.0.0.1:8080${path}"
+    docker exec "$CONTAINER_NAME" /bin/busybox wget -qO- "http://127.0.0.1:8080${path}"
 }
 
 cleanup() {
@@ -87,18 +97,14 @@ main() {
         -e KALAMDB_SERVER_HOST=0.0.0.0
         -e KALAMDB_LOG_LEVEL=info
         -e KALAMDB_ROOT_PASSWORD="$ROOT_PASSWORD"
+        -e KALAMDB_JWT_SECRET="$KALAMDB_JWT_SECRET"
     )
 
     if [[ -n "$DOCKER_PLATFORM" ]]; then
         DOCKER_RUN_ARGS+=(--platform "$DOCKER_PLATFORM")
     fi
 
-    if [ -n "${KALAMDB_JWT_SECRET:-}" ]; then
-        DOCKER_RUN_ARGS+=(-e "KALAMDB_JWT_SECRET=${KALAMDB_JWT_SECRET}")
-        docker run "${DOCKER_RUN_ARGS[@]}" "$IMAGE_NAME"
-    else
-        docker run "${DOCKER_RUN_ARGS[@]}" "$IMAGE_NAME"
-    fi
+    docker run "${DOCKER_RUN_ARGS[@]}" "$IMAGE_NAME"
     
     log_info "Waiting for server to start (timeout: ${TIMEOUT}s)..."
     START_TIME=$(date +%s)
@@ -120,7 +126,7 @@ main() {
             exit 1
         fi
         
-        if docker exec "$CONTAINER_NAME" /usr/local/bin/busybox wget -q -O /dev/null "http://127.0.0.1:8080/health" > /dev/null 2>&1; then
+        if docker exec "$CONTAINER_NAME" /bin/busybox wget -q -O /dev/null "http://127.0.0.1:8080/health" > /dev/null 2>&1; then
             log_info "Server is ready! (took ${ELAPSED}s)"
             break
         fi
@@ -150,13 +156,13 @@ main() {
     
     # Test 3: Runtime user and writable paths
     log_info "Test 3: Checking runtime user and writable paths..."
-    RUNTIME_UID=$(docker exec "$CONTAINER_NAME" /usr/local/bin/busybox sh -c 'id -u')
+    RUNTIME_UID=$(docker exec "$CONTAINER_NAME" /bin/busybox sh -c 'id -u')
     if [[ "$RUNTIME_UID" != "$EXPECTED_RUNTIME_UID" ]]; then
         log_error "✗ Container is running as unexpected uid: $RUNTIME_UID"
         exit 1
     fi
 
-    docker exec "$CONTAINER_NAME" /usr/local/bin/busybox sh -c 'test -f /config/server.toml && test -d /data && test -w /data && mkdir -p /data/.kalam && touch /data/.kalam/write-test && rm /data/.kalam/write-test' &>/dev/null
+    docker exec "$CONTAINER_NAME" /bin/busybox sh -c 'test -f /config/server.toml && test -d /data && test -w /data && mkdir -p /data/.kalam && touch /data/.kalam/write-test && rm /data/.kalam/write-test' &>/dev/null
     if [ $? -eq 0 ]; then
         log_info "✓ Runtime paths are present and writable"
     else
@@ -166,7 +172,7 @@ main() {
 
     # Test 4: Check binary existence
     log_info "Test 4: Checking binaries inside container..."
-    docker exec "$CONTAINER_NAME" /usr/local/bin/busybox sh -c "test -x /usr/local/bin/kalamdb-server" &>/dev/null
+    docker exec "$CONTAINER_NAME" /bin/busybox sh -c "test -x /usr/local/bin/kalamdb-server" &>/dev/null
     if [ $? -eq 0 ]; then
         log_info "✓ Server binary exists and is executable"
     else
