@@ -15,8 +15,8 @@ use crate::seq_id::SeqId;
 /// ```rust
 /// use kalam_client::{SeqId, SubscriptionOptions};
 ///
-/// // Fetch last 100 rows with batch size of 50
-/// let options = SubscriptionOptions::default().with_batch_size(50).with_last_rows(100);
+/// // Fetch last 50 rows in a single initial batch
+/// let options = SubscriptionOptions::default().with_batch_size(50).with_last_rows(50);
 ///
 /// // Resume from a specific sequence ID after reconnection
 /// let some_seq_id = SeqId::new(123);

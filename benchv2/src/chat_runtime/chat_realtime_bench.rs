@@ -11,9 +11,9 @@ use kalam_client::{
 };
 use serde_json::Value as JsonValue;
 use sysinfo::{MemoryRefreshKind, Pid, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
-use tokio::sync::{Mutex as AsyncMutex, Semaphore, watch};
-use tokio::task::JoinSet;
+use tokio::sync::{watch, Mutex as AsyncMutex, Semaphore};
 use tokio::task::JoinHandle;
+use tokio::task::JoinSet;
 use tokio::time::{sleep, timeout, Instant};
 
 use crate::benchmarks::Benchmark;
@@ -65,10 +65,8 @@ impl ChatWorkloadSettings {
     fn from_env() -> Result<Self, String> {
         let minutes = parse_u64_env("KALAMDB_BENCH_CHAT_MINUTES", DEFAULT_CHAT_MINUTES)?;
         let user_count = parse_u32_env("KALAMDB_BENCH_CHAT_USERS", DEFAULT_CHAT_USERS)?;
-        let realtime_conversations = parse_u32_env(
-            "KALAMDB_BENCH_CHAT_REALTIME_CONVS",
-            DEFAULT_CHAT_REALTIME_CONVS,
-        )?;
+        let realtime_conversations =
+            parse_u32_env("KALAMDB_BENCH_CHAT_REALTIME_CONVS", DEFAULT_CHAT_REALTIME_CONVS)?;
         let messages_per_minute = parse_u32_env(
             "KALAMDB_BENCH_CHAT_MESSAGES_PER_MINUTE",
             DEFAULT_CHAT_MESSAGES_PER_MINUTE,
@@ -81,9 +79,7 @@ impl ChatWorkloadSettings {
             return Err("KALAMDB_BENCH_CHAT_USERS must be at least 2".to_string());
         }
         if realtime_conversations == 0 {
-            return Err(
-                "KALAMDB_BENCH_CHAT_REALTIME_CONVS must be greater than zero".to_string(),
-            );
+            return Err("KALAMDB_BENCH_CHAT_REALTIME_CONVS must be greater than zero".to_string());
         }
 
         Ok(Self {
@@ -248,12 +244,8 @@ impl Benchmark for ChatRealtimeBench {
             let conversation_topic = conversation_topic_name(&config.namespace);
             let message_topic = message_topic_name(&config.namespace);
 
-            let _ = client
-                .sql(&format!("DROP TOPIC IF EXISTS {}", message_topic))
-                .await;
-            let _ = client
-                .sql(&format!("DROP TOPIC IF EXISTS {}", conversation_topic))
-                .await;
+            let _ = client.sql(&format!("DROP TOPIC IF EXISTS {}", message_topic)).await;
+            let _ = client.sql(&format!("DROP TOPIC IF EXISTS {}", conversation_topic)).await;
             let _ = client
                 .sql(&format!("DROP TOPIC IF EXISTS {}", typing_topic_name(&config.namespace)))
                 .await;
@@ -268,9 +260,7 @@ impl Benchmark for ChatRealtimeBench {
                 .await;
 
             for username in &usernames {
-                let _ = client
-                    .sql(&format!("DROP USER IF EXISTS {}", sql_literal(username)))
-                    .await;
+                let _ = client.sql(&format!("DROP USER IF EXISTS {}", sql_literal(username))).await;
             }
 
             run_sql_with_retry(
@@ -379,15 +369,12 @@ impl Benchmark for ChatRealtimeBench {
                 global_stop.clone(),
                 iteration,
             );
-            let conversation_ids = Arc::new(AtomicU64::new(
-                40_000_000_000 + u64::from(iteration) * 1_000_000,
-            ));
-            let message_ids = Arc::new(AtomicU64::new(
-                50_000_000_000 + u64::from(iteration) * 10_000_000,
-            ));
-            let typing_ids = Arc::new(AtomicU64::new(
-                60_000_000_000 + u64::from(iteration) * 10_000_000,
-            ));
+            let conversation_ids =
+                Arc::new(AtomicU64::new(40_000_000_000 + u64::from(iteration) * 1_000_000));
+            let message_ids =
+                Arc::new(AtomicU64::new(50_000_000_000 + u64::from(iteration) * 10_000_000));
+            let typing_ids =
+                Arc::new(AtomicU64::new(60_000_000_000 + u64::from(iteration) * 10_000_000));
 
             let prewarmed_active_users = prewarm_user_clients(
                 user_pool.clone(),
@@ -424,17 +411,6 @@ impl Benchmark for ChatRealtimeBench {
                 CHAT_TYPING_INTERVAL.as_secs(),
             );
 
-            println!(
-                "  Chat workload settings: duration={}m, regular_users={}, target_active_chat_users={}, active_conversations={}, message_rate={}, typing_burst={}x{}s",
-                settings.minutes,
-                settings.user_count,
-                target_active_user_count,
-                settings.realtime_conversations,
-                settings.message_rate_label(),
-                CHAT_TYPING_BURSTS,
-                CHAT_TYPING_INTERVAL.as_secs(),
-            );
-
             for worker_id in 0..settings.realtime_conversations {
                 let namespace = config.namespace.clone();
                 let worker_stats = stats.clone();
@@ -444,9 +420,7 @@ impl Benchmark for ChatRealtimeBench {
                 let worker_conversations = conversation_ids.clone();
                 let worker_messages = message_ids.clone();
                 let worker_typing = typing_ids.clone();
-                let worker_start_delay = chat_worker_start_delay(
-                    worker_id,
-                );
+                let worker_start_delay = chat_worker_start_delay(worker_id);
                 let worker_deadline = run_deadline + worker_start_delay;
 
                 handles.push(tokio::spawn(async move {
@@ -475,7 +449,7 @@ impl Benchmark for ChatRealtimeBench {
             let mut errors = Vec::new();
             for handle in handles {
                 match handle.await {
-                    Ok(Ok(())) => {}
+                    Ok(Ok(())) => {},
                     Ok(Err(error)) => errors.push(error),
                     Err(error) => errors.push(format!("worker join error: {}", error)),
                 }
@@ -517,10 +491,7 @@ impl Benchmark for ChatRealtimeBench {
                 ))
                 .await;
             let _ = client
-                .sql(&format!(
-                    "DROP TOPIC IF EXISTS {}",
-                    typing_topic_name(&config.namespace)
-                ))
+                .sql(&format!("DROP TOPIC IF EXISTS {}", typing_topic_name(&config.namespace)))
                 .await;
             let _ = client
                 .sql(&format!("DROP STREAM TABLE IF EXISTS {}.typing_events", config.namespace))
@@ -533,9 +504,8 @@ impl Benchmark for ChatRealtimeBench {
                 .await;
 
             for username in users {
-                let _ = client
-                    .sql(&format!("DROP USER IF EXISTS {}", sql_literal(&username)))
-                    .await;
+                let _ =
+                    client.sql(&format!("DROP USER IF EXISTS {}", sql_literal(&username))).await;
             }
 
             Ok(())
@@ -761,9 +731,7 @@ async fn emit_typing_event(
     )
     .await?;
 
-    stats
-        .insert_typing_event_timings
-        .record(insert_typing_started.elapsed());
+    stats.insert_typing_event_timings.record(insert_typing_started.elapsed());
     stats.typing_events_sent.fetch_add(1, Ordering::Relaxed);
     Ok(())
 }
@@ -799,9 +767,7 @@ async fn emit_message(
     )
     .await?;
 
-    stats
-        .insert_message_timings
-        .record(insert_message_started.elapsed());
+    stats.insert_message_timings.record(insert_message_started.elapsed());
     stats.messages_sent.fetch_add(1, Ordering::Relaxed);
     Ok(message_id)
 }
@@ -880,10 +846,7 @@ async fn create_subscription(
     let mut attempts = 0_u32;
 
     loop {
-        let config = SubscriptionConfig::without_initial_data(
-            subscription_id.clone(),
-            sql.clone(),
-        );
+        let config = SubscriptionConfig::without_initial_data(subscription_id.clone(), sql.clone());
 
         match timeout(SUBSCRIBE_TIMEOUT, link.subscribe_with_config(config)).await {
             Ok(Ok(subscription)) => return Ok(subscription),
@@ -894,13 +857,13 @@ async fn create_subscription(
                 attempts += 1;
                 sleep(delay).await;
                 delay = (delay * 2).min(Duration::from_secs(5));
-            }
+            },
             Ok(Err(error)) => return Err(format!("subscribe error: {}", error)),
             Err(_) if attempts < CHAT_SUBSCRIBE_RETRY_ATTEMPTS => {
                 attempts += 1;
                 sleep(delay).await;
                 delay = (delay * 2).min(Duration::from_secs(5));
-            }
+            },
             Err(_) => return Err("subscription timed out before becoming ready".to_string()),
         }
     }
@@ -978,13 +941,13 @@ async fn shutdown_subscription_tasks(
 
     for mut handle in handles {
         match timeout(SUBSCRIPTION_SHUTDOWN_TIMEOUT, &mut handle).await {
-            Ok(Ok(Ok(()))) => {}
+            Ok(Ok(Ok(()))) => {},
             Ok(Ok(Err(error))) => errors.push(error),
             Ok(Err(error)) => errors.push(format!("subscription join error: {}", error)),
             Err(_) => {
                 handle.abort();
                 errors.push("timed out waiting for subscription shutdown".to_string());
-            }
+            },
         }
     }
 
@@ -1039,13 +1002,13 @@ impl ChatTopicForwarder {
 
         for mut handle in self.handles {
             match timeout(SUBSCRIPTION_SHUTDOWN_TIMEOUT, &mut handle).await {
-                Ok(Ok(Ok(()))) => {}
+                Ok(Ok(Ok(()))) => {},
                 Ok(Ok(Err(error))) => errors.push(error),
                 Ok(Err(error)) => errors.push(format!("forwarder join error: {}", error)),
                 Err(_) => {
                     handle.abort();
                     errors.push("timed out waiting for topic forwarder shutdown".to_string());
-                }
+                },
             }
         }
 
@@ -1099,15 +1062,15 @@ async fn run_conversation_forwarder(
             let forwarded = match parse_conversation_forward_record(&record.payload) {
                 Ok(row) if row.needs_forward => {
                     forward_conversation(&admin_client, &namespace, &row, &stats).await?
-                }
+                },
                 Ok(_) => {
                     stats.skipped_topic_records.fetch_add(1, Ordering::Relaxed);
                     false
-                }
+                },
                 Err(error) => {
                     let _ = consumer.close().await;
                     return Err(format!("conversation topic payload decode: {}", error));
-                }
+                },
             };
 
             if forwarded {
@@ -1175,29 +1138,22 @@ async fn run_message_forwarder(
                 Ok(row) if row.needs_forward => {
                     rows_to_forward.push(row);
                     records_to_commit.push(record);
-                }
+                },
                 Ok(_) => {
                     stats.skipped_topic_records.fetch_add(1, Ordering::Relaxed);
                     consumer.mark_processed(&record);
-                }
+                },
                 Err(error) => {
                     let _ = consumer.close().await;
                     return Err(format!("message topic payload decode: {}", error));
-                }
+                },
             }
         }
 
         if !rows_to_forward.is_empty() {
-            let forwarded_count = forward_message_rows(
-                &admin_client,
-                &namespace,
-                rows_to_forward,
-                &stats,
-            )
-            .await?;
-            stats
-                .messages_forwarded
-                .fetch_add(forwarded_count, Ordering::Relaxed);
+            let forwarded_count =
+                forward_message_rows(&admin_client, &namespace, rows_to_forward, &stats).await?;
+            stats.messages_forwarded.fetch_add(forwarded_count, Ordering::Relaxed);
 
             for record in &records_to_commit {
                 consumer.mark_processed(record);
@@ -1262,29 +1218,22 @@ async fn run_typing_forwarder(
                 Ok(row) if row.needs_forward => {
                     rows_to_forward.push(row);
                     records_to_commit.push(record);
-                }
+                },
                 Ok(_) => {
                     stats.skipped_topic_records.fetch_add(1, Ordering::Relaxed);
                     consumer.mark_processed(&record);
-                }
+                },
                 Err(error) => {
                     let _ = consumer.close().await;
                     return Err(format!("typing topic payload decode: {}", error));
-                }
+                },
             }
         }
 
         if !rows_to_forward.is_empty() {
-            let forwarded_count = forward_typing_rows(
-                &admin_client,
-                &namespace,
-                rows_to_forward,
-                &stats,
-            )
-            .await?;
-            stats
-                .typing_events_forwarded
-                .fetch_add(forwarded_count, Ordering::Relaxed);
+            let forwarded_count =
+                forward_typing_rows(&admin_client, &namespace, rows_to_forward, &stats).await?;
+            stats.typing_events_forwarded.fetch_add(forwarded_count, Ordering::Relaxed);
 
             for record in &records_to_commit {
                 consumer.mark_processed(record);
@@ -1431,17 +1380,17 @@ async fn forward_message_rows(
                 if forwarded {
                     forwarded_count += 1;
                 }
-            }
+            },
             Some(Ok(Err(error))) => {
                 join_set.abort_all();
                 while join_set.join_next().await.is_some() {}
                 return Err(error);
-            }
+            },
             Some(Err(error)) => {
                 join_set.abort_all();
                 while join_set.join_next().await.is_some() {}
                 return Err(format!("message forward task join error: {}", error));
-            }
+            },
             None => break,
         }
 
@@ -1514,17 +1463,17 @@ async fn forward_typing_rows(
                 if forwarded {
                     forwarded_count += 1;
                 }
-            }
+            },
             Some(Ok(Err(error))) => {
                 join_set.abort_all();
                 while join_set.join_next().await.is_some() {}
                 return Err(error);
-            }
+            },
             Some(Err(error)) => {
                 join_set.abort_all();
                 while join_set.join_next().await.is_some() {}
                 return Err(format!("typing forward task join error: {}", error));
-            }
+            },
             None => break,
         }
 
@@ -1534,7 +1483,9 @@ async fn forward_typing_rows(
     Ok(forwarded_count)
 }
 
-fn parse_conversation_forward_record(payload_bytes: &[u8]) -> Result<ConversationForwardRecord, String> {
+fn parse_conversation_forward_record(
+    payload_bytes: &[u8],
+) -> Result<ConversationForwardRecord, String> {
     let payload: JsonValue = serde_json::from_slice(payload_bytes)
         .map_err(|error| format!("invalid topic payload json: {}", error))?;
     let row = payload.get("row").unwrap_or(&payload);
@@ -1622,13 +1573,10 @@ impl UserClientPool {
             }
         }
 
-        let fresh_client = login_user_with_retry(
-            self.urls.as_ref(),
-            username,
-            self.password.as_ref(),
-        )
-        .await
-        .map_err(|error| format!("login failed for {}: {}", username, error))?;
+        let fresh_client =
+            login_user_with_retry(self.urls.as_ref(), username, self.password.as_ref())
+                .await
+                .map_err(|error| format!("login failed for {}: {}", username, error))?;
 
         let mut clients = self.clients.lock().await;
         if let Some(client) = clients.get(username) {
@@ -1653,13 +1601,12 @@ async fn login_user_with_retry(
         match KalamClient::login_steady_state(urls, username, password).await {
             Ok(client) => return Ok(client),
             Err(error)
-                if attempts < CHAT_LOGIN_RETRY_ATTEMPTS
-                    && is_transient_chat_error(&error) =>
+                if attempts < CHAT_LOGIN_RETRY_ATTEMPTS && is_transient_chat_error(&error) =>
             {
                 attempts += 1;
                 sleep(delay).await;
                 delay = (delay * 2).min(Duration::from_secs(5));
-            }
+            },
             Err(error) => return Err(error),
         }
     }
@@ -1693,11 +1640,10 @@ impl SessionDeliveryTracker {
                         self.peer_messages.fetch_add(1, Ordering::Relaxed);
                     }
                 }
-            }
+            },
             SubscriptionKind::Typing => {
-                self.typing_events
-                    .fetch_add(rows.len() as u64, Ordering::Relaxed);
-            }
+                self.typing_events.fetch_add(rows.len() as u64, Ordering::Relaxed);
+            },
         }
     }
 }
@@ -1769,9 +1715,7 @@ async fn prewarm_user_clients(
             break;
         };
         let pool = user_pool.clone();
-        join_set.spawn(async move {
-            pool.client_for(&username).await.map(|_| username)
-        });
+        join_set.spawn(async move { pool.client_for(&username).await.map(|_| username) });
         in_flight += 1;
     }
 
@@ -1788,13 +1732,13 @@ async fn prewarm_user_clients(
                 if failure_samples.len() < 5 {
                     failure_samples.push(error);
                 }
-            }
+            },
             Err(error) => {
                 failed_attempts += 1;
                 if failure_samples.len() < 5 {
                     failure_samples.push(format!("active-user prewarm join error: {}", error));
                 }
-            }
+            },
         }
 
         while in_flight < CHAT_LOGIN_MAX_IN_FLIGHT
@@ -1804,9 +1748,7 @@ async fn prewarm_user_clients(
                 break;
             };
             let pool = user_pool.clone();
-            join_set.spawn(async move {
-                pool.client_for(&username).await.map(|_| username)
-            });
+            join_set.spawn(async move { pool.client_for(&username).await.map(|_| username) });
             in_flight += 1;
         }
     }
@@ -1905,9 +1847,9 @@ fn json_string_field(row: &JsonValue, key: &str) -> Result<String, String> {
 
 fn json_u64_field(row: &JsonValue, key: &str) -> Result<u64, String> {
     match row.get(key) {
-        Some(JsonValue::Number(value)) => value
-            .as_u64()
-            .ok_or_else(|| format!("field {} is not a u64", key)),
+        Some(JsonValue::Number(value)) => {
+            value.as_u64().ok_or_else(|| format!("field {} is not a u64", key))
+        },
         Some(JsonValue::String(value)) => value
             .parse::<u64>()
             .map_err(|error| format!("field {} is not a valid u64: {}", key, error)),
@@ -1929,11 +1871,7 @@ fn json_bool_field(row: &JsonValue, key: &str) -> Result<bool, String> {
 
 fn sql_response_has_rows(response: &SqlResponse) -> bool {
     response.results.iter().any(|result| {
-        result
-            .rows
-            .as_ref()
-            .map(|rows| !rows.is_empty())
-            .unwrap_or(false)
+        result.rows.as_ref().map(|rows| !rows.is_empty()).unwrap_or(false)
             || result.row_count.unwrap_or(0) > 0
     })
 }
@@ -1993,15 +1931,13 @@ fn record_sql_metric(stats: &ChatWorkloadStats, kind: ChatSqlKind, elapsed: Dura
             stats.inserts.fetch_add(1, Ordering::Relaxed);
             stats.insert_latency_us.fetch_add(elapsed_us, Ordering::Relaxed);
             update_peak(&stats.insert_max_us, elapsed_us);
-        }
+        },
     }
 }
 
 fn record_subscription_open(stats: &ChatWorkloadStats, elapsed: Duration) {
     let elapsed_us = duration_to_us(elapsed);
-    stats
-        .subscription_open_latency_us
-        .fetch_add(elapsed_us, Ordering::Relaxed);
+    stats.subscription_open_latency_us.fetch_add(elapsed_us, Ordering::Relaxed);
     update_peak(&stats.subscription_open_max_us, elapsed_us);
     stats.subscription_connect_timings.record(elapsed);
 }
@@ -2306,7 +2242,11 @@ fn print_chat_summary(
     println!("{}", insert_typing_stats.display_ms("insert_typing_event"));
     println!(
         "  Managed server RSS: {}",
-        format_memory_summary(memory, logged_in_users.max(u64::from(settings.realtime_conversations)), peak_active_subscriptions),
+        format_memory_summary(
+            memory,
+            logged_in_users.max(u64::from(settings.realtime_conversations)),
+            peak_active_subscriptions
+        ),
     );
     println!(
         "  Backend note: conversations and messages are USER tables, typing_events is a STREAM table, and Rust topic consumers mirror conversation, message, and typing INSERTs back into recipient user scopes with EXECUTE AS USER.",
@@ -2317,9 +2257,7 @@ fn print_chat_summary(
     );
     println!(
         "  Coverage: configured_users={} | sessions_started={} | sessions_completed={}",
-        settings.user_count,
-        sessions_started,
-        sessions_completed,
+        settings.user_count, sessions_started, sessions_completed,
     );
 }
 
@@ -2332,7 +2270,7 @@ async fn run_sql_with_retry(client: &KalamClient, sql: &str) -> Result<SqlRespon
             Err(error) if attempt + 1 < SQL_RETRY_ATTEMPTS && is_transient_chat_error(&error) => {
                 sleep(delay).await;
                 delay = (delay * 2).min(CHAT_SQL_RETRY_MAX_DELAY);
-            }
+            },
             Err(error) => return Err(error),
         }
     }
@@ -2344,12 +2282,12 @@ fn is_transient_chat_error(error: &str) -> bool {
     let lower = error.to_ascii_lowercase();
     lower.contains("timeout")
         || lower.contains("temporarily unavailable")
-    || lower.contains("connection failed")
+        || lower.contains("connection failed")
         || lower.contains("connection reset")
         || lower.contains("connection refused")
         || lower.contains("broken pipe")
-    || lower.contains("error sending request")
-    || lower.contains("transport")
+        || lower.contains("error sending request")
+        || lower.contains("transport")
         || lower.contains("too many open files")
         || lower.contains("503")
 }
@@ -2408,8 +2346,7 @@ fn percentile_us(sorted_samples: &[u64], percentile: f64) -> f64 {
     let upper = idx.ceil() as usize;
     let fraction = idx - lower as f64;
 
-    sorted_samples[lower] as f64 * (1.0 - fraction)
-        + sorted_samples[upper] as f64 * fraction
+    sorted_samples[lower] as f64 * (1.0 - fraction) + sorted_samples[upper] as f64 * fraction
 }
 
 fn lock_unpoisoned<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -2422,12 +2359,7 @@ fn lock_unpoisoned<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 fn update_peak(peak: &AtomicU64, candidate: u64) {
     let mut current = peak.load(Ordering::Relaxed);
     while candidate > current {
-        match peak.compare_exchange_weak(
-            current,
-            candidate,
-            Ordering::Relaxed,
-            Ordering::Relaxed,
-        ) {
+        match peak.compare_exchange_weak(current, candidate, Ordering::Relaxed, Ordering::Relaxed) {
             Ok(_) => break,
             Err(observed) => current = observed,
         }
@@ -2486,10 +2418,10 @@ fn format_memory(memory_bytes: Option<u64>) -> String {
     match memory_bytes {
         Some(bytes) if bytes >= 1024 * 1024 * 1024 => {
             format!("{:.2} GiB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
-        }
+        },
         Some(bytes) if bytes >= 1024 * 1024 => {
             format!("{:.1} MiB", bytes as f64 / (1024.0 * 1024.0))
-        }
+        },
         Some(bytes) if bytes >= 1024 => format!("{:.1} KiB", bytes as f64 / 1024.0),
         Some(bytes) => format!("{} B", bytes),
         None => "n/a".to_string(),

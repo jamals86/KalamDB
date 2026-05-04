@@ -5,6 +5,7 @@ use std::time::Instant;
 use clap::Parser;
 
 mod benchmarks;
+mod chat_runtime;
 mod client;
 mod comparison;
 mod config;
@@ -16,7 +17,7 @@ mod system_info;
 mod verdict;
 
 use client::KalamClient;
-use config::Config;
+use config::{BenchmarkSuite, Config};
 use reporter::html_reporter;
 use reporter::json_reporter;
 use system_info::collect_system_info;
@@ -29,7 +30,7 @@ async fn main() {
 
     if config.list_benches {
         println!("Available benchmarks:");
-        for bench in benchmarks::all_benchmarks() {
+        for bench in selected_benchmarks(config.suite) {
             println!("  {:<28} {}", bench.name(), bench.description());
         }
         return;
@@ -50,6 +51,8 @@ async fn main() {
     println!("  Warmup:      {}", config.warmup);
     println!("  Concurrency: {}", config.concurrency);
     println!("  Max Subs:    {}", config.max_subscribers);
+    println!("  Suite:       {}", config.suite.as_str());
+    println!("  Output Dir:  {}", config.output_dir);
     if let Some(ref f) = config.filter {
         println!("  Filter:      {}", f);
     }
@@ -188,6 +191,13 @@ async fn main() {
     println!();
     if failed > 0 {
         std::process::exit(1);
+    }
+}
+
+pub(crate) fn selected_benchmarks(suite: BenchmarkSuite) -> Vec<Box<dyn benchmarks::Benchmark>> {
+    match suite {
+        BenchmarkSuite::Standard => benchmarks::standard_benchmarks(),
+        BenchmarkSuite::ChatRuntime => chat_runtime::benchmarks(),
     }
 }
 

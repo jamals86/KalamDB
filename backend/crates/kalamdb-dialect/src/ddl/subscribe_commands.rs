@@ -24,7 +24,7 @@
 //! SUBSCRIBE TO app.messages WHERE user_id = CURRENT_USER() OPTIONS (last_rows=10);
 //!
 //! -- With multiple options
-//! SUBSCRIBE TO app.messages OPTIONS (last_rows=100, batch_size=50);
+//! SUBSCRIBE TO app.messages OPTIONS (last_rows=50, batch_size=50);
 //!
 //! -- Resume from specific sequence ID
 //! SUBSCRIBE TO app.messages OPTIONS (from=12345);
@@ -603,12 +603,12 @@ mod tests {
         use kalamdb_commons::ids::SeqId;
 
         let stmt = SubscribeStatement::parse(
-            "SUBSCRIBE TO app.messages OPTIONS (last_rows=100, batch_size=50, from=999)",
+            "SUBSCRIBE TO app.messages OPTIONS (last_rows=50, batch_size=50, from=999)",
         )
         .unwrap();
         assert_eq!(stmt.namespace, NamespaceId::from("app"));
         assert_eq!(stmt.table_name, TableName::from("messages"));
-        assert_eq!(stmt.options.last_rows, Some(100));
+        assert_eq!(stmt.options.last_rows, Some(50));
         assert_eq!(stmt.options.batch_size, Some(50));
         assert_eq!(stmt.options.from, Some(SeqId::new(999)));
     }

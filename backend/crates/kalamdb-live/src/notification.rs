@@ -468,6 +468,11 @@ impl NotificationService {
         change_notification: ChangeNotification,
         all_handles: Arc<dashmap::DashMap<LiveQueryId, SubscriptionHandle>>,
     ) -> Result<usize, LiveError> {
+        let handle_count = all_handles.len();
+        if handle_count == 0 {
+            return Ok(0);
+        }
+
         let seq_value = extract_seq(&change_notification);
         let commit_seq = extract_commit_seq(&change_notification);
         let delivery_timestamp_ms = epoch_millis();
@@ -476,14 +481,29 @@ impl NotificationService {
         let new_row = Arc::new(change_notification.row_data);
         let old_row = change_notification.old_data.map(Arc::new);
 
-        let handle_count = all_handles.len();
-        if handle_count == 0 {
-            return Ok(0);
+        if handle_count == 1 {
+            let Some(handle) = all_handles.iter().next().map(|entry| entry.value().clone()) else {
+                return Ok(0);
+            };
+
+            return dispatch_one(
+                handle,
+                &new_row,
+                old_row.as_deref(),
+                &change_type,
+                &pk_columns,
+                seq_value,
+                commit_seq,
+                delivery_timestamp_ms,
+            );
         }
 
         // Small fan-out: inline dispatch directly from DashMap refs (no clone/spawn overhead)
         if handle_count <= SHARED_NOTIFY_CHUNK_SIZE {
-            let chunk_handles = all_handles.iter().map(|entry| entry.value().clone()).collect();
+            let chunk_handles = all_handles
+                .iter()
+                .map(|entry| entry.value().clone())
+                .collect::<Vec<_>>();
             return dispatch_chunk(
                 chunk_handles,
                 &new_row,
@@ -664,6 +684,52 @@ fn dispatch_chunk(
     }
 
     Ok(count)
+}
+
+fn dispatch_one(
+    handle: SubscriptionHandle,
+    new_row: &Row,
+    old_row: Option<&Row>,
+    change_type: &ChangeType,
+    pk_columns: &[String],
+    seq_value: Option<SeqId>,
+    commit_seq: Option<u64>,
+    delivery_timestamp_ms: u64,
+) -> Result<usize, LiveError> {
+    if let Some(ref filter_expr) = handle.filter_expr {
+        match filter_matches(filter_expr, new_row) {
+            Ok(true) => {},
+            Ok(false) => return Ok(0),
+            Err(e) => {
+                log::error!(
+                    "Filter error for subscription_id={}: {}",
+                    handle.subscription_id,
+                    e
+                );
+                return Ok(0);
+            },
+        }
+    }
+
+    let payload = Arc::new(build_shared_payload(
+        change_type,
+        new_row,
+        old_row,
+        pk_columns,
+        &handle.projections,
+    )?);
+    let notification = Arc::new(WireNotification {
+        subscription_id: Arc::clone(&handle.subscription_id),
+        payload,
+    });
+
+    Ok(usize::from(try_deliver(
+        &handle,
+        notification,
+        seq_value,
+        commit_seq,
+        delivery_timestamp_ms,
+    )))
 }
 
 impl NotificationServiceTrait for NotificationService {

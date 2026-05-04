@@ -4,10 +4,9 @@
 
 use std::{
     collections::{HashMap, VecDeque},
-    hash::{DefaultHasher, Hash, Hasher},
     sync::{
         atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering},
-        Arc, OnceLock, Weak,
+        Arc, OnceLock,
     },
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
@@ -26,54 +25,6 @@ use tokio::sync::mpsc;
 #[inline]
 pub(crate) fn epoch_millis() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64
-}
-
-#[derive(Default)]
-struct SubscriptionStringPool {
-    buckets: HashMap<u64, Vec<Weak<str>>>,
-}
-
-impl SubscriptionStringPool {
-    fn intern(&mut self, value: &str) -> Arc<str> {
-        let hash = hash_subscription_str(value);
-        let bucket = self.buckets.entry(hash).or_default();
-        let mut dead_entries = 0usize;
-
-        for weak in bucket.iter() {
-            match weak.upgrade() {
-                Some(existing) if existing.as_ref() == value => return existing,
-                Some(_) => {},
-                None => dead_entries += 1,
-            }
-        }
-
-        if dead_entries > 0 {
-            bucket.retain(|weak| weak.strong_count() > 0);
-        }
-
-        let interned: Arc<str> = Arc::from(value);
-        bucket.push(Arc::downgrade(&interned));
-        interned
-    }
-}
-
-fn hash_subscription_str(value: &str) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    value.hash(&mut hasher);
-    hasher.finish()
-}
-
-fn subscription_string_pool() -> &'static Mutex<SubscriptionStringPool> {
-    static STRING_POOL: OnceLock<Mutex<SubscriptionStringPool>> = OnceLock::new();
-    STRING_POOL.get_or_init(|| Mutex::new(SubscriptionStringPool::default()))
-}
-
-fn intern_subscription_str(value: &str) -> Arc<str> {
-    if value.is_empty() {
-        return Arc::from("");
-    }
-
-    subscription_string_pool().lock().intern(value)
 }
 
 /// Maximum live-query subscriptions allowed on a single WebSocket connection.
@@ -159,8 +110,8 @@ pub struct SubscriptionRuntimeMetadata {
 impl SubscriptionRuntimeMetadata {
     pub fn new(query: &str, options_json: Option<&str>, created_at_ms: i64) -> Self {
         Self {
-            query: intern_subscription_str(query),
-            options_json: options_json.map(intern_subscription_str),
+            query: Arc::from(query),
+            options_json: options_json.map(Arc::from),
             created_at_ms,
             last_update_ms: AtomicI64::new(created_at_ms),
             changes: AtomicI64::new(0),
@@ -766,7 +717,7 @@ mod tests {
     }
 
     #[test]
-    fn test_subscription_runtime_metadata_interns_query_and_options() {
+    fn test_subscription_runtime_metadata_owns_query_and_options() {
         let first = SubscriptionRuntimeMetadata::new(
             "SELECT * FROM shared.events",
             Some(r#"{"batch_size":100}"#),
@@ -778,8 +729,10 @@ mod tests {
             2,
         );
 
-        assert!(Arc::ptr_eq(&first.query, &second.query));
-        assert!(Arc::ptr_eq(
+        assert_eq!(first.query(), second.query());
+        assert_eq!(first.options_json(), second.options_json());
+        assert!(!Arc::ptr_eq(&first.query, &second.query));
+        assert!(!Arc::ptr_eq(
             first.options_json.as_ref().expect("options should exist"),
             second.options_json.as_ref().expect("options should exist"),
         ));
