@@ -35,6 +35,9 @@ nanoid = { workspace = true, optional = true }
 log = { workspace = true, optional = true }
 tracing = { workspace = true }
 
+[dev-dependencies]
+criterion = { workspace = true }
+
 [features]
 # Feature to enable serde support for serialization
 serde = [
@@ -97,3 +100,7 @@ default = ["full"]
 [lib]
 name = "kalamdb_commons"
 path = "src/lib.rs"
+
+[[bench]]
+name = "snowflake_generator"
+harness = false

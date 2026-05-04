@@ -10,22 +10,22 @@ use parking_lot::Mutex;
 /// - 10 bits: machine/worker ID
 /// - 12 bits: sequence number
 pub struct SnowflakeGenerator {
-    /// Machine/worker ID (0-1023)
-    worker_id: u16,
+    /// Pre-shifted worker bits reused for every emitted ID.
+    worker_bits: u64,
 
     /// Custom epoch (milliseconds since Unix epoch)
     /// Default: 2024-01-01 00:00:00 UTC (1704067200000)
     epoch: u64,
 
-    /// State protected by mutex
+    /// Mutable generator state protected by a lightweight mutex.
     state: Mutex<GeneratorState>,
 }
 
 struct GeneratorState {
-    /// Last timestamp used
+    /// Last timestamp used.
     last_timestamp: u64,
 
-    /// Sequence number (0-4095)
+    /// Last sequence emitted for `last_timestamp`.
     sequence: u16,
 }
 
@@ -33,6 +33,9 @@ impl SnowflakeGenerator {
     /// Custom epoch: 2024-01-01 00:00:00 UTC
     pub const DEFAULT_EPOCH: u64 = 1704067200000;
 
+    const TIMESTAMP_SHIFT: u32 = 22;
+
+        const SEQUENCE_BITS: u32 = 12;
     /// Maximum worker ID
     pub const MAX_WORKER_ID: u16 = 1023;
 
@@ -53,7 +56,7 @@ impl SnowflakeGenerator {
         assert!(worker_id <= Self::MAX_WORKER_ID, "worker_id must be <= {}", Self::MAX_WORKER_ID);
 
         Self {
-            worker_id,
+            worker_bits: (worker_id as u64) << Self::SEQUENCE_BITS,
             epoch,
             state: Mutex::new(GeneratorState {
                 last_timestamp: 0,
@@ -63,35 +66,27 @@ impl SnowflakeGenerator {
     }
 
     /// Generate the next Snowflake ID
+    #[inline]
     pub fn next_id(&self) -> Result<i64, String> {
         let mut state = self.state.lock();
-
-        let mut timestamp = self.reconcile_timestamp(&state)?;
+        let mut timestamp = self.reconcile_timestamp(state.last_timestamp)?;
 
         if timestamp == state.last_timestamp {
-            // Same millisecond - increment sequence
             state.sequence = (state.sequence + 1) & Self::MAX_SEQUENCE;
 
             if state.sequence == 0 {
-                // Sequence overflow - wait for next millisecond
                 timestamp = self.wait_next_millis(state.last_timestamp)?;
             }
         } else {
-            // New millisecond - reset sequence
             state.sequence = 0;
         }
 
         state.last_timestamp = timestamp;
-
-        // Construct the ID
-        let id = ((timestamp - self.epoch) << 22)
-            | ((self.worker_id as u64) << 12)
-            | (state.sequence as u64);
-
-        Ok(id as i64)
+        Ok(self.compose_id(timestamp, state.sequence as u64))
     }
 
     /// Get current timestamp in milliseconds
+    #[inline]
     fn current_timestamp(&self) -> Result<u64, String> {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -125,6 +120,7 @@ impl SnowflakeGenerator {
     }
 
     /// Wait until next millisecond
+    #[inline]
     fn wait_next_millis(&self, last_timestamp: u64) -> Result<u64, String> {
         let mut timestamp = self.current_timestamp()?;
         while timestamp <= last_timestamp {
@@ -161,6 +157,7 @@ impl SnowflakeGenerator {
     ///
     /// # Returns
     /// Vector of unique, time-ordered Snowflake IDs
+    #[inline]
     pub fn next_ids(&self, count: usize) -> Result<Vec<i64>, String> {
         if count == 0 {
             return Ok(Vec::new());
@@ -169,42 +166,44 @@ impl SnowflakeGenerator {
         let mut state = self.state.lock();
         let mut ids = Vec::with_capacity(count);
 
-        for _ in 0..count {
-            let mut timestamp = self.reconcile_timestamp(&state)?;
+        while ids.len() < count {
+            let remaining = count - ids.len();
 
-            if timestamp == state.last_timestamp {
-                // Same millisecond - increment sequence
-                state.sequence = (state.sequence + 1) & Self::MAX_SEQUENCE;
-
-                if state.sequence == 0 {
-                    // Sequence overflow - wait for next millisecond
+            let mut timestamp = self.reconcile_timestamp(state.last_timestamp)?;
+            let (start_sequence, chunk_len) = if timestamp == state.last_timestamp {
+                if state.sequence == Self::MAX_SEQUENCE {
                     timestamp = self.wait_next_millis(state.last_timestamp)?;
+                    let chunk_len = remaining.min((Self::MAX_SEQUENCE as usize) + 1);
+                    state.sequence = (chunk_len - 1) as u16;
+                    (0_u64, chunk_len)
+                } else {
+                    let available = (Self::MAX_SEQUENCE - state.sequence) as usize;
+                    let chunk_len = remaining.min(available);
+                    let start_sequence = state.sequence as u64 + 1;
+                    state.sequence += chunk_len as u16;
+                    (start_sequence, chunk_len)
                 }
             } else {
-                // New millisecond - reset sequence
-                state.sequence = 0;
-            }
+                let chunk_len = remaining.min((Self::MAX_SEQUENCE as usize) + 1);
+                state.sequence = (chunk_len - 1) as u16;
+                (0_u64, chunk_len)
+            };
 
             state.last_timestamp = timestamp;
-
-            // Construct the ID
-            let id = ((timestamp - self.epoch) << 22)
-                | ((self.worker_id as u64) << 12)
-                | (state.sequence as u64);
-
-            ids.push(id as i64);
+            self.append_chunk_ids(&mut ids, timestamp, start_sequence, chunk_len);
         }
 
         Ok(ids)
     }
 
-    fn reconcile_timestamp(&self, state: &GeneratorState) -> Result<u64, String> {
+    #[inline]
+    fn reconcile_timestamp(&self, last_timestamp: u64) -> Result<u64, String> {
         let timestamp = self.current_timestamp()?;
-        if timestamp >= state.last_timestamp {
+        if timestamp >= last_timestamp {
             return Ok(timestamp);
         }
 
-        let drift_ms = state.last_timestamp - timestamp;
+        let drift_ms = last_timestamp - timestamp;
         if drift_ms > Self::MAX_BACKWARD_DRIFT_MS {
             return Err(format!(
                 "Clock moved backwards. Refusing to generate id for {} milliseconds",
@@ -213,7 +212,24 @@ impl SnowflakeGenerator {
         }
 
         std::thread::sleep(Duration::from_millis(drift_ms));
-        self.wait_next_millis(state.last_timestamp)
+        self.wait_next_millis(last_timestamp)
+    }
+
+    #[inline]
+    fn compose_id(&self, timestamp: u64, sequence: u64) -> i64 {
+        (((timestamp - self.epoch) << Self::TIMESTAMP_SHIFT) | self.worker_bits | sequence) as i64
+    }
+
+    fn append_chunk_ids(
+        &self,
+        ids: &mut Vec<i64>,
+        timestamp: u64,
+        start_sequence: u64,
+        chunk_len: usize,
+    ) {
+        for offset in 0..chunk_len {
+            ids.push(self.compose_id(timestamp, start_sequence + offset as u64));
+        }
     }
 }
 
@@ -458,5 +474,39 @@ mod tests {
         all_ids.insert(batch_ids[1]);
         all_ids.insert(batch_ids[2]);
         assert_eq!(all_ids.len(), 4, "All IDs must be unique");
+    }
+
+    #[test]
+    fn test_concurrent_single_and_batch_generation() {
+        use std::{sync::Arc, thread};
+
+        let gen = Arc::new(SnowflakeGenerator::new(7));
+        let mut handles = Vec::new();
+
+        for _ in 0..4 {
+            let gen_clone = Arc::clone(&gen);
+            handles.push(thread::spawn(move || {
+                let mut ids = Vec::new();
+                for _ in 0..250 {
+                    ids.push(gen_clone.next_id().unwrap());
+                }
+                ids
+            }));
+        }
+
+        for _ in 0..4 {
+            let gen_clone = Arc::clone(&gen);
+            handles.push(thread::spawn(move || gen_clone.next_ids(250).unwrap()));
+        }
+
+        let mut all_ids = HashSet::new();
+        for handle in handles {
+            let ids = handle.join().unwrap();
+            for id in ids {
+                assert!(all_ids.insert(id), "Duplicate ID in mixed concurrency test");
+            }
+        }
+
+        assert_eq!(all_ids.len(), 2000);
     }
 }
