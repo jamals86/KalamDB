@@ -28,6 +28,30 @@ RUN chmod 755 /staged/usr/local/bin/* && \
 # ---------- Stage 3: final runtime ----------
 FROM debian:bookworm-slim
 
+ARG OCI_IMAGE_TITLE="KalamDB"
+ARG OCI_IMAGE_DESCRIPTION="KalamDB database server"
+ARG OCI_IMAGE_URL="https://kalamdb.org"
+ARG OCI_IMAGE_SOURCE="https://github.com/kalamstack/KalamDB"
+ARG OCI_IMAGE_DOCUMENTATION="https://kalamdb.org/docs"
+ARG OCI_IMAGE_VENDOR="KalamDB"
+ARG OCI_IMAGE_AUTHORS="Jamal Saad"
+ARG OCI_IMAGE_LICENSES="Apache-2.0"
+ARG OCI_IMAGE_VERSION="dev"
+ARG OCI_IMAGE_REVISION="unknown"
+ARG OCI_IMAGE_CREATED="unknown"
+
+LABEL org.opencontainers.image.title="$OCI_IMAGE_TITLE" \
+      org.opencontainers.image.description="$OCI_IMAGE_DESCRIPTION" \
+      org.opencontainers.image.url="$OCI_IMAGE_URL" \
+      org.opencontainers.image.source="$OCI_IMAGE_SOURCE" \
+      org.opencontainers.image.documentation="$OCI_IMAGE_DOCUMENTATION" \
+      org.opencontainers.image.vendor="$OCI_IMAGE_VENDOR" \
+      org.opencontainers.image.authors="$OCI_IMAGE_AUTHORS" \
+      org.opencontainers.image.licenses="$OCI_IMAGE_LICENSES" \
+      org.opencontainers.image.version="$OCI_IMAGE_VERSION" \
+      org.opencontainers.image.revision="$OCI_IMAGE_REVISION" \
+      org.opencontainers.image.created="$OCI_IMAGE_CREATED"
+
 RUN apt-get update -o Acquire::Retries=3 && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         ca-certificates bash busybox-static && \

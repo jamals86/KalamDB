@@ -4073,6 +4073,7 @@ dependencies = [
  "arrow",
  "arrow-schema",
  "chrono",
+ "criterion 0.8.2",
  "dashmap 6.1.0",
  "datafusion-common",
  "flatbuffers",
