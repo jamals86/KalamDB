@@ -1,4 +1,19 @@
-use clap::Parser;
+use clap::{Parser, ValueEnum};
+
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BenchmarkSuite {
+    Standard,
+    ChatRuntime,
+}
+
+impl BenchmarkSuite {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Standard => "standard",
+            Self::ChatRuntime => "chat-runtime",
+        }
+    }
+}
 
 /// CLI configuration for the benchmark tool.
 #[derive(Parser, Debug, Clone)]
@@ -37,6 +52,11 @@ pub struct Config {
     /// Output directory for reports
     #[arg(long, default_value = "results")]
     pub output_dir: String,
+
+    /// Benchmark suite to run. The standard suite writes to results/ by default;
+    /// named suites should pass their own output directory from their runner script.
+    #[arg(long, value_enum, default_value_t = BenchmarkSuite::Standard)]
+    pub suite: BenchmarkSuite,
 
     /// Run only benchmarks matching this filter (substring match)
     #[arg(long)]

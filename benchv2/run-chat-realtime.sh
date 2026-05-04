@@ -74,7 +74,7 @@ else
     echo "▸ Conversation message rate: $MESSAGES_PER_MINUTE messages/min"
 fi
 
-CMD=(./run-benchmarks.sh --urls "$URL" --bench chat_realtime --iterations 1 --warmup 0)
+CMD=(./run-benchmarks.sh --urls "$URL" --suite chat-runtime --output-dir results/chat-runtime --bench chat_realtime --iterations 1 --warmup 0)
 
 if [[ -n "$BENCH_USER" ]]; then
     CMD+=(--user "$BENCH_USER")

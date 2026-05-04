@@ -1,10 +1,11 @@
 use std::time::Instant;
 
-use crate::benchmarks::{all_benchmarks, enabled_in_default_suite, Benchmark};
+use crate::benchmarks::{enabled_in_default_suite, Benchmark};
 use crate::client::KalamClient;
 use crate::comparison::{self, PreviousRun};
 use crate::config::Config;
 use crate::metrics::BenchmarkResult;
+use crate::selected_benchmarks;
 use crate::verdict;
 
 /// Runs all registered benchmarks according to config, returning results.
@@ -13,7 +14,7 @@ pub async fn run_all(
     config: &Config,
     previous: Option<&PreviousRun>,
 ) -> Vec<BenchmarkResult> {
-    let benchmarks = all_benchmarks();
+    let benchmarks = selected_benchmarks(config.suite);
     let mut results = Vec::new();
 
     let mut selected = Vec::new();

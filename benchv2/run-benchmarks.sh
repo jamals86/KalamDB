@@ -20,6 +20,7 @@ URLS="${KALAMDB_URLS:-${KALAMDB_URL:-http://127.0.0.1:8080}}"
 USER="${KALAMDB_USER:-admin}"
 PASSWORD="${KALAMDB_PASSWORD:-kalamdb123}"
 MAX_SUBSCRIBERS="${KALAMDB_MAX_SUBSCRIBERS:-}"
+OUTPUT_DIR="results"
 EXTRA_ARGS=()
 BENCH_SERVER_PID=""
 
@@ -190,6 +191,7 @@ while [[ $# -gt 0 ]]; do
         --user) USER="$2"; shift 2;;
         --password) PASSWORD="$2"; shift 2;;
         --max-subscribers) MAX_SUBSCRIBERS="$2"; shift 2;;
+        --output-dir) OUTPUT_DIR="$2"; EXTRA_ARGS+=("$1" "$2"); shift 2;;
         *) EXTRA_ARGS+=("$1"); shift;;
     esac
 done
@@ -240,4 +242,4 @@ if [[ "$MANAGED_SERVER" == "yes" ]]; then
 fi
 
 echo ""
-echo "📊 Results directory: $SCRIPT_DIR/results"
+echo "📊 Results directory: $SCRIPT_DIR/$OUTPUT_DIR"
