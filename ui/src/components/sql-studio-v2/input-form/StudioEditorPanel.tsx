@@ -13,8 +13,16 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { LiveSubscriptionOptions, StudioNamespace } from "../shared/types";
+import {
+  buildSqlCompletionData,
+  resolveSqlContextualCompletions,
+  type SqlCompletionEntry,
+  type SqlCompletionData,
+} from "./sqlCompletionCatalog";
 
 type ExecuteMode = "all" | "selected";
+
+const EMPTY_COMPLETION_DATA = buildSqlCompletionData([]);
 
 interface StudioEditorPanelProps {
   schema: StudioNamespace[];
@@ -62,40 +70,10 @@ export function StudioEditorPanel({
   const onRunRef = useRef(onRun);
   const sqlRef = useRef(sql);
   const completionProviderRef = useRef<IDisposable | null>(null);
-  const completionDataRef = useRef<{
-    namespaces: string[];
-    tablesByNamespace: Record<string, string[]>;
-    columnsByTable: Record<string, string[]>;
-    keywords: string[];
-  }>({
-    namespaces: [],
-    tablesByNamespace: {},
-    columnsByTable: {},
-    keywords: [],
-  });
+  const completionDataRef = useRef<SqlCompletionData>(EMPTY_COMPLETION_DATA);
 
   const completionData = useMemo(() => {
-    const namespaces: string[] = [];
-    const tablesByNamespace: Record<string, string[]> = {};
-    const columnsByTable: Record<string, string[]> = {};
-
-    schema.forEach((namespace) => {
-      const namespaceKey = namespace.name.toLowerCase();
-      namespaces.push(namespace.name);
-      tablesByNamespace[namespaceKey] = namespace.tables.map((table) => table.name);
-      namespace.tables.forEach((table) => {
-        columnsByTable[`${namespaceKey}.${table.name.toLowerCase()}`] = table.columns.map((column) => column.name);
-      });
-    });
-
-    const keywords = [
-      "SELECT", "FROM", "WHERE", "JOIN", "LEFT", "RIGHT", "INNER", "OUTER",
-      "GROUP BY", "ORDER BY", "LIMIT", "INSERT", "UPDATE", "DELETE",
-      "CREATE", "ALTER", "DROP", "TABLE", "NAMESPACE", "VALUES", "SET",
-      "AND", "OR", "NOT", "IN", "AS", "ON",
-    ];
-
-    return { namespaces, tablesByNamespace, columnsByTable, keywords };
+    return buildSqlCompletionData(schema);
   }, [schema]);
 
   useEffect(() => {
@@ -192,57 +170,67 @@ export function StudioEditorPanel({
           aliasMatch = aliasRegex.exec(textUntilPosition);
         }
 
-        const pushSuggestion = (label: string, kind: languages.CompletionItemKind, detail: string, insertText = label) => {
+        const pushSuggestion = (
+          label: string,
+          kind: languages.CompletionItemKind,
+          detail: string,
+          insertText = label,
+          sortText?: string,
+          insertTextRules?: languages.CompletionItemInsertTextRule,
+          matchText = prefix,
+        ) => {
           const key = `${kind}-${label}-${insertText}`;
           if (seen.has(key)) {
             return;
           }
-          if (prefix && !label.toLowerCase().includes(prefix)) {
+          if (matchText && !label.toLowerCase().includes(matchText)) {
             return;
           }
           seen.add(key);
-          suggestions.push({ label, kind, detail, insertText, range });
+          suggestions.push({ label, kind, detail, insertText, insertTextRules, range, sortText });
         };
 
-        const tableColumnMatch = /([a-zA-Z_][\w]*)\.([a-zA-Z_][\w]*)\.([a-zA-Z_][\w]*)?$/.exec(textUntilPosition);
-        if (tableColumnMatch) {
-          const namespaceKey = tableColumnMatch[1].toLowerCase();
-          const tableKey = tableColumnMatch[2].toLowerCase();
-          const columns = data.columnsByTable[`${namespaceKey}.${tableKey}`] ?? [];
-          columns.forEach((column) =>
-            pushSuggestion(column, monaco.languages.CompletionItemKind.Field, `${namespaceKey}.${tableKey} column`),
+        const pushEntry = (entry: SqlCompletionEntry) => {
+          const snippetRule = entry.isSnippet
+            ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet
+            : undefined;
+          const kindByCategory: Record<SqlCompletionEntry["category"], languages.CompletionItemKind> = {
+            function: monaco.languages.CompletionItemKind.Function,
+            keyword: monaco.languages.CompletionItemKind.Keyword,
+            operator: monaco.languages.CompletionItemKind.Operator,
+            snippet: monaco.languages.CompletionItemKind.Snippet,
+            type: monaco.languages.CompletionItemKind.TypeParameter,
+          };
+
+          pushSuggestion(
+            entry.label,
+            kindByCategory[entry.category],
+            entry.detail,
+            entry.insertText ?? entry.label,
+            entry.sortText,
+            snippetRule,
+          );
+        };
+
+        const contextualCompletion = resolveSqlContextualCompletions(data, textUntilPosition, aliasToTable);
+        if (contextualCompletion) {
+          const kind = contextualCompletion.kind === "column"
+            ? monaco.languages.CompletionItemKind.Field
+            : monaco.languages.CompletionItemKind.Class;
+
+          contextualCompletion.labels.forEach((label) =>
+            pushSuggestion(label, kind, contextualCompletion.detail, label, undefined, undefined, contextualCompletion.partial),
           );
           return { suggestions };
         }
 
-        const aliasColumnMatch = /([a-zA-Z_][\w]*)\.([a-zA-Z_][\w]*)?$/.exec(textUntilPosition);
-        if (aliasColumnMatch) {
-          const aliasKey = aliasColumnMatch[1].toLowerCase();
-          const resolvedTable = aliasToTable[aliasKey];
-          if (resolvedTable) {
-            const columns = data.columnsByTable[resolvedTable] ?? [];
-            columns.forEach((column) =>
-              pushSuggestion(column, monaco.languages.CompletionItemKind.Field, `${aliasKey} alias column`),
-            );
-            return { suggestions };
-          }
-        }
-
-        const namespaceTableMatch = /([a-zA-Z_][\w]*)\.([a-zA-Z_][\w]*)?$/.exec(textUntilPosition);
-        if (namespaceTableMatch) {
-          const namespaceKey = namespaceTableMatch[1].toLowerCase();
-          const namespaceTables = data.tablesByNamespace[namespaceKey];
-          if (namespaceTables && namespaceTables.length > 0) {
-            namespaceTables.forEach((table) =>
-              pushSuggestion(table, monaco.languages.CompletionItemKind.Class, `${namespaceKey} table`),
-            );
-            return { suggestions };
-          }
-        }
-
         data.keywords.forEach((keyword) =>
-          pushSuggestion(keyword, monaco.languages.CompletionItemKind.Keyword, "SQL keyword"),
+          pushSuggestion(keyword, monaco.languages.CompletionItemKind.Keyword, "SQL keyword", keyword, `2_${keyword}`),
         );
+        data.snippets.forEach(pushEntry);
+        data.functions.forEach(pushEntry);
+        data.types.forEach(pushEntry);
+        data.operators.forEach(pushEntry);
         data.namespaces.forEach((namespaceName) =>
           pushSuggestion(namespaceName, monaco.languages.CompletionItemKind.Module, "Namespace"),
         );

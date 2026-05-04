@@ -141,6 +141,7 @@ mod tests {
             named_rows: None,
             row_count: 1,
             message: None,
+            as_user: None,
         };
         let resp = QueryResponse {
             status: ResponseStatus::Success,
@@ -187,6 +188,7 @@ mod tests {
             named_rows: None,
             row_count: 0,
             message: Some("Table created".into()),
+            as_user: None,
         };
         let dart: DartQueryResult = qr.into();
         assert!(dart.columns.is_empty());

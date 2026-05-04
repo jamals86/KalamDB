@@ -701,7 +701,8 @@ export class KalamDBClient {
   * Execute a single SQL statement with an AS USER wrapper.
   *
   * KalamDB authorizes cross-user targets with its EXECUTE AS USER role matrix.
-  * Regular users can only target themselves.
+  * Regular users can only target themselves. The wrapper is valid for USER
+  * and STREAM tables; SHARED tables use their table policy directly.
    *
    * Wraps the SQL using:
    * `EXECUTE AS USER 'user' ( <single statement> )`

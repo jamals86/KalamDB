@@ -1,7 +1,3 @@
-use std::collections::HashMap;
-
-use kalam_client::KalamCellValue;
-
 use super::{cell_bool, cell_text, cell_u64, CLISession};
 use crate::{CLIError, Result};
 
@@ -258,6 +254,10 @@ fn bytes_to_mb(bytes: u64) -> f64 {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
+    use kalam_client::KalamCellValue;
+
     use super::*;
 
     #[test]

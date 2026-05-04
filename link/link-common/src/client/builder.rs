@@ -1,5 +1,5 @@
 use std::{
-    sync::{Arc, RwLock},
+    sync::{Arc, Once, RwLock},
     time::Duration,
 };
 
@@ -16,6 +16,14 @@ use crate::{
     query::AuthRefreshCallback,
     timeouts::KalamLinkTimeouts,
 };
+
+fn ensure_rustls_crypto_provider() {
+    static INSTALL_RUSTLS_PROVIDER: Once = Once::new();
+
+    INSTALL_RUSTLS_PROVIDER.call_once(|| {
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    });
+}
 
 impl KalamLinkClientBuilder {
     pub(crate) fn new() -> Self {
@@ -107,6 +115,8 @@ impl KalamLinkClientBuilder {
 
     /// Build the client
     pub fn build(self) -> Result<KalamLinkClient> {
+        ensure_rustls_crypto_provider();
+
         let base_url = self
             .base_url
             .ok_or_else(|| KalamLinkError::ConfigurationError("base_url is required".into()))?;

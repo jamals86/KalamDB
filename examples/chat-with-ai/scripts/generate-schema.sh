@@ -4,7 +4,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-ORM_CLI="$PROJECT_DIR/../../link/sdks/typescript/orm/dist/cli.js"
+ORM_CLI="$PROJECT_DIR/node_modules/@kalamdb/orm/dist/cli.js"
+NODE_FLAGS=(--preserve-symlinks --preserve-symlinks-main)
 
 if [ -f "$PROJECT_DIR/.env.local" ]; then
     set -a
@@ -13,7 +14,7 @@ if [ -f "$PROJECT_DIR/.env.local" ]; then
     set +a
 fi
 
-node "$ORM_CLI" \
+node "${NODE_FLAGS[@]}" "$ORM_CLI" \
     --url "${KALAMDB_URL:-http://127.0.0.1:8080}" \
     --user "${KALAMDB_USER:-admin}" \
     --password "${KALAMDB_PASSWORD:-kalamdb123}" \

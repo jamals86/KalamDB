@@ -14,15 +14,15 @@
     "preview": "vite preview",
     "setup": "bash setup.sh",
     "preagent": "bash scripts/ensure-sdk.sh",
-    "agent": "tsx src/agent.ts",
+    "agent": "NODE_OPTIONS=--preserve-symlinks tsx src/agent.ts",
     "pretest": "bash scripts/ensure-sdk.sh",
-    "test": "tsc -p tsconfig.test.json && tsx --test tests/agent.test.ts && playwright test"
+    "test": "tsc -p tsconfig.test.json && NODE_OPTIONS=--preserve-symlinks tsx --test tests/agent.test.ts && playwright test"
   },
   "dependencies": {
     "@kalamdb/client": "file:../../link/sdks/typescript/client",
     "@kalamdb/consumer": "file:../../link/sdks/typescript/consumer",
     "@kalamdb/orm": "file:../../link/sdks/typescript/orm",
-    "dotenv": "^17.4.1",
+    "dotenv": "^17.4.2",
     "drizzle-orm": "^0.41.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4"

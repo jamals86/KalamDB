@@ -230,6 +230,15 @@ jobs:
           cd ui
           npm install
 
+      - name: Run SQL Studio regression tests
+        shell: bash
+        env:
+          CI: "true"
+        run: |
+          set -euo pipefail
+          cd ui
+          npm run test:sql-studio
+
       - name: Run Admin UI tests
         shell: bash
         env:
@@ -237,7 +246,7 @@ jobs:
         run: |
           set -euo pipefail
           cd ui
-          npm test -- --run
+          npm run test:ci
 
       - name: Build Admin UI
         shell: bash

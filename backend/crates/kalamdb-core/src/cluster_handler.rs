@@ -431,7 +431,8 @@ impl ClusterMessageHandler for CoreClusterHandler {
                     "SQL_EXECUTION_ERROR",
                     &format!(
                         "Statement {} failed: EXECUTE AS USER is not allowed on SHARED tables \
-                         (table '{}'). AS USER impersonation is only supported for USER tables.",
+                         (table '{}'). AS USER impersonation is only supported for USER and \
+                         STREAM tables.",
                         idx + 1,
                         table_name
                     ),

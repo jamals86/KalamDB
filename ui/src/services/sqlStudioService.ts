@@ -347,7 +347,7 @@ function normalizeTimestampValue(value: unknown): string | number | null {
 
 function applyTableMetadata(
   table: StudioTable,
-  row: Pick<SystemSchemaRow, "storage_id" | "schema_version" | "options" | "table_comment" | "updated_at" | "created_at">,
+  row: Partial<Pick<SystemSchemaRow, "storage_id" | "schema_version" | "options" | "table_comment" | "updated_at" | "created_at">>,
 ): void {
   table.storageId = normalizeTextValue(row.storage_id);
   table.version = normalizeNumericValue(row.schema_version);

@@ -450,3 +450,362 @@ async fn test_proxy_packet_loss_style_stalls_resume_without_replay() {
 
     assert!(result.is_ok(), "packet-loss-style stall test timed out");
 }
+
+/// Very small write slices fragment WebSocket frames at the transport boundary.
+/// The client should parse the stream normally and avoid spurious reconnects.
+#[tokio::test]
+#[ntest::timeout(8000)]
+async fn test_tokio_netem_fragmented_writes_preserve_live_stream() {
+    let result = timeout(Duration::from_secs(45), async {
+        let writer = match create_test_client() {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("Skipping test (writer client unavailable): {}", e);
+                return;
+            },
+        };
+
+        let proxy = TcpDisconnectProxy::start(upstream_server_url()).await;
+        let (client, _connect_count, disconnect_count) =
+            match create_test_client_with_events_for_base_url(proxy.base_url()) {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("Skipping test (proxy client unavailable): {}", e);
+                    proxy.shutdown().await;
+                    return;
+                },
+            };
+
+        let suffix = unique_suffix();
+        let table = format!("default.netem_sliced_{}", suffix);
+        ensure_table(&writer, &table).await;
+
+        client.connect().await.expect("initial connect through proxy");
+        let mut sub = client
+            .subscribe_with_config(SubscriptionConfig::new(
+                format!("netem-sliced-{}", suffix),
+                format!("SELECT id, value FROM {}", table),
+            ))
+            .await
+            .expect("subscribe through proxy");
+
+        let _ = timeout(TEST_TIMEOUT, sub.next()).await;
+        let disconnects_before = disconnect_count.load(Ordering::SeqCst);
+        proxy.set_netem_write_slice_size(3);
+
+        writer
+            .execute_query(
+                &format!(
+                    "INSERT INTO {} (id, value) VALUES ('fragmented', '{}')",
+                    table,
+                    "x".repeat(512)
+                ),
+                None,
+                None,
+                None,
+            )
+            .await
+            .expect("insert row through fragmented transport");
+
+        let mut ids = Vec::<String>::new();
+        let mut seq = None;
+        for _ in 0..30 {
+            if ids.iter().any(|id| id == "fragmented") {
+                break;
+            }
+            match timeout(Duration::from_millis(1000), sub.next()).await {
+                Ok(Some(Ok(ev))) => {
+                    collect_ids_and_track_seq(&ev, &mut ids, &mut seq, None, "netem slicing");
+                },
+                Ok(Some(Err(e))) => panic!("netem slicing subscription error: {}", e),
+                Ok(None) => panic!("netem slicing subscription ended unexpectedly"),
+                Err(_) => {},
+            }
+        }
+
+        assert!(
+            ids.iter().any(|id| id == "fragmented"),
+            "live row should arrive when netem fragments writes"
+        );
+        assert_eq!(
+            disconnect_count.load(Ordering::SeqCst),
+            disconnects_before,
+            "write fragmentation should not cause a reconnect"
+        );
+
+        proxy.clear_netem_write_slice_size();
+        sub.close().await.ok();
+        client.disconnect().await;
+        proxy.shutdown().await;
+    })
+    .await;
+
+    assert!(result.is_ok(), "netem fragmented write test timed out");
+}
+
+/// A severe bandwidth collapse should look like a dead link to keepalive. Once
+/// the throttle is removed, reconnect resume must deliver only rows after the
+/// checkpoint.
+#[tokio::test]
+#[ntest::timeout(16000)]
+async fn test_tokio_netem_bandwidth_collapse_forces_resume_without_replay() {
+    let result = timeout(Duration::from_secs(75), async {
+        let writer = match create_test_client() {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("Skipping test (writer client unavailable): {}", e);
+                return;
+            },
+        };
+
+        let proxy = TcpDisconnectProxy::start(upstream_server_url()).await;
+        let (client, connect_count, disconnect_count) =
+            match create_test_client_with_events_for_base_url(proxy.base_url()) {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("Skipping test (proxy client unavailable): {}", e);
+                    proxy.shutdown().await;
+                    return;
+                },
+            };
+
+        let suffix = unique_suffix();
+        let table = format!("default.netem_throttle_{}", suffix);
+        ensure_table(&writer, &table).await;
+
+        client.connect().await.expect("initial connect through proxy");
+        let mut sub = client
+            .subscribe_with_config(SubscriptionConfig::new(
+                format!("netem-throttle-{}", suffix),
+                format!("SELECT id, value FROM {}", table),
+            ))
+            .await
+            .expect("subscribe through proxy");
+
+        let _ = timeout(TEST_TIMEOUT, sub.next()).await;
+        writer
+            .execute_query(
+                &format!("INSERT INTO {} (id, value) VALUES ('baseline-throttle', 'ready')", table),
+                None,
+                None,
+                None,
+            )
+            .await
+            .expect("insert baseline row");
+
+        let mut baseline_ids = Vec::<String>::new();
+        let mut checkpoint = None;
+        for _ in 0..12 {
+            if baseline_ids.iter().any(|id| id == "baseline-throttle") {
+                break;
+            }
+            match timeout(Duration::from_millis(1200), sub.next()).await {
+                Ok(Some(Ok(ev))) => {
+                    collect_ids_and_track_seq(
+                        &ev,
+                        &mut baseline_ids,
+                        &mut checkpoint,
+                        None,
+                        "netem throttle baseline",
+                    );
+                },
+                _ => {},
+            }
+        }
+        assert!(baseline_ids.iter().any(|id| id == "baseline-throttle"));
+        let resume_from = query_max_seq(&writer, &table).await;
+
+        let disconnects_before = disconnect_count.load(Ordering::SeqCst);
+        let expected_connects = connect_count.load(Ordering::SeqCst) + 1;
+        proxy.set_netem_write_rate(8);
+
+        writer
+            .execute_query(
+                &format!(
+                    "INSERT INTO {} (id, value) VALUES ('gap-throttle', 'during-collapse')",
+                    table
+                ),
+                None,
+                None,
+                None,
+            )
+            .await
+            .expect("insert gap row during bandwidth collapse");
+
+        for _ in 0..80 {
+            if disconnect_count.load(Ordering::SeqCst) > disconnects_before {
+                break;
+            }
+            sleep(Duration::from_millis(100)).await;
+        }
+        assert!(
+            disconnect_count.load(Ordering::SeqCst) > disconnects_before,
+            "severe netem throttle should force a reconnect"
+        );
+
+        proxy.clear_netem_write_rate();
+        wait_for_reconnect(&client, &connect_count, expected_connects, "netem throttle").await;
+
+        writer
+            .execute_query(
+                &format!(
+                    "INSERT INTO {} (id, value) VALUES ('live-throttle', 'after-reconnect')",
+                    table
+                ),
+                None,
+                None,
+                None,
+            )
+            .await
+            .expect("insert live row after throttle clears");
+
+        wait_for_row_after_checkpoint(
+            &mut sub,
+            resume_from,
+            &["gap-throttle", "live-throttle"],
+            &["baseline-throttle"],
+            "netem throttle recovery",
+        )
+        .await;
+
+        sub.close().await.ok();
+        client.disconnect().await;
+        proxy.shutdown().await;
+    })
+    .await;
+
+    assert!(result.is_ok(), "netem bandwidth collapse test timed out");
+}
+
+/// tokio-netem can fail the transport from inside the I/O adapter instead of
+/// aborting the proxy task. The client should treat it as a normal disconnect.
+#[tokio::test]
+#[ntest::timeout(10000)]
+async fn test_tokio_netem_forced_transport_termination_recovers() {
+    let result = timeout(Duration::from_secs(75), async {
+        let writer = match create_test_client() {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("Skipping test (writer client unavailable): {}", e);
+                return;
+            },
+        };
+
+        let proxy = TcpDisconnectProxy::start(upstream_server_url()).await;
+        let (client, connect_count, disconnect_count) =
+            match create_test_client_with_events_for_base_url(proxy.base_url()) {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("Skipping test (proxy client unavailable): {}", e);
+                    proxy.shutdown().await;
+                    return;
+                },
+            };
+
+        let suffix = unique_suffix();
+        let table = format!("default.netem_terminator_{}", suffix);
+        ensure_table(&writer, &table).await;
+
+        client.connect().await.expect("initial connect through proxy");
+        let mut sub = client
+            .subscribe_with_config(SubscriptionConfig::new(
+                format!("netem-terminator-{}", suffix),
+                format!("SELECT id, value FROM {}", table),
+            ))
+            .await
+            .expect("subscribe through proxy");
+
+        let _ = timeout(TEST_TIMEOUT, sub.next()).await;
+        writer
+            .execute_query(
+                &format!("INSERT INTO {} (id, value) VALUES ('baseline-term', 'ready')", table),
+                None,
+                None,
+                None,
+            )
+            .await
+            .expect("insert baseline row");
+
+        let mut baseline_ids = Vec::<String>::new();
+        let mut checkpoint = None;
+        for _ in 0..12 {
+            if baseline_ids.iter().any(|id| id == "baseline-term") {
+                break;
+            }
+            match timeout(Duration::from_millis(1200), sub.next()).await {
+                Ok(Some(Ok(ev))) => {
+                    collect_ids_and_track_seq(
+                        &ev,
+                        &mut baseline_ids,
+                        &mut checkpoint,
+                        None,
+                        "netem termination baseline",
+                    );
+                },
+                _ => {},
+            }
+        }
+        assert!(baseline_ids.iter().any(|id| id == "baseline-term"));
+        let resume_from = query_max_seq(&writer, &table).await;
+
+        let disconnects_before = disconnect_count.load(Ordering::SeqCst);
+        let expected_connects = connect_count.load(Ordering::SeqCst) + 1;
+        proxy.set_netem_termination_probability(1.0);
+
+        writer
+            .execute_query(
+                &format!(
+                    "INSERT INTO {} (id, value) VALUES ('gap-term', 'during-termination')",
+                    table
+                ),
+                None,
+                None,
+                None,
+            )
+            .await
+            .expect("insert gap row during transport termination");
+
+        for _ in 0..80 {
+            if disconnect_count.load(Ordering::SeqCst) > disconnects_before {
+                break;
+            }
+            sleep(Duration::from_millis(100)).await;
+        }
+        assert!(
+            disconnect_count.load(Ordering::SeqCst) > disconnects_before,
+            "netem terminator should force a disconnect"
+        );
+
+        proxy.clear_netem_termination_probability();
+        wait_for_reconnect(&client, &connect_count, expected_connects, "netem terminator").await;
+
+        writer
+            .execute_query(
+                &format!(
+                    "INSERT INTO {} (id, value) VALUES ('live-term', 'after-reconnect')",
+                    table
+                ),
+                None,
+                None,
+                None,
+            )
+            .await
+            .expect("insert live row after terminator clears");
+
+        wait_for_row_after_checkpoint(
+            &mut sub,
+            resume_from,
+            &["gap-term", "live-term"],
+            &["baseline-term"],
+            "netem terminator recovery",
+        )
+        .await;
+
+        sub.close().await.ok();
+        client.disconnect().await;
+        proxy.shutdown().await;
+    })
+    .await;
+
+    assert!(result.is_ok(), "netem forced termination test timed out");
+}

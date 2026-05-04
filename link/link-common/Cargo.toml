@@ -49,13 +49,14 @@ web-sys = { workspace = true, features = [
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 aws-lc-rs = { workspace = true, optional = true }
+rustls = { workspace = true, features = ["aws_lc_rs"], optional = true }
 quinn-proto = { workspace = true, optional = true }
 rustls-webpki = { workspace = true, optional = true }
 
 [features]
 default = []
 client-core = ["dep:futures-util", "dep:log", "dep:miniz_oxide", "dep:rmp-serde"]
-tokio-runtime = ["client-core", "tokio", "reqwest", "tokio-tungstenite", "bytes", "dep:aws-lc-rs", "dep:quinn-proto", "dep:rustls-webpki"]
+tokio-runtime = ["client-core", "tokio", "reqwest", "tokio-tungstenite", "bytes", "dep:aws-lc-rs", "dep:rustls", "dep:quinn-proto", "dep:rustls-webpki"]
 auth-flows = []
 setup = []
 healthcheck = []

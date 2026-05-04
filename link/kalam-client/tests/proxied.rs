@@ -43,6 +43,8 @@ mod socket_drop_resume;
 mod staggered_outages;
 #[path = "proxied/subscribe_during_reconnect.rs"]
 mod subscribe_during_reconnect;
+#[path = "proxied/topic_consumption_netem.rs"]
+mod topic_consumption_netem;
 #[path = "proxied/transport_impairments.rs"]
 mod transport_impairments;
 #[path = "proxied/unsubscribe_during_outage.rs"]

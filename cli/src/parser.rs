@@ -12,6 +12,12 @@ pub enum Command {
     /// SQL statement
     Sql(String),
 
+    /// Execute a single SQL statement as another user
+    ExecuteAs {
+        user: String,
+        sql: String,
+    },
+
     /// Meta-commands (backslash commands)
     Quit,
     Help,
@@ -35,8 +41,6 @@ pub enum Command {
     },
     ClusterRebalance,
     Health,
-    Pause,
-    Continue,
     ListTables,
     Describe(String),
     SetFormat(String),
@@ -66,6 +70,41 @@ pub enum Command {
     Unknown(String),
 }
 
+pub(crate) const META_COMMAND_COMPLETIONS: &[&str] = &[
+    "\\quit",
+    "\\q",
+    "\\help",
+    "\\?",
+    "\\info",
+    "\\session",
+    "\\history",
+    "\\h",
+    "\\sessions",
+    "\\stats",
+    "\\metrics",
+    "\\flush",
+    "\\health",
+    "\\dt",
+    "\\tables",
+    "\\d",
+    "\\describe",
+    "\\as",
+    "\\format",
+    "\\refresh-tables",
+    "\\refresh",
+    "\\subscribe",
+    "\\watch",
+    "\\live",
+    "\\unsubscribe",
+    "\\unwatch",
+    "\\show-credentials",
+    "\\credentials",
+    "\\update-credentials",
+    "\\delete-credentials",
+    "\\cluster",
+    "\\consume",
+];
+
 /// Command parser
 pub struct CommandParser;
 
@@ -94,6 +133,10 @@ impl CommandParser {
 
     /// Parse meta-commands (backslash commands)
     fn parse_meta_command(&self, line: &str) -> Result<Command> {
+        if line.starts_with("\\as") {
+            return Self::parse_execute_as_command(line);
+        }
+
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.is_empty() {
             return Err(CLIError::ParseError("Invalid command".into()));
@@ -214,8 +257,6 @@ impl CommandParser {
                 }
             },
             "\\health" => Ok(Command::Health),
-            "\\pause" => Ok(Command::Pause),
-            "\\continue" => Ok(Command::Continue),
             "\\dt" | "\\tables" => Ok(Command::ListTables),
             "\\d" | "\\describe" => {
                 if args.is_empty() {
@@ -231,7 +272,7 @@ impl CommandParser {
                     Ok(Command::SetFormat(args[0].to_string()))
                 }
             },
-            "\\subscribe" | "\\watch" => {
+            "\\subscribe" | "\\watch" | "\\live" => {
                 if args.is_empty() {
                     Err(CLIError::ParseError("\\subscribe requires a SQL query".into()))
                 } else {
@@ -341,6 +382,33 @@ impl CommandParser {
             _ => Ok(Command::Unknown(command.to_string())),
         }
     }
+
+    fn parse_execute_as_command(line: &str) -> Result<Command> {
+        let remainder = line["\\as".len()..].trim_start();
+        if remainder.is_empty() {
+            return Err(CLIError::ParseError(
+                "\\as requires a target user and SQL query".into(),
+            ));
+        }
+
+        let user_end = remainder.find(char::is_whitespace).ok_or_else(|| {
+            CLIError::ParseError("\\as requires a target user and SQL query".into())
+        })?;
+
+        let user = remainder[..user_end].trim();
+        let sql = remainder[user_end..].trim_start();
+
+        if user.is_empty() || sql.is_empty() {
+            return Err(CLIError::ParseError(
+                "\\as requires a target user and SQL query".into(),
+            ));
+        }
+
+        Ok(Command::ExecuteAs {
+            user: user.to_string(),
+            sql: sql.to_string(),
+        })
+    }
 }
 
 impl Default for CommandParser {
@@ -379,6 +447,26 @@ mod tests {
         let parser = CommandParser::new();
         let cmd = parser.parse("\\describe users").unwrap();
         assert_eq!(cmd, Command::Describe("users".to_string()));
+    }
+
+    #[test]
+    fn test_parse_live_alias() {
+        let parser = CommandParser::new();
+        let cmd = parser.parse("\\live SELECT * FROM chat.messages").unwrap();
+        assert_eq!(cmd, Command::Subscribe("SELECT * FROM chat.messages".to_string()));
+    }
+
+    #[test]
+    fn test_parse_execute_as_shortcut() {
+        let parser = CommandParser::new();
+        let cmd = parser.parse("\\as alice SELECT * FROM chat.messages WHERE body = 'hi  there'");
+        assert_eq!(
+            cmd.unwrap(),
+            Command::ExecuteAs {
+                user: "alice".to_string(),
+                sql: "SELECT * FROM chat.messages WHERE body = 'hi  there'".to_string(),
+            }
+        );
     }
 
     #[test]

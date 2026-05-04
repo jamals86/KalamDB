@@ -22,6 +22,18 @@ fn test_builder_pattern() {
 }
 
 #[test]
+fn test_builder_installs_rustls_provider_idempotently() {
+    for _ in 0..2 {
+        let result = KalamLinkClient::builder()
+            .base_url("https://kalam.masky.app")
+            .jwt_token("test_token")
+            .build();
+
+        assert!(result.is_ok());
+    }
+}
+
+#[test]
 fn test_builder_missing_url() {
     let result = KalamLinkClient::builder().build();
     assert!(result.is_err());

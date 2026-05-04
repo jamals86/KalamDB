@@ -92,18 +92,40 @@ impl OutputFormatter {
             return Ok(self.format_error_detail(error));
         }
 
+        let as_user = Self::query_as_user(response);
+
         match self.format {
-            OutputFormat::Table => self.format_table(response),
+            OutputFormat::Table => self.format_table(response, as_user),
             OutputFormat::Json => self.format_json(response),
             OutputFormat::Csv => self.format_csv(response),
         }
     }
 
+    fn query_as_user(response: &QueryResponse) -> Option<&str> {
+        response
+            .results
+            .first()
+            .and_then(|result| result.as_user.as_deref())
+            .filter(|value| !value.trim().is_empty())
+    }
+
+    fn format_table_footer(exec_time_ms: f64, as_user: Option<&str>) -> String {
+        let mut footer = String::new();
+        if let Some(as_user) = as_user {
+            footer.push_str(&format!("As: {as_user}\n"));
+        }
+        footer.push_str(&format!("Took: {:.3} ms", exec_time_ms));
+        footer
+    }
+
     /// Format as table
-    fn format_table(&self, response: &QueryResponse) -> Result<String> {
+    fn format_table(&self, response: &QueryResponse, as_user: Option<&str>) -> Result<String> {
         if response.results.is_empty() {
             let exec_time_ms = response.took.unwrap_or(0.0);
-            return Ok(format!("Query OK, 0 rows affected\n\nTook: {:.3} ms", exec_time_ms));
+            return Ok(format!(
+                "Query OK, 0 rows affected\n\n{}",
+                Self::format_table_footer(exec_time_ms, as_user)
+            ));
         }
 
         let result = &response.results[0];
@@ -114,8 +136,10 @@ impl OutputFormatter {
             // Format DDL message similar to MySQL/PostgreSQL
             let row_count = result.row_count;
             return Ok(format!(
-                "{}\nQuery OK, {} rows affected\n\nTook: {:.3} ms",
-                message, row_count, exec_time_ms
+                "{}\nQuery OK, {} rows affected\n\n{}",
+                message,
+                row_count,
+                Self::format_table_footer(exec_time_ms, as_user)
             ));
         }
 
@@ -255,16 +279,18 @@ impl OutputFormatter {
             output.push_str(&format!("({} {})\n", row_count, row_label));
             // Add blank line for psql-style formatting
             output.push('\n');
-            // Display timing in milliseconds like psql
-            let exec_time_ms = response.took.unwrap_or(0.0);
-            output.push_str(&format!("Took: {:.3} ms", exec_time_ms));
+            output.push_str(&Self::format_table_footer(exec_time_ms, as_user));
 
             Ok(output)
         } else {
             // Non-query statement (INSERT, UPDATE, DELETE)
             let row_count = result.row_count;
             let exec_time_ms = response.took.unwrap_or(0.0);
-            Ok(format!("Query OK, {} rows affected\n\nTook: {:.3} ms", row_count, exec_time_ms))
+            Ok(format!(
+                "Query OK, {} rows affected\n\n{}",
+                row_count,
+                Self::format_table_footer(exec_time_ms, as_user)
+            ))
         }
     }
 
@@ -519,7 +545,8 @@ impl OutputFormatter {
 
 #[cfg(test)]
 mod tests {
-    use kalam_client::TimestampFormat;
+    use kalam_client::{query::models::ResponseStatus, QueryResult, SchemaField, TimestampFormat};
+    use serde_json::json;
 
     use super::*;
 
@@ -603,5 +630,36 @@ mod tests {
 
         assert_eq!(formatter.raw_timestamp_millis(1735689600000000), 1735689600000);
         assert_eq!(formatter.raw_timestamp_millis(1735689600000000000), 1735689600000);
+    }
+
+    #[test]
+    fn test_format_table_footer_includes_effective_user() {
+        let formatter = OutputFormatter::new(
+            OutputFormat::Table,
+            false,
+            TimestampFormatter::new(TimestampFormat::Iso8601),
+        );
+
+        let response = QueryResponse {
+            status: ResponseStatus::Success,
+            results: vec![QueryResult {
+                schema: vec![SchemaField {
+                    name: "name".to_string(),
+                    data_type: KalamDataType::Text,
+                    index: 0,
+                    flags: None,
+                }],
+                rows: Some(vec![vec![json!("Alice").into()]]),
+                named_rows: None,
+                row_count: 1,
+                message: None,
+                as_user: Some("alice".to_string()),
+            }],
+            took: Some(2.146),
+            error: None,
+        };
+
+        let output = formatter.format_response(&response).unwrap();
+        assert!(output.contains("(1 row)\n\nAs: alice\nTook: 2.146 ms"));
     }
 }
