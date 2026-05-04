@@ -298,7 +298,7 @@ pub(super) async fn execute_file_upload_path(
             ErrorCode::SqlExecutionError,
             &format!(
                 "EXECUTE AS USER is not allowed on SHARED tables (table '{}'). AS USER \
-                 impersonation is only supported for USER tables.",
+                 impersonation is only supported for USER and STREAM tables.",
                 table_id
             ),
             took_ms(start_time),
@@ -562,7 +562,7 @@ pub(super) async fn execute_batch_path(
                     ErrorCode::SqlExecutionError,
                     &format!(
                         "EXECUTE AS USER is not allowed on SHARED tables (table '{}'). AS USER \
-                         impersonation is only supported for USER tables.",
+                         impersonation is only supported for USER and STREAM tables.",
                         table_id
                     ),
                     took_ms(start_time),

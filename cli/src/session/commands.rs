@@ -72,20 +72,6 @@ impl CLISession {
                 Ok(_) => {},
                 Err(e) => eprintln!("Health check failed: {}", e),
             },
-            Command::Pause => {
-                println!("Pausing ingestion...");
-                match self.execute("PAUSE").await {
-                    Ok(_) => println!("Ingestion paused"),
-                    Err(e) => eprintln!("Pause failed: {}", e),
-                }
-            },
-            Command::Continue => {
-                println!("Resuming ingestion...");
-                match self.execute("CONTINUE").await {
-                    Ok(_) => println!("Ingestion resumed"),
-                    Err(e) => eprintln!("Resume failed: {}", e),
-                }
-            },
             Command::ListTables => {
                 self.execute(
                     "SELECT namespace_id AS namespace, table_name, table_type FROM system.tables \
@@ -94,11 +80,11 @@ impl CLISession {
                 .await?;
             },
             Command::Describe(table) => {
-                let query = format!(
-                    "SELECT * FROM information_schema.columns WHERE table_name = '{}' ORDER BY \
-                     ordinal_position",
-                    table
-                );
+                let query = Self::build_describe_query(&table)?;
+                self.execute(&query).await?;
+            },
+            Command::ExecuteAs { user, sql } => {
+                let query = Self::build_execute_as_query(&user, &sql)?;
                 self.execute(&query).await?;
             },
             Command::SetFormat(format) => match format.to_lowercase().as_str() {
@@ -135,7 +121,6 @@ impl CLISession {
                 println!("No active subscription to cancel");
             },
             Command::RefreshTables => {
-                // This is handled in run_interactive, shouldn't reach here
                 println!("Table names refreshed");
             },
             Command::ShowCredentials => {
@@ -164,8 +149,6 @@ impl CLISession {
                 .await?;
             },
             Command::History => {
-                // Handled in run_interactive() where we have access to history
-                // This should not be reached
                 eprintln!("History command should be handled in interactive mode");
             },
             Command::Consume {
@@ -185,166 +168,250 @@ impl CLISession {
         Ok(())
     }
 
-    /// Show help message (styled, sectioned)
-    fn show_help(&self) {
-        println!();
-        println!(
-            "{}",
-            "╔═══════════════════════════════════════════════════════════╗"
-                .bright_blue()
-                .bold()
-        );
-        println!(
-            "{}{}{}",
-            "║ ".bright_blue().bold(),
-            "Commands & Shortcuts".white().bold(),
-            "                                                 ║"
-                .to_string()
-                .bright_blue()
-                .bold()
-        );
-        println!(
-            "{}",
-            "╠═══════════════════════════════════════════════════════════╣"
-                .bright_blue()
-                .bold()
-        );
+    fn build_describe_query(target: &str) -> Result<String> {
+        let (namespace, table_name) = Self::parse_describe_target(target)?;
+        let columns = "table_schema AS namespace, table_name, column_name, data_type, \
+                       is_nullable, column_default, ordinal_position AS position";
+        let escaped_table = Self::escape_sql_literal(&table_name);
 
-        // Basics
-        println!("{}", "║  Basics".bright_blue().bold());
-        println!("║    • Write SQL; end with ';' to run");
-        println!(
-            "║    • Autocomplete: keywords, namespaces, tables, columns  {}",
-            "(Tab)".dimmed()
-        );
-        println!("║    • Inline hints and SQL highlighting enabled");
+        if let Some(namespace) = namespace {
+            Ok(format!(
+                "SELECT {columns} FROM information_schema.columns WHERE table_schema = '{namespace}' \
+                 AND table_name = '{table_name}' ORDER BY ordinal_position",
+                namespace = Self::escape_sql_literal(&namespace),
+                table_name = escaped_table,
+            ))
+        } else {
+            Ok(format!(
+                "SELECT {columns} FROM information_schema.columns WHERE table_name = '{table_name}' \
+                 ORDER BY table_schema, ordinal_position",
+                table_name = escaped_table,
+            ))
+        }
+    }
 
-        // Meta-commands (two columns)
-        println!(
-            "{}",
-            "╠───────────────────────────────────────────────────────────╣"
-                .bright_blue()
-                .bold()
-        );
-        println!("{}", "║  Meta-Commands".bright_blue().bold());
-        let left = [
-            ("\\help, \\?", "Show this help"),
-            ("\\quit, \\q", "Exit CLI"),
-            ("\\info, \\session", "Session info"),
-            ("\\sessions", "PG gRPC sessions"),
-            ("\\stats, \\metrics", "System stats"),
-            ("\\health", "Health check"),
-            ("\\format <type>", "table|json|csv"),
-            ("\\history, \\h", "Browse history"),
-            ("\\refresh-tables, \\refresh", "Refresh autocomplete"),
-        ];
-        let right = [
-            ("\\dt, \\tables", "List tables"),
-            ("\\d, \\describe <table>", "Describe table"),
-            ("\\flush", "Run STORAGE FLUSH ALL"),
-            ("\\pause", "Pause ingestion"),
-            ("\\continue", "Resume ingestion"),
-            ("\\subscribe, \\watch <SQL>", "Start live query"),
-            ("\\unsubscribe, \\unwatch", "Stop live query"),
-            ("\\consume <topic>", "Consume topic messages"),
-            ("\\cluster <subcommand>", "Cluster operations"),
-        ];
-        for i in 0..left.len().max(right.len()) {
-            let l = left
-                .get(i)
-                .map(|(a, b)| format!("{:<28} {:<18}", a.cyan(), b))
-                .unwrap_or_default();
-            let r = right
-                .get(i)
-                .map(|(a, b)| format!("{:<28} {:<18}", a.cyan(), b))
-                .unwrap_or_default();
-            println!("║  {:<47}{:<47} ║", l, r);
+    fn build_execute_as_query(user: &str, sql: &str) -> Result<String> {
+        let normalized_user = Self::normalize_execute_as_user(user)?;
+        let inner_sql = sql.trim().trim_end_matches(';').trim_end();
+
+        if inner_sql.is_empty() {
+            return Err(CLIError::ParseError(
+                "\\as requires a non-empty SQL statement".to_string(),
+            ));
         }
 
-        // Cluster Commands
-        println!(
-            "{}",
-            "╠───────────────────────────────────────────────────────────╣"
-                .bright_blue()
-                .bold()
-        );
-        println!("{}", "║  Cluster Commands".bright_blue().bold());
-        println!("║    {:<48} Trigger snapshot", "\\cluster snapshot".cyan());
-        println!("║    {:<48} Purge logs up to index", "\\cluster purge --upto <index>".cyan());
-        println!("║    {:<48} Trigger cluster election", "\\cluster trigger-election".cyan());
-        println!(
-            "║    {:<48} Transfer cluster leadership",
-            "\\cluster transfer-leader <node_id>".cyan()
-        );
-        println!("║    {:<48} Rebalance data leaders", "\\cluster rebalance".cyan());
-        println!("║    {:<48} Leader stepdown", "\\cluster stepdown".cyan());
-        println!("║    {:<48} Clear old snapshots", "\\cluster clear".cyan());
-        println!("║    {:<48} List cluster nodes", "\\cluster list".cyan());
-        println!("║    {:<48} List all raft groups", "\\cluster list groups".cyan());
-        println!(
-            "║    {:<48} Join node at runtime",
-            "\\cluster join <node_id> <rpc_addr> <api_addr>".cyan()
-        );
-        println!(
-            "║    {:<48} Live per-node stats",
-            "\\subscribe SELECT * FROM system.cluster".cyan()
-        );
+        Ok(format!(
+            "EXECUTE AS USER '{}' ({})",
+            Self::escape_sql_literal(&normalized_user),
+            inner_sql,
+        ))
+    }
 
-        // Credentials
-        println!(
-            "{}",
-            "╠───────────────────────────────────────────────────────────╣"
-                .bright_blue()
-                .bold()
-        );
-        println!("{}", "║  Credentials".bright_blue().bold());
-        println!(
-            "║    {:<32} Show stored credentials",
-            "\\show-credentials, \\credentials".cyan()
-        );
-        println!("║    {:<32} Update credentials", "\\update-credentials <u> <p>".cyan());
-        println!("║    {:<32} Delete stored credentials", "\\delete-credentials".cyan());
+    fn normalize_execute_as_user(user: &str) -> Result<String> {
+        let trimmed = user.trim();
+        if trimmed.is_empty() {
+            return Err(CLIError::ParseError(
+                "\\as requires a target user".to_string(),
+            ));
+        }
 
-        // Topic Consumption
+        let normalized = if trimmed.len() >= 2
+            && ((trimmed.starts_with('\'') && trimmed.ends_with('\''))
+                || (trimmed.starts_with('"') && trimmed.ends_with('"')))
+        {
+            &trimmed[1..trimmed.len() - 1]
+        } else {
+            trimmed
+        };
+
+        if normalized.is_empty() {
+            return Err(CLIError::ParseError(
+                "\\as requires a target user".to_string(),
+            ));
+        }
+
+        Ok(normalized.to_string())
+    }
+
+    pub(super) fn parse_describe_target(target: &str) -> Result<(Option<String>, String)> {
+        let trimmed = target.trim().trim_end_matches(';').trim();
+        if trimmed.is_empty() {
+            return Err(CLIError::ParseError(
+                "\\describe requires a table name".to_string(),
+            ));
+        }
+
+        let parts = Self::split_identifier_parts(trimmed)?;
+        match parts.as_slice() {
+            [table_name] => Ok((None, table_name.clone())),
+            [namespace, table_name] => Ok((Some(namespace.clone()), table_name.clone())),
+            _ => Err(CLIError::ParseError(
+                "\\describe expects <table> or <namespace.table>".to_string(),
+            )),
+        }
+    }
+
+    fn split_identifier_parts(target: &str) -> Result<Vec<String>> {
+        let mut parts = Vec::new();
+        let mut current = String::new();
+        let mut chars = target.chars().peekable();
+        let mut in_quotes = false;
+
+        while let Some(ch) = chars.next() {
+            match ch {
+                '"' => {
+                    if in_quotes && chars.peek() == Some(&'"') {
+                        current.push('"');
+                        chars.next();
+                    } else {
+                        in_quotes = !in_quotes;
+                    }
+                },
+                '.' if !in_quotes => {
+                    let part = current.trim();
+                    if part.is_empty() {
+                        return Err(CLIError::ParseError(
+                            "\\describe received an invalid identifier".to_string(),
+                        ));
+                    }
+                    parts.push(part.to_string());
+                    current.clear();
+                },
+                _ => current.push(ch),
+            }
+        }
+
+        if in_quotes {
+            return Err(CLIError::ParseError(
+                "\\describe received an unterminated quoted identifier".to_string(),
+            ));
+        }
+
+        let tail = current.trim();
+        if tail.is_empty() {
+            return Err(CLIError::ParseError(
+                "\\describe received an invalid identifier".to_string(),
+            ));
+        }
+        parts.push(tail.to_string());
+
+        Ok(parts)
+    }
+
+    fn escape_sql_literal(value: &str) -> String {
+        value.replace('\'', "''")
+    }
+
+    fn print_help_section(title: &str) {
+        println!("{}", title.yellow().bold());
+    }
+
+    fn print_help_row(command: &str, description: &str) {
+        println!("  {} {}", format!("{command:<38}").cyan(), description);
+    }
+
+    fn print_help_example(example: &str) {
+        println!("  {}", example.green());
+    }
+
+    fn show_help(&self) {
+        println!();
+        println!("{}", "Kalam CLI Help".bright_blue().bold());
+        println!();
+
+        Self::print_help_section("Basics");
+        println!("  Write SQL and end with ';' to run it");
+        println!("  Press Tab for SQL, table, namespace, and command completion");
+        println!("  Press Up on an empty prompt to open command history");
+        println!();
+
+        Self::print_help_section("Meta Commands");
+        for (command, description) in [
+            ("\\help, \\?", "Show this help"),
+            ("\\quit, \\q", "Exit CLI"),
+            ("\\info, \\session", "Show session details"),
+            ("\\history, \\h", "Browse command history"),
+            ("\\health", "Run public health probes"),
+            ("\\dt, \\tables", "List tables"),
+            ("\\d, \\describe <table>", "Describe a table"),
+            ("\\as <user> <SQL>", "Wrap a statement as EXECUTE AS USER"),
+            ("\\format <table|json|csv>", "Change output format"),
+            ("\\refresh-tables, \\refresh", "Refresh autocomplete caches"),
+            ("\\stats, \\metrics", "Show system stats"),
+            ("\\sessions", "Show active sessions"),
+            ("\\flush", "Run STORAGE FLUSH ALL"),
+            ("\\cluster <subcommand>", "Cluster operations"),
+            ("\\consume <topic>", "Consume topic messages"),
+        ] {
+            Self::print_help_row(command, description);
+        }
+        println!();
+
+        Self::print_help_section("Live Queries");
+        for (command, description) in [
+            ("\\subscribe <SELECT ...>", "Start a live query"),
+            ("\\watch <SELECT ...>", "Alias of \\subscribe"),
+            ("\\live <SELECT ...>", "Short alias of \\subscribe"),
+            ("\\unsubscribe, \\unwatch", "Stop the active live query"),
+        ] {
+            Self::print_help_row(command, description);
+        }
+        Self::print_help_example("\\live SELECT * FROM chat.messages;");
+        println!("  {}", "system.* tables are not subscribable.".dimmed());
+        println!();
+
+        Self::print_help_section("Cluster Commands");
+        for (command, description) in [
+            ("\\cluster list", "List cluster nodes"),
+            ("\\cluster list groups", "List raft groups"),
+            ("\\cluster snapshot", "Trigger a snapshot"),
+            ("\\cluster purge --upto <index>", "Purge raft logs"),
+            ("\\cluster trigger-election", "Trigger an election"),
+            ("\\cluster transfer-leader <node_id>", "Transfer leadership"),
+            ("\\cluster rebalance", "Rebalance leaders"),
+            ("\\cluster stepdown", "Leader stepdown"),
+            ("\\cluster clear", "Clear old snapshots"),
+            ("\\cluster join <id> <rpc> <api>", "Join a node at runtime"),
+        ] {
+            Self::print_help_row(command, description);
+        }
+        println!();
+
+        Self::print_help_section("Credentials");
+        for (command, description) in [
+            ("\\show-credentials, \\credentials", "Show stored credentials"),
+            ("\\update-credentials <user> <password>", "Update stored credentials"),
+            ("\\delete-credentials", "Delete stored credentials"),
+        ] {
+            Self::print_help_row(command, description);
+        }
+        println!();
+
+        Self::print_help_section("Topic Consumption");
+        for (command, description) in [
+            ("\\consume app.events", "Consume a topic"),
+            (
+                "\\consume app.events --group my-group",
+                "Consume with a group",
+            ),
+            (
+                "\\consume app.events --from earliest --limit 10",
+                "Read from the earliest offset",
+            ),
+        ] {
+            Self::print_help_row(command, description);
+        }
         println!(
-            "{}",
-            "╠───────────────────────────────────────────────────────────╣"
-                .bright_blue()
-                .bold()
-        );
-        println!("{}", "║  Topic Consumption".bright_blue().bold());
-        println!("║    {:<48} Basic consume", "\\consume app.events".cyan());
-        println!(
-            "║    {:<48} With consumer group",
-            "\\consume app.events --group my-group".cyan()
-        );
-        println!(
-            "║    {:<48} From earliest offset",
-            "\\consume app.events --from earliest --limit 10".cyan()
-        );
-        println!(
-            "║    {}",
+            "  {}",
             "CLI args: kalam --consume --topic app.events --group my-group".green()
         );
+        println!();
 
-        // Tips & examples
-        println!(
-            "{}",
-            "╠───────────────────────────────────────────────────────────╣"
-                .bright_blue()
-                .bold()
-        );
-        println!("{}", "║  Examples".bright_blue().bold());
-        println!("║    {}", "SELECT * FROM system.tables LIMIT 5;".green());
-        println!("║    {}", "SELECT name FROM system.namespaces;".green());
-        println!("║    {}", "\\cluster list".green());
-
-        println!(
-            "{}",
-            "╚═══════════════════════════════════════════════════════════╝"
-                .bright_blue()
-                .bold()
-        );
+        Self::print_help_section("Examples");
+        Self::print_help_example("SELECT * FROM system.tables LIMIT 5;");
+        Self::print_help_example("\\describe chat.messages;");
+        Self::print_help_example("\\as alice SELECT * FROM user.orders LIMIT 5;");
+        Self::print_help_example("\\cluster list");
         println!();
     }
 
@@ -574,5 +641,23 @@ impl CLISession {
         );
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_execute_as_query_wraps_statement() {
+        let query = CLISession::build_execute_as_query("alice", "SELECT * FROM user.orders;  ")
+            .unwrap();
+        assert_eq!(query, "EXECUTE AS USER 'alice' (SELECT * FROM user.orders)");
+    }
+
+    #[test]
+    fn test_build_execute_as_query_escapes_user_literal() {
+        let query = CLISession::build_execute_as_query("o'brien", "SELECT 1").unwrap();
+        assert_eq!(query, "EXECUTE AS USER 'o''brien' (SELECT 1)");
     }
 }

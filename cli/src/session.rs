@@ -133,10 +133,7 @@ struct ClusterNodeDisplay {
     api_addr: String,
     is_self: bool,
     is_leader: bool,
-    hostname: Option<String>,
-    memory_usage_mb: Option<u64>,
-    cpu_usage_percent: Option<f32>,
-    uptime_human: Option<String>,
+    version: Option<String>,
 }
 
 /// Cluster information for CLI display
@@ -1059,7 +1056,7 @@ impl CLISession {
         // NOTE: Do NOT update server_host here — keep it as the address the user connected to,
         // not the server's internal listening address (e.g. 0.0.0.0:8080).
         if let Some(cluster_info) = self.fetch_cluster_info().await {
-            self.cluster_name = Some(cluster_info.cluster_name);
+            self.adopt_cluster_metadata(&cluster_info);
         }
 
         // Connection and auth successful - print welcome banner
@@ -1330,6 +1327,24 @@ impl CLISession {
             "\\quit".cyan().bold()
         );
         println!();
+    }
+
+    fn adopt_cluster_metadata(&mut self, info: &ClusterInfoDisplay) {
+        self.cluster_name = Some(info.cluster_name.clone());
+
+        if self.server_version.is_some() {
+            return;
+        }
+
+        let version = info
+            .current_node
+            .as_ref()
+            .and_then(|node| node.version.clone())
+            .or_else(|| info.nodes.iter().find(|node| node.is_self).and_then(|node| node.version.clone()));
+
+        if let Some(version) = version.and_then(Self::normalize_server_field) {
+            self.server_version = Some(version);
+        }
     }
 
     /// Fetch namespaces, table names, and column names from server and update completer
@@ -2378,53 +2393,14 @@ impl CLISession {
         );
     }
 
-    fn render_cluster_health_fallback(&self, info: &ClusterInfoDisplay, note: Option<&str>) {
-        let active_nodes = info
-            .nodes
-            .iter()
-            .filter(|node| node.status.eq_ignore_ascii_case("active"))
-            .count();
-        let offline_nodes = info
-            .nodes
-            .iter()
-            .filter(|node| node.status.eq_ignore_ascii_case("offline"))
-            .count();
-
-        println!("{} Cluster health: {}", "✓".green(), "reachable".green());
-        println!(
-            "  Cluster: {} | Nodes: {} total, {} active, {} offline",
-            info.cluster_name.as_str().cyan(),
-            info.nodes.len(),
-            active_nodes,
-            offline_nodes
-        );
-        if let Some(message) = note {
-            println!("  {}", message.yellow());
-        }
-        println!();
-        println!("{}", "Nodes:".yellow().bold());
-
-        for node in &info.nodes {
-            let self_marker = if node.is_self { " (connected)" } else { "" };
-            let leader_marker = if node.is_leader { " [LEADER]" } else { "" };
-            let hostname = node.hostname.as_deref().unwrap_or(node.api_addr.as_str());
-            println!(
-                "  Node {}: {} | {} | {}{}{}",
-                node.node_id,
-                node.role,
-                node.status,
-                node.api_addr,
-                leader_marker.yellow(),
-                self_marker.cyan()
-            );
-            println!(
-                "           host={} | {} | {} | {}",
-                hostname,
-                Self::format_cluster_memory(node.memory_usage_mb),
-                Self::format_cluster_cpu(node.cpu_usage_percent),
-                Self::format_cluster_uptime(node.uptime_human.as_deref())
-            );
-        }
+    fn public_probe_client(&self) -> Result<KalamLinkClient> {
+        Ok(KalamLinkClient::builder()
+            .base_url(&self.server_url)
+            .timeout(self.timeouts.receive_timeout)
+            .max_retries(self.config.resolved_server().max_retries)
+            .timeouts(self.timeouts.clone())
+            .connection_options(self.config.to_connection_options())
+            .build()?)
     }
 
     /// Fetch cluster information from system.cluster
@@ -2434,8 +2410,7 @@ impl CLISession {
             .client
             .execute_query(
                 "SELECT cluster_id, node_id, role, status, api_addr, is_self, is_leader, \
-                 hostname, memory_usage_mb, cpu_usage_percent, uptime_human FROM system.cluster \
-                 ORDER BY is_leader DESC, node_id ASC",
+                 version FROM system.cluster ORDER BY is_leader DESC, node_id ASC",
                 None,
                 None,
                 None,
@@ -2454,8 +2429,8 @@ impl CLISession {
                     if let Some(rows) = &query_result.rows {
                         for row in rows {
                             // row fields: cluster_id, node_id, role, status, api_addr, is_self,
-                            // is_leader, hostname, memory_usage_mb, cpu_usage_percent, uptime_human
-                            if row.len() >= 11 {
+                            // is_leader, version
+                            if row.len() >= 8 {
                                 // Extract cluster_id from first row only
                                 if cluster_name.is_empty() {
                                     cluster_name =
@@ -2467,10 +2442,7 @@ impl CLISession {
                                 let api_addr = row[4].as_str().unwrap_or("").to_string();
                                 let is_self = row[5].as_bool().unwrap_or(false);
                                 let is_leader = row[6].as_bool().unwrap_or(false);
-                                let hostname = row[7].as_str().map(ToString::to_string);
-                                let memory_usage_mb = row[8].as_u64();
-                                let cpu_usage_percent = row[9].as_f64().map(|cpu| cpu as f32);
-                                let uptime_human = row[10].as_str().map(ToString::to_string);
+                                let version = row[7].as_str().map(ToString::to_string);
 
                                 // Check if this looks like cluster mode (role is leader/follower)
                                 if matches!(
@@ -2487,10 +2459,7 @@ impl CLISession {
                                     api_addr,
                                     is_self,
                                     is_leader,
-                                    hostname,
-                                    memory_usage_mb,
-                                    cpu_usage_percent,
-                                    uptime_human,
+                                    version,
                                 };
 
                                 if is_self {
@@ -2520,7 +2489,8 @@ impl CLISession {
 
     /// Check server health and refresh cached server metadata
     pub async fn health_check(&mut self) -> Result<()> {
-        let basic_health = self.client.health_check().await;
+        let probe_client = self.public_probe_client()?;
+        let basic_health = probe_client.health_check().await;
 
         match &basic_health {
             Ok(health) => {
@@ -2533,7 +2503,7 @@ impl CLISession {
             Err(KalamLinkError::ServerError {
                 status_code: 403, ..
             }) => {
-                // Localhost-only endpoint; fall back to authenticated SQL-based cluster info.
+                self.connected = true;
             },
             Err(_) => {
                 self.connected = false;
@@ -2543,58 +2513,43 @@ impl CLISession {
             },
         }
 
-        let cluster_info = self.fetch_cluster_info().await;
-        if let Some(ref info) = cluster_info {
-            self.connected = true;
-            self.cluster_name = Some(info.cluster_name.clone());
-
-            if info.is_cluster_mode {
-                match self.client.cluster_health_check().await {
-                    Ok(cluster_health) => {
-                        self.server_version =
-                            Self::normalize_server_field(cluster_health.version.clone());
-                        self.server_build_date =
-                            Self::normalize_server_field(cluster_health.build_date.clone());
-                        self.render_cluster_health_response(&cluster_health);
-                        return Ok(());
-                    },
-                    Err(KalamLinkError::ServerError {
-                        status_code: 403, ..
-                    }) => {
-                        self.render_cluster_health_fallback(
-                            info,
-                            Some("Cluster health endpoint is localhost-only; using system.cluster"),
-                        );
-                        return Ok(());
-                    },
-                    Err(_) => {
-                        self.render_cluster_health_fallback(
-                            info,
-                            Some("Cluster health endpoint unavailable; using system.cluster"),
-                        );
-                        return Ok(());
-                    },
-                }
-            }
-
-            match basic_health {
+        match probe_client.cluster_health_check().await {
+            Ok(cluster_health) => {
+                self.connected = true;
+                self.server_version = Self::normalize_server_field(cluster_health.version.clone());
+                self.server_build_date =
+                    Self::normalize_server_field(cluster_health.build_date.clone());
+                self.render_cluster_health_response(&cluster_health);
+                return Ok(());
+            },
+            Err(KalamLinkError::ServerError {
+                status_code: 403, ..
+            }) => match basic_health {
                 Ok(_) => {
                     println!("✓ Server is healthy");
+                    println!("  {}", "Cluster health endpoint is restricted to localhost".yellow());
                     return Ok(());
                 },
                 Err(KalamLinkError::ServerError {
                     status_code: 403, ..
                 }) => {
-                    println!("{} Server is reachable", "✓".green());
-                    println!("  {}", "Health endpoint is restricted to localhost".yellow());
+                    println!("{}", "Health endpoints are localhost-only for this connection".yellow());
+                    println!("  {}", "No authenticated SQL fallback was used.".dimmed());
+                    println!(
+                        "  {}",
+                        "Run SELECT * FROM system.cluster manually if you want authenticated cluster state."
+                            .dimmed()
+                    );
                     return Ok(());
                 },
-                Err(_) => {
-                    println!("{} Server is reachable", "✓".green());
-                    println!("  {}", "Using authenticated SQL fallback".yellow());
+                Err(e) => return Err(e.into()),
+            },
+            Err(_) => {
+                if basic_health.is_ok() {
+                    println!("✓ Server is healthy");
                     return Ok(());
-                },
-            }
+                }
+            },
         }
 
         match basic_health {
@@ -3122,10 +3077,27 @@ mod tests {
     use super::*;
     use crate::credentials::FileCredentialStore;
 
-    #[derive(Debug, Default)]
+    #[derive(Debug)]
     struct TestServerState {
         sql_authorization_headers: Vec<String>,
         refresh_authorization_headers: Vec<String>,
+        health_authorization_headers: Vec<String>,
+        cluster_health_authorization_headers: Vec<String>,
+        health_status: u16,
+        cluster_health_status: u16,
+    }
+
+    impl Default for TestServerState {
+        fn default() -> Self {
+            Self {
+                sql_authorization_headers: Vec::new(),
+                refresh_authorization_headers: Vec::new(),
+                health_authorization_headers: Vec::new(),
+                cluster_health_authorization_headers: Vec::new(),
+                health_status: 200,
+                cluster_health_status: 404,
+            }
+        }
     }
 
     struct TestServer {
@@ -3176,16 +3148,86 @@ mod tests {
         let authorization = request.headers.get("authorization").cloned();
 
         let (status_line, body) = match request.path.as_str() {
-            "/v1/api/healthcheck" => (
-                "HTTP/1.1 200 OK",
-                json!({
-                    "status": "healthy",
-                    "version": "test",
-                    "api_version": "v1",
-                    "build_date": null
-                })
-                .to_string(),
-            ),
+            "/v1/api/healthcheck" => {
+                let status = {
+                    let mut guard = state.lock().await;
+                    guard
+                        .health_authorization_headers
+                        .push(authorization.clone().unwrap_or_default());
+                    guard.health_status
+                };
+
+                match status {
+                    200 => (
+                        "HTTP/1.1 200 OK",
+                        json!({
+                            "status": "healthy",
+                            "version": "test",
+                            "api_version": "v1",
+                            "build_date": null
+                        })
+                        .to_string(),
+                    ),
+                    403 => (
+                        "HTTP/1.1 403 Forbidden",
+                        json!({ "message": "localhost only" }).to_string(),
+                    ),
+                    code => (
+                        "HTTP/1.1 500 Internal Server Error",
+                        json!({ "message": format!("unexpected status {code}") }).to_string(),
+                    ),
+                }
+            },
+            "/v1/api/cluster/health" => {
+                let status = {
+                    let mut guard = state.lock().await;
+                    guard
+                        .cluster_health_authorization_headers
+                        .push(authorization.clone().unwrap_or_default());
+                    guard.cluster_health_status
+                };
+
+                match status {
+                    200 => (
+                        "HTTP/1.1 200 OK",
+                        json!({
+                            "status": "healthy",
+                            "version": "test",
+                            "build_date": "2026-05-04T00:00:00Z",
+                            "is_cluster_mode": true,
+                            "cluster_id": "test-cluster",
+                            "node_id": 0,
+                            "is_leader": true,
+                            "total_groups": 1,
+                            "groups_leading": 1,
+                            "current_term": 1,
+                            "last_applied": 1,
+                            "millis_since_quorum_ack": 0,
+                            "nodes": [{
+                                "node_id": 0,
+                                "role": "leader",
+                                "status": "active",
+                                "api_addr": "http://127.0.0.1:8080",
+                                "is_self": true,
+                                "is_leader": true,
+                                "replication_lag": null,
+                                "catchup_progress_pct": null,
+                                "hostname": "localhost",
+                                "memory_usage_mb": 64,
+                                "cpu_usage_percent": 0.25,
+                                "uptime_seconds": 42,
+                                "uptime_human": "42s"
+                            }]
+                        })
+                        .to_string(),
+                    ),
+                    403 => (
+                        "HTTP/1.1 403 Forbidden",
+                        json!({ "message": "localhost only" }).to_string(),
+                    ),
+                    _ => ("HTTP/1.1 404 Not Found", "Not found".to_string()),
+                }
+            },
             "/v1/api/sql" => {
                 if let Some(header) = authorization.clone() {
                     state.lock().await.sql_authorization_headers.push(header.clone());
@@ -3354,6 +3396,56 @@ mod tests {
             CLISession::extract_subscribe_options("SELECT * FROM table OPTIONS (last_rows=50);");
         assert_eq!(sql, "SELECT * FROM table");
         assert!(options.is_some());
+    }
+
+    #[test]
+    fn test_parse_describe_target_supports_namespace_and_semicolon() {
+        let (namespace, table_name) = CLISession::parse_describe_target("chat.messages;").unwrap();
+        assert_eq!(namespace.as_deref(), Some("chat"));
+        assert_eq!(table_name, "messages");
+
+        let (namespace, table_name) =
+            CLISession::parse_describe_target("\"chat\".\"message logs\"").unwrap();
+        assert_eq!(namespace.as_deref(), Some("chat"));
+        assert_eq!(table_name, "message logs");
+    }
+
+    #[tokio::test]
+    #[timeout(5000)]
+    async fn test_health_check_does_not_fall_back_to_authenticated_sql() {
+        let server = TestServer::spawn().await;
+        {
+            let mut state = server.state.lock().await;
+            state.health_status = 403;
+            state.cluster_health_status = 403;
+        }
+
+        let mut session = CLISession::with_auth_and_instance(
+            server.base_url.clone(),
+            AuthProvider::jwt_token("fresh-token".to_string()),
+            OutputFormat::Table,
+            false,
+            None,
+            None,
+            Some("admin".to_string()),
+            None,
+            true,
+            None,
+            None,
+            None,
+            CLIConfiguration::default(),
+            crate::config::default_config_path(),
+            false,
+        )
+        .await
+        .expect("create session");
+
+        session.health_check().await.expect("health check should succeed");
+
+        let state = server.state.lock().await;
+        assert!(state.sql_authorization_headers.is_empty());
+        assert_eq!(state.health_authorization_headers, vec![String::new(), String::new()]);
+        assert_eq!(state.cluster_health_authorization_headers, vec![String::new()]);
     }
 
     #[tokio::test]

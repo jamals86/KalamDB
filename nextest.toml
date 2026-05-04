@@ -108,6 +108,30 @@ filter = 'test(test_shared_connection_recovers_subscriptions_in_different_stages
 test-group = "stateful-heavy"
 
 [[profile.default.overrides]]
+filter = 'test(test_tokio_netem_fragmented_writes_preserve_live_stream)'
+test-group = "stateful-heavy"
+
+[[profile.default.overrides]]
+filter = 'test(test_tokio_netem_bandwidth_collapse_forces_resume_without_replay)'
+test-group = "stateful-heavy"
+
+[[profile.default.overrides]]
+filter = 'test(test_tokio_netem_forced_transport_termination_recovers)'
+test-group = "stateful-heavy"
+
+[[profile.default.overrides]]
+filter = 'test(test_tokio_netem_topic_consume_fragmented_insert_update_delete_and_commit)'
+test-group = "stateful-heavy"
+
+[[profile.default.overrides]]
+filter = 'test(test_tokio_netem_topic_bandwidth_collapse_poll_recovers_without_losing_offsets)'
+test-group = "stateful-heavy"
+
+[[profile.default.overrides]]
+filter = 'test(test_tokio_netem_topic_commit_failure_can_be_retried_without_replay)'
+test-group = "stateful-heavy"
+
+[[profile.default.overrides]]
 filter = 'test(test_cli_syntax_error_handling)'
 test-group = "stateful-heavy"
 

@@ -12,6 +12,8 @@ use std::collections::HashMap;
 use colored::*;
 use rustyline::completion::{Completer, Pair};
 
+use crate::parser::META_COMMAND_COMPLETIONS;
+
 pub(crate) const SQL_KEYWORDS: &[&str] = &[
     // DML
     "SELECT",
@@ -31,6 +33,8 @@ pub(crate) const SQL_KEYWORDS: &[&str] = &[
     "IS",
     "NULL",
     "AS",
+    "EXECUTE",
+    "USER",
     "ORDER",
     "BY",
     "GROUP",
@@ -170,34 +174,10 @@ impl AutoCompleter {
     pub fn new() -> Self {
         let keywords = SQL_KEYWORDS.iter().map(|s| s.to_string()).collect::<Vec<String>>();
 
-        let meta_commands = vec![
-            "\\quit",
-            "\\q",
-            "\\help",
-            "\\?",
-            "\\history",
-            "\\h",
-            "\\sessions",
-            "\\stats",
-            "\\metrics",
-            "\\flush",
-            "\\health",
-            "\\pause",
-            "\\continue",
-            "\\dt",
-            "\\tables",
-            "\\d",
-            "\\describe",
-            "\\format",
-            "\\refresh-tables",
-            "\\show-credentials",
-            "\\credentials",
-            "\\update-credentials",
-            "\\delete-credentials",
-        ]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
+        let meta_commands = META_COMMAND_COMPLETIONS
+            .iter()
+            .map(|command| (*command).to_string())
+            .collect();
 
         Self {
             keywords,
@@ -498,6 +478,29 @@ mod tests {
         let completions = completer.get_styled_completions("\\q", line, line.len());
         assert!(completions.iter().any(|c| c.replacement == "\\quit"));
         assert!(completions.iter().any(|c| c.replacement == "\\q"));
+
+        let as_line = "\\a";
+        let as_completions = completer.get_styled_completions("\\a", as_line, as_line.len());
+        assert!(as_completions.iter().any(|c| c.replacement == "\\as"));
+
+        let live_line = "\\li";
+        let live_completions =
+            completer.get_styled_completions("\\li", live_line, live_line.len());
+        assert!(live_completions.iter().any(|c| c.replacement == "\\live"));
+    }
+
+    #[test]
+    fn test_execute_as_keyword_completion() {
+        let completer = AutoCompleter::new();
+
+        let execute_line = "EXE";
+        let execute_completions =
+            completer.get_styled_completions("EXE", execute_line, execute_line.len());
+        assert!(execute_completions.iter().any(|c| c.replacement == "EXECUTE"));
+
+        let user_line = "US";
+        let user_completions = completer.get_styled_completions("US", user_line, user_line.len());
+        assert!(user_completions.iter().any(|c| c.replacement == "USER"));
     }
 
     #[test]

@@ -1,8 +1,14 @@
+use std::fmt::Display;
+
 use colored::Colorize;
 use kalam_client::KalamLinkError;
 
 use super::CLISession;
 use crate::{history::CommandHistory, CLI_VERSION};
+
+fn print_info_row(label: &str, value: impl Display) {
+    println!("  {:<20} {}", format!("{label}:"), value);
+}
 
 impl CLISession {
     pub(super) fn normalize_server_field(value: String) -> Option<String> {
@@ -18,7 +24,8 @@ impl CLISession {
     ///
     /// Displays detailed information about the current CLI session
     pub(super) async fn show_session_info(&mut self) {
-        let health_status = match self.client.health_check().await {
+        let health_status = match self.public_probe_client() {
+            Ok(probe_client) => match probe_client.health_check().await {
             Ok(health) => {
                 self.connected = true;
                 self.server_version = Self::normalize_server_field(health.version);
@@ -43,6 +50,8 @@ impl CLISession {
                 self.server_build_date = None;
                 Some(e.to_string())
             },
+            },
+            Err(e) => Some(e.to_string()),
         };
 
         // Only fetch cluster details if the server is reachable right now
@@ -51,6 +60,9 @@ impl CLISession {
         } else {
             None
         };
+        if let Some(info) = cluster_info.as_ref() {
+            self.adopt_cluster_metadata(info);
+        }
 
         println!();
         println!("{}", "═══════════════════════════════════════".cyan().bold());
@@ -60,23 +72,23 @@ impl CLISession {
 
         // Connection info
         println!("{}", "Connection:".yellow().bold());
-        println!("  Server URL:     {}", self.server_url.green());
-        println!("  User ID:        {}", self.username.green());
-        println!(
-            "  Connected:      {}",
+        print_info_row("Server URL", self.server_url.green());
+        print_info_row("User ID", self.username.green());
+        print_info_row(
+            "Connected",
             if self.connected {
                 "Yes".green()
             } else {
                 "No".red()
-            }
+            },
         );
         if let Some(ref err) = health_status {
             if self.connected {
                 // Server is reachable but health detail could not be retrieved (e.g. localhost-only
                 // restriction)
-                println!("  Health check:   {}", format!("Note ({})", err).yellow());
+                print_info_row("Health check", format!("Note ({})", err).yellow());
             } else {
-                println!("  Last check:     {}", format!("Failed ({})", err).red());
+                print_info_row("Last check", format!("Failed ({})", err).red());
             }
         }
 
@@ -92,48 +104,48 @@ impl CLISession {
         } else {
             format!("{}s", seconds)
         };
-        println!("  Session time:   {}", uptime_str.green());
+        print_info_row("Session time", uptime_str.green());
         println!();
 
         // Server info
         println!("{}", "Server:".yellow().bold());
         if let Some(ref version) = self.server_version {
-            println!("  Version:        {}", version.green());
+            print_info_row("Version", version.green());
         } else {
-            println!("  Version:        {}", "Unknown".dimmed());
+            print_info_row("Version", "Unknown".dimmed());
         }
         if let Some(ref api_version) = self.server_api_version {
-            println!("  API Version:    {}", api_version.green());
+            print_info_row("API Version", api_version.green());
         } else {
-            println!("  API Version:    {}", "Unknown".dimmed());
+            print_info_row("API Version", "Unknown".dimmed());
         }
         if let Some(ref build_date) = self.server_build_date {
-            println!("  Build Date:     {}", build_date.green());
+            print_info_row("Build Date", build_date.green());
         } else {
-            println!("  Build Date:     {}", "Unknown".dimmed());
+            print_info_row("Build Date", "Unknown".dimmed());
         }
         println!();
 
         // Cluster info (if server provided it)
         println!("{}", "Cluster:".yellow().bold());
         if let Some(ref info) = cluster_info {
-            println!(
-                "  Mode:           {}",
+            print_info_row(
+                "Mode",
                 if info.is_cluster_mode {
                     "Cluster".green()
                 } else {
                     "Standalone".dimmed()
-                }
+                },
             );
             if info.is_cluster_mode {
                 // Show current node (the one we're connected to)
                 if let Some(ref current_node) = info.current_node {
-                    println!(
-                        "  Connected Node: {}",
-                        format!("Node {}", current_node.node_id).green()
+                    print_info_row(
+                        "Connected Node",
+                        format!("Node {}", current_node.node_id).green(),
                     );
-                    println!("  Node Role:      {}", current_node.role.green());
-                    println!("  Node API:       {}", current_node.api_addr.green());
+                    print_info_row("Node Role", current_node.role.green());
+                    print_info_row("Node API", current_node.api_addr.green());
                 }
                 // Show all cluster nodes
                 println!();
@@ -153,7 +165,7 @@ impl CLISession {
                 }
             }
         } else {
-            println!("  Mode:           {}", "Standalone".dimmed());
+            print_info_row("Mode", "Standalone".dimmed());
             if self.connected {
                 println!("  {}", "(Could not fetch cluster info)".dimmed());
             } else {
@@ -168,99 +180,102 @@ impl CLISession {
         let conn_cfg = self.config.resolved_connection();
         let ui_cfg = self.config.resolved_ui();
         println!("{}", "CLI Config:".yellow().bold());
-        println!("  Config File:   {}", self.config_path.display().to_string().green());
-        println!(
-            "  File Exists:   {}",
+        print_info_row("Config File", self.config_path.display().to_string().green());
+        print_info_row(
+            "File Exists",
             if self.config_path.exists() {
                 "Yes".green()
             } else {
                 "No".red()
-            }
+            },
         );
-        println!("  Timeout:       {}s", server_cfg.timeout.to_string().green());
-        println!("  Max Retries:   {}", server_cfg.max_retries.to_string().green());
-        println!("  HTTP Version: {}", server_cfg.http_version.to_string().green());
-        println!(
-            "  Auto Reconnect: {}",
+        print_info_row("Timeout", format!("{}s", server_cfg.timeout).green());
+        print_info_row("Max Retries", server_cfg.max_retries.to_string().green());
+        print_info_row("HTTP Version", server_cfg.http_version.to_string().green());
+        print_info_row(
+            "Auto Reconnect",
             if conn_cfg.auto_reconnect {
                 "Yes".green()
             } else {
                 "No".red()
-            }
+            },
         );
-        println!("  Reconnect Delay: {} ms", conn_cfg.reconnect_delay_ms.to_string().green());
-        println!(
-            "  Max Reconnect Delay: {} ms",
-            conn_cfg.max_reconnect_delay_ms.to_string().green()
+        print_info_row(
+            "Reconnect Delay",
+            format!("{} ms", conn_cfg.reconnect_delay_ms).green(),
         );
-        println!(
-            "  Max Reconnect Attempts: {}",
-            conn_cfg.max_reconnect_attempts.to_string().green()
+        print_info_row(
+            "Max Reconnect Delay",
+            format!("{} ms", conn_cfg.max_reconnect_delay_ms).green(),
         );
-        println!("  Output Format: {}", ui_cfg.format.green());
-        println!(
-            "  Colors:        {}",
+        print_info_row(
+            "Max Reconnect Attempts",
+            conn_cfg.max_reconnect_attempts.to_string().green(),
+        );
+        print_info_row("Output Format", ui_cfg.format.green());
+        print_info_row(
+            "Colors",
             if ui_cfg.color {
                 "Enabled".green()
             } else {
                 "Disabled".red()
-            }
+            },
         );
-        println!("  Timestamp Format: {}", ui_cfg.timestamp_format.green());
-        println!("  History Size:  {}", ui_cfg.history_size.to_string().green());
+        print_info_row("Timestamp Format", ui_cfg.timestamp_format.green());
+        print_info_row("History Size", ui_cfg.history_size.to_string().green());
         println!();
 
         // History info
         let history = CommandHistory::new(ui_cfg.history_size);
         let history_count = history.entry_count().unwrap_or(0);
         println!("{}", "History:".yellow().bold());
-        println!("  History File:  {}", history.path().display().to_string().green());
-        println!("  Entries:       {}", history_count.to_string().green());
-        println!("  Max Entries:   {}", ui_cfg.history_size.to_string().green());
+        print_info_row("History File", history.path().display().to_string().green());
+        print_info_row("Entries", history_count.to_string().green());
+        print_info_row("Max Entries", ui_cfg.history_size.to_string().green());
         println!();
 
         // Client info
         println!("{}", "Client:".yellow().bold());
-        println!("  CLI Version:    {}", CLI_VERSION.green());
-        println!("  Build Date:     {}", env!("BUILD_DATE").green());
-        println!("  Git Branch:     {}", env!("GIT_BRANCH").green());
-        println!("  Git Commit:     {}", env!("GIT_COMMIT_HASH").green());
+        print_info_row("CLI Version", CLI_VERSION.green());
+        print_info_row("Build Date", env!("BUILD_DATE").green());
+        print_info_row("Git Branch", env!("GIT_BRANCH").green());
+        print_info_row("Git Commit", env!("GIT_COMMIT_HASH").green());
         println!();
 
         // Session statistics
         println!("{}", "Statistics:".yellow().bold());
-        println!("  Queries:        {}", self.queries_executed.to_string().green());
-        println!("  Format:         {}", format!("{:?}", self.format).green());
-        println!(
-            "  Colors:         {}",
+        print_info_row("Queries", self.queries_executed.to_string().green());
+        print_info_row("Format", format!("{:?}", self.format).green());
+        print_info_row(
+            "Colors",
             if self.color {
                 "Enabled".green()
             } else {
                 "Disabled".red()
-            }
+            },
         );
         println!();
 
         // Credentials info
         println!("{}", "Credentials:".yellow().bold());
         if let Some(ref instance) = self.instance {
-            println!("  Instance:       {}", instance.green());
+            print_info_row("Instance", instance.green());
         }
-        println!(
-            "  Loaded:         {}",
+        print_info_row(
+            "Loaded",
             if self.credentials_loaded {
                 "Yes (from stored credentials)".green()
             } else {
                 "No (provided via CLI args)".dimmed()
-            }
+            },
         );
         if self.credential_store.is_some() {
-            println!(
-                "  Storage:        {}",
+            print_info_row(
+                "Storage",
                 crate::credentials::FileCredentialStore::default_path()
                     .display()
                     .to_string()
-                    .dimmed()
+                    .dimmed(),
             );
         }
         println!();

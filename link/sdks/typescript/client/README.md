@@ -187,7 +187,7 @@ This pattern is useful for chat threads, activity feeds, audit logs, and any UI 
 
 ## Preserve Tenant Boundaries in Worker Writes
 
-Background services should keep the same user isolation guarantees as the browser. Direct USER-table reads stay scoped to the authenticated account; `executeAsUser()` switches subject only when KalamDB authorizes the actor role for the target user's role.
+Background services should keep the same user isolation guarantees as the browser. Direct USER-table and STREAM-table access stays scoped to the authenticated account; `executeAsUser()` switches subject only when KalamDB authorizes the actor role for the target user's role.
 
 ```ts
 await client.executeAsUser(
@@ -197,7 +197,7 @@ await client.executeAsUser(
 );
 ```
 
-That keeps the write inside Alice's USER-table partition through an explicit, audited delegation boundary instead of leaking service-side writes into the wrong tenant scope.
+That keeps the write inside Alice's USER-table or STREAM-table partition through an explicit, audited delegation boundary instead of leaking service-side writes into the wrong tenant scope.
 
 ## Lower-Level Realtime API
 

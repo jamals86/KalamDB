@@ -33,6 +33,10 @@ pub struct QueryResult {
     /// Optional message for non-query statements.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+
+    /// Effective user identifier this statement executed as.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub as_user: Option<String>,
 }
 
 impl QueryResult {

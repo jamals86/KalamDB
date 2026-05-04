@@ -35,10 +35,10 @@ This document outlines the test scenarios for authentication, authorization, and
 - **Agent Friendly**: Check `backend/tests/testserver/tables/test_user_tables_http.rs`.
 
 ## 4. EXECUTE AS USER Role Matrix
-**Goal**: Direct USER-table access stays subject-scoped, while explicit `EXECUTE AS USER` follows the role hierarchy.
+**Goal**: Direct USER-table and STREAM-table access stays subject-scoped, while explicit `EXECUTE AS USER` follows the role hierarchy.
 - **Step 1**: Authenticate as `user`, `service`, `dba`, and `system` role users.
 - **Step 2**: Attempt allowed and denied cross-user `EXECUTE AS USER` SELECT/INSERT/UPDATE/DELETE.
-- **Step 3**: Verify allowed role edges operate under the target user ID and denied edges leave target rows unchanged.
+- **Step 3**: Verify allowed role edges operate under the target user ID for USER and STREAM tables, and denied edges leave target rows unchanged.
 - **Step 4**: Verify self-targeted `EXECUTE AS USER` is a no-op and remains scoped to the actor.
 - **Agent Friendly**: Check `backend/tests/misc/auth/test_as_user_impersonation.rs`.
 

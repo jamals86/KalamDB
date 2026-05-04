@@ -348,6 +348,13 @@ fn test_docs_matrix_has_execution_tests_for_documented_flags_and_commands() {
             ],
         },
         Coverage {
+            item: "\\as",
+            tests: &[
+                "test_parse_execute_as_shortcut",
+                "test_cli_meta_commands_doc_smoke_non_interactive",
+            ],
+        },
+        Coverage {
             item: "\\format",
             tests: &[
                 "smoke_cli_format_json_command",
@@ -387,6 +394,13 @@ fn test_docs_matrix_has_execution_tests_for_documented_flags_and_commands() {
             tests: &["test_cli_meta_commands_doc_smoke_non_interactive"],
         },
         Coverage {
+            item: "\\live",
+            tests: &[
+                "test_parse_live_alias",
+                "test_cli_meta_commands_doc_smoke_non_interactive",
+            ],
+        },
+        Coverage {
             item: "\\unsubscribe",
             tests: &["test_cli_meta_commands_doc_smoke_non_interactive"],
         },
@@ -404,14 +418,6 @@ fn test_docs_matrix_has_execution_tests_for_documented_flags_and_commands() {
                 "smoke_cli_flush_command",
                 "test_cli_meta_commands_doc_smoke_non_interactive",
             ],
-        },
-        Coverage {
-            item: "\\pause",
-            tests: &["test_cli_meta_commands_doc_smoke_non_interactive"],
-        },
-        Coverage {
-            item: "\\continue",
-            tests: &["test_cli_meta_commands_doc_smoke_non_interactive"],
         },
         Coverage {
             item: "\\cluster snapshot",
@@ -864,9 +870,14 @@ fn test_cli_meta_commands_doc_smoke_non_interactive() {
         "\\tables",
         "\\d",
         "\\describe",
+        "\\as",
         "\\format",
         "\\refresh-tables",
         "\\refresh",
+        "\\subscribe",
+        "\\watch",
+        "\\live",
+        "\\consume",
         "\\show-credentials",
         "\\credentials",
         "\\update-credentials",
@@ -874,8 +885,6 @@ fn test_cli_meta_commands_doc_smoke_non_interactive() {
         "\\unsubscribe",
         "\\unwatch",
         "\\flush",
-        "\\pause",
-        "\\continue",
         "\\cluster",
     ];
 

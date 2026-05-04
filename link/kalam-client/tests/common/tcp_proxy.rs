@@ -15,6 +15,10 @@ use tokio::{
     task::JoinHandle,
     time::sleep,
 };
+use tokio_netem::{
+    delayer::DynamicDuration, io::NetEmWriteExt, probability::DynamicProbability,
+    slicer::DynamicSize, terminator::Terminator, throttler::DynamicRate,
+};
 
 /// A TCP proxy that sits between a client and a real server, allowing tests to
 /// simulate network failures by pausing new connections and/or forcibly dropping
@@ -43,6 +47,10 @@ struct ProxyImpairments {
     latency_ms: AtomicU64,
     stall_every_n_chunks: AtomicU64,
     stall_duration_ms: AtomicU64,
+    netem_write_delay: Arc<DynamicDuration>,
+    netem_write_rate: Arc<DynamicRate>,
+    netem_write_slice_size: Arc<DynamicSize>,
+    netem_termination_probability: Arc<DynamicProbability>,
 }
 
 impl ProxyImpairments {
@@ -52,6 +60,11 @@ impl ProxyImpairments {
             latency_ms: AtomicU64::new(0),
             stall_every_n_chunks: AtomicU64::new(0),
             stall_duration_ms: AtomicU64::new(0),
+            netem_write_delay: DynamicDuration::new(Duration::ZERO),
+            netem_write_rate: DynamicRate::new(0),
+            netem_write_slice_size: DynamicSize::new(0),
+            netem_termination_probability: DynamicProbability::new(0.0)
+                .expect("zero termination probability should be valid"),
         }
     }
 
@@ -96,7 +109,6 @@ impl TcpDisconnectProxy {
         let accept_task = tokio::spawn(async move {
             while let Ok((mut inbound, _peer)) = listener.accept().await {
                 if paused_clone.load(Ordering::SeqCst) {
-                    let _ = inbound.set_linger(Some(Duration::ZERO));
                     let _ = inbound.shutdown().await;
                     drop(inbound);
                     continue;
@@ -191,6 +203,54 @@ impl TcpDisconnectProxy {
         self.impairments.stall_duration_ms.store(0, Ordering::SeqCst);
     }
 
+    /// Add tokio-netem write-side latency in both directions.
+    pub fn set_netem_write_delay(&self, delay: Duration) {
+        self.impairments.netem_write_delay.set(delay);
+    }
+
+    /// Clear tokio-netem write-side latency.
+    pub fn clear_netem_write_delay(&self) {
+        self.impairments.netem_write_delay.set(Duration::ZERO);
+    }
+
+    /// Throttle forwarded writes in both directions to `bytes_per_second`.
+    ///
+    /// A value of `0` disables throttling.
+    pub fn set_netem_write_rate(&self, bytes_per_second: usize) {
+        self.impairments.netem_write_rate.set(bytes_per_second);
+    }
+
+    /// Clear any tokio-netem write throttle.
+    pub fn clear_netem_write_rate(&self) {
+        self.impairments.netem_write_rate.set(0);
+    }
+
+    /// Slice forwarded writes in both directions. A size of `0` disables slicing.
+    pub fn set_netem_write_slice_size(&self, size: usize) {
+        self.impairments.netem_write_slice_size.set(size);
+    }
+
+    /// Clear tokio-netem write slicing.
+    pub fn clear_netem_write_slice_size(&self) {
+        self.impairments.netem_write_slice_size.set(0);
+    }
+
+    /// Probabilistically terminate each proxied transport poll in both directions.
+    pub fn set_netem_termination_probability(&self, probability: f64) {
+        self.impairments
+            .netem_termination_probability
+            .set(probability)
+            .expect("termination probability should be between 0.0 and 1.0");
+    }
+
+    /// Clear tokio-netem transport termination.
+    pub fn clear_netem_termination_probability(&self) {
+        self.impairments
+            .netem_termination_probability
+            .set(0.0)
+            .expect("zero termination probability should be valid");
+    }
+
     /// Abort all in-flight proxy tasks, forcibly closing both sides of every
     /// active connection.
     pub async fn drop_active_connections(&self) {
@@ -271,11 +331,18 @@ async fn bind_loopback_listener() -> std::io::Result<TcpListener> {
 
 async fn relay_with_impairments(
     mut reader: tokio::net::tcp::ReadHalf<'_>,
-    mut writer: tokio::net::tcp::WriteHalf<'_>,
+    writer: tokio::net::tcp::WriteHalf<'_>,
     impairments: Arc<ProxyImpairments>,
 ) -> std::io::Result<()> {
     let mut buffer = [0_u8; 16 * 1024];
     let mut chunk_index = 0_u64;
+    let mut writer = Terminator::new(
+        writer
+            .delay_writes_dyn(impairments.netem_write_delay.clone())
+            .throttle_writes_dyn(impairments.netem_write_rate.clone())
+            .slice_writes_dyn(impairments.netem_write_slice_size.clone()),
+        impairments.netem_termination_probability.clone(),
+    );
 
     loop {
         let read = reader.read(&mut buffer).await?;

@@ -12,9 +12,10 @@ The security model now requires a stronger invariant: authenticated users must n
 
 ## Decision
 
-Ordinary USER-table access is always subject-scoped to the authenticated user.
+Ordinary USER-table and STREAM-table access is always subject-scoped to the
+authenticated user.
 
-- No role receives implicit all-user USER-table reads.
+- No role receives implicit all-user USER-table or STREAM-table reads.
 - Explicit `EXECUTE AS USER` uses a role hierarchy: system can target system/dba/service/user, DBA can target dba/service/user, service can target service/user, and regular users cannot target another user.
 - Target role classification for `EXECUTE AS USER` and USER-table file `user_id` downloads comes from a small in-memory map of service, DBA, and system users maintained by `system.users`; IDs absent from that privileged map are treated as regular users.
 - Self-targeted `EXECUTE AS USER` is allowed as a no-op identity boundary.
@@ -23,7 +24,7 @@ Ordinary USER-table access is always subject-scoped to the authenticated user.
 
 ## Rationale
 
-Role privilege should control administrative capabilities, not silently merge user data planes. Keeping ordinary USER-table DML and SELECT behavior tied to the authenticated subject avoids accidental cross-user reads, deletes, updates, file downloads, and subscriptions. When a background service must act for a user, `EXECUTE AS USER` provides an explicit, audited boundary governed by the role hierarchy.
+Role privilege should control administrative capabilities, not silently merge user data planes. Keeping ordinary USER-table and STREAM-table DML and SELECT behavior tied to the authenticated subject avoids accidental cross-user reads, deletes, updates, file downloads, and subscriptions. When a background service must act for a user, `EXECUTE AS USER` provides an explicit, audited boundary governed by the role hierarchy.
 
 Self-targeted `EXECUTE AS USER` remains valid so existing wrapper syntax can be parsed and audited without introducing a second behavior for the caller's own identity.
 
@@ -33,11 +34,11 @@ The privileged-role map avoids fetching high-cardinality regular user rows in im
 
 ### Positive
 
-- DBA, service, system, and regular users all see the same per-subject isolation on USER tables.
-- Privileged DML can delete or update another user's USER-table rows only through authorized, audited `EXECUTE AS USER`.
+- DBA, service, system, and regular users all see the same per-subject isolation on USER and STREAM tables.
+- Privileged DML can act on another user's USER-table or STREAM-table rows only through authorized, audited `EXECUTE AS USER`.
 - File download `user_id` query parameters cannot bypass the caller identity or role matrix.
 - Impersonation authorization no longer performs a per-request `system.users` lookup for regular targets.
-- Tests assert both isolation surfaces: direct USER-table access is scoped, and explicit `EXECUTE AS USER` follows the role matrix.
+- Tests assert both isolation surfaces: direct USER-table and STREAM-table access is scoped, and explicit `EXECUTE AS USER` follows the role matrix.
 
 ### Negative
 

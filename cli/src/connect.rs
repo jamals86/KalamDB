@@ -36,7 +36,6 @@ fn build_timeouts(cli: &Cli) -> KalamLinkTimeouts {
         .subscribe_timeout_secs(5) // Keep default for subscribe ack
         .initial_data_timeout_secs(cli.initial_data_timeout)
         .idle_timeout_secs(cli.subscription_timeout) // subscription_timeout is the idle timeout
-        .keepalive_interval_secs(30) // Keep default
         .build()
 }
 
@@ -60,8 +59,43 @@ fn is_localhost_url(url: &str) -> bool {
     normalized_host.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback())
 }
 
+fn should_default_to_http(raw: &str) -> bool {
+    let candidate = format!("http://{}", raw.trim());
+    let parsed = match Url::parse(&candidate) {
+        Ok(url) => url,
+        Err(_) => return false,
+    };
+
+    let host = match parsed.host_str() {
+        Some(host) => host,
+        None => return false,
+    };
+
+    let normalized_host = host.trim_start_matches('[').trim_end_matches(']');
+    normalized_host.eq_ignore_ascii_case("localhost")
+        || normalized_host.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback())
+}
+
 fn normalize_and_validate_server_url(server_url: &str) -> Result<String> {
-    let mut parsed = Url::parse(server_url.trim()).map_err(|e| {
+    let trimmed = server_url.trim();
+    if trimmed.is_empty() {
+        return Err(CLIError::ConfigurationError(
+            "Server URL must not be empty".to_string(),
+        ));
+    }
+
+    let normalized_input = if trimmed.contains("://") {
+        trimmed.to_string()
+    } else {
+        let scheme = if should_default_to_http(trimmed) {
+            "http"
+        } else {
+            "https"
+        };
+        format!("{scheme}://{trimmed}")
+    };
+
+    let mut parsed = Url::parse(&normalized_input).map_err(|e| {
         CLIError::ConfigurationError(format!("Invalid server URL '{}': {}", server_url, e))
     })?;
 
@@ -1044,7 +1078,11 @@ pub async fn create_session(
 
 #[cfg(test)]
 mod tests {
-    use super::{is_localhost_url, normalize_and_validate_server_url};
+    use clap::Parser;
+
+    use super::{build_timeouts, is_localhost_url, normalize_and_validate_server_url};
+    use crate::args::Cli;
+    use kalam_client::KalamLinkTimeouts;
 
     #[test]
     fn test_is_localhost_url_accepts_loopback_hosts() {
@@ -1072,6 +1110,14 @@ mod tests {
             normalize_and_validate_server_url("https://db.example.com/base/").unwrap(),
             "https://db.example.com/base"
         );
+        assert_eq!(
+            normalize_and_validate_server_url("kalam.masky.app").unwrap(),
+            "https://kalam.masky.app"
+        );
+        assert_eq!(
+            normalize_and_validate_server_url("localhost:8080").unwrap(),
+            "http://localhost:8080"
+        );
     }
 
     #[test]
@@ -1080,5 +1126,14 @@ mod tests {
         assert!(normalize_and_validate_server_url("http://user:pass@localhost:8080").is_err());
         assert!(normalize_and_validate_server_url("http://localhost:8080?token=secret").is_err());
         assert!(normalize_and_validate_server_url("http://localhost:8080/#fragment").is_err());
+    }
+
+    #[test]
+    fn test_build_timeouts_preserves_sdk_keepalive_default() {
+        let cli = Cli::parse_from(["kalam"]);
+
+        let timeouts = build_timeouts(&cli);
+
+        assert_eq!(timeouts.keepalive_interval, KalamLinkTimeouts::default().keepalive_interval);
     }
 }

@@ -109,11 +109,9 @@ SELECT * FROM app.users;
 -- Subscribe to changes
 SUBSCRIBE TO app.messages WHERE user_id = 'user123';
 
--- Pause subscription
-\pause
-
--- Resume subscription
-\continue
+-- Or use the interactive CLI aliases
+\subscribe SELECT * FROM app.messages WHERE user_id = 'user123';
+\live SELECT * FROM app.messages WHERE user_id = 'user123';
 
 -- Stop subscription (Ctrl+C)
 ```
@@ -207,14 +205,13 @@ Special commands starting with backslash (`\`):
 | `\sessions` | Show active pg-extension gRPC sessions |
 | `\format <table\|json\|csv>` | Set output format |
 | `\dt` / `\tables` | List tables |
-| `\d <table>` / `\describe <table>` | Describe a table |
+| `\d <table>` / `\describe <table>` | Describe a table (`<table>` or `<namespace.table>`) |
+| `\as <user> <SQL>` | Wrap one statement as `EXECUTE AS USER` |
 | `\stats` / `\metrics` | Show system stats |
 | `\health` | Check server health |
 | `\flush` | Execute STORAGE FLUSH ALL |
-| `\pause` | Pause ingestion |
-| `\continue` | Resume ingestion |
 | `\refresh-tables` / `\refresh` | Refresh autocomplete cache |
-| `\subscribe <SQL>` / `\watch <SQL>` | Start live query |
+| `\subscribe <SQL>` / `\watch <SQL>` / `\live <SQL>` | Start live query |
 | `\unsubscribe` / `\unwatch` | Cancel live query |
 | `\show-credentials` / `\credentials` | Show stored credentials |
 | `\update-credentials <u> <p>` | Update stored credentials |

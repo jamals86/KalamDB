@@ -1009,6 +1009,7 @@ dependencies = [
  "quinn-proto",
  "reqwest",
  "rmp-serde",
+ "rustls",
  "rustls-webpki",
  "serde",
  "serde_json",

@@ -26,7 +26,9 @@ pub struct ChatRealtimeBench;
 const DEFAULT_CHAT_MINUTES: u64 = 5;
 const DEFAULT_CHAT_USERS: u32 = 1_000;
 const DEFAULT_CHAT_REALTIME_CONVS: u32 = 100;
+const DEFAULT_CHAT_MESSAGES_PER_MINUTE: u32 = 20;
 const CHAT_USER_PASSWORD: &str = "BenchChatP@ss123";
+const CHAT_MESSAGES_PER_CYCLE: u32 = 2;
 const CHAT_TYPING_INTERVAL: Duration = Duration::from_secs(2);
 const CHAT_TYPING_BURSTS: u64 = 3;
 const CHAT_WORKER_START_STAGGER_MS: u64 = 5;
@@ -56,6 +58,7 @@ struct ChatWorkloadSettings {
     minutes: u64,
     user_count: u32,
     realtime_conversations: u32,
+    messages_per_minute: u32,
 }
 
 impl ChatWorkloadSettings {
@@ -65,6 +68,10 @@ impl ChatWorkloadSettings {
         let realtime_conversations = parse_u32_env(
             "KALAMDB_BENCH_CHAT_REALTIME_CONVS",
             DEFAULT_CHAT_REALTIME_CONVS,
+        )?;
+        let messages_per_minute = parse_u32_env(
+            "KALAMDB_BENCH_CHAT_MESSAGES_PER_MINUTE",
+            DEFAULT_CHAT_MESSAGES_PER_MINUTE,
         )?;
 
         if minutes == 0 {
@@ -83,6 +90,7 @@ impl ChatWorkloadSettings {
             minutes,
             user_count,
             realtime_conversations,
+            messages_per_minute,
         })
     }
 
@@ -91,11 +99,30 @@ impl ChatWorkloadSettings {
             minutes: DEFAULT_CHAT_MINUTES,
             user_count: DEFAULT_CHAT_USERS,
             realtime_conversations: DEFAULT_CHAT_REALTIME_CONVS,
+            messages_per_minute: DEFAULT_CHAT_MESSAGES_PER_MINUTE,
         })
     }
 
     fn duration(&self) -> Duration {
         Duration::from_secs(self.minutes.saturating_mul(60))
+    }
+
+    fn target_cycle_interval(&self) -> Option<Duration> {
+        if self.messages_per_minute == 0 {
+            return None;
+        }
+
+        Some(Duration::from_secs_f64(
+            (60.0 * f64::from(CHAT_MESSAGES_PER_CYCLE)) / f64::from(self.messages_per_minute),
+        ))
+    }
+
+    fn message_rate_label(&self) -> String {
+        if self.messages_per_minute == 0 {
+            "idle subscriptions only".to_string()
+        } else {
+            format!("{} messages/min per conversation", self.messages_per_minute)
+        }
     }
 }
 
@@ -154,18 +181,22 @@ impl Benchmark for ChatRealtimeBench {
     fn report_description(&self, _config: &Config) -> String {
         let settings = ChatWorkloadSettings::for_report();
         format!(
-            "Realtime chat scenario for {}m with {} regular users and {} active conversations",
-            settings.minutes, settings.user_count, settings.realtime_conversations
+            "Realtime chat scenario for {}m with {} regular users, {} active conversations, and {}",
+            settings.minutes,
+            settings.user_count,
+            settings.realtime_conversations,
+            settings.message_rate_label()
         )
     }
 
     fn report_full_description(&self, _config: &Config) -> String {
         let settings = ChatWorkloadSettings::for_report();
         format!(
-            "Creates {} regular KalamDB users, then runs {} concurrent chat-session workers for {} minute(s). Each worker logs in as real users, opens a USER-table conversation row for user A, relies on a Rust topic consumer to mirror that conversation into user B's USER table, sends a user A message that the consumer forwards to user B, emits three typing events over six seconds from user B via a STREAM table, sends a user B reply that the consumer forwards back to user A, and keeps user A on live SQL subscriptions for message and typing delivery.",
+            "Creates {} regular KalamDB users, then runs {} concurrent chat-session workers for {} minute(s). Each worker logs in as real users, opens a USER-table conversation row for user A, keeps user A on live SQL subscriptions for message and typing delivery, and paces each conversation at {}. When message sending is enabled, a Rust topic consumer mirrors the user A conversation row into user B's USER table, forwards a user A message to user B, emits three typing events over six seconds from user B via a STREAM table, and forwards a user B reply back to user A.",
             settings.user_count,
             settings.realtime_conversations,
             settings.minutes,
+            settings.message_rate_label(),
         )
     }
 
@@ -177,6 +208,10 @@ impl Benchmark for ChatRealtimeBench {
             BenchmarkDetail::new(
                 "Active Conversations",
                 settings.realtime_conversations.to_string(),
+            ),
+            BenchmarkDetail::new(
+                "Conversation Message Rate",
+                settings.message_rate_label(),
             ),
             BenchmarkDetail::new(
                 "Responder Typing Burst",
@@ -354,16 +389,6 @@ impl Benchmark for ChatRealtimeBench {
                 60_000_000_000 + u64::from(iteration) * 10_000_000,
             ));
 
-            println!(
-                "  Chat workload settings: duration={}m, regular_users={}, target_active_chat_users={}, active_conversations={}, typing_burst={}x{}s",
-                settings.minutes,
-                settings.user_count,
-                target_active_user_count,
-                settings.realtime_conversations,
-                CHAT_TYPING_BURSTS,
-                CHAT_TYPING_INTERVAL.as_secs(),
-            );
-
             let prewarmed_active_users = prewarm_user_clients(
                 user_pool.clone(),
                 users.clone(),
@@ -384,8 +409,31 @@ impl Benchmark for ChatRealtimeBench {
 
             let scenario_started = Instant::now();
             let run_deadline = scenario_started + settings.duration();
+            let target_cycle_interval = settings.target_cycle_interval();
             let delivery_timeout = chat_delivery_wait_timeout(settings.realtime_conversations);
             let mut handles = Vec::with_capacity(settings.realtime_conversations as usize);
+
+            println!(
+                "  Chat workload settings: duration={}m, regular_users={}, target_active_chat_users={}, active_conversations={}, message_rate={}, typing_burst={}x{}s",
+                settings.minutes,
+                settings.user_count,
+                target_active_user_count,
+                settings.realtime_conversations,
+                settings.message_rate_label(),
+                CHAT_TYPING_BURSTS,
+                CHAT_TYPING_INTERVAL.as_secs(),
+            );
+
+            println!(
+                "  Chat workload settings: duration={}m, regular_users={}, target_active_chat_users={}, active_conversations={}, message_rate={}, typing_burst={}x{}s",
+                settings.minutes,
+                settings.user_count,
+                target_active_user_count,
+                settings.realtime_conversations,
+                settings.message_rate_label(),
+                CHAT_TYPING_BURSTS,
+                CHAT_TYPING_INTERVAL.as_secs(),
+            );
 
             for worker_id in 0..settings.realtime_conversations {
                 let namespace = config.namespace.clone();
@@ -416,6 +464,7 @@ impl Benchmark for ChatRealtimeBench {
                         worker_conversations,
                         worker_messages,
                         worker_typing,
+                        target_cycle_interval,
                         delivery_timeout,
                         worker_stop.clone(),
                     )
@@ -505,6 +554,7 @@ async fn run_chat_worker(
     conversation_ids: Arc<AtomicU64>,
     message_ids: Arc<AtomicU64>,
     typing_ids: Arc<AtomicU64>,
+    target_cycle_interval: Option<Duration>,
     delivery_timeout: Duration,
     global_stop: Arc<AtomicBool>,
 ) -> Result<(), String> {
@@ -556,8 +606,17 @@ async fn run_chat_worker(
             .create_conversation_timings
             .record(create_conversation_started.elapsed());
 
+        if target_cycle_interval.is_none() {
+            while Instant::now() < run_deadline && !global_stop.load(Ordering::Relaxed) {
+                sleep(Duration::from_secs(1)).await;
+            }
+
+            return Ok(());
+        }
+
         let mut cycle_ordinal = 0_u64;
         while Instant::now() < run_deadline && !global_stop.load(Ordering::Relaxed) {
+            let cycle_started = Instant::now();
             stats.sessions_started.fetch_add(1, Ordering::Relaxed);
             cycle_ordinal += 1;
 
@@ -646,6 +705,17 @@ async fn run_chat_worker(
             }
 
             stats.sessions_completed.fetch_add(1, Ordering::Relaxed);
+
+            if let Some(target_cycle_interval) = target_cycle_interval {
+                let cycle_elapsed = cycle_started.elapsed();
+                if cycle_elapsed < target_cycle_interval {
+                    let remaining_run = run_deadline.saturating_duration_since(Instant::now());
+                    let sleep_for = (target_cycle_interval - cycle_elapsed).min(remaining_run);
+                    if !sleep_for.is_zero() {
+                        sleep(sleep_for).await;
+                    }
+                }
+            }
         }
 
         Ok(())

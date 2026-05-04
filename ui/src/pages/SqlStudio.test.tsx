@@ -353,6 +353,16 @@ describe("SqlStudio page", () => {
     vi.unstubAllGlobals();
   });
 
+  it("renders the main SQL Studio controls on load", async () => {
+    await renderSqlStudio();
+
+    expect(getSqlEditor()).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^execute$/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /refresh explorer/i })).toBeTruthy();
+    expect(screen.getByTitle("New query tab")).toBeTruthy();
+    expect(screen.getByTitle("Expand details panel")).toBeTruthy();
+  });
+
   it("runs a query from the SQL Studio page and renders the results grid", async () => {
     mockExecuteSqlStudioQuery.mockResolvedValue({
       status: "success",
@@ -378,6 +388,36 @@ describe("SqlStudio page", () => {
     });
 
     expect(await screen.findByText("Ada")).toBeTruthy();
+  });
+
+  it("runs the active query through the editor command binding", async () => {
+    mockExecuteSqlStudioQuery.mockResolvedValue({
+      status: "success",
+      rows: [{ id: 42, name: "Grace" }],
+      schema: [
+        { name: "id", dataType: "INT", index: 0, isPrimaryKey: true },
+        { name: "name", dataType: "TEXT", index: 1, isPrimaryKey: false },
+      ],
+      tookMs: 8,
+      rowCount: 1,
+      logs: [],
+    });
+
+    await renderSqlStudio();
+
+    fireEvent.change(getSqlEditor(), {
+      target: { value: "SELECT id, name FROM default.events WHERE id = 42" },
+    });
+
+    await act(async () => {
+      latestEditorCommand?.();
+    });
+
+    await waitFor(() => {
+      expect(mockExecuteSqlStudioQuery).toHaveBeenCalledWith("SELECT id, name FROM default.events WHERE id = 42");
+    });
+
+    expect(await screen.findByText("Grace")).toBeTruthy();
   });
 
   it("starts with an empty query editor and opens new tabs empty", async () => {

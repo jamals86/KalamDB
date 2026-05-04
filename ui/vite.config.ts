@@ -48,12 +48,16 @@ export default defineConfig(({ mode }) => {
     base: "/ui/",
     resolve: {
       preserveSymlinks: true,
-      dedupe: ["drizzle-orm", "@kalamdb/client"],
+      dedupe: ["drizzle-orm", "@kalamdb/client", "@kalamdb/orm"],
       alias: {
         "@": path.resolve(__dirname, "./src"),
         "@kalamdb/client": path.resolve(
           __dirname,
           "../link/sdks/typescript/client/dist/src/index.js",
+        ),
+        "@kalamdb/orm": path.resolve(
+          __dirname,
+          "../link/sdks/typescript/orm/dist/index.js",
         ),
       },
     },
@@ -74,6 +78,7 @@ export default defineConfig(({ mode }) => {
         allow: [
           path.resolve(__dirname, "."),
           path.resolve(__dirname, "../link/sdks/typescript/client"),
+          path.resolve(__dirname, "../link/sdks/typescript/orm"),
         ],
       },
       // Disable caching for WASM and SDK files
@@ -102,7 +107,7 @@ export default defineConfig(({ mode }) => {
       force: true,
       // Exclude the SDK from pre-bundling so WASM files load correctly
       // When pre-bundled, import.meta.url points to .vite/deps which breaks WASM loading
-      exclude: ["@kalamdb/client"],
+      exclude: ["@kalamdb/client", "@kalamdb/orm"],
     },
     // Ensure WASM files are handled correctly
     assetsInclude: ["**/*.wasm"],

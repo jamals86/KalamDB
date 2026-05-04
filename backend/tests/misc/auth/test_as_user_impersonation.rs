@@ -1,8 +1,9 @@
 //! Integration tests for EXECUTE AS USER subject isolation and role hierarchy.
 //!
-//! Ordinary USER-table reads remain scoped to the authenticated subject. Explicit
-//! EXECUTE AS USER can switch the subject only when the actor role is allowed to
-//! target the cached privileged-role class for the target user ID.
+//! Ordinary USER-table and STREAM-table reads remain scoped to the authenticated
+//! subject. Explicit EXECUTE AS USER can switch the subject only when the actor
+//! role is allowed to target the cached privileged-role class for the target
+//! user ID.
 
 use kalam_client::models::{QueryResponse, ResponseStatus};
 use kalamdb_commons::models::{AuthType, Role, UserId};
@@ -109,6 +110,21 @@ async fn create_user_table(server: &TestServer, namespace: &str, table: &str) {
     );
     let table_resp = server.execute_sql_as_user(&create_table, "root").await;
     assert_success(&table_resp, "create user table");
+}
+
+async fn create_stream_table(server: &TestServer, namespace: &str, table: &str) {
+    let ns_resp = server
+        .execute_sql_as_user(&format!("CREATE NAMESPACE {}", namespace), "root")
+        .await;
+    assert_success(&ns_resp, "create namespace");
+
+    let create_table = format!(
+        "CREATE TABLE {}.{} (id VARCHAR PRIMARY KEY, value VARCHAR) WITH (TYPE = 'STREAM', \
+         TTL_SECONDS = 3600)",
+        namespace, table
+    );
+    let table_resp = server.execute_sql_as_user(&create_table, "root").await;
+    assert_success(&table_resp, "create stream table");
 }
 
 #[actix_web::test]
@@ -344,6 +360,60 @@ async fn test_allowed_execute_as_can_select_update_and_delete_target_rows() {
         row_count(&target_after),
         0,
         "target row should be deleted through EXECUTE AS USER"
+    );
+}
+
+#[actix_web::test]
+#[ntest::timeout(45000)]
+async fn test_execute_as_stream_table_uses_target_user_scope() {
+    let server = TestServer::new_shared().await;
+    let ns = unique_name("as_user_stream_scope");
+    create_stream_table(&server, &ns, "events").await;
+
+    let actor = insert_user(&server, &unique_name("stream_actor"), Role::Service).await;
+    let target = insert_user(&server, &unique_name("stream_target"), Role::User).await;
+
+    let insert_sql = format!(
+        "EXECUTE AS USER '{}' (INSERT INTO {}.events (id, value) VALUES ('e1', 'delegated'))",
+        target.as_str(),
+        ns
+    );
+    let insert_resp = server.execute_sql_as_user(&insert_sql, actor.as_str()).await;
+    assert_success(&insert_resp, "stream insert through execute as user");
+
+    let target_direct = server
+        .execute_sql_as_user(
+            &format!("SELECT value FROM {}.events WHERE id = 'e1'", ns),
+            target.as_str(),
+        )
+        .await;
+    assert_success(&target_direct, "target direct stream select");
+    assert_eq!(row_count(&target_direct), 1, "target should see delegated stream row");
+
+    let actor_direct = server
+        .execute_sql_as_user(
+            &format!("SELECT value FROM {}.events WHERE id = 'e1'", ns),
+            actor.as_str(),
+        )
+        .await;
+    assert_success(&actor_direct, "actor direct stream select");
+    assert_eq!(row_count(&actor_direct), 0, "actor must not see target stream row directly");
+
+    let actor_as_target = server
+        .execute_sql_as_user(
+            &format!(
+                "EXECUTE AS USER '{}' (SELECT value FROM {}.events WHERE id = 'e1')",
+                target.as_str(),
+                ns
+            ),
+            actor.as_str(),
+        )
+        .await;
+    assert_success(&actor_as_target, "actor select through execute as on stream table");
+    assert_eq!(
+        row_count(&actor_as_target),
+        1,
+        "execute as user should read the target stream partition"
     );
 }
 

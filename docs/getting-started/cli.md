@@ -120,16 +120,20 @@ In interactive mode, meta-commands start with `\`:
 | `\help`, `\?`                   | Show help                                 |
 | `\quit`, `\q`                   | Exit                                      |
 | `\info`, `\session`             | Show session info                         |
+| `\history`, `\h`                | Open command history                      |
 | `\dt`, `\tables`               | List tables (`system.tables`)             |
 | `\d <table>`, `\describe <table>` | Describe table                         |
+| `\as <user> <SQL>`              | Wrap one statement as `EXECUTE AS USER`   |
 | `\stats`, `\metrics`          | Show `system.stats`                       |
 | `\health`                       | Server healthcheck                        |
-| `\pause` / `\continue`          | Pause/resume ingestion                    |
+| `\flush`                        | Run `STORAGE FLUSH ALL`                   |
 | `\format table|json|csv`        | Change output format                      |
-| `\subscribe <SQL>`, `\watch <SQL>` | Start WebSocket live subscription     |
+| `\subscribe <SQL>`, `\watch <SQL>`, `\live <SQL>` | Start live subscription |
 | `\unsubscribe`, `\unwatch`      | No-op (prints “No active subscription to cancel”) |
 | `\cluster ...`                  | Cluster commands (see below)              |
 | `\refresh-tables`, `\refresh` | Refresh autocomplete metadata             |
+| `\sessions`                     | Show active sessions                      |
+| `\consume <topic> ...`          | Consume topic messages                    |
 | `\show-credentials`, `\credentials` | Show stored credentials               |
 | `\update-credentials <u> <p>`  | Update stored credentials                 |
 | `\delete-credentials`          | Delete stored credentials                 |
@@ -367,10 +371,11 @@ kalam --no-color -c "SELECT * FROM users" > output.txt
 
 ### 5. Timing Information
 
-Execution time is displayed for all queries:
+Execution metadata is displayed for all queries:
 ```
 (10 rows)
 
+As: root
 Took: 245.123 ms
 ```
 

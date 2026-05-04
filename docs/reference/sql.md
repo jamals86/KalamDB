@@ -195,9 +195,9 @@ FROM [<namespace>.]<table_name>
 
 ## Execute As User
 
-`EXECUTE AS USER` syntax is wrapper-only. It switches USER-table execution to a
-target user ID only when the authenticated actor role is allowed to target that
-ID's cached role class.
+`EXECUTE AS USER` syntax is wrapper-only. It switches USER-table or
+STREAM-table execution to a target user ID only when the authenticated actor
+role is allowed to target that ID's cached role class.
 
 ```sql
 EXECUTE AS USER '<username>' (
@@ -221,7 +221,7 @@ Rules:
 4. DBA users may target dba, service, and user accounts.
 5. Service users may target service and user accounts.
 6. Regular users may only use self-targeted `EXECUTE AS USER` as a no-op identity boundary.
-7. The wrapper is valid only for USER tables; shared tables use their table policy directly.
+7. The wrapper is valid for USER and STREAM tables; shared tables use their table policy directly.
 8. Target role checks are hot-path cached: service, DBA, and system user IDs are tracked in memory from `system.users`; soft-deleted privileged IDs stay classified by their persisted role, and target IDs not present in that privileged cache are treated as regular users.
 9. Legacy inline `... AS USER 'name'` syntax is not supported.
 
